@@ -468,6 +468,34 @@ async def api_test_key(payload: dict) -> dict:
     }
     errs: list[str] = []
     tried: list[str] = []
+    report: list[str] = []
+
+    def _fp(label: str, val: str) -> str:
+        """Отпечаток секрета: длина и края, без раскрытия середины."""
+        if not val:
+            return f"{label}: (пусто)"
+        shown = val if len(val) <= 12 else f"{val[:4]}…{val[-4:]}"
+        kinds = []
+        if any(c.isupper() for c in val):
+            kinds.append("A-Z")
+        if any(c.islower() for c in val):
+            kinds.append("a-z")
+        if any(c.isdigit() for c in val):
+            kinds.append("0-9")
+        odd = sorted({c for c in val if not c.isalnum() and c not in "-_."})
+        extra = f", подозрительные символы: {odd}" if odd else ""
+        return (f"{label}: {shown} (длина {len(val)}, "
+                f"{'+'.join(kinds) or 'нет букв/цифр'}{extra})")
+
+    report.append(_fp("Ключ", key))
+    if raw_key != key:
+        report.append(f"  ⚠ из ключа убран мусор, было {len(raw_key)} символов")
+    report.append(_fp("Key ID", key_id))
+    report.append(_fp("Key Secret", key_secret))
+    report.append(f"ID проекта: {project}")
+    report.append(f"Адрес: {base}")
+    report.append("")
+
     try:
         async with httpx.AsyncClient(timeout=25) as c:
             for mode in prov.auth_modes():
@@ -475,6 +503,8 @@ async def api_test_key(payload: dict) -> dict:
                     errs.append("Не удалось обменять Key ID + Key Secret на "
                                 "токен: iam.api.cloud.ru отклонил эту пару. "
                                 "Проверьте Key ID и Key Secret.")
+                    report.append(
+                        f"[{labels.get(mode, mode)}] — обмен на токен не удался")
                     continue
                 r = await c.get(base.rstrip("/") + "/models",
                                 headers=prov.headers(json_body=False, mode=mode))
@@ -482,18 +512,27 @@ async def api_test_key(payload: dict) -> dict:
                 if r.status_code < 400:
                     prov.remember_auth(mode)
                     models = [m.get("id") for m in r.json().get("data", [])]
+                    report.append(f"[{labels.get(mode, mode)}] → OK")
                     return {
                         "ok": True,
                         "count": len(models),
                         "models": models[:60],
                         "auth": labels.get(mode, mode),
+                        "report": "\n".join(report),
                     }
                 err = f"{r.status_code}: {r.text[:200]}"
                 errs.append(err)
+                sent = prov.headers(json_body=False, mode=mode)
+                report.append(
+                    f"[{labels.get(mode, mode)}]\n"
+                    f"  отправлено: {', '.join(sorted(sent))}\n"
+                    f"  ответ {r.status_code}: {r.text[:300]}")
                 if not is_auth_error(err):
                     break
     except Exception as e:
-        return {"ok": False, "error": str(e), "hint": explain_error(str(e))}
+        report.append(f"Соединение оборвалось: {type(e).__name__}: {e}")
+        return {"ok": False, "error": str(e), "hint": explain_error(str(e)),
+                "report": "\n".join(report)}
 
     shown = best_error(errs) or (errs[0] if errs else "неизвестная ошибка")
     hint = explain_error(shown)
@@ -505,7 +544,8 @@ async def api_test_key(payload: dict) -> dict:
         hint = (hint + "\n\nДжарвис попробовал все способы передать ключ ("
                 + ", ".join(tried) + ") — сервис не принял ни один, "
                 "значит дело в самом ключе, а не в способе подключения.").strip()
-    return {"ok": False, "error": shown, "hint": hint}
+    return {"ok": False, "error": shown, "hint": hint,
+            "report": "\n".join(report)}
 
 
 def main() -> None:

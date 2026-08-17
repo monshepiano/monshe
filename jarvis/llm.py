@@ -182,24 +182,24 @@ class Provider:
 
 
 def clean_key(raw: str) -> str:
-    """Убирает из ключа мусор, который часто прилетает при копировании.
+    """Убирает из ключа мусор, который прилипает при копировании.
 
-    Люди копируют ключ вместе со словом "Bearer"/"Api-Key", в кавычках,
-    с переносом строки или невидимыми пробелами. Cloud.ru на такое отвечает
-    "Invalid authorization header format", и понять причину невозможно.
+    Осторожно: сам ключ вполне может начинаться с букв "key" или "token",
+    поэтому префикс отрезаем ТОЛЬКО если после него был разделитель
+    (пробел или двоеточие) — то есть это действительно отдельное слово.
     """
     k = (raw or "").strip()
-    # невидимые пробелы и переносы внутри строки
+    # Кавычки по краям.
+    k = k.strip("\"'\u00ab\u00bb`").strip()
+    # Отдельное слово-префикс: "Bearer xxx", "Api-Key: xxx".
+    m = re.match(r"(?i)^(bearer|api-?key|token)[\s:=]+(\S.*)$", k)
+    if m:
+        k = m.group(2).strip()
+    # Ещё раз кавычки — они могли быть внутри: Bearer "xxx".
+    k = k.strip("\"'\u00ab\u00bb`").strip()
+    # Невидимые символы и переносы строк внутри ключа.
     k = re.sub(r"[\s\u00a0\u200b-\u200f\ufeff]+", "", k)
-    k = k.strip("\"'\u00ab\u00bb`")
-    for prefix in ("bearer", "api-key", "apikey", "token", "key"):
-        if k.lower().startswith(prefix):
-            rest = k[len(prefix):].lstrip(" :=")
-            # отрезаем, только если после префикса что-то осталось
-            if rest and len(rest) > 8:
-                k = rest
-                break
-    return k.strip()
+    return k
 
 
 def providers() -> list[Provider]:

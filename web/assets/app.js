@@ -865,6 +865,27 @@ function init() {
         + (r.auth ? `\nСпособ подключения: ${r.auth}` : '')
       : (r.hint ? `✗ ${r.hint}\n\n(${r.error})` : `✗ ${r.error}`);
     box.style.whiteSpace = 'pre-wrap';
+    if (r.report) {
+      const d = document.createElement('details');
+      d.style.marginTop = '10px';
+      const sum = document.createElement('summary');
+      sum.textContent = 'Технические подробности (для отправки помощнику)';
+      sum.style.cursor = 'pointer';
+      const pre = document.createElement('pre');
+      pre.textContent = r.report;
+      pre.style.cssText = 'white-space:pre-wrap;font-size:11px;opacity:.85;'
+        + 'margin:8px 0;max-height:260px;overflow:auto';
+      const btn = document.createElement('button');
+      btn.textContent = '⧉ Скопировать';
+      btn.className = 'btn';
+      btn.onclick = () => {
+        navigator.clipboard.writeText(r.report);
+        btn.textContent = '✓ Скопировано';
+        setTimeout(() => { btn.textContent = '⧉ Скопировать'; }, 1500);
+      };
+      d.append(sum, pre, btn);
+      box.appendChild(d);
+    }
   };
 
   $('#btnLoadModels').onclick = async () => {
