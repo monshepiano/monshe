@@ -147,6 +147,9 @@ body {
 .corner.br { bottom: 6px; right: 6px; border-left: 0; border-top: 0; }
 
 /* ---------------------------------------------------------------- центр/чат */
+/* атрибут hidden должен побеждать display:flex — иначе скрытый раздел остаётся на экране */
+[hidden] { display: none !important; }
+
 .center { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 14px; gap: 12px; }
 
 .stream { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;
@@ -259,17 +262,12 @@ body {
 /* ------------------------------------------------- раздел из левого меню (на весь центр) */
 .view {
   flex: 1; min-width: 0; display: flex; flex-direction: column;
-  margin: 12px; border: 1px solid var(--line-soft); border-radius: var(--radius);
-  background: var(--panel); backdrop-filter: blur(16px);
-  position: relative; overflow: hidden;
-  animation: rise 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
+  background: transparent; position: relative; overflow: hidden;
+  animation: fadein 0.25s ease;
 }
-.view::before {
-  content: ''; position: absolute; top: 0; left: 14px; right: 14px; height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(71, 213, 255, 0.55), transparent);
-}
-.view .side-h { font-size: 12px; letter-spacing: 2px; padding: 16px 18px; }
-.view .scrolly { padding: 16px; gap: 12px; }
+@keyframes fadein { from { opacity: 0; transform: translateY(6px); } }
+.view .side-h { font-size: 13px; letter-spacing: 2.5px; padding: 20px 24px 16px; }
+.view .scrolly { padding: 4px 24px 24px; gap: 12px; }
 .view .card, .view .approve-box { max-width: 820px; width: 100%; }
 .view video.cam { max-width: 720px; }
 .view .field, .view .btn.primary, .view .hint { max-width: 720px; }
