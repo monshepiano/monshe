@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#04070d">
+<title>J.A.R.V.I.S.</title>
+<link rel="manifest" href="/assets/manifest.json">
+<link rel="apple-touch-icon" href="/assets/icon.png">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<div class="backdrop"></div>
+<div class="scanline"></div>
+
+<div class="app">
+  <!-- ================= ВЕРХНЯЯ ПАНЕЛЬ ================= -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div>
+        <div class="brand-name">JARVIS</div>
+        <div class="brand-sub">Персональный ИИ-агент</div>
+      </div>
+    </div>
+    <div class="topbar-status">
+      <div class="stat">
+        <span class="stat-label">Модель</span>
+        <span class="stat-value" id="statModel">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Задачи</span>
+        <span class="stat-value" id="statTasks">0</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Связь</span>
+        <span class="stat-value"><span class="dot off" id="statDot"></span> <span id="statConn">…</span></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= ЛЕВАЯ НАВИГАЦИЯ ================= -->
+  <nav class="rail">
+    <button class="rail-btn active" data-view="chat" title="Диалог">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 11.5a8.4 8.4 0 01-9 8.4 8.9 8.9 0 01-4-.9L3 21l1.9-4.9A8.4 8.4 0 013 11.5a8.4 8.4 0 018.5-8.4h.5a8.4 8.4 0 019 8.4z"/></svg>
+    </button>
+    <button class="rail-btn" data-view="tasks" title="Задачи">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h9"/></svg>
+    </button>
+    <button class="rail-btn" data-view="camera" title="Камера">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+    </button>
+    <button class="rail-btn" data-view="memory" title="Память">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 2a5 5 0 00-5 5v1a4 4 0 000 8v1a4 4 0 008 0v-1a4 4 0 000-8V7a5 5 0 00-3-5z"/></svg>
+    </button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" id="btnSide" title="Панель">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
+    </button>
+    <button class="rail-btn" id="btnSettings" title="Настройки">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-1.8-.3 1.6 1.6 0 00-1 1.5V21a2 2 0 11-4 0v-.1A1.6 1.6 0 008 19.4a1.6 1.6 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.6 1.6 0 00.3-1.8 1.6 1.6 0 00-1.5-1H2a2 2 0 110-4h.1A1.6 1.6 0 003.6 8a1.6 1.6 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 001.8.3H8a1.6 1.6 0 001-1.5V2a2 2 0 114 0v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8V8a1.6 1.6 0 001.5 1H22a2 2 0 110 4h-.1a1.6 1.6 0 00-1.5 1z"/></svg>
+    </button>
+  </nav>
+
+  <!-- ================= ЦЕНТР ================= -->
+  <main class="main">
+    <!-- ДИАЛОГ -->
+    <section class="view active" id="view-chat">
+      <div class="stream" id="stream">
+        <div class="hero" id="hero">
+          <div class="reactor" id="reactor">
+            <div class="ring r1"></div><div class="ring r2"></div>
+            <div class="ring r3"></div><div class="ring r4"></div>
+            <div class="core"></div>
+          </div>
+          <div>
+            <div class="hero-title">Джарвис к вашим услугам</div>
+            <div class="hero-sub" id="heroSub">
+              Скажите или напишите, что нужно сделать. Сложные задачи я разобью
+              на шаги и выполню сам — с поиском в интернете, файлами и отчётом.
+            </div>
+          </div>
+          <div class="hero-chips" id="chips">
+            <div class="chip">Что нового в мире ИИ за неделю?</div>
+            <div class="chip">Собери отчёт о рынке электромобилей в России</div>
+            <div class="chip">Составь план тренировок на месяц в файле</div>
+            <div class="chip">Каждое утро в 9:00 присылай сводку новостей</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-inner">
+          <div class="attach-row" id="attachRow"></div>
+          <div class="composer-row">
+            <button class="icon-btn" id="btnAttach" title="Прикрепить файл">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21.4 11.05l-9.2 9.2a6 6 0 01-8.5-8.5l9.2-9.2a4 4 0 015.7 5.7l-9.2 9.2a2 2 0 01-2.8-2.8l8.5-8.5"/></svg>
+            </button>
+            <button class="icon-btn" id="btnMic" title="Голосом">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
+            </button>
+            <textarea id="input" rows="1" placeholder="Чем могу помочь, Сэр?"></textarea>
+            <button class="send-btn" id="btnSend" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+            </button>
+          </div>
+          <div class="composer-hint">
+            <span class="toggle-agent" id="toggleAgent">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              Агентский режим
+            </span>
+            <span>Enter — отправить · Shift+Enter — новая строка</span>
+          </div>
+        </div>
+      </div>
+      <input type="file" id="fileInput" multiple hidden>
+    </section>
+
+    <!-- ЗАДАЧИ -->
+    <section class="view" id="view-tasks">
+      <div class="stream">
+        <div class="section-title" style="margin-top:6px">Фоновые задачи и расписания</div>
+        <div class="card">
+          <div class="card-title">Поставить задачу в фон</div>
+          <div class="card-meta" style="margin-bottom:9px">Джарвис выполнит её сам и пришлёт результат</div>
+          <div class="field" style="margin-bottom:9px">
+            <textarea id="bgGoal" rows="2" placeholder="Например: найди топ-5 ноутбуков до 100 000 ₽ и сделай сравнительную таблицу"></textarea>
+          </div>
+          <div class="row2" style="margin-bottom:9px">
+            <div class="field" style="margin:0">
+              <label>Повторять каждые (минут, 0 — один раз)</label>
+              <input type="number" id="bgEvery" value="0" min="0">
+            </div>
+            <div class="field" style="margin:0">
+              <label>Название</label>
+              <input type="text" id="bgTitle" placeholder="Обзор ноутбуков">
+            </div>
+          </div>
+          <button class="btn primary" id="btnRunBg">Запустить</button>
+        </div>
+        <div id="taskList"></div>
+        <div class="section-title">Расписания</div>
+        <div id="schedList"></div>
+      </div>
+    </section>
+
+    <!-- КАМЕРА -->
+    <section class="view" id="view-camera">
+      <div class="stream">
+        <div class="section-title" style="margin-top:6px">Зрение Джарвиса</div>
+        <p style="color:var(--text-dim);font-size:13px;margin-bottom:14px;line-height:1.6">
+          Наведите камеру на предмет и спросите голосом или текстом — Джарвис
+          увидит и ответит. Например: «что это за картина» или «найди такую же
+          и покажи, где купить».
+        </p>
+        <div class="cam-wrap">
+          <video id="camVideo" autoplay playsinline muted></video>
+          <div class="cam-frame"></div>
+        </div>
+        <div class="field" style="margin-top:14px">
+          <label>Вопрос по кадру</label>
+          <input type="text" id="camPrompt" value="Что изображено на этом кадре? Опиши подробно.">
+        </div>
+        <div style="display:flex;gap:9px;flex-wrap:wrap">
+          <button class="btn" id="btnCamStart">Включить камеру</button>
+          <button class="btn primary" id="btnCamShot">Сделать снимок и спросить</button>
+          <button class="btn ghost" id="btnCamStop">Выключить</button>
+        </div>
+        <div id="camResult" style="margin-top:16px"></div>
+      </div>
+    </section>
+
+    <!-- ПАМЯТЬ -->
+    <section class="view" id="view-memory">
+      <div class="stream">
+        <div class="section-title" style="margin-top:6px">Что Джарвис знает о вас</div>
+        <p style="color:var(--text-dim);font-size:13px;margin-bottom:14px;line-height:1.6">
+          Джарвис сам запоминает важное из разговоров, чтобы отвечать точнее.
+          Здесь можно добавить факт вручную или удалить лишнее.
+        </p>
+        <div class="row2" style="margin-bottom:12px">
+          <div class="field" style="margin:0"><label>Ключ</label><input id="memKey" placeholder="город"></div>
+          <div class="field" style="margin:0"><label>Значение</label><input id="memVal" placeholder="Москва"></div>
+        </div>
+        <button class="btn primary" id="btnMemAdd" style="margin-bottom:18px">Запомнить</button>
+        <div id="memList"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ================= ПРАВАЯ ПАНЕЛЬ ================= -->
+  <aside class="side" id="side">
+    <div class="side-tabs">
+      <button class="side-tab active" data-pane="term">Мысли</button>
+      <button class="side-tab" data-pane="files">Файлы</button>
+      <button class="side-tab" data-pane="events">Журнал</button>
+    </div>
+    <div class="side-body">
+      <div class="side-pane active" id="pane-term">
+        <div class="empty-note" id="termEmpty">
+          Здесь будет виден ход мыслей Джарвиса:<br>какие инструменты он
+          запускает и что находит.
+        </div>
+        <div id="term"></div>
+      </div>
+      <div class="side-pane" id="pane-files">
+        <div id="fileList"><div class="empty-note">Файлы, которые создаст Джарвис,<br>появятся здесь.</div></div>
+      </div>
+      <div class="side-pane" id="pane-events">
+        <div id="eventList"><div class="empty-note">Журнал событий пуст.</div></div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- ================= НАСТРОЙКИ ================= -->
+<div class="overlay" id="settingsOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">Настройки Джарвиса</div>
+      <button class="icon-btn" id="btnCloseSettings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="section-title">Мозг — ключ доступа к моделям</div>
+      <div class="field">
+        <label>API-ключ Cloud.ru Foundation Models</label>
+        <input type="password" id="cfgKey" placeholder="вставьте ключ">
+        <div class="hint">
+          Работает из России без VPN. Получить бесплатно:
+          <a href="https://cloud.ru/products/evolution-foundation-models" target="_blank">cloud.ru → Evolution → Foundation Models</a>
+          → создать сервисный аккаунт → API-ключ.
+        </div>
+        <button class="btn" id="btnTestKey" style="margin-top:9px">Проверить ключ</button>
+        <div class="test-result" id="testResult"></div>
+      </div>
+      <div class="field">
+        <label>Резервный провайдер (необязательно)</label>
+        <div class="row2">
+          <input type="text" id="cfgFbUrl" placeholder="https://api.vsegpt.ru/v1">
+          <input type="password" id="cfgFbKey" placeholder="ключ">
+        </div>
+        <div class="hint">Любой OpenAI-совместимый сервис: VseGPT, AITunnel, ProxyAPI. Подхватится, если основной недоступен.</div>
+      </div>
+
+      <div class="section-title">Модели по задачам</div>
+      <div class="row2">
+        <div class="field"><label>Быстрые ответы</label><input id="cfgMChat"></div>
+        <div class="field"><label>Сложные задачи</label><input id="cfgMSmart"></div>
+        <div class="field"><label>Агентский режим</label><input id="cfgMAgent"></div>
+        <div class="field"><label>Код</label><input id="cfgMCode"></div>
+        <div class="field"><label>Зрение / камера</label><input id="cfgMVision"></div>
+        <div class="field"><label>Распознавание речи</label><input id="cfgMStt"></div>
+      </div>
+      <button class="btn" id="btnLoadModels">Показать доступные модели</button>
+      <div class="hint" id="modelsHint" style="margin-top:8px"></div>
+
+      <div class="section-title">Личность</div>
+      <div class="row2">
+        <div class="field"><label>Как к вам обращаться</label><input id="cfgUserName" placeholder="Сэр"></div>
+        <div class="field"><label>Имя ассистента</label><input id="cfgName" placeholder="Джарвис"></div>
+      </div>
+      <div class="field">
+        <label>Характер и стиль общения</label>
+        <textarea id="cfgStyle" rows="3"></textarea>
+      </div>
+
+      <div class="section-title">Telegram</div>
+      <div class="field">
+        <label>Токен бота</label>
+        <input type="password" id="cfgTgToken" placeholder="123456:ABC-...">
+        <div class="hint">
+          Создайте бота у <a href="https://t.me/BotFather" target="_blank">@BotFather</a> → /newbot →
+          скопируйте токен сюда. Затем напишите боту «привет» — он сам запомнит ваш чат.
+          После этого сможете ставить задачи с телефона и получать уведомления.
+        </div>
+      </div>
+      <label class="switch"><input type="checkbox" id="cfgTgOn"> Включить Telegram</label>
+      <label class="switch"><input type="checkbox" id="cfgTgNotify"> Уведомлять о завершении фоновых задач</label>
+
+      <div class="section-title">Безопасность</div>
+      <div class="hint" style="margin-bottom:11px">Перед этими действиями Джарвис остановится и спросит разрешения.</div>
+      <div id="safetyList"></div>
+      <div class="row2" style="margin-top:12px">
+        <div class="field"><label>Максимум шагов на задачу</label><input type="number" id="cfgMaxSteps"></div>
+        <div class="field"><label>Тайм-аут задачи (сек)</label><input type="number" id="cfgMaxSec"></div>
+      </div>
+
+      <div class="section-title">Фоновая работа</div>
+      <label class="switch"><input type="checkbox" id="cfgBgOn"> Работать в фоне</label>
+      <label class="switch"><input type="checkbox" id="cfgProactive"> Проактивные подсказки (сам предлагает полезное)</label>
+      <div class="field"><label>Как часто просыпаться (минут)</label><input type="number" id="cfgHeartbeat"></div>
+
+      <div class="section-title">Генерация изображений</div>
+      <div class="row2">
+        <div class="field"><label>FusionBrain API Key</label><input type="password" id="cfgFbApiKey"></div>
+        <div class="field"><label>FusionBrain Secret</label><input type="password" id="cfgFbSecret"></div>
+      </div>
+      <div class="hint">Бесплатно на <a href="https://fusionbrain.ai/docs/doc/api-dokumentaciya/" target="_blank">fusionbrain.ai</a> (Kandinsky). Доступно из России.</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" id="btnCancelSettings">Отмена</button>
+      <button class="btn primary" id="btnSaveSettings">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

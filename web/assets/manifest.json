@@ -1,0 +1,14 @@
+{
+  "name": "J.A.R.V.I.S.",
+  "short_name": "Джарвис",
+  "description": "Персональный AI-агент",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#04070d",
+  "theme_color": "#04070d",
+  "lang": "ru",
+  "icons": [
+    { "src": "/assets/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
