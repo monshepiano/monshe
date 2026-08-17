@@ -194,20 +194,32 @@ try {
 } catch (e) {}
 
 /* ============================ правая панель ============================ */
-function openDrawer(tab) {
+/* Панель одна: вкладка «Центр» (уведомления сверху, санкции снизу) и «Камера».
+   focus — к какой секции центра подскроллить и какую подсветить. */
+function openDrawer(tab, focus) {
   $('#drawer').classList.add('open');
   if (tab) {
     $$('.dtab').forEach((t) => t.classList.toggle('active', t.dataset.dtab === tab));
     $$('.dpane').forEach((p) => p.classList.toggle('active', p.id === 'dpane-' + tab));
   }
+  if (focus) {
+    const sec = $(focus === 'sanctions' ? '#secSanctions' : '#secNotes');
+    if (sec) {
+      requestAnimationFrame(() => {
+        sec.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        sec.classList.remove('flash');
+        void sec.offsetWidth;
+        sec.classList.add('flash');
+      });
+    }
+  }
 }
 $$('.dtab').forEach((t) => t.addEventListener('click', () => openDrawer(t.dataset.dtab)));
 $('#drawerClose').addEventListener('click', () => $('#drawer').classList.remove('open'));
-$('#approvalsBtn').addEventListener('click', () => openDrawer('sanctions'));
+$('#approvalsBtn').addEventListener('click', () => openDrawer('center', 'sanctions'));
 $('#notifyBtn').addEventListener('click', () => {
-  openDrawer('notes'); api('/api/notifications/read', {}).then(refreshState);
+  openDrawer('center', 'notes'); api('/api/notifications/read', {}).then(refreshState);
 });
-$('#sandboxBtn').addEventListener('click', () => openDrawer('sandbox'));
 
 /* ============================ переключатели ============================ */
 $('#tgAgent').addEventListener('click', function () {
@@ -441,6 +453,7 @@ function attachFileChip(container, f) {
 
 function termLine(text, cls) {
   const feed = $('#termFeed');
+  if (!feed) return;
   const line = el('div', 'term-line ' + (cls || ''), esc(text));
   feed.appendChild(line);
   feed.scrollTop = feed.scrollHeight;
@@ -663,7 +676,7 @@ function handleEvent(ev, ui) {
       };
       card.querySelector('.ok').addEventListener('click', () => decide('approved'));
       card.querySelector('.no').addEventListener('click', () => decide('rejected'));
-      refreshState(); openDrawer('sanctions');
+      refreshState(); openDrawer('center', 'sanctions');
       beep(340, 0.3);
       toast((ev.label || ev.tool) + ' — нужно твоё разрешение', 'warn', 'Санкция');
       scrollDown(true);
@@ -876,8 +889,16 @@ $('#camBuy').addEventListener('click', async () => {
 });
 
 /* ============================ санкции / уведомления ============================ */
+function setCount(id, n, hot) {
+  const e = $(id);
+  if (!e) return;
+  e.textContent = n;
+  e.classList.toggle('zero', !n);
+  e.classList.toggle('hot', !!(hot && n));
+}
 function renderSanctions() {
   const pane = $('#dpane-sanctions');
+  setCount('#sanctCount', S.approvals.length, true);
   if (!S.approvals.length) {
     pane.innerHTML = '<div class="empty"><span class="e-ico">⛨</span>Нет запросов на подтверждение.<br>' +
       'Опасные действия — оплата, удаление, управление компьютером — я всегда спрашиваю здесь.</div>';
@@ -910,6 +931,7 @@ async function decideApproval(id, decision, card) {
 
 function renderNotes() {
   const pane = $('#dpane-notes');
+  setCount('#notesCount', S.notifications.length, false);
   if (!S.notifications.length) {
     pane.innerHTML = '<div class="empty"><span class="e-ico">◔</span>Пока тихо.<br>' +
       'Здесь появятся отчёты фоновых задач и мои проактивные подсказки.</div>';

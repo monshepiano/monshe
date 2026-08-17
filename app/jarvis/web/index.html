@@ -15,6 +15,7 @@
   <div class="grid-plane"></div>
   <div class="glow glow-a"></div>
   <div class="glow glow-b"></div>
+  <div class="glow glow-c"></div>
   <canvas id="particles"></canvas>
 </div>
 
@@ -42,24 +43,24 @@
         <div class="brand-name">JARVIS</div>
         <div class="brand-sub" id="brandSub">система активна</div>
       </div>
-      <button class="icon-btn collapse-btn" id="collapseBtn" title="Свернуть меню">‹</button>
+      <button class="icon-btn collapse-btn" id="collapseBtn" title="Свернуть / развернуть меню">‹</button>
     </div>
 
     <nav class="nav">
-      <button class="nav-item active" data-view="chat">
+      <button class="nav-item active" data-view="chat" data-name="Чат">
         <span class="nav-ico">◈</span><span class="nav-label">Чат</span>
       </button>
-      <button class="nav-item" data-view="auto">
+      <button class="nav-item" data-view="auto" data-name="AUTO">
         <span class="nav-ico">◎</span><span class="nav-label">AUTO</span>
         <span class="badge" id="autoBadge">0</span>
       </button>
-      <button class="nav-item" data-view="files">
+      <button class="nav-item" data-view="files" data-name="Песочница">
         <span class="nav-ico">▤</span><span class="nav-label">Песочница</span>
       </button>
-      <button class="nav-item" data-view="memory">
+      <button class="nav-item" data-view="memory" data-name="Память">
         <span class="nav-ico">◇</span><span class="nav-label">Память</span>
       </button>
-      <button class="nav-item" data-view="settings">
+      <button class="nav-item" data-view="settings" data-name="Настройки">
         <span class="nav-ico">⚙</span><span class="nav-label">Настройки</span>
       </button>
     </nav>
@@ -92,29 +93,19 @@
       </div>
       <div class="top-title" id="topTitle">Диалог</div>
       <div class="top-actions">
-        <button class="icon-btn pulse-on-new" id="approvalsBtn" title="Подтверждения">
-          ⛨<span class="mini-badge hidden" id="approvalsBadge">0</span>
-        </button>
-        <button class="icon-btn" id="notifyBtn" title="Уведомления">
+        <button class="icon-btn tone-notes" id="notifyBtn" title="Уведомления">
           ◔<span class="mini-badge hidden" id="notifyBadge">0</span>
         </button>
-        <button class="icon-btn" id="sandboxBtn" title="Панель песочницы">▣</button>
+        <button class="icon-btn tone-sanct pulse-on-new" id="approvalsBtn" title="Санкции — подтверждения">
+          ⛨<span class="mini-badge hidden" id="approvalsBadge">0</span>
+        </button>
       </div>
     </header>
 
     <!-- ---------- VIEW: ЧАТ ---------- -->
     <section class="view view-chat active" id="view-chat">
-      <div class="stream" id="stream">
-        <div class="welcome" id="welcome">
-          <div class="reactor xl">
-            <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
-            <div class="core"></div>
-          </div>
-          <h1 class="hello">Добрый день. Я <span>JARVIS</span>.</h1>
-          <p class="hello-sub">Спрашивай что угодно — или включи <b>Агент</b>, и я сделаю всё сам.</p>
-          <div class="suggestions" id="suggestions"></div>
-        </div>
-      </div>
+      <!-- приветствие строится в app.js (buildWelcome), здесь его быть не должно -->
+      <div class="stream" id="stream"></div>
 
       <!-- ПОЛЕ ВВОДА -->
       <div class="composer-wrap">
@@ -161,10 +152,14 @@
     <!-- ---------- VIEW: ПЕСОЧНИЦА ---------- -->
     <section class="view view-files" id="view-files">
       <div class="panel-head">
-        <div><h2>Песочница</h2><p class="muted">Файлы, которые JARVIS создал или скачал.</p></div>
+        <div><h2>Песочница</h2><p class="muted">Файлы, которые JARVIS создал или скачал, и трансляция терминала.</p></div>
         <button class="btn" id="refreshFiles">Обновить</button>
       </div>
       <div class="file-grid" id="fileGrid"></div>
+      <div class="term-block">
+        <div class="term-head"><span class="term-dot"></span>ТЕРМИНАЛ</div>
+        <div class="term" id="termFeed"></div>
+      </div>
     </section>
 
     <!-- ---------- VIEW: ПАМЯТЬ ---------- -->
@@ -187,18 +182,30 @@
   <aside class="drawer" id="drawer">
     <div class="drawer-head">
       <div class="drawer-tabs">
-        <button class="dtab active" data-dtab="sanctions">Санкции</button>
-        <button class="dtab" data-dtab="notes">Уведомления</button>
-        <button class="dtab" data-dtab="sandbox">Песочница</button>
+        <button class="dtab active" data-dtab="center">Центр</button>
         <button class="dtab" data-dtab="camera">Камера</button>
       </div>
       <button class="icon-btn" id="drawerClose">✕</button>
     </div>
     <div class="drawer-body">
-      <div class="dpane active" id="dpane-sanctions"></div>
-      <div class="dpane" id="dpane-notes"></div>
-      <div class="dpane" id="dpane-sandbox">
-        <div class="term" id="termFeed"></div>
+      <!-- единая панель: сверху уведомления, снизу санкции -->
+      <div class="dpane active" id="dpane-center">
+        <section class="dsection" id="secNotes">
+          <div class="dsec-head">
+            <span class="dsec-ico ico-notes">◔</span>
+            <h3>Уведомления</h3>
+            <span class="dsec-count" id="notesCount">0</span>
+          </div>
+          <div class="dsec-body" id="dpane-notes"></div>
+        </section>
+        <section class="dsection" id="secSanctions">
+          <div class="dsec-head">
+            <span class="dsec-ico ico-sanct">⛨</span>
+            <h3>Санкции</h3>
+            <span class="dsec-count" id="sanctCount">0</span>
+          </div>
+          <div class="dsec-body" id="dpane-sanctions"></div>
+        </section>
       </div>
       <div class="dpane" id="dpane-camera">
         <div class="cam-wrap">
