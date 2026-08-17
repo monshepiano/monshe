@@ -544,6 +544,7 @@ async function openSettings() {
 
   setV('#cfgKey', ''); $('#cfgKey').placeholder =
     c.providers?.cloudru?.api_key_set ? 'ключ сохранён (••••)' : 'вставьте ключ';
+  setV('#cfgProject', c.providers?.cloudru?.project_id);
   setV('#cfgFbUrl', c.providers?.fallback?.base_url);
   setV('#cfgFbKey', '');
   setV('#cfgMChat', c.models?.chat); setV('#cfgMSmart', c.models?.smart);
@@ -600,6 +601,7 @@ async function saveSettings() {
     image_gen: {},
   };
   if (val('#cfgKey')) patch.providers.cloudru.api_key = val('#cfgKey');
+  patch.providers.cloudru.project_id = val('#cfgProject');
   if (val('#cfgFbKey')) { patch.providers.fallback.api_key = val('#cfgFbKey'); patch.providers.fallback.enabled = true; }
   if (val('#cfgTgToken')) patch.telegram.bot_token = val('#cfgTgToken');
   if (val('#cfgFbApiKey')) patch.image_gen.api_key = val('#cfgFbApiKey');
@@ -690,12 +692,16 @@ function init() {
     box.textContent = 'Проверяю…';
     const r = await (await fetch('/api/test-key', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key: $('#cfgKey').value.trim() }),
+      body: JSON.stringify({
+        api_key: $('#cfgKey').value.trim(),
+        project_id: $('#cfgProject').value.trim(),
+      }),
     })).json();
     box.className = 'test-result ' + (r.ok ? 'ok' : 'err');
     box.textContent = r.ok
       ? `✓ Ключ работает. Доступно моделей: ${r.count}`
-      : `✗ ${r.error}`;
+      : (r.hint ? `✗ ${r.hint}\n\n(${r.error})` : `✗ ${r.error}`);
+    box.style.whiteSpace = 'pre-wrap';
   };
 
   $('#btnLoadModels').onclick = async () => {

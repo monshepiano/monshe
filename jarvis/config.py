@@ -29,7 +29,11 @@ DEFAULTS: dict[str, Any] = {
             "enabled": True,
             "base_url": "https://foundation-models.api.cloud.ru/v1",
             "api_key": "",
-            "note": "Ключ: cloud.ru -> Evolution -> Foundation Models -> API-ключ",
+            # Идентификатор проекта Cloud.ru. Без него сервис отвечает
+            # "403: Project not found". Личный кабинет -> Проекты ->
+            # нужный проект -> скопировать ID (вид: 50000000-4000-...).
+            "project_id": "",
+            "note": "Ключ: cloud.ru -> Пользователи -> Сервисные аккаунты -> API-ключ",
         },
         # Резервный/дополнительный OpenAI-совместимый провайдер
         # (VseGPT, AITunnel, ProxyAPI, OpenRouter — что угодно).
@@ -152,6 +156,7 @@ class Config:
         """Переменные окружения перекрывают конфиг (удобно для сервера)."""
         env_map = {
             "JARVIS_CLOUDRU_KEY": ("providers", "cloudru", "api_key"),
+            "JARVIS_CLOUDRU_PROJECT": ("providers", "cloudru", "project_id"),
             "JARVIS_FALLBACK_KEY": ("providers", "fallback", "api_key"),
             "JARVIS_FALLBACK_URL": ("providers", "fallback", "base_url"),
             "JARVIS_TELEGRAM_TOKEN": ("telegram", "bot_token"),

@@ -27,10 +27,28 @@ class Provider:
     name: str
     base_url: str
     api_key: str
+    project_id: str = ""
 
     @property
     def ok(self) -> bool:
         return bool(self.api_key and self.base_url)
+
+    def headers(self, *, json_body: bool = True) -> dict:
+        """Заголовки авторизации.
+
+        Cloud.ru Foundation Models требует не только ключ, но и указание
+        проекта: без заголовка x-project-id сервис отвечает
+        "403: Project not found". Ключ дублируем в x-api-key — так делает
+        официальная интеграция Cloud.ru, а обычный Bearer оставляем ради
+        совместимости с остальными OpenAI-совместимыми шлюзами.
+        """
+        h = {"Authorization": f"Bearer {self.api_key}"}
+        if json_body:
+            h["Content-Type"] = "application/json"
+        if self.project_id:
+            h["x-api-key"] = self.api_key
+            h["x-project-id"] = self.project_id
+        return h
 
 
 def providers() -> list[Provider]:
@@ -39,7 +57,12 @@ def providers() -> list[Provider]:
         node = config.get("providers", key, default={}) or {}
         if not node.get("enabled", False):
             continue
-        p = Provider(key, node.get("base_url", ""), node.get("api_key", ""))
+        p = Provider(
+            key,
+            node.get("base_url", ""),
+            node.get("api_key", ""),
+            (node.get("project_id") or "").strip(),
+        )
         if p.ok:
             out.append(p)
     return out
@@ -124,13 +147,43 @@ class Completion:
     reason: str = ""
 
 
+def explain_error(err: str) -> str:
+    """Переводит ошибку API на человеческий язык с готовым решением."""
+    e = str(err or "")
+    low = e.lower()
+    if "project not found" in low or ("403" in e and "project" in low):
+        return (
+            "Cloud.ru не видит проект. Обычно это значит, что в настройках "
+            "не указан Project ID (идентификатор проекта).\n"
+            "Как исправить: личный кабинет Cloud.ru -> раздел Проекты -> "
+            "откройте свой проект -> скопируйте его ID "
+            "(длинная строка вида 50000000-4000-3000-2000-100000000001) "
+            "и вставьте в настройках Джарвиса в поле «ID проекта»."
+        )
+    if "401" in e or "unauthorized" in low or "invalid api key" in low:
+        return (
+            "Ключ не принят. Проверьте, что вы вставили Key Secret целиком, "
+            "без пробелов, и что у ключа выбран сервис Foundation Models "
+            "и не истёк срок действия."
+        )
+    if "429" in e or "rate limit" in low or "quota" in low:
+        return ("Слишком много запросов или закончилась квота. "
+                "Подождите минуту и попробуйте снова.")
+    if "404" in e and "model" in low:
+        return ("Такой модели нет в вашем проекте. Откройте настройки "
+                "Джарвиса и выберите модель из списка доступных.")
+    if "timeout" in low or "timed out" in low:
+        return "Cloud.ru не ответил вовремя. Попробуйте ещё раз."
+    if "ssl" in low or "certificate" in low or "connect" in low or "dns" in low:
+        return ("Нет связи с сервером Cloud.ru. Проверьте интернет "
+                "(VPN для Cloud.ru не нужен и может мешать).")
+    return ""
+
+
 async def _post(provider: Provider, path: str, payload: dict,
                 timeout: float = 180.0) -> dict:
     url = provider.base_url.rstrip("/") + path
-    headers = {
-        "Authorization": f"Bearer {provider.api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = provider.headers()
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(url, headers=headers, json=payload)
         if r.status_code >= 400:
@@ -208,6 +261,9 @@ async def complete(
             except Exception as e:  # сеть
                 last_err = e
                 await asyncio.sleep(1.0)
+    hint = explain_error(str(last_err))
+    if hint:
+        raise LLMError(f"{hint}\n\nТехническая деталь: {last_err}")
     raise LLMError(f"Все провайдеры недоступны. Последняя ошибка: {last_err}")
 
 
@@ -243,7 +299,7 @@ async def stream(
     last_err = None
     for provider in provs:
         url = provider.base_url.rstrip("/") + "/chat/completions"
-        headers = {"Authorization": f"Bearer {provider.api_key}"}
+        headers = provider.headers()
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
                 async with client.stream("POST", url, headers=headers,
@@ -274,7 +330,11 @@ async def stream(
         except Exception as e:
             last_err = str(e)
             continue
-    yield {"type": "error", "text": f"Модели недоступны: {last_err}"}
+    hint = explain_error(str(last_err))
+    text = f"Модели недоступны: {last_err}"
+    if hint:
+        text = f"{hint}\n\nТехническая деталь: {last_err}"
+    yield {"type": "error", "text": text}
 
 
 async def transcribe(audio_bytes: bytes, filename: str = "audio.webm") -> str:
@@ -286,7 +346,7 @@ async def transcribe(audio_bytes: bytes, filename: str = "audio.webm") -> str:
     last_err = None
     for provider in provs:
         url = provider.base_url.rstrip("/") + "/audio/transcriptions"
-        headers = {"Authorization": f"Bearer {provider.api_key}"}
+        headers = provider.headers(json_body=False)
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 r = await client.post(
@@ -311,9 +371,7 @@ async def list_models() -> list[str]:
         url = provider.base_url.rstrip("/") + "/models"
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                r = await client.get(
-                    url, headers={"Authorization": f"Bearer {provider.api_key}"}
-                )
+                r = await client.get(url, headers=provider.headers(json_body=False))
                 if r.status_code < 400:
                     for m in r.json().get("data", []):
                         mid = m.get("id")

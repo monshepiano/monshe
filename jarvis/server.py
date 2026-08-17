@@ -380,7 +380,8 @@ async def api_models() -> dict:
     try:
         return {"ok": True, "models": await llm.list_models()}
     except Exception as e:
-        return {"ok": False, "error": str(e), "models": []}
+        return {"ok": False, "error": str(e),
+                "hint": llm.explain_error(str(e)), "models": []}
 
 
 @app.post("/api/test-key")
@@ -388,19 +389,28 @@ async def api_test_key(payload: dict) -> dict:
     """Проверка ключа прямо из интерфейса настроек."""
     base = payload.get("base_url") or config.get("providers", "cloudru", "base_url")
     key = payload.get("api_key") or config.get("providers", "cloudru", "api_key")
+    project = payload.get("project_id")
+    if project is None:
+        project = config.get("providers", "cloudru", "project_id", default="")
+    project = (project or "").strip()
     if not key:
-        return {"ok": False, "error": "Ключ пустой"}
+        return {"ok": False, "error": "Ключ пустой", "hint": "Вставьте Key Secret."}
+
     import httpx
+    from .llm import Provider, explain_error
+
+    prov = Provider("cloudru", base, key, project)
     try:
         async with httpx.AsyncClient(timeout=25) as c:
             r = await c.get(base.rstrip("/") + "/models",
-                            headers={"Authorization": f"Bearer {key}"})
+                            headers=prov.headers(json_body=False))
             if r.status_code >= 400:
-                return {"ok": False, "error": f"{r.status_code}: {r.text[:200]}"}
+                err = f"{r.status_code}: {r.text[:200]}"
+                return {"ok": False, "error": err, "hint": explain_error(err)}
             models = [m.get("id") for m in r.json().get("data", [])]
             return {"ok": True, "count": len(models), "models": models[:60]}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e), "hint": explain_error(str(e))}
 
 
 def main() -> None:

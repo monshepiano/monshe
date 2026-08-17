@@ -234,6 +234,15 @@
           <a href="https://cloud.ru/products/evolution-foundation-models" target="_blank">cloud.ru → Evolution → Foundation Models</a>
           → создать сервисный аккаунт → API-ключ.
         </div>
+      </div>
+      <div class="field">
+        <label>ID проекта Cloud.ru <span style="color:#ff9d5c">(обязательно)</span></label>
+        <input type="text" id="cfgProject" placeholder="50000000-4000-3000-2000-100000000001" spellcheck="false">
+        <div class="hint">
+          Без него Cloud.ru отвечает «403: Project not found».
+          Где взять: личный кабинет Cloud.ru → раздел <b>Проекты</b> →
+          откройте свой проект → скопируйте <b>ID проекта</b> (длинная строка с дефисами).
+        </div>
         <button class="btn" id="btnTestKey" style="margin-top:9px">Проверить ключ</button>
         <div class="test-result" id="testResult"></div>
       </div>
