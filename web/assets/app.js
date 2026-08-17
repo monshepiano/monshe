@@ -698,6 +698,7 @@ async function openSettings() {
   const c = r.config; State.config = c;
   const setV = (id, v) => { const el = $(id); if (el) el.value = v ?? ''; };
 
+  $('#cfgKey').dataset.saved = c.providers?.cloudru?.api_key_set ? '1' : '';
   setV('#cfgKey', ''); $('#cfgKey').placeholder =
     c.providers?.cloudru?.api_key_set ? 'ключ сохранён (••••)' : 'вставьте ключ';
   setV('#cfgProject', c.providers?.cloudru?.project_id);
@@ -859,9 +860,25 @@ function init() {
         key_secret: $('#cfgKeySecret').value.trim(),
       }),
     })).json();
+    // Проверенные данные сразу сохраняем: иначе Джарвис продолжит
+    // работать со старым ключом, хотя проверка показала «работает».
+    if (r.ok) {
+      const keep = { providers: { cloudru: {
+        project_id: $('#cfgProject').value.trim(),
+        key_id: $('#cfgKeyId').value.trim(),
+      } } };
+      if ($('#cfgKey').value.trim())
+        keep.providers.cloudru.api_key = $('#cfgKey').value.trim();
+      if ($('#cfgKeySecret').value.trim())
+        keep.providers.cloudru.key_secret = $('#cfgKeySecret').value.trim();
+      await fetch('/api/config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(keep),
+      });
+    }
     box.className = 'test-result ' + (r.ok ? 'ok' : 'err');
     box.textContent = r.ok
-      ? `✓ Ключ работает. Доступно моделей: ${r.count}`
+      ? `✓ Ключ работает и сохранён. Доступно моделей: ${r.count}`
         + (r.auth ? `\nСпособ подключения: ${r.auth}` : '')
       : (r.hint ? `✗ ${r.hint}\n\n(${r.error})` : `✗ ${r.error}`);
     box.style.whiteSpace = 'pre-wrap';

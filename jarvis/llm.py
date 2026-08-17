@@ -463,6 +463,12 @@ async def complete(
     hint = explain_error(str(last_err))
     if hint:
         raise LLMError(f"{hint}\n\nТехническая деталь: {last_err}")
+    if not providers():
+        raise LLMError(
+            "Ключ Cloud.ru не сохранён. Откройте настройки (шестерёнка "
+            "справа вверху), вставьте ключ и ID проекта, нажмите "
+            "«Проверить ключ», затем «Сохранить»."
+        )
     raise LLMError(f"Все провайдеры недоступны. Последняя ошибка: {last_err}")
 
 
@@ -479,7 +485,11 @@ async def stream(
     """Потоковая генерация. Отдаёт словари: {'type': 'meta'|'delta'|'done'}."""
     provs = providers()
     if not provs:
-        yield {"type": "error", "text": "Не задан API-ключ Cloud.ru. Открой Настройки."}
+        yield {"type": "error", "text": (
+            "Ключ Cloud.ru не сохранён. Откройте настройки (шестерёнка "
+            "справа вверху), вставьте ключ и ID проекта, нажмите "
+            "«Проверить ключ» — он сохранится автоматически."
+        )}
         return
 
     hint = task_hint or (messages[-1].get("content", "") if messages else "")
