@@ -73,7 +73,21 @@ async def index() -> HTMLResponse:
     f = WEB_DIR / "index.html"
     if not f.exists():
         return HTMLResponse("<h1>Интерфейс не найден</h1>", status_code=500)
-    return HTMLResponse(f.read_text("utf-8"))
+    html = f.read_text("utf-8")
+    # К ссылкам на скрипты и стили дописываем версию — по времени изменения
+    # файла. Иначе браузер показывает старый интерфейс из кэша даже после
+    # обновления Джарвиса, и правки просто не работают.
+    import re as _re
+
+    def _stamp(m: "_re.Match[str]") -> str:
+        path = m.group(2)
+        local = WEB_DIR / path.lstrip("/")
+        if not local.exists():
+            return m.group(0)
+        return f'{m.group(1)}{path}?v={int(local.stat().st_mtime)}"'
+
+    html = _re.sub(r'(src="|href=")(/assets/[^"?]+)"', _stamp, html)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/health")
@@ -513,11 +527,29 @@ async def api_test_key(payload: dict) -> dict:
                     prov.remember_auth(mode)
                     models = [m.get("id") for m in r.json().get("data", [])]
                     report.append(f"[{labels.get(mode, mode)}] → OK")
+                    # Ключ рабочий — сохраняем его сразу здесь, на сервере.
+                    # Иначе чат продолжит работать со старым ключом, если
+                    # браузер закэшировал прежнюю версию app.js.
+                    node = config.data.setdefault("providers", {}).setdefault(
+                        "cloudru", {})
+                    if key:
+                        node["api_key"] = key
+                    if key_id:
+                        node["key_id"] = key_id
+                    if key_secret:
+                        node["key_secret"] = key_secret
+                    node["project_id"] = project
+                    node["base_url"] = base
+                    node["enabled"] = True
+                    config.save()
+                    llm._WORKING_AUTH.clear()
+                    report.append("Ключ сохранён в настройках.")
                     return {
                         "ok": True,
                         "count": len(models),
                         "models": models[:60],
                         "auth": labels.get(mode, mode),
+                        "saved": True,
                         "report": "\n".join(report),
                     }
                 err = f"{r.status_code}: {r.text[:200]}"
