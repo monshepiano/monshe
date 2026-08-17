@@ -333,6 +333,76 @@
   }
   $('#saveSettings').onclick = saveKeys;
 
+  /* ---------------- документация ---------------- */
+  const docsModal = $('#docsModal');
+  const docsContent = $('#docsContent');
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+
+  function inlineMd(s) {
+    s = esc(s);
+    s = s.replace(/`([^`]+)`/g, '<code class="doc-inline">$1</code>');
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    return s;
+  }
+
+  function mdToHtml(src) {
+    const blocks = [];
+    src = src.replace(/```[a-z]*\n([\s\S]*?)```/g, (m, code) => {
+      blocks.push('<pre class="doc-code">' + esc(code.replace(/\n$/, '')) + '</pre>');
+      return '\u0000' + (blocks.length - 1) + '\u0000';
+    });
+    let html = '';
+    let listOpen = false;
+    for (const raw of src.split('\n')) {
+      const line = raw.replace(/\u0000(\d+)\u0000/g, (m, i) => blocks[+i]);
+      const blockOnly = raw.match(/^\u0000(\d+)\u0000$/);
+      if (blockOnly) {
+        if (listOpen) { html += '</ul>'; listOpen = false; }
+        html += blocks[+blockOnly[1]];
+        continue;
+      }
+      const h = line.match(/^(#{1,4})\s+(.*)/);
+      if (h) {
+        if (listOpen) { html += '</ul>'; listOpen = false; }
+        html += `<h${h[1].length} class="doc-h">${inlineMd(h[2])}</h${h[1].length}>`;
+        continue;
+      }
+      const li = line.match(/^\s*[-*]\s+(.*)/);
+      if (li) {
+        if (!listOpen) { html += '<ul class="doc-list">'; listOpen = true; }
+        html += `<li>${inlineMd(li[1])}</li>`;
+        continue;
+      }
+      if (listOpen) { html += '</ul>'; listOpen = false; }
+      if (!line.trim()) continue;
+      html += `<p class="doc-p">${inlineMd(line)}</p>`;
+    }
+    if (listOpen) html += '</ul>';
+    return html;
+  }
+
+  $('#docsBtn').onclick = async () => {
+    docsModal.classList.remove('hidden');
+    if (docsContent.dataset.loaded) return;
+    docsContent.textContent = 'Загрузка…';
+    try {
+      const r = await fetch('/api/docs/run-on-pc');
+      const text = await r.text();
+      docsContent.innerHTML = mdToHtml(text);
+      docsContent.dataset.loaded = '1';
+    } catch (e) {
+      docsContent.innerHTML = '<p class="doc-p">Не удалось загрузить документацию.</p>';
+    }
+  };
+  $('#closeDocs').onclick = () => docsModal.classList.add('hidden');
+
   /* ---------------- старт ---------------- */
   boot();
 })();

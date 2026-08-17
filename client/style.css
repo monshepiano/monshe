@@ -260,6 +260,28 @@ body {
 }
 .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .modal-head h2 { font-family: var(--disp); letter-spacing: .2em; font-size: 16px; color: var(--cyan); }
+.modal-card.wide { width: min(820px, 94vw); }
+
+/* ---------- документация ---------- */
+.doc-content {
+  font-size: 13px; line-height: 1.6; color: var(--text);
+  max-height: 68vh; overflow-y: auto; padding-right: 4px;
+}
+.doc-content::-webkit-scrollbar { width: 8px; }
+.doc-content::-webkit-scrollbar-thumb { background: rgba(0,168,255,.25); border-radius: 4px; }
+.doc-h { font-family: var(--disp); color: var(--cyan); letter-spacing: .06em; margin: 16px 0 6px; font-size: 15px; }
+.doc-h3 { font-size: 13px; }
+.doc-p { margin: 6px 0; }
+.doc-list { margin: 6px 0 6px 20px; }
+.doc-list li { margin: 3px 0; }
+.doc-code {
+  display: block; margin: 8px 0; padding: 10px 12px; border-radius: 6px;
+  background: rgba(3,7,13,.8); border: 1px solid var(--panel-line);
+  color: #a8f0ff; font-family: var(--mono); font-size: 12px; line-height: 1.5;
+  overflow-x: auto; white-space: pre;
+}
+.doc-inline { color: #7ffcff; background: rgba(0,168,255,.1); padding: 1px 5px; border-radius: 3px; }
+.doc-content a { color: var(--cyan); text-decoration: underline; }
 .modal-note { font-size: 11px; color: var(--dim); line-height: 1.5; margin-bottom: 14px; }
 .modal-note code { color: var(--cyan); }
 .key-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
