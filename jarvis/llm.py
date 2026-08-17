@@ -40,6 +40,35 @@ def is_auth_error(err: str) -> bool:
     return bool(_AUTH_FAIL.search(str(err or "")))
 
 
+# Малосодержательные ответы: они означают лишь "схема заголовков не та"
+# и ничего не говорят о причине. Показывать их пользователю последним делом.
+_USELESS_ERR = re.compile(
+    r"(invalid authorization header format|invalid authorization in request|"
+    r"missing authorization|no authorization header)",
+    re.IGNORECASE,
+)
+
+
+def best_error(errors: list[str]) -> str:
+    """Из ошибок всех испробованных схем выбирает самую содержательную.
+
+    Иначе пользователь видит жалобу на формат заголовка от последней
+    попытки, хотя настоящая причина ("ключ не найден", "проект не найден")
+    пришла раньше.
+    """
+    errs = [e for e in errors if e]
+    if not errs:
+        return ""
+    useful = [e for e in errs if not _USELESS_ERR.search(e)]
+    if not useful:
+        return errs[0]
+    # Осмысленное объяснение важнее прочего.
+    for e in useful:
+        if explain_error(e):
+            return e
+    return useful[0]
+
+
 @dataclass
 class Provider:
     name: str
@@ -81,9 +110,13 @@ class Provider:
         """
         if self.auth_mode and self.auth_mode != "auto":
             return [self.auth_mode]
+        # Заголовок Authorization Cloud.ru требует всегда, поэтому схемы
+        # без него не пробуем — они дают бесполезное
+        # "Invalid authorization header format" и только маскируют
+        # настоящую причину отказа.
         order = ["bearer", "apikey_hdr"]
         if self.project_id:
-            order = ["both", "bearer", "apikey_hdr", "apikey"]
+            order = ["both", "bearer", "apikey_hdr"]
         if self.key_secret:
             # Задана пара логин+пароль — это точно ключ доступа, а не
             # статический API-ключ: сразу идём за токеном.
@@ -148,6 +181,27 @@ class Provider:
         _WORKING_AUTH[self.name] = mode
 
 
+def clean_key(raw: str) -> str:
+    """Убирает из ключа мусор, который часто прилетает при копировании.
+
+    Люди копируют ключ вместе со словом "Bearer"/"Api-Key", в кавычках,
+    с переносом строки или невидимыми пробелами. Cloud.ru на такое отвечает
+    "Invalid authorization header format", и понять причину невозможно.
+    """
+    k = (raw or "").strip()
+    # невидимые пробелы и переносы внутри строки
+    k = re.sub(r"[\s\u00a0\u200b-\u200f\ufeff]+", "", k)
+    k = k.strip("\"'\u00ab\u00bb`")
+    for prefix in ("bearer", "api-key", "apikey", "token", "key"):
+        if k.lower().startswith(prefix):
+            rest = k[len(prefix):].lstrip(" :=")
+            # отрезаем, только если после префикса что-то осталось
+            if rest and len(rest) > 8:
+                k = rest
+                break
+    return k.strip()
+
+
 def providers() -> list[Provider]:
     out: list[Provider] = []
     for key in ("cloudru", "fallback"):
@@ -157,10 +211,10 @@ def providers() -> list[Provider]:
         p = Provider(
             key,
             (node.get("base_url") or "").strip().rstrip("/"),
-            (node.get("api_key") or "").strip(),
+            clean_key(node.get("api_key") or ""),
             (node.get("project_id") or "").strip(),
-            key_id=(node.get("key_id") or "").strip(),
-            key_secret=(node.get("key_secret") or "").strip(),
+            key_id=clean_key(node.get("key_id") or ""),
+            key_secret=clean_key(node.get("key_secret") or ""),
         )
         if p.ok:
             out.append(p)
@@ -250,6 +304,18 @@ def explain_error(err: str) -> str:
     """Переводит ошибку API на человеческий язык с готовым решением."""
     e = str(err or "")
     low = e.lower()
+    if "invalid authorization" in low or "authorization header format" in low:
+        return (
+            "Cloud.ru не понял формат ключа. Чаще всего это значит, что "
+            "в поле ключа лежит не то, что нужно: лишние слова "
+            "(«Bearer», «Api-Key»), кавычки, перенос строки или "
+            "скопирована только часть строки.\n\n"
+            "Вставьте ключ «чистым» — одну длинную строку без пробелов "
+            "и кавычек. Если не помогает, воспользуйтесь запасным входом: "
+            "поля «Key ID» и «Key Secret» в настройках "
+            "(cloud.ru → Пользователи → Сервисные аккаунты → ваш аккаунт → "
+            "Учётные данные доступа → Ключи доступа)."
+        )
     if "api key not found" in low or "record not found" in low:
         return (
             "Cloud.ru не нашёл такой ключ. Проект определился правильно, "
@@ -307,7 +373,7 @@ async def _post(provider: Provider, path: str, payload: dict,
     у Cloud.ru их два, и какой ждёт конкретный аккаунт, заранее не ясно.
     """
     url = provider.base_url.rstrip("/") + path
-    last_err = ""
+    errs: list[str] = []
     async with httpx.AsyncClient(timeout=timeout) as client:
         for mode in provider.auth_modes():
             if not await provider.prepare(mode):
@@ -317,10 +383,11 @@ async def _post(provider: Provider, path: str, payload: dict,
             if r.status_code < 400:
                 provider.remember_auth(mode)
                 return r.json()
-            last_err = f"{provider.name} {r.status_code}: {r.text[:400]}"
-            if not is_auth_error(last_err):
+            err = f"{provider.name} {r.status_code}: {r.text[:400]}"
+            errs.append(err)
+            if not is_auth_error(err):
                 break
-    raise LLMError(last_err)
+    raise LLMError(best_error(errs))
 
 
 async def complete(
@@ -429,6 +496,7 @@ async def stream(
     }
 
     last_err = None
+    errs: list[str] = []
     for provider in provs:
         url = provider.base_url.rstrip("/") + "/chat/completions"
         for mode in provider.auth_modes():
@@ -442,6 +510,7 @@ async def stream(
                         if r.status_code >= 400:
                             body = (await r.aread()).decode("utf-8", "ignore")
                             last_err = f"{r.status_code}: {body[:300]}"
+                            errs.append(last_err)
                             if is_auth_error(last_err):
                                 continue  # пробуем следующую схему заголовков
                             break
@@ -468,11 +537,13 @@ async def stream(
                         return
             except Exception as e:
                 last_err = str(e)
+                errs.append(last_err)
                 break
-    hint = explain_error(str(last_err))
-    text = f"Модели недоступны: {last_err}"
+    shown = best_error(errs) or str(last_err)
+    hint = explain_error(shown)
+    text = f"Модели недоступны: {shown}"
     if hint:
-        text = f"{hint}\n\nТехническая деталь: {last_err}"
+        text = f"{hint}\n\nТехническая деталь: {shown}"
     yield {"type": "error", "text": text}
 
 

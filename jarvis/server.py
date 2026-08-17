@@ -376,6 +376,14 @@ async def api_config_set(payload: dict) -> dict:
         return base
 
     merge(config.data, payload or {})
+    # Ключи чистим от кавычек, слов "Bearer"/"Api-Key" и невидимых пробелов,
+    # иначе Cloud.ru отвечает "Invalid authorization header format".
+    for _node in (config.data.get("providers") or {}).values():
+        if not isinstance(_node, dict):
+            continue
+        for _f in ("api_key", "key_id", "key_secret"):
+            if _node.get(_f):
+                _node[_f] = llm.clean_key(_node[_f])
     config.save()
     # Ключ или проект могли смениться — заново подберём схему авторизации.
     llm._WORKING_AUTH.clear()
@@ -407,11 +415,13 @@ async def api_test_key(payload: dict) -> dict:
     key_secret = payload.get("key_secret")
     if key_secret is None:
         key_secret = config.get("providers", "cloudru", "key_secret", default="")
+    from .llm import clean_key as _clean
     base = (base or "").strip().rstrip("/")
-    key = (key or "").strip()
+    raw_key = (key or "").strip()
+    key = _clean(raw_key)
     project = (project or "").strip()
-    key_id = (key_id or "").strip()
-    key_secret = (key_secret or "").strip()
+    key_id = _clean(key_id or "")
+    key_secret = _clean(key_secret or "")
     if not key and not (key_id and key_secret):
         return {"ok": False, "error": "Ключ пустой", "hint": "Вставьте Key Secret."}
 
@@ -444,7 +454,8 @@ async def api_test_key(payload: dict) -> dict:
         }
 
     import httpx
-    from .llm import Provider, explain_error, is_auth_error
+    from .llm import (Provider, best_error, clean_key, explain_error,
+                      is_auth_error)
 
     prov = Provider("cloudru", base, key, project,
                     key_id=key_id, key_secret=key_secret)
@@ -455,14 +466,15 @@ async def api_test_key(payload: dict) -> dict:
         "apikey": "только x-api-key",
         "iam_token": "обмен Key ID + Key Secret на токен",
     }
-    err = ""
+    errs: list[str] = []
     tried: list[str] = []
     try:
         async with httpx.AsyncClient(timeout=25) as c:
             for mode in prov.auth_modes():
                 if not await prov.prepare(mode):
-                    err = ("Не удалось обменять Key ID + Key Secret на токен "
-                           "(iam.api.cloud.ru отклонил пару).")
+                    errs.append("Не удалось обменять Key ID + Key Secret на "
+                                "токен: iam.api.cloud.ru отклонил эту пару. "
+                                "Проверьте Key ID и Key Secret.")
                     continue
                 r = await c.get(base.rstrip("/") + "/models",
                                 headers=prov.headers(json_body=False, mode=mode))
@@ -477,17 +489,23 @@ async def api_test_key(payload: dict) -> dict:
                         "auth": labels.get(mode, mode),
                     }
                 err = f"{r.status_code}: {r.text[:200]}"
+                errs.append(err)
                 if not is_auth_error(err):
                     break
     except Exception as e:
         return {"ok": False, "error": str(e), "hint": explain_error(str(e))}
 
-    hint = explain_error(err)
+    shown = best_error(errs) or (errs[0] if errs else "неизвестная ошибка")
+    hint = explain_error(shown)
+    if raw_key and raw_key != key:
+        hint = ("Из ключа пришлось убрать лишнее (пробелы, кавычки или "
+                "слово Bearer/Api-Key) — проверьте, что скопировали "
+                "только сам ключ.\n\n" + hint).strip()
     if len(tried) > 1:
         hint = (hint + "\n\nДжарвис попробовал все способы передать ключ ("
                 + ", ".join(tried) + ") — сервис не принял ни один, "
-                "значит дело в самом ключе.").strip()
-    return {"ok": False, "error": err, "hint": hint}
+                "значит дело в самом ключе, а не в способе подключения.").strip()
+    return {"ok": False, "error": shown, "hint": hint}
 
 
 def main() -> None:
