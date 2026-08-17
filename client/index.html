@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JARVIS — личный ассистент</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <div class="scanlines"></div>
+
+  <div id="boot" class="boot hidden">ИНИЦИАЛИЗАЦИЯ…</div>
+
+  <header class="hud-header">
+    <div class="brand">
+      <div class="arc-reactor" id="arcReactor">
+        <span class="ring r1"></span>
+        <span class="ring r2"></span>
+        <span class="ring r3"></span>
+        <span class="core"></span>
+      </div>
+      <div class="brand-text">
+        <h1>JARVIS</h1>
+        <span class="sub">ЛИЧНЫЙ АССИСТЕНТ · v1.0</span>
+      </div>
+    </div>
+    <div class="header-status">
+      <div class="stat"><label>МОЗГ</label><span id="brainLabel">—</span></div>
+      <div class="stat"><label>РЕЖИМ</label><span id="modeLabel">—</span></div>
+      <button id="settingsBtn" class="icon-btn">⚙ НАСТРОЙКИ</button>
+    </div>
+  </header>
+
+  <main class="hud-main">
+    <section class="panel chat-panel">
+      <div class="panel-title"><span class="dot"></span>СВЯЗЬ · ДИАЛОГ</div>
+      <div id="chat" class="chat-log">
+        <div class="msg jarvis">
+          <div class="avatar">J</div>
+          <div class="bubble">Система JARVIS к вашим услугам. Сэр, чем могу помочь?</div>
+        </div>
+      </div>
+      <div class="input-bar">
+        <button id="micBtn" class="icon-btn mic" title="Голосовая команда">🎤</button>
+        <input id="msgInput" type="text" placeholder="Командуй, шеф…" autocomplete="off">
+        <button id="voiceBtn" class="icon-btn" title="Озвучивать ответы">🔇</button>
+        <button id="sendBtn" class="send-btn">▶ ОТПРАВИТЬ</button>
+      </div>
+      <div class="mic-hint" id="micHint"></div>
+    </section>
+
+    <aside class="side">
+      <section class="panel module">
+        <div class="panel-title"><span class="dot"></span>ОПТИКА · КАМЕРА</div>
+        <div class="cam-wrap">
+          <video id="camVideo" autoplay playsinline muted></video>
+          <div id="camOverlay" class="cam-overlay">
+            <div class="reticle"></div>
+            <span>КАМЕРА ВЫКЛЮЧЕНА</span>
+          </div>
+        </div>
+        <div class="cam-controls">
+          <button id="camBtn" class="btn">▶ ВКЛ. КАМЕРУ</button>
+          <button id="scanBtn" class="btn accent" disabled>◉ СКАНИРОВАТЬ</button>
+        </div>
+      </section>
+
+      <section class="panel module">
+        <div class="panel-title"><span class="dot amber"></span>САНКЦИИ · ПОДТВЕРЖДЕНИЯ</div>
+        <div id="actionsList" class="actions-list">
+          <div class="empty">Нет ожидающих действий</div>
+        </div>
+      </section>
+
+      <section class="panel module">
+        <div class="panel-title"><span class="dot"></span>СИСТЕМА</div>
+        <div class="sys-row"><label>УРОВЕНЬ</label><span id="tierLabel">—</span></div>
+        <div class="sys-row"><label>МОДЕЛЬ</label><span id="modelLabel">—</span></div>
+        <div class="sys-row"><label>ОТКЛИК</label><span id="latencyLabel">—</span></div>
+      </section>
+    </aside>
+  </main>
+
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>НАСТРОЙКИ</h2>
+        <button id="closeSettings" class="icon-btn">✕</button>
+      </div>
+      <p class="modal-note">Ключи хранятся только в памяти текущей сессии (не на диске). На своём ПК заведите их в файле <code>.env</code>.</p>
+      <div class="key-row"><label>DeepSeek (текст, дёшево)</label><input id="keyDeepseek" type="password" placeholder="sk-…"></div>
+      <div class="key-row"><label>Google Gemini (зрение)</label><input id="keyGemini" type="password" placeholder="AIza…"></div>
+      <div class="key-row"><label>OpenAI (зрение)</label><input id="keyOpenai" type="password" placeholder="sk-…"></div>
+      <div class="key-row"><label>Anthropic (зрение)</label><input id="keyAnthropic" type="password" placeholder="sk-ant-…"></div>
+      <div class="key-row">
+        <label>Режим мышления</label>
+        <select id="modeSelect">
+          <option value="auto">АВТО — роутер сам выберет</option>
+          <option value="fast">БЫСТРО — дешёвая модель</option>
+          <option value="smart">УМНО — глубокая модель</option>
+        </select>
+      </div>
+      <div id="settingsStatus" class="settings-status"></div>
+      <div class="modal-actions">
+        <button id="saveSettings" class="btn accent">СОХРАНИТЬ</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

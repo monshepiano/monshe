@@ -1,0 +1,12 @@
+# секреты
+.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# node / общее
+node_modules/
+.DS_Store
