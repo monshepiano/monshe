@@ -283,11 +283,11 @@ body {
   border-bottom: 1px solid var(--line-soft); font-size: 11px; letter-spacing: 2px;
   text-transform: uppercase; color: var(--cyan); }
 .side { position: relative; }
-.side-close { position: absolute; top: 9px; right: 10px; z-index: 3; }
-.side-close .iconbtn { width: 30px; height: 30px; border-radius: 11px;
-  background: rgba(8, 18, 32, 0.85); }
+.side-tabs { display: flex; align-items: center; gap: 7px; padding: 11px 12px;
+  border-bottom: 1px solid var(--line-soft); flex-shrink: 0;
+  background: rgba(4, 10, 20, 0.5); }
+.side-tabs .iconbtn { width: 36px; height: 36px; border-radius: 13px; }
 .side-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.side-h { padding-right: 48px; }
 .scrolly { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 
 /* карточки */

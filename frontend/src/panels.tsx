@@ -124,7 +124,7 @@ export function MemoryPanel({ memory, onRefresh }: any) {
 }
 
 /* ------------------------------------------------------------------ Уведомления */
-export function NotifPanel({ items, onRead, approvals, onDecide }: any) {
+export function NotifPanel({ items, onRead }: any) {
   return (
     <>
       <div className="side-h" style={{ justifyContent: 'space-between' }}>
@@ -132,6 +132,33 @@ export function NotifPanel({ items, onRead, approvals, onDecide }: any) {
         <button className="btn sm ghost" onClick={onRead}>Прочитано</button>
       </div>
       <div className="scrolly">
+        {!items.length && <div className="empty">
+          Пока тихо.<br />Здесь появятся сообщения<br />о выполненных задачах.
+        </div>}
+        {items.map((n: any) => (
+          <div className={`card notif ${n.level} ${n.read ? '' : 'unread'}`} key={n.id}>
+            <div className="card-t">{n.title}</div>
+            {n.body && <div className="card-s" style={{ whiteSpace: 'pre-wrap' }}>{n.body}</div>}
+            <div className="card-s" style={{ opacity: .55, marginTop: 4 }}>
+              {new Date(n.created * 1000).toLocaleString('ru-RU')}</div>
+          </div>
+        ))}
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ Санкции */
+export function ApprovalsPanel({ approvals, onDecide }: any) {
+  return (
+    <>
+      <div className="side-h"><IcShield size={14} /> Санкции</div>
+      <div className="scrolly">
+        {!approvals.length && <div className="empty">
+          Опасных действий на подтверждении нет.<br /><br />
+          Перед тем как что-то удалить, купить<br />или отправить от вашего имени,<br />
+          Джарвис спросит разрешение здесь.
+        </div>}
         {approvals.map((a: any) => (
           <div className="approve-box" key={a.id}>
             <div className="card-t" style={{ color: 'var(--gold)' }}>
@@ -144,17 +171,6 @@ export function NotifPanel({ items, onRead, approvals, onDecide }: any) {
               <button className="btn primary sm" onClick={() => onDecide(a.id, true)}>Разрешить</button>
               <button className="btn danger sm" onClick={() => onDecide(a.id, false)}>Отклонить</button>
             </div>
-          </div>
-        ))}
-        {!items.length && !approvals.length && <div className="empty">
-          Пока тихо.<br />Здесь появятся сообщения о готовых задачах<br />и запросы на подтверждение действий.
-        </div>}
-        {items.map((n: any) => (
-          <div className={`card notif ${n.level} ${n.read ? '' : 'unread'}`} key={n.id}>
-            <div className="card-t">{n.title}</div>
-            {n.body && <div className="card-s" style={{ whiteSpace: 'pre-wrap' }}>{n.body}</div>}
-            <div className="card-s" style={{ opacity: .55, marginTop: 4 }}>
-              {new Date(n.created * 1000).toLocaleString('ru-RU')}</div>
           </div>
         ))}
       </div>

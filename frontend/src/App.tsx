@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import {
-  IcBell, IcBrain, IcCam, IcChat, IcClip, IcFile, IcGear, IcMic, IcSend, IcTask, IcTerm, IcX,
+  IcBell, IcBrain, IcCam, IcChat, IcClip, IcFile, IcGear, IcMenu, IcMic, IcSend, IcShield,
+  IcTask, IcTerm, IcX,
 } from './icons'
 import {
-  Corners, FilesPanel, MemoryPanel, NotifPanel, TasksPanel, VisionPanel,
+  ApprovalsPanel, Corners, FilesPanel, MemoryPanel, NotifPanel, TasksPanel, VisionPanel,
 } from './panels'
 import { Settings } from './settings'
 
@@ -35,7 +36,7 @@ export default function App() {
   const [memory, setMemory] = useState<any[]>([])
   const [status, setStatus] = useState<any>({})
   const [view, setView] = useState<string>('chat')
-  const [notifOpen, setNotifOpen] = useState(false)
+  const [drawer, setDrawer] = useState<string>('')
   const [showSettings, setShowSettings] = useState(false)
   const [toasts, setToasts] = useState<any[]>([])
   const [attachments, setAttachments] = useState<string[]>([])
@@ -130,7 +131,7 @@ export default function App() {
         case 'approval_request':
           setApprovals(a => [...a.filter(x => x.id !== ev.approval_id),
             { id: ev.approval_id, tool: ev.tool, args: ev.args, reason: ev.reason }])
-          setNotifOpen(true)
+          setDrawer('approvals')
           toast('Нужно подтверждение', `${ev.tool}: ${ev.reason}`)
           push('thought', `Жду вашего разрешения: ${TOOL_LABEL[ev.tool] || ev.tool}`, 'wait')
           break
@@ -139,7 +140,7 @@ export default function App() {
           break
         case 'notification':
           setNotifs(n => [{ ...ev, id: ev.id || String(keyRef.current++) }, ...n])
-          setNotifOpen(true)
+          setDrawer('notif')
           toast(ev.title, ev.body?.slice(0, 140))
           break
         case 'task_queued':
@@ -230,7 +231,8 @@ export default function App() {
     push('term', ok ? '[✓] действие разрешено' : '[×] действие отклонено', ok ? 't-ok' : 't-err')
   }
 
-  const unread = notifs.filter(n => !n.read).length + approvals.length
+  const unreadNotif = notifs.filter(n => !n.read).length
+  const unread = unreadNotif + approvals.length
   const online = !!status.primary
   const liveThoughts = trace.filter(t => t.kind === 'thought')
   const liveTerm = trace.filter(t => t.kind === 'term')
@@ -240,7 +242,12 @@ export default function App() {
     ['tasks', <IcTask size={18} />, 'Фоновые задачи'],
     ['files', <IcFile size={18} />, 'Песочница'],
     ['memory', <IcBrain size={18} />, 'Память'],
-    ['vision', <IcCam size={18} />, 'Зрение'],
+  ]
+
+  const DRAWER: any[] = [
+    ['notif', <IcBell size={16} />, 'Уведомления'],
+    ['approvals', <IcShield size={16} />, 'Санкции'],
+    ['vision', <IcCam size={16} />, 'Зрение'],
   ]
 
   return (
@@ -265,13 +272,11 @@ export default function App() {
           {status.telegram && <span className="chip on hide-sm">telegram</span>}
           {busy && <span className="chip warn"><i className="thinker" /> работаю</span>}
           <span className="spacer" />
-          <div className={`iconbtn ${notifOpen ? 'active' : ''}`} title="Уведомления"
-            onClick={() => setNotifOpen(v => !v)}>
-            <IcBell size={17} />
+          <div className={`iconbtn ${drawer ? 'active' : ''}`} title="Боковое меню"
+            onClick={() => setDrawer(d => (d ? '' : 'notif'))}>
+            <IcMenu size={17} />
             {unread > 0 && <span className="badge">{unread}</span>}
           </div>
-          <div className="iconbtn" title="Настройки" onClick={() => setShowSettings(true)}>
-            <IcGear size={17} /></div>
         </div>
 
         <div className="body">
@@ -378,7 +383,8 @@ export default function App() {
                   <IcClip size={16} /></div>
                 <div className={`iconbtn ${listening ? 'rec' : ''}`} title="Голос" onClick={toggleVoice}>
                   <IcMic size={16} /></div>
-                <div className="iconbtn" title="Камера" onClick={() => setView('vision')}>
+                <div className={`iconbtn ${drawer === 'vision' ? 'active' : ''}`} title="Камера"
+                  onClick={() => setDrawer(d => (d === 'vision' ? '' : 'vision'))}>
                   <IcCam size={16} /></div>
                 <button className="send" disabled={busy || !input.trim()} onClick={() => send()}>
                   <IcSend size={14} /> {busy ? 'Работаю…' : 'Отправить'}
@@ -398,26 +404,38 @@ export default function App() {
                 onRefresh={() => api.files().then(r => setFiles(r.files || []))} />}
               {view === 'memory' && <MemoryPanel memory={memory}
                 onRefresh={() => api.memory().then(r => setMemory(r.memory))} />}
-              {view === 'vision' && <VisionPanel onClose={() => setView('chat')}
-                onResult={(text: string) => {
-                  setMessages(m => [...m, { role: 'assistant', content: '👁 ' + text }])
-                  setView('chat')
-                }} />}
             </div>
           )}
 
-          {/* -------------------------------------------------- уведомления справа */}
-          {notifOpen && (
+          {/* -------------------------------------------------- правое боковое меню */}
+          {drawer && (
             <div className="side">
               <Corners />
-              <div className="side-close">
-                <div className="iconbtn" title="Закрыть" onClick={() => setNotifOpen(false)}>
+              <div className="side-tabs">
+                {DRAWER.map(([id, icon, title]: any) => (
+                  <div key={id} title={title}
+                    className={`iconbtn ${drawer === id ? 'active' : ''}`}
+                    onClick={() => setDrawer(id)}>
+                    {icon}
+                    {id === 'notif' && unreadNotif > 0 && <span className="badge">{unreadNotif}</span>}
+                    {id === 'approvals' && approvals.length > 0 &&
+                      <span className="badge">{approvals.length}</span>}
+                  </div>
+                ))}
+                <span style={{ flex: 1 }} />
+                <div className="iconbtn" title="Закрыть" onClick={() => setDrawer('')}>
                   <IcX size={15} /></div>
               </div>
               <div className="side-body">
-                <NotifPanel items={notifs} approvals={approvals} onDecide={decide}
+                {drawer === 'notif' && <NotifPanel items={notifs}
                   onRead={() => api.readNotifications().then(() =>
-                    setNotifs(n => n.map(x => ({ ...x, read: 1 }))))} />
+                    setNotifs(n => n.map(x => ({ ...x, read: 1 }))))} />}
+                {drawer === 'approvals' && <ApprovalsPanel approvals={approvals} onDecide={decide} />}
+                {drawer === 'vision' && <VisionPanel onClose={() => setDrawer('')}
+                  onResult={(text: string) => {
+                    setMessages(m => [...m, { role: 'assistant', content: '👁 ' + text }])
+                    setView('chat')
+                  }} />}
               </div>
             </div>
           )}
@@ -428,7 +446,7 @@ export default function App() {
 
       <div className="toasts">
         {toasts.map(t => (
-          <div className="toast" key={t.id} onClick={() => setNotifOpen(true)}>
+          <div className="toast" key={t.id} onClick={() => setDrawer('notif')}>
             <b>{t.title}</b>{t.body}</div>
         ))}
       </div>
