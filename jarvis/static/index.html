@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#041018" />
+  <title>JARVIS</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/assets/icon.png" />
+  <link rel="apple-touch-icon" href="/assets/icon.png" />
+  <link rel="stylesheet" href="/css/jarvis.css" />
+</head>
+<body>
+  <div id="boot">
+    <div class="boot-core">
+      <img src="/assets/boot-mark.png" alt="" />
+      <div class="boot-ring r1"></div>
+      <div class="boot-ring r2"></div>
+      <div class="boot-ring r3"></div>
+    </div>
+    <div class="boot-brand">J.A.R.V.I.S</div>
+    <div class="boot-log" id="bootLog"></div>
+  </div>
+
+  <div id="app" class="hidden">
+    <div class="hud-bg"></div>
+    <canvas id="particles"></canvas>
+    <div class="scanlines"></div>
+    <div class="vignette"></div>
+
+    <a class="dl-banner" href="/assets/JARVIS.zip" download="JARVIS.zip">↓ СКАЧАТЬ УСТАНОВЩИК JARVIS.zip</a>
+    <header class="topbar">
+      <div class="brand">
+        <img src="/assets/icon.png" alt="" />
+        <div>
+          <div class="brand-name">JARVIS</div>
+          <div class="brand-sub" id="ownerLabel">личный контур</div>
+        </div>
+      </div>
+      <div class="sys-pills">
+        <span class="pill" id="pillLink"><i></i> LINK</span>
+        <span class="pill" id="pillModel">CORE · AUTO</span>
+        <span class="pill gold" id="pillMode">CHAT</span>
+      </div>
+      <div class="clock" id="clock">00:00:00</div>
+      <button class="icon-btn" id="btnThoughts" title="Мысли">◈</button>
+      <button class="icon-btn" id="btnTerm" title="Терминал">{/}</button>
+      <button class="icon-btn bell" id="btnBell" title="Уведомления">
+        <span>▣</span>
+        <b id="bellCount">0</b>
+      </button>
+    </header>
+
+    <nav class="rail">
+      <button class="rail-btn active" data-view="chat" title="Диалог">✦<span>Диалог</span></button>
+      <button class="rail-btn" data-view="agent" title="Агент">⬡<span>Агент</span></button>
+      <button class="rail-btn" data-view="bg" title="Фон">◎<span>Фон</span></button>
+      <button class="rail-btn" data-view="sandbox" title="Песочница">▤<span>Файлы</span></button>
+      <button class="rail-btn" data-view="computer" title="Computer-use">⌘<span>Комп</span></button>
+      <button class="rail-btn" data-view="camera" title="Камера">◎<span>Камера</span></button>
+      <button class="rail-btn" data-view="settings" title="Настройки">⚙<span>Настр.</span></button>
+    </nav>
+
+    <main class="stage">
+      <!-- CHAT -->
+      <section class="view active" id="view-chat">
+        <div class="idle-core" id="idleCore">
+          <img src="/assets/arc-reactor.png" alt="" />
+          <div class="orbit o1"></div>
+          <div class="orbit o2"></div>
+          <div class="orbit o3"></div>
+          <div class="idle-hello" id="idleHello">Добрый день. Чем помочь?</div>
+        </div>
+        <div class="feed" id="feed"></div>
+      </section>
+
+      <!-- AGENT -->
+      <section class="view" id="view-agent">
+        <div class="view-head">
+          <h2>Агентский контур</h2>
+          <p>Задача дробится на шаги и выполняется без вашего участия. Опасные действия — только после подтверждения.</p>
+        </div>
+        <div class="mission-grid" id="missionGrid"></div>
+      </section>
+
+      <!-- BACKGROUND -->
+      <section class="view" id="view-bg">
+        <div class="view-head">
+          <h2>Фоновые миссии</h2>
+          <p>Как Perplexity Computer: отправил — закрыл — получил уведомление.</p>
+        </div>
+        <div class="blocks" id="bgBlocks"></div>
+      </section>
+
+      <!-- SANDBOX -->
+      <section class="view" id="view-sandbox">
+        <div class="view-head row">
+          <div>
+            <h2>Песочница</h2>
+            <p>Свои файлы Джарвиса. Можно скачать архивом.</p>
+          </div>
+          <a class="chip-btn" href="/api/export">↓ архив</a>
+        </div>
+        <div class="file-grid" id="fileGrid"></div>
+      </section>
+
+      <!-- COMPUTER -->
+      <section class="view" id="view-computer">
+        <div class="view-head">
+          <h2>Computer-use</h2>
+          <p>Скриншот, клики, ввод, приложения. Перед покупкой / сообщением / удалением — подтверждение.</p>
+        </div>
+        <div class="screen-frame">
+          <img id="screenImg" alt="экран" />
+          <div class="screen-empty" id="screenEmpty">Ожидание кадра с вашего компьютера</div>
+        </div>
+      </section>
+
+      <!-- CAMERA -->
+      <section class="view" id="view-camera">
+        <div class="view-head">
+          <h2>Зрение</h2>
+          <p>Наведите камеру на картину, этикетку, экран — и скажите, что сделать.</p>
+        </div>
+        <div class="cam-wrap">
+          <video id="cam" autoplay playsinline muted></video>
+          <canvas id="camCanvas" class="hidden"></canvas>
+          <div class="cam-hud"></div>
+          <div class="cam-actions">
+            <button class="chip-btn" id="btnCamStart">включить камеру</button>
+            <button class="chip-btn gold" id="btnCamShot">снять и спросить</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section class="view" id="view-settings">
+        <div class="view-head">
+          <h2>Конфигурация</h2>
+          <p>Ключи уже прописаны. Telegram и имя — по желанию.</p>
+        </div>
+        <form class="settings-grid" id="settingsForm">
+          <label>Как к вам обращаться
+            <input name="owner_name" placeholder="сэр / имя" />
+          </label>
+          <label>Имя ассистента
+            <input name="assistant_name" placeholder="Джарвис" />
+          </label>
+          <label>Cloud.ru Foundation Models ключ
+            <input name="fm_key" type="password" autocomplete="off" />
+          </label>
+          <label>DeepSeek запасной ключ
+            <input name="ds_key" type="password" autocomplete="off" />
+          </label>
+          <label>Telegram bot token
+            <input name="telegram_token" placeholder="123:ABC" />
+          </label>
+          <label>Telegram chat id
+            <input name="telegram_chat_id" placeholder="123456" />
+          </label>
+          <label class="check"><input type="checkbox" name="voice_out" /> голос в ответ</label>
+          <label class="check"><input type="checkbox" name="proactive" /> проактивный режим</label>
+          <label class="check"><input type="checkbox" name="confirm_dangerous" /> спрашивать перед опасным</label>
+          <button class="chip-btn gold" type="submit">сохранить</button>
+        </form>
+        <div class="hint-block">
+          iPhone / iPad: откройте этот адрес в Safari → «На экран Домой». Так Джарвис станет приложением.
+          Mac: установщик уже добавил ярлык. Чтобы слушать с телефона в той же Wi‑Fi сети — откройте IP вашего Mac и порт 8787.
+        </div>
+      </section>
+    </main>
+
+    <aside class="panel thoughts" id="panelThoughts">
+      <header>мыслепоток <button class="x" data-close="panelThoughts">×</button></header>
+      <div class="panel-body" id="thoughtStream"></div>
+    </aside>
+
+    <aside class="panel term" id="panelTerm">
+      <header>терминал <button class="x" data-close="panelTerm">×</button></header>
+      <div class="panel-body mono" id="termStream"></div>
+    </aside>
+
+    <aside class="panel notif" id="panelNotif">
+      <header>уведомления <button class="x" data-close="panelNotif">×</button></header>
+      <div class="panel-body" id="notifList"></div>
+    </aside>
+
+    <footer class="composer">
+      <div class="composer-glass">
+        <div class="suggest" id="suggest"></div>
+        <div class="attach-row" id="attachRow"></div>
+        <div class="bar">
+          <button class="mode-sw" id="modeSw" title="Режим агента">
+            <span>CHAT</span>
+            <i></i>
+          </button>
+          <button class="icon-btn" id="btnAttach" title="Файл">＋</button>
+          <button class="icon-btn" id="btnMic" title="Голос">◉</button>
+          <textarea id="input" rows="1" placeholder="Приказ Джарвису…  «купи такую мне», «найди», «нарисуй»"></textarea>
+          <button class="send" id="btnSend">▶</button>
+        </div>
+        <div class="composer-meta">
+          <label class="mini"><input type="checkbox" id="bgCheck" /> в фон</label>
+          <span id="listenHint"></span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <div class="modal hidden" id="confirmModal">
+    <div class="modal-card">
+      <div class="modal-tag">CONFIRMATION REQUIRED</div>
+      <h3 id="confirmTitle">Подтвердите действие</h3>
+      <p id="confirmBody"></p>
+      <pre id="confirmArgs"></pre>
+      <div class="modal-actions">
+        <button class="chip-btn danger" id="confirmNo">отмена</button>
+        <button class="chip-btn gold" id="confirmYes">подтверждаю</button>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="filePick" class="hidden" multiple />
+  <script src="/js/jarvis.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+.env
+.venv
+venv
+__pycache__/
+*.pyc
+.DS_Store
+jarvis/data/
+dist/
+jarvis/static/assets/JARVIS.zip
+installer/_payload/
+*.log
+.arena/
