@@ -72,8 +72,15 @@ class OpenAICompatProvider(Provider):
             headers["X-Title"] = "Jarvis"
         async with httpx.AsyncClient(timeout=240) as cl:
             r = await cl.post(f"{url}/chat/completions", headers=headers, json=payload)
+        if r.status_code == 404:
+            raise ProviderError(
+                f"{self.name}: адрес или модель не найдены (404). Проверьте в «Настройках» "
+                f"адрес сервиса ({url}) и название модели «{payload['model']}»."
+                + (f" Ответ сервиса: {r.text[:150]}" if r.text.strip() else ""))
         if r.status_code != 200:
-            raise ProviderError(f"{self.name} {r.status_code}: {r.text[:300]}")
+            body = r.text.strip()
+            raise ProviderError(f"{self.name}: ошибка {r.status_code}"
+                                + (f" — {body[:250]}" if body else ""))
         data = r.json()
         msg = data["choices"][0]["message"]
         usage = data.get("usage", {})

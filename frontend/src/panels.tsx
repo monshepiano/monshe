@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
-import { IcCam, IcFile, IcPlay, IcPlus, IcShield, IcTrash, IcX } from './icons'
+import { IcCam, IcFile, IcPlay, IcShield, IcTrash, IcX } from './icons'
 
 export function Corners() {
   return <>
@@ -15,48 +15,16 @@ export function statusClass(s: string) {
 
 /* ------------------------------------------------------------------ Задачи */
 export function TasksPanel({ tasks, onRefresh }: any) {
-  const [goal, setGoal] = useState('')
-  const [sched, setSched] = useState('once')
-  const [busy, setBusy] = useState(false)
-
-  const create = async () => {
-    if (!goal.trim()) return
-    setBusy(true)
-    try {
-      await api.newTask(goal.trim(), goal.trim().slice(0, 48), sched)
-      setGoal('')
-      onRefresh()
-    } finally { setBusy(false) }
-  }
-
   return (
     <>
-      <div className="side-h"><IcPlay size={14} /> Автономные задачи</div>
+      <div className="side-h"><IcPlay size={14} /> Фоновые задачи</div>
       <div className="scrolly">
-        <div className="card">
-          <div className="field">
-            <label>Новая фоновая задача</label>
-            <textarea rows={3} value={goal} onChange={e => setGoal(e.target.value)}
-              placeholder="Например: каждое утро собирай сводку новостей по ИИ и присылай в телеграм" />
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 9 }}>
-            <select value={sched} onChange={e => setSched(e.target.value)}
-              style={{ flex: 1, padding: '7px 9px', borderRadius: 9, background: 'rgba(4,12,22,.75)',
-                color: 'var(--text)', border: '1px solid var(--line-soft)', fontSize: 12 }}>
-              <option value="once">Один раз</option>
-              <option value="hourly">Каждый час</option>
-              <option value="daily">Каждый день</option>
-              <option value="weekly">Каждую неделю</option>
-              <option value="every:15m">Каждые 15 минут</option>
-            </select>
-            <button className="btn primary sm" disabled={busy || !goal.trim()} onClick={create}>
-              <IcPlus size={13} /> Запустить
-            </button>
-          </div>
-        </div>
-
-        {!tasks.length && <div className="empty">Задач пока нет.<br />
-          Джарвис сам разобьёт цель на шаги и выполнит их в фоне.</div>}
+        {!tasks.length && <div className="empty">
+          Задач пока нет.<br /><br />
+          Просто напишите Джарвису в чате, например:<br />
+          <i>«каждое утро собирай сводку новостей по ИИ»</i><br /><br />
+          он сам поставит задачу в фон, разобьёт её на шаги и выполнит.
+        </div>}
 
         {tasks.map((t: any) => (
           <div className="card" key={t.id}>
@@ -65,8 +33,9 @@ export function TasksPanel({ tasks, onRefresh }: any) {
               <span className={statusClass(t.status)}>{t.status}</span>
             </div>
             <div className="card-s">{t.goal}</div>
-            {t.schedule && <div className="card-s" style={{ marginTop: 4, color: 'var(--cyan)' }}>
-              ⟳ {t.schedule}</div>}
+            {t.schedule && t.schedule !== 'once' && (
+              <div className="card-s" style={{ marginTop: 4, color: 'var(--cyan)' }}>⟳ {t.schedule}</div>
+            )}
             {!!t.steps?.length && (
               <div className="steps">
                 {t.steps.filter((s: any) => s.status !== 'stale').map((s: any) => (
@@ -87,25 +56,6 @@ export function TasksPanel({ tasks, onRefresh }: any) {
             </div>
           </div>
         ))}
-      </div>
-    </>
-  )
-}
-
-/* ------------------------------------------------------------------ Терминал */
-export function TerminalPanel({ lines }: any) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => { ref.current?.scrollTo(0, ref.current.scrollHeight) }, [lines])
-  return (
-    <>
-      <div className="side-h">Терминал агента</div>
-      <div className="scrolly">
-        <div className="term" ref={ref}>
-          {!lines.length && <div className="ln t-dim">// журнал действий появится здесь</div>}
-          {lines.map((l: any, i: number) => (
-            <div className={`ln ${l.cls}`} key={i}>{l.text}</div>
-          ))}
-        </div>
       </div>
     </>
   )
@@ -174,23 +124,20 @@ export function MemoryPanel({ memory, onRefresh }: any) {
 }
 
 /* ------------------------------------------------------------------ Уведомления */
-export function NotifPanel({ items, onClose, onRead, approvals, onDecide }: any) {
+export function NotifPanel({ items, onRead, approvals, onDecide }: any) {
   return (
-    <div className="panel notif-panel">
-      <Corners />
-      <div className="panel-h">
-        <b>Уведомления</b><span className="spacer" style={{ flex: 1 }} />
+    <>
+      <div className="side-h" style={{ justifyContent: 'space-between' }}>
+        <span>Уведомления</span>
         <button className="btn sm ghost" onClick={onRead}>Прочитано</button>
-        <button className="btn sm ghost" onClick={onClose}><IcX size={13} /></button>
       </div>
-      <div className="scrolly" style={{ maxHeight: '62vh' }}>
+      <div className="scrolly">
         {approvals.map((a: any) => (
           <div className="approve-box" key={a.id}>
             <div className="card-t" style={{ color: 'var(--gold)' }}>
-              <IcShield size={14} /> Требуется подтверждение</div>
+              <IcShield size={14} /> Нужно ваше разрешение</div>
             <div className="card-s">{a.reason}</div>
-            <div className="card-s" style={{ marginTop: 6, fontFamily: 'var(--mono)',
-              background: 'rgba(0,0,0,.35)', padding: 8, borderRadius: 8 }}>
+            <div className="card-s mono-box">
               {a.tool}({JSON.stringify(a.args).slice(0, 260)})
             </div>
             <div style={{ display: 'flex', gap: 7, marginTop: 10 }}>
@@ -199,7 +146,9 @@ export function NotifPanel({ items, onClose, onRead, approvals, onDecide }: any)
             </div>
           </div>
         ))}
-        {!items.length && !approvals.length && <div className="empty">Пока тихо.</div>}
+        {!items.length && !approvals.length && <div className="empty">
+          Пока тихо.<br />Здесь появятся сообщения о готовых задачах<br />и запросы на подтверждение действий.
+        </div>}
         {items.map((n: any) => (
           <div className={`card notif ${n.level} ${n.read ? '' : 'unread'}`} key={n.id}>
             <div className="card-t">{n.title}</div>
@@ -209,58 +158,65 @@ export function NotifPanel({ items, onClose, onRead, approvals, onDecide }: any)
           </div>
         ))}
       </div>
-    </div>
+    </>
   )
 }
 
-/* ------------------------------------------------------------------ Камера */
-export function CameraModal({ onClose, onResult }: any) {
+/* ------------------------------------------------------------------ Зрение */
+export function VisionPanel({ onResult, onClose }: any) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
-  const [q, setQ] = useState('Что изображено? Если это товар или картина — назови и подскажи, где купить похожее.')
+  const [shot, setShot] = useState('')
+  const [q, setQ] = useState('Что тут изображено? Если это товар или картина — назови и подскажи, где купить похожее.')
 
   useEffect(() => {
-    let stream: MediaStream
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    let stream: MediaStream | undefined
+    navigator.mediaDevices?.getUserMedia({ video: { facingMode: 'environment' } })
       .then(s => { stream = s; if (videoRef.current) videoRef.current.srcObject = s })
       .catch(e => setErr('Нет доступа к камере: ' + e.message))
     return () => { stream?.getTracks().forEach(t => t.stop()) }
   }, [])
 
-  const shoot = async () => {
+  const shoot = () => {
     const v = videoRef.current
-    if (!v) return
+    if (!v || !v.videoWidth) return
     setBusy(true)
     const c = document.createElement('canvas')
     c.width = v.videoWidth; c.height = v.videoHeight
     c.getContext('2d')!.drawImage(v, 0, 0)
+    setShot(c.toDataURL('image/jpeg', 0.8))
     c.toBlob(async blob => {
       try {
         const r = await api.vision(blob!, q)
-        onResult(r.ok ? r.description : 'Ошибка распознавания: ' + r.error)
-      } catch (e: any) { onResult('Ошибка: ' + e.message) }
-      finally { setBusy(false); onClose() }
+        onResult(r.ok ? r.description : 'Не удалось распознать: ' + r.error)
+      } catch (e: any) { onResult('Не удалось распознать: ' + e.message) }
+      finally { setBusy(false) }
     }, 'image/jpeg', 0.9)
   }
 
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="panel modal" style={{ maxWidth: 560 }} onClick={e => e.stopPropagation()}>
-        <Corners />
-        <div className="panel-h"><b>Камера</b><span style={{ flex: 1 }} />
-          <button className="btn sm ghost" onClick={onClose}><IcX size={13} /></button></div>
-        <div className="modal-b">
-          {err ? <div className="empty">{err}</div> : <video ref={videoRef} className="cam" autoPlay playsInline muted />}
-          <div className="field"><label>Что спросить о кадре</label>
-            <textarea rows={2} value={q} onChange={e => setQ(e.target.value)} /></div>
+    <>
+      <div className="side-h" style={{ justifyContent: 'space-between' }}>
+        <span><IcCam size={14} /> Зрение Джарвиса</span>
+        <button className="btn sm ghost" onClick={onClose}><IcX size={12} /></button>
+      </div>
+      <div className="scrolly">
+        {err
+          ? <div className="empty">{err}<br /><br />Разрешите доступ к камере в браузере и откройте панель снова.</div>
+          : <video ref={videoRef} className="cam" autoPlay playsInline muted />}
+        {shot && <img className="art-img" src={shot} alt="кадр" />}
+        <div className="field">
+          <label>Что спросить о том, что видит камера</label>
+          <textarea rows={3} value={q} onChange={e => setQ(e.target.value)} />
         </div>
-        <div className="modal-f">
-          <button className="btn ghost" onClick={onClose}>Отмена</button>
-          <button className="btn primary" disabled={busy || !!err} onClick={shoot}>
-            <IcCam size={14} /> {busy ? 'Смотрю…' : 'Снять и распознать'}</button>
+        <button className="btn primary" disabled={busy || !!err} onClick={shoot}>
+          <IcCam size={14} /> {busy ? 'Смотрю…' : 'Снять и распознать'}
+        </button>
+        <div className="hint" style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+          Ответ придёт прямо в чат — дальше можно попросить, например, найти такую же вещь в магазине.
         </div>
       </div>
-    </div>
+    </>
   )
 }

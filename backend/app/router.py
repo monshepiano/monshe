@@ -96,7 +96,11 @@ async def complete(messages: List[Dict[str, Any]], *, tools=None, tier: str = ""
             errors.append(f"{pname}: {e}")
             events.publish("router_fallback", provider=pname, error=str(e)[:200])
             continue
-    raise ProviderError("Все модели недоступны. " + " | ".join(errors)[:500])
+    detail = " | ".join(errors)[:400]
+    raise ProviderError(
+        "Не получилось получить ответ ни от одной модели.\n" + detail +
+        "\n\nЧаще всего помогает: открыть «Настройки → Модели» и проверить ключ GigaChat, "
+        "либо подождать минуту и повторить.")
 
 
 async def status() -> Dict[str, Any]:

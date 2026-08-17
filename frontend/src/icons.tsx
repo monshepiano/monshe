@@ -21,3 +21,4 @@ export const IcPlay = (p: any) => <svg {...s(p)}><path d="M5 3l14 9-14 9V3z"/></
 export const IcTrash = (p: any) => <svg {...s(p)}><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
 export const IcShield = (p: any) => <svg {...s(p)}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
 export const IcTg = (p: any) => <svg {...s(p)}><path d="M22 3L2 10.5l6 2.3L20 6l-9 8.5.5 6L15 17l5 4z"/></svg>
+export const IcMenu = (p: any) => <svg {...s(p)}><path d="M4 6h16M4 12h16M4 18h16"/></svg>

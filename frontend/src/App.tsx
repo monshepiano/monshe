@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, getToken, setToken } from './api'
+import { api } from './api'
 import {
-  IcBell, IcBrain, IcCam, IcChat, IcClip, IcFile, IcGear, IcMic, IcSend, IcTask, IcTerm,
+  IcBell, IcBrain, IcCam, IcClip, IcFile, IcGear, IcMenu, IcMic, IcSend, IcTask, IcTerm, IcX,
 } from './icons'
 import {
-  CameraModal, Corners, FilesPanel, MemoryPanel, NotifPanel, TasksPanel, TerminalPanel,
+  Corners, FilesPanel, MemoryPanel, NotifPanel, TasksPanel, VisionPanel,
 } from './panels'
 import { Settings } from './settings'
 
-type Msg = { role: string; content: string; id?: string }
-type Thought = { text: string; cls: string; key: number }
+type Trace = { text: string; cls: string; key: number; kind: 'thought' | 'term' }
+type Msg = { role: string; content: string; id?: string; trace?: Trace[] }
 
 const TOOL_LABEL: Record<string, string> = {
   web_search: 'Ищу в интернете', open_page: 'Читаю страницу', browser_act: 'Работаю в браузере',
@@ -26,18 +26,16 @@ export default function App() {
   const [chatId, setChatId] = useState<string>('')
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
-  const [thoughts, setThoughts] = useState<Thought[]>([])
-  const [term, setTerm] = useState<any[]>([])
+  const [trace, setTrace] = useState<Trace[]>([])
+  const [showTerm, setShowTerm] = useState(false)
   const [tasks, setTasks] = useState<any[]>([])
   const [notifs, setNotifs] = useState<any[]>([])
   const [approvals, setApprovals] = useState<any[]>([])
   const [files, setFiles] = useState<any[]>([])
   const [memory, setMemory] = useState<any[]>([])
   const [status, setStatus] = useState<any>({})
-  const [side, setSide] = useState<string>('tasks')
-  const [showNotif, setShowNotif] = useState(false)
+  const [side, setSide] = useState<string>('')
   const [showSettings, setShowSettings] = useState(false)
-  const [showCam, setShowCam] = useState(false)
   const [toasts, setToasts] = useState<any[]>([])
   const [attachments, setAttachments] = useState<string[]>([])
   const [listening, setListening] = useState(false)
@@ -47,6 +45,7 @@ export default function App() {
   const fileRef = useRef<HTMLInputElement>(null)
   const recogRef = useRef<any>(null)
   const keyRef = useRef(0)
+  const traceRef = useRef<Trace[]>([])
 
   const toast = useCallback((title: string, body = '') => {
     const id = Date.now() + Math.random()
@@ -54,8 +53,20 @@ export default function App() {
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 6000)
   }, [])
 
-  const pushTerm = useCallback((text: string, cls = '') => {
-    setTerm(t => [...t.slice(-160), { text, cls }])
+  /* мысли и терминал живут одним потоком прямо в ответе Джарвиса */
+  const push = useCallback((kind: 'thought' | 'term', text: string, cls = '') => {
+    const item: Trace = { kind, text, cls, key: keyRef.current++ }
+    traceRef.current = [...traceRef.current.slice(-220), item]
+    setTrace(traceRef.current)
+  }, [])
+
+  const markLast = useCallback((cls: string) => {
+    const arr = traceRef.current.slice()
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (arr[i].kind === 'thought') { arr[i] = { ...arr[i], cls }; break }
+    }
+    traceRef.current = arr
+    setTrace(arr)
   }, [])
 
   const refreshAll = useCallback(() => {
@@ -88,30 +99,28 @@ export default function App() {
     es.onmessage = e => {
       let ev: any
       try { ev = JSON.parse(e.data) } catch { return }
-      const k = keyRef.current++
       switch (ev.kind) {
         case 'router':
-          setThoughts(t => [...t.slice(-7), {
-            text: `модель: ${ev.model} · ${ev.tier}`, cls: '', key: k }])
-          pushTerm(`[router] ${ev.provider}/${ev.model} · сложность: ${ev.tier}`, 't-dim')
+          push('term', `[модель] ${ev.provider}/${ev.model} · сложность: ${ev.tier}`, 't-dim')
+          break
+        case 'router_fallback':
+          push('term', `[модель] ${ev.provider} не ответил: ${ev.error}`, 't-err')
           break
         case 'thinking':
-          setThoughts(t => [...t.slice(-7), { text: 'Думаю…', cls: 'think', key: k }])
+          push('thought', 'Думаю…', 'think')
           break
         case 'tool_start': {
           const label = TOOL_LABEL[ev.tool] || ev.tool
           const arg = ev.args?.query || ev.args?.url || ev.args?.path || ev.args?.title ||
             ev.args?.command || ev.args?.prompt || ''
-          setThoughts(t => [...t.slice(-7), {
-            text: `${label}${arg ? ': ' + String(arg).slice(0, 70) : ''}`, cls: '', key: k }])
-          pushTerm(`$ ${ev.tool} ${JSON.stringify(ev.args).slice(0, 180)}`, 't-in')
+          push('thought', `${label}${arg ? ': ' + String(arg).slice(0, 80) : ''}`)
+          push('term', `$ ${ev.tool} ${JSON.stringify(ev.args).slice(0, 200)}`, 't-in')
           break
         }
         case 'tool_end': {
           const ok = ev.result?.ok !== false
-          pushTerm(`  → ${JSON.stringify(ev.result).slice(0, 300)}`, ok ? 't-ok' : 't-err')
-          setThoughts(t => t.map((x, i) =>
-            i === t.length - 1 ? { ...x, cls: ok ? 'ok' : 'fail' } : x))
+          push('term', `  → ${JSON.stringify(ev.result).slice(0, 320)}`, ok ? 't-ok' : 't-err')
+          markLast(ok ? 'ok' : 'fail')
           if (ev.tool === 'write_file' || ev.tool === 'generate_image') {
             api.files().then(r => setFiles(r.files || [])).catch(() => {})
           }
@@ -120,60 +129,68 @@ export default function App() {
         case 'approval_request':
           setApprovals(a => [...a.filter(x => x.id !== ev.approval_id),
             { id: ev.approval_id, tool: ev.tool, args: ev.args, reason: ev.reason }])
-          setShowNotif(true)
+          setSide('notif')
           toast('Нужно подтверждение', `${ev.tool}: ${ev.reason}`)
-          pushTerm(`[!] ожидаю подтверждения: ${ev.tool}`, 't-err')
+          push('thought', `Жду вашего разрешения: ${TOOL_LABEL[ev.tool] || ev.tool}`, 'wait')
           break
         case 'approval_resolved':
           setApprovals(a => a.filter(x => x.id !== ev.approval_id))
           break
         case 'notification':
-          setNotifs(n => [{ ...ev, id: ev.id || String(k) }, ...n])
-          setShowNotif(true)
+          setNotifs(n => [{ ...ev, id: ev.id || String(keyRef.current++) }, ...n])
+          setSide('notif')
           toast(ev.title, ev.body?.slice(0, 140))
           break
+        case 'task_queued':
+        case 'task_scheduled':
+          push('thought', `Поставил задачу в фон: ${ev.title || ''}`)
+          refreshAll(); break
         case 'task_start':
-          pushTerm(`[задача] старт: ${ev.title}`, 't-in'); refreshAll(); break
+          push('term', `[задача] старт: ${ev.title}`, 't-in'); refreshAll(); break
         case 'task_plan':
-          pushTerm(`[план] ${ev.steps?.join(' → ')}`, 't-dim'); refreshAll(); break
+          push('term', `[план] ${ev.steps?.join(' → ')}`, 't-dim'); refreshAll(); break
         case 'step_start':
-          pushTerm(`  ▸ шаг ${ev.idx + 1}: ${ev.title}`, ''); break
+          push('term', `  ▸ шаг ${ev.idx + 1}: ${ev.title}`, ''); break
         case 'step_end':
-          pushTerm(`  ✓ шаг ${ev.idx + 1} готов`, 't-ok'); refreshAll(); break
+          push('term', `  ✓ шаг ${ev.idx + 1} готов`, 't-ok'); refreshAll(); break
         case 'task_done':
-          pushTerm(`[задача] выполнена`, 't-ok'); refreshAll(); break
+          push('term', '[задача] выполнена', 't-ok'); refreshAll(); break
         case 'task_failed':
-          pushTerm(`[задача] ошибка: ${ev.error}`, 't-err'); refreshAll(); break
-        case 'chat_end':
-          setThoughts([]); break
+          push('term', `[задача] ошибка: ${ev.error}`, 't-err'); refreshAll(); break
         case 'memory':
-          pushTerm(`[память] ${ev.key} = ${ev.value}`, 't-dim'); break
+          push('term', `[память] ${ev.key} = ${ev.value}`, 't-dim'); break
         case 'telegram_in':
-          pushTerm(`[telegram] ${ev.text}`, 't-in'); break
+          push('term', `[telegram] ${ev.text}`, 't-in'); break
       }
     }
     return () => es.close()
-  }, [pushTerm, refreshAll, toast])
+  }, [push, markLast, refreshAll, toast])
 
   useEffect(() => {
     streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages, thoughts])
+  }, [messages, trace])
 
   /* ---------------------------------------------------------- отправка */
   const send = async (textOverride?: string) => {
     const text = (textOverride ?? input).trim()
     if (!text || busy) return
-    setInput(''); setBusy(true); setThoughts([])
+    setInput('')
+    setBusy(true)
+    traceRef.current = []; setTrace([])
     setMessages(m => [...m, { role: 'user', content: text }])
     const atts = attachments.slice()
     setAttachments([])
     try {
       const r = await api.chat(text, chatId, atts)
       setChatId(r.chat_id)
-      setMessages(m => [...m, { role: 'assistant', content: r.answer }])
+      setMessages(m => [...m, { role: 'assistant', content: r.answer, trace: traceRef.current }])
     } catch (e: any) {
-      setMessages(m => [...m, { role: 'assistant', content: '⚠️ ' + e.message }])
-    } finally { setBusy(false); setThoughts([]); refreshAll() }
+      setMessages(m => [...m, { role: 'assistant', content: '⚠️ ' + e.message, trace: traceRef.current }])
+    } finally {
+      setBusy(false)
+      traceRef.current = []; setTrace([])
+      refreshAll()
+    }
   }
 
   /* ---------------------------------------------------------- голос */
@@ -209,11 +226,21 @@ export default function App() {
   const decide = async (id: string, ok: boolean) => {
     await api.decide(id, ok)
     setApprovals(a => a.filter(x => x.id !== id))
-    pushTerm(ok ? '[✓] действие разрешено' : '[×] действие отклонено', ok ? 't-ok' : 't-err')
+    push('term', ok ? '[✓] действие разрешено' : '[×] действие отклонено', ok ? 't-ok' : 't-err')
   }
 
   const unread = notifs.filter(n => !n.read).length + approvals.length
   const online = !!status.primary
+  const liveThoughts = trace.filter(t => t.kind === 'thought')
+  const liveTerm = trace.filter(t => t.kind === 'term')
+
+  const SIDE_TABS: any[] = [
+    ['notif', <IcBell size={18} />, 'Уведомления'],
+    ['tasks', <IcTask size={18} />, 'Фоновые задачи'],
+    ['files', <IcFile size={18} />, 'Песочница'],
+    ['memory', <IcBrain size={18} />, 'Память'],
+    ['vision', <IcCam size={18} />, 'Зрение'],
+  ]
 
   return (
     <>
@@ -237,30 +264,18 @@ export default function App() {
           {status.telegram && <span className="chip on hide-sm">telegram</span>}
           {busy && <span className="chip warn"><i className="thinker" /> работаю</span>}
           <span className="spacer" />
-          <div className={`iconbtn ${showNotif ? 'active' : ''}`} onClick={() => setShowNotif(v => !v)}>
+          <div className={`iconbtn ${side === 'notif' ? 'active' : ''}`} title="Уведомления"
+            onClick={() => setSide(s => (s === 'notif' ? '' : 'notif'))}>
             <IcBell size={17} />
             {unread > 0 && <span className="badge">{unread}</span>}
           </div>
-          <div className="iconbtn" onClick={() => setShowSettings(true)}><IcGear size={17} /></div>
+          <div className="iconbtn" title="Настройки" onClick={() => setShowSettings(true)}>
+            <IcGear size={17} /></div>
+          <div className={`iconbtn ${side ? 'active' : ''}`} title="Боковое меню"
+            onClick={() => setSide(s => (s ? '' : 'notif'))}><IcMenu size={17} /></div>
         </div>
 
         <div className="body">
-          {/* -------------------------------------------------- рельса */}
-          <div className="rail">
-            {[
-              ['tasks', <IcTask size={18} />, 'Задачи'],
-              ['term', <IcTerm size={18} />, 'Терминал'],
-              ['files', <IcFile size={18} />, 'Песочница'],
-              ['memory', <IcBrain size={18} />, 'Память'],
-            ].map(([id, icon, title]: any) => (
-              <div key={id} title={title}
-                className={`iconbtn ${side === id ? 'active' : ''}`}
-                onClick={() => setSide(side === id ? '' : id)}>{icon}</div>
-            ))}
-            <span style={{ flex: 1 }} />
-            <div className="iconbtn" title="Камера" onClick={() => setShowCam(true)}><IcCam size={18} /></div>
-          </div>
-
           {/* -------------------------------------------------- центр */}
           <div className="center">
             <div className="stream" ref={streamRef}>
@@ -288,20 +303,42 @@ export default function App() {
               {messages.map((m, i) => (
                 <div className={`msg ${m.role === 'user' ? 'me' : ''}`} key={m.id || i}>
                   <div className="avatar">{m.role === 'user' ? 'ВЫ' : 'J'}</div>
-                  <div className="bubble">{m.content}</div>
+                  <div className="bubble-wrap">
+                    {!!m.trace?.length && <TraceBlock trace={m.trace} done />}
+                    <div className="bubble">{m.content}</div>
+                  </div>
                 </div>
               ))}
 
-              {!!thoughts.length && (
+              {busy && (
                 <div className="msg">
                   <div className="avatar">J</div>
-                  <div className="thoughts">
-                    {thoughts.map(t => (
-                      <div className={`thought ${t.cls}`} key={t.key}>
-                        {t.cls === 'think' ? <i className="thinker" /> : <span className="tool">▸</span>}
-                        <span>{t.text}</span>
+                  <div className="bubble-wrap">
+                    <div className="bubble live">
+                      <div className="live-head">
+                        <i className="thinker" />
+                        <span>{liveThoughts.length ? liveThoughts[liveThoughts.length - 1].text : 'Думаю…'}</span>
+                        {!!liveTerm.length && (
+                          <button className="mini-btn" onClick={() => setShowTerm(v => !v)}>
+                            <IcTerm size={12} /> {showTerm ? 'скрыть терминал' : 'терминал'}
+                          </button>
+                        )}
                       </div>
-                    ))}
+                      {liveThoughts.length > 1 && (
+                        <div className="thoughts">
+                          {liveThoughts.slice(0, -1).map(t => (
+                            <div className={`thought ${t.cls}`} key={t.key}>
+                              <span className="tool">▸</span><span>{t.text}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {showTerm && !!liveTerm.length && (
+                        <div className="term inline">
+                          {liveTerm.map(l => <div className={`ln ${l.cls}`} key={l.key}>{l.text}</div>)}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -328,7 +365,8 @@ export default function App() {
                   <IcClip size={16} /></div>
                 <div className={`iconbtn ${listening ? 'rec' : ''}`} title="Голос" onClick={toggleVoice}>
                   <IcMic size={16} /></div>
-                <div className="iconbtn" title="Камера" onClick={() => setShowCam(true)}>
+                <div className={`iconbtn ${side === 'vision' ? 'active' : ''}`} title="Камера"
+                  onClick={() => setSide(s => (s === 'vision' ? '' : 'vision'))}>
                   <IcCam size={16} /></div>
                 <button className="send" disabled={busy || !input.trim()} onClick={() => send()}>
                   <IcSend size={14} /> {busy ? 'Работаю…' : 'Отправить'}
@@ -342,36 +380,76 @@ export default function App() {
           {/* -------------------------------------------------- боковая панель */}
           {side && (
             <div className="side">
-              {side === 'tasks' && <TasksPanel tasks={tasks} onRefresh={refreshAll} />}
-              {side === 'term' && <TerminalPanel lines={term} />}
-              {side === 'files' && <FilesPanel files={files}
-                onRefresh={() => api.files().then(r => setFiles(r.files || []))} />}
-              {side === 'memory' && <MemoryPanel memory={memory}
-                onRefresh={() => api.memory().then(r => setMemory(r.memory))} />}
+              <Corners />
+              <div className="side-tabs">
+                {SIDE_TABS.map(([id, icon, title]) => (
+                  <div key={id} title={title}
+                    className={`iconbtn ${side === id ? 'active' : ''}`}
+                    onClick={() => setSide(id)}>
+                    {icon}
+                    {id === 'notif' && unread > 0 && <span className="badge">{unread}</span>}
+                  </div>
+                ))}
+                <span style={{ flex: 1 }} />
+                <div className="iconbtn" title="Закрыть" onClick={() => setSide('')}><IcX size={16} /></div>
+              </div>
+              <div className="side-body">
+                {side === 'notif' && <NotifPanel items={notifs} approvals={approvals} onDecide={decide}
+                  onRead={() => api.readNotifications().then(() =>
+                    setNotifs(n => n.map(x => ({ ...x, read: 1 }))))} />}
+                {side === 'tasks' && <TasksPanel tasks={tasks} onRefresh={refreshAll} />}
+                {side === 'files' && <FilesPanel files={files}
+                  onRefresh={() => api.files().then(r => setFiles(r.files || []))} />}
+                {side === 'memory' && <MemoryPanel memory={memory}
+                  onRefresh={() => api.memory().then(r => setMemory(r.memory))} />}
+                {side === 'vision' && <VisionPanel onClose={() => setSide('')}
+                  onResult={(text: string) =>
+                    setMessages(m => [...m, { role: 'assistant', content: '👁 ' + text }])} />}
+              </div>
             </div>
           )}
         </div>
       </div>
 
-      {showNotif && (
-        <NotifPanel items={notifs} approvals={approvals} onDecide={decide}
-          onClose={() => setShowNotif(false)}
-          onRead={() => api.readNotifications().then(() =>
-            setNotifs(n => n.map(x => ({ ...x, read: 1 }))))} />
-      )}
-
       {showSettings && <Settings onClose={() => setShowSettings(false)} onSaved={refreshAll} />}
-      {showCam && <CameraModal onClose={() => setShowCam(false)}
-        onResult={(text: string) => {
-          setMessages(m => [...m, { role: 'assistant', content: '👁 ' + text }])
-          setSide(side || 'tasks')
-        }} />}
 
       <div className="toasts">
         {toasts.map(t => (
-          <div className="toast" key={t.id}><b>{t.title}</b>{t.body}</div>
+          <div className="toast" key={t.id} onClick={() => setSide('notif')}>
+            <b>{t.title}</b>{t.body}</div>
         ))}
       </div>
     </>
+  )
+}
+
+/* ------------------------------------------------ свёрнутый след прошлого ответа */
+function TraceBlock({ trace, done }: { trace: Trace[]; done?: boolean }) {
+  const [open, setOpen] = useState(false)
+  const thoughts = trace.filter(t => t.kind === 'thought')
+  const term = trace.filter(t => t.kind === 'term')
+  if (!thoughts.length && !term.length) return null
+  return (
+    <div className={`trace ${open ? 'open' : ''}`}>
+      <button className="trace-head" onClick={() => setOpen(v => !v)}>
+        <span className="tool">▸</span>
+        <span>{done ? `Ход мыслей · ${thoughts.length} шаг(ов)` : 'Ход мыслей'}</span>
+        <span className="trace-caret">{open ? '−' : '+'}</span>
+      </button>
+      {open && (
+        <div className="trace-body">
+          {thoughts.map(t => (
+            <div className={`thought ${t.cls}`} key={t.key}>
+              <span className="tool">▸</span><span>{t.text}</span>
+            </div>
+          ))}
+          {!!term.length && (
+            <div className="term inline">
+              {term.map(l => <div className={`ln ${l.cls}`} key={l.key}>{l.text}</div>)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
