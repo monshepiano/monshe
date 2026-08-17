@@ -164,8 +164,6 @@ button,input,textarea,select{font-family:inherit;color:inherit}
 .main{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;position:relative}
 .topbar{display:flex;align-items:center;gap:12px;padding:11px 18px;border-bottom:1px solid var(--line);
   background:rgba(5,11,20,.6);backdrop-filter:blur(16px);min-height:56px}
-/* ☰ только на узких экранах: на десктопе меню сворачивается в полосу с кнопкой «‹» */
-.menu-toggle{display:none}
 .status-cluster{display:flex;gap:7px}
 .status-chip{display:flex;align-items:center;gap:6px;padding:5px 11px;border-radius:20px;font-size:10.5px;
   border:1px solid var(--line);background:rgba(0,212,255,.05);color:var(--tx2);letter-spacing:.3px;
@@ -506,44 +504,23 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .prov-state{display:flex;align-items:center;gap:8px;font-size:11.5px;padding:8px 11px;border-radius:9px;
   background:rgba(0,0,0,.25);margin-bottom:10px;font-family:var(--fm)}
 
-/* ---------- правая панель ---------- */
-.drawer{position:fixed;top:0;right:0;bottom:0;width:390px;max-width:92vw;z-index:40;
-  background:linear-gradient(180deg,rgba(7,15,26,.97),rgba(4,9,17,.97));border-left:1px solid var(--line2);
-  backdrop-filter:blur(22px);transform:translateX(100%);transition:transform .42s cubic-bezier(.4,0,.2,1);
-  display:flex;flex-direction:column;box-shadow:-24px 0 60px rgba(0,0,0,.5)}
-.drawer.open{transform:none}
-.drawer-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
-.drawer-tabs{display:flex;gap:5px;flex:1;overflow-x:auto}
-.dtab{padding:6px 12px;border-radius:9px;border:1px solid transparent;background:transparent;color:var(--tx3);
-  font-size:11.5px;cursor:pointer;transition:.2s;white-space:nowrap}
-.dtab:hover{color:var(--tx2);background:rgba(0,212,255,.07)}
-.dtab.active{background:rgba(0,212,255,.14);border-color:var(--line2);color:#fff}
-.drawer-body{flex:1;overflow-y:auto;padding:14px}
-.dpane{display:none;animation:viewIn .3s}
-.dpane.active{display:block}
-
-/* секции единой панели: уведомления сверху, санкции снизу */
-.dsection{margin-bottom:18px;border-radius:14px;padding:2px;position:relative}
-.dsection:last-child{margin-bottom:4px}
-.dsec-head{display:flex;align-items:center;gap:9px;padding:4px 4px 10px;margin-bottom:8px;
-  border-bottom:1px solid var(--line)}
-.dsec-head h3{margin:0;font-size:11.5px;font-weight:600;letter-spacing:1.6px;text-transform:uppercase;
-  color:var(--tx2);flex:1}
-.dsec-ico{width:24px;height:24px;border-radius:8px;display:grid;place-items:center;font-size:12px}
-.dsec-ico.ico-notes{background:rgba(56,189,248,.16);color:var(--sky);box-shadow:0 0 14px rgba(56,189,248,.18)}
-.dsec-ico.ico-sanct{background:rgba(255,182,72,.16);color:var(--gold);box-shadow:0 0 14px rgba(255,182,72,.18)}
-.dsec-count{min-width:20px;height:19px;padding:0 6px;border-radius:10px;font-size:10.5px;display:grid;
-  place-items:center;background:rgba(56,189,248,.16);color:var(--sky);border:1px solid rgba(56,189,248,.34)}
-.dsec-count.zero{background:rgba(120,150,170,.1);color:var(--tx3);border-color:var(--line)}
-.dsec-count.hot{background:rgba(255,182,72,.2);color:var(--gold);border-color:rgba(255,182,72,.45);
-  animation:hotpulse 1.6s infinite}
-#secSanctions .dsec-head{border-bottom-color:rgba(255,182,72,.24)}
-.dsection.flash::before{content:"";position:absolute;inset:-6px;border-radius:16px;pointer-events:none;
-  border:1px solid var(--line2);animation:secFlash 1.1s ease-out}
-@keyframes secFlash{0%{opacity:1;box-shadow:0 0 0 0 rgba(56,189,248,.35)}100%{opacity:0;box-shadow:0 0 0 14px rgba(56,189,248,0)}}
+/* ---------- карточки уведомлений и санкций (теперь прямо в диалоге) ---------- */
 .empty{text-align:center;color:var(--tx3);font-size:12px;padding:36px 12px;line-height:1.7}
 .empty .e-ico{font-size:26px;color:var(--line2);display:block;margin-bottom:9px}
 
+.chat-card{max-width:min(820px,100%);margin:6px auto 6px 58px;animation:slideIn .35s both}
+.chat-card.resolved{opacity:.6}
+.chat-card.flash{animation:secFlash 1.1s ease-out}
+@keyframes secFlash{0%{box-shadow:0 0 0 0 rgba(56,189,248,.4)}100%{box-shadow:0 0 0 16px rgba(56,189,248,0)}}
+.note-digest{border:1px solid var(--line);border-radius:14px;padding:12px;background:var(--panel)}
+.cc-head{display:flex;align-items:center;gap:9px;font-size:11.5px;font-weight:600;letter-spacing:1.6px;
+  text-transform:uppercase;color:var(--tx2);padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid var(--line)}
+.cc-ico{width:24px;height:24px;border-radius:8px;display:grid;place-items:center;font-size:12px}
+.cc-ico.ico-notes{background:rgba(56,189,248,.16);color:var(--sky);box-shadow:0 0 14px rgba(56,189,248,.18)}
+.cc-ico.ico-sanct{background:rgba(255,182,72,.16);color:var(--gold);box-shadow:0 0 14px rgba(255,182,72,.18)}
+.cc-count{margin-left:auto;min-width:20px;height:19px;padding:0 6px;border-radius:10px;font-size:10.5px;
+  display:grid;place-items:center;background:rgba(56,189,248,.16);color:var(--sky);border:1px solid rgba(56,189,248,.34)}
+.note-digest .note-item:last-child{margin-bottom:0}
 .sanction{border:1px solid rgba(255,182,72,.4);border-radius:13px;background:linear-gradient(135deg,rgba(255,182,72,.1),transparent);
   padding:13px;margin-bottom:11px;animation:approveIn .4s both}
 .sanction.critical{border-color:rgba(255,77,109,.5);background:linear-gradient(135deg,rgba(255,77,109,.12),transparent)}
@@ -575,10 +552,14 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   border:1px solid var(--line);border-radius:11px;padding:12px;min-height:220px;max-height:70vh;overflow:auto;
   white-space:pre-wrap;word-break:break-all}
 
-/* камера */
-.cam-wrap{position:relative;border-radius:14px;overflow:hidden;border:1px solid var(--line2);background:#000;
-  aspect-ratio:4/3;margin-bottom:11px}
-#cam{width:100%;height:100%;object-fit:cover;display:block}
+/* ---------- камера прямо в диалоге ---------- */
+.cam-msg .ai-content{max-width:640px}
+.cam-live{border:1px solid var(--line2);border-radius:16px;padding:11px;background:rgba(0,0,0,.28);
+  box-shadow:0 0 0 1px rgba(0,212,255,.05),0 14px 40px rgba(0,0,0,.4);animation:slideIn .35s both}
+.cam-wrap{position:relative;border-radius:13px;overflow:hidden;border:1px solid var(--line2);background:#000;
+  aspect-ratio:4/3;margin-bottom:10px}
+/* зеркалим картинку — так привычнее, как в зеркале */
+#cam{width:100%;height:100%;object-fit:cover;display:block;transform:scaleX(-1)}
 .cam-scan{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--cy),transparent);
   box-shadow:0 0 16px var(--cy);animation:scan 3s ease-in-out infinite}
 @keyframes scan{0%,100%{top:4%}50%{top:96%}}
@@ -587,9 +568,23 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .cam-corners i:nth-child(2){top:9px;right:9px;border-left:0;border-bottom:0}
 .cam-corners i:nth-child(3){bottom:9px;left:9px;border-right:0;border-top:0}
 .cam-corners i:nth-child(4){bottom:9px;right:9px;border-left:0;border-top:0}
-.cam-menu{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
-.cam-note{font-size:11px;line-height:1.5;margin-bottom:10px}
-.cam-result{font-size:12.5px;color:var(--tx2);line-height:1.65}
+.cam-hud{position:absolute;left:10px;bottom:10px;display:flex;align-items:center;gap:7px;padding:5px 11px;
+  border-radius:20px;background:rgba(3,8,15,.72);border:1px solid var(--line2);backdrop-filter:blur(10px);
+  font-family:var(--fm);font-size:10px;letter-spacing:.6px;color:var(--tx2);text-transform:uppercase}
+.cam-rec{width:7px;height:7px;border-radius:50%;background:var(--tx3)}
+.cam-live.live .cam-rec{background:var(--red);box-shadow:0 0 10px var(--red);animation:blink 1.4s infinite}
+.cam-msg.done .cam-wrap{filter:grayscale(1) brightness(.5)}
+.cam-msg.done .cam-scan{display:none}
+.cam-feed{display:flex;flex-direction:column;gap:6px;max-height:210px;overflow-y:auto;margin-bottom:9px}
+.cam-feed:empty{display:none}
+.cam-line{display:flex;gap:9px;font-size:12.5px;line-height:1.6;color:var(--tx);padding:7px 10px;
+  border-radius:10px;background:rgba(0,212,255,.05);border:1px solid var(--line);animation:slideIn .3s both}
+.cam-line.sys{color:var(--tx3);background:transparent;border-color:transparent;font-size:11.5px}
+.cam-line.err{color:#ffb3c1;border-color:rgba(255,77,109,.35);background:rgba(255,77,109,.07)}
+.cam-t{font-family:var(--fm);font-size:10px;color:var(--tx3);flex-shrink:0;padding-top:2px}
+.cam-x{min-width:0}
+.cam-x p{margin:0}
+.cam-note{font-size:11px;line-height:1.55;color:var(--tx3)}
 
 /* тосты */
 .toasts{position:fixed;top:66px;right:20px;z-index:200;display:flex;flex-direction:column;gap:9px;pointer-events:none}
@@ -621,25 +616,30 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 
 /* адаптив */
 @media (max-width:900px){
-  .app,.app.collapsed{grid-template-columns:1fr}
-  /* на телефоне узкой полосы нет — меню выезжает поверх целиком */
-  .app.collapsed .sidebar{padding:16px 12px;gap:12px}
-  .app.collapsed .brand{flex-direction:row;gap:10px;padding:4px 6px 12px}
-  .app.collapsed .brand-text,.app.collapsed .chats-block,
-  .app.collapsed .nav-label,.app.collapsed .side-foot .stat-row{display:block}
-  .app.collapsed .chats-block{display:flex}
-  .app.collapsed .nav-item{justify-content:flex-start;padding:10px 12px;gap:11px}
-  .app.collapsed .nav-item::after{display:none}
-  .app.collapsed .collapse-btn{transform:none}
-  .sidebar{position:fixed;top:0;bottom:0;left:0;width:262px;z-index:60;margin-left:-262px;box-shadow:20px 0 50px rgba(0,0,0,.5)}
-  .app.nav-open .sidebar{margin-left:0}
-  .menu-toggle,.app.collapsed .menu-toggle{display:grid}
+  /* кнопки «три палки» нет: на телефоне меню — всегда видимая узкая полоса иконок,
+     а по «‹» она разворачивается поверх контента */
+  .app,.app.collapsed{grid-template-columns:62px 1fr}
+  .sidebar{position:fixed;top:0;bottom:0;left:0;width:62px;z-index:60;padding:14px 7px;gap:10px;
+    overflow:visible;transition:width .3s cubic-bezier(.4,0,.2,1)}
+  .app.nav-open .sidebar{width:262px;padding:16px 12px;gap:12px;box-shadow:20px 0 50px rgba(0,0,0,.55)}
+  .brand-text,.chats-block,.nav-label,.side-foot .stat-row{display:none}
+  .app.nav-open .brand-text,.app.nav-open .nav-label,.app.nav-open .side-foot .stat-row{display:block}
+  .app.nav-open .chats-block{display:flex}
+  .brand{flex-direction:column;gap:8px;padding:4px 0 10px}
+  .app.nav-open .brand{flex-direction:row;gap:10px;padding:4px 6px 12px}
+  .nav-item{justify-content:center;padding:11px 0;gap:0}
+  .app.nav-open .nav-item{justify-content:flex-start;padding:10px 12px;gap:11px}
+  .nav-item::after{display:none}
+  .collapse-btn{transform:rotate(180deg)}
+  .app.nav-open .collapse-btn{transform:none}
+  .side-foot{margin-top:auto;border-top:0;padding:6px 0 2px}
+  .app.nav-open .side-foot{border-top:1px solid var(--line);padding:10px 4px 2px}
   .status-cluster .status-chip:nth-child(n+2){display:none}
   .top-title{display:none}
   .stream{padding:16px 14px 8px}
   .composer-wrap{padding:8px 12px 14px}
   .panel-head,.task-grid,.file-grid,.mem-grid,.settings-grid{padding-left:14px;padding-right:14px}
-  .drawer{width:100%}
+  .chat-card{margin-left:0}
   .bubble-user{max-width:88%}
 }
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}

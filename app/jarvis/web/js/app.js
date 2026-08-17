@@ -32,6 +32,16 @@ const S = {
   recorder: null,
   recChunks: [],
   pendingApprovalNode: null,
+  shownApprovals: new Set(),
+  sanctionNodes: {},
+  streamApproval: false,
+  shownNotes: new Set(),
+  notesReady: false,
+  camNode: null,
+  camTimer: null,
+  camBusy: false,
+  camLast: '',
+  camPrevPix: null,
 };
 
 /* ============================ утилиты ============================ */
@@ -185,7 +195,6 @@ function toggleSidebar() {
   const collapsed = app.classList.toggle('collapsed');
   try { localStorage.setItem('jarvis.sidebar', collapsed ? 'collapsed' : 'open'); } catch (e) {}
 }
-$('#menuToggle').addEventListener('click', toggleSidebar);
 $('#collapseBtn').addEventListener('click', toggleSidebar);
 try {
   if (localStorage.getItem('jarvis.sidebar') === 'collapsed' && !isNarrow()) {
@@ -193,33 +202,8 @@ try {
   }
 } catch (e) {}
 
-/* ============================ правая панель ============================ */
-/* Панель одна: вкладка «Центр» (уведомления сверху, санкции снизу) и «Камера».
-   focus — к какой секции центра подскроллить и какую подсветить. */
-function openDrawer(tab, focus) {
-  $('#drawer').classList.add('open');
-  if (tab) {
-    $$('.dtab').forEach((t) => t.classList.toggle('active', t.dataset.dtab === tab));
-    $$('.dpane').forEach((p) => p.classList.toggle('active', p.id === 'dpane-' + tab));
-  }
-  if (focus) {
-    const sec = $(focus === 'sanctions' ? '#secSanctions' : '#secNotes');
-    if (sec) {
-      requestAnimationFrame(() => {
-        sec.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        sec.classList.remove('flash');
-        void sec.offsetWidth;
-        sec.classList.add('flash');
-      });
-    }
-  }
-}
-$$('.dtab').forEach((t) => t.addEventListener('click', () => openDrawer(t.dataset.dtab)));
-$('#drawerClose').addEventListener('click', () => $('#drawer').classList.remove('open'));
-$('#approvalsBtn').addEventListener('click', () => openDrawer('center', 'sanctions'));
-$('#notifyBtn').addEventListener('click', () => {
-  openDrawer('center', 'notes'); api('/api/notifications/read', {}).then(refreshState);
-});
+/* Правой панели больше нет: уведомления, санкции и камера живут прямо в чате
+   (см. разделы «камера в диалоге» и «санкции / уведомления в диалоге» ниже). */
 
 /* ============================ переключатели ============================ */
 $('#tgAgent').addEventListener('click', function () {
@@ -232,7 +216,7 @@ $('#tgAgent').addEventListener('click', function () {
 });
 $('#tgCamera').addEventListener('click', function () {
   S.cameraOn = !S.cameraOn; this.classList.toggle('on', S.cameraOn);
-  if (S.cameraOn) { openDrawer('camera'); startCam(); } else { stopCam(); }
+  if (S.cameraOn) startCam(); else stopCam();
 });
 $('#tgComputer').addEventListener('click', function () {
   S.computerUse = !S.computerUse; this.classList.toggle('on', S.computerUse);
@@ -305,6 +289,8 @@ async function loadChats() {
   });
 }
 function newChat() {
+  if (S.camStream) stopCam();          // камера жила в старом диалоге — гасим
+  S.sanctionNodes = {};
   S.chatId = null;
   $('#stream').innerHTML = '';
   $('#stream').appendChild(buildWelcome());
@@ -315,6 +301,8 @@ function newChat() {
 $('#newChatBtn').addEventListener('click', newChat);
 
 async function openChat(id) {
+  if (S.camStream) stopCam();
+  S.sanctionNodes = {};
   S.chatId = id;
   showView('chat');
   const r = await api('/api/messages?chat_id=' + encodeURIComponent(id));
@@ -482,6 +470,12 @@ async function send() {
   const text = input.value.trim();
   if ((!text && !S.attachments.length) || S.streaming) return;
   S.lastPrompt = text;
+
+  // камера включена — молча прикладываем текущий кадр, чтобы вопрос был «про то, что вижу»
+  if (S.camStream && !S.attachments.some((a) => a.fromCam)) {
+    const frame = await camAttachFrame();
+    if (frame) { frame.fromCam = true; S.attachments.push(frame); }
+  }
 
   addUserMsg(text, S.attachments);
   input.value = ''; autoGrow();
@@ -676,7 +670,9 @@ function handleEvent(ev, ui) {
       };
       card.querySelector('.ok').addEventListener('click', () => decide('approved'));
       card.querySelector('.no').addEventListener('click', () => decide('rejected'));
-      refreshState(); openDrawer('center', 'sanctions');
+      // карточка уже нарисована прямо в ответе — дубль из renderSanctions не нужен
+      S.streamApproval = true;
+      refreshState();
       beep(340, 0.3);
       toast((ev.label || ev.tool) + ' — нужно твоё разрешение', 'warn', 'Санкция');
       scrollDown(true);
@@ -684,6 +680,7 @@ function handleEvent(ev, ui) {
     }
 
     case 'approval_done':
+      S.streamApproval = false;
       refreshState(); break;
 
     case 'tool_result': {
@@ -845,109 +842,284 @@ $('#micBtn').addEventListener('click', async function () {
   }
 });
 
-/* ============================ камера ============================ */
-async function startCam() {
-  try {
-    S.camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    $('#cam').srcObject = S.camStream;
-    toast('Камера включена', 'success');
-  } catch (e) { toast('Нет доступа к камере', 'error'); }
-}
-function stopCam() {
-  if (S.camStream) { S.camStream.getTracks().forEach((t) => t.stop()); S.camStream = null; }
-  $('#cam').srcObject = null;
-}
-function camFrame() {
-  const v = $('#cam');
-  if (!v.videoWidth) return null;
-  const c = document.createElement('canvas');
-  c.width = v.videoWidth; c.height = v.videoHeight;
-  c.getContext('2d').drawImage(v, 0, 0);
-  return c.toDataURL('image/jpeg', 0.85);
-}
-$('#camStart').addEventListener('click', startCam);
-$('#camStop').addEventListener('click', stopCam);
-$('#camShot').addEventListener('click', async () => {
-  const data = camFrame();
-  if (!data) { toast('Сначала включи камеру', 'warn'); return; }
-  $('#camResult').innerHTML = '<div class="thinking-line"><div class="spinner"></div><span>Смотрю…</span></div>';
-  const r = await api('/api/vision', { image: data, question: 'Что на изображении? Опиши кратко и по делу, по-русски.' });
-  $('#camResult').innerHTML = r.ok ? '<div class="md">' + MD.render(r.content || r.text || '') + '</div>'
-    : '<span style="color:#ffb3c1">' + esc(r.error) + '</span>';
-});
-$('#camBuy').addEventListener('click', async () => {
-  const data = camFrame();
-  if (!data) { toast('Сначала включи камеру', 'warn'); return; }
-  const r = await api('/api/upload', { name: 'camera_' + Date.now() + '.jpg', data });
-  if (r.ok) {
-    r.data = data;
-    S.attachments.push(r); renderAttachments();
-    $('#input').value = 'Определи, что на фото, и найди, где это купить в России — с ценами и ссылками.';
-    autoGrow(); showView('chat'); $('#drawer').classList.remove('open');
-    send();
-  }
-});
+/* ============================ камера в диалоге ============================ */
+/* Камера открывается прямо в чате. Кнопок нет: JARVIS сам смотрит трансляцию —
+   раз в несколько секунд берёт кадр и, если картинка изменилась, отправляет
+   его зрительной модели. Так получается «живое» распознавание видео. */
+const CAM_TICK = 2500;      // как часто заглядывать в кадр, мс
+const CAM_MOTION = 7;       // порог изменения сцены (0..255)
 
-/* ============================ санкции / уведомления ============================ */
-function setCount(id, n, hot) {
-  const e = $(id);
-  if (!e) return;
-  e.textContent = n;
-  e.classList.toggle('zero', !n);
-  e.classList.toggle('hot', !!(hot && n));
+function buildCamCard() {
+  const card = el('div', 'msg msg-ai cam-msg');
+  card.innerHTML =
+    '<div class="ai-avatar"><div class="reactor sm" style="width:34px;height:34px">' +
+    '<div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div></div>' +
+    '<div class="ai-body"><div class="ai-name">JARVIS<span class="ai-model"> · зрение</span></div>' +
+    '<div class="ai-content">' +
+      '<div class="cam-live">' +
+        '<div class="cam-wrap">' +
+          '<video id="cam" autoplay playsinline muted></video>' +
+          '<div class="cam-scan"></div>' +
+          '<div class="cam-corners"><i></i><i></i><i></i><i></i></div>' +
+          '<div class="cam-hud"><span class="cam-rec"></span><span id="camState">включаю камеру…</span></div>' +
+        '</div>' +
+        '<div class="cam-feed" id="camFeed"></div>' +
+        '<div class="cam-note muted">Трансляция идёт в реальном времени: я смотрю кадры и комментирую, ' +
+        'что вижу. Спроси прямо в чате — например «что это?» или «где такое купить» — ' +
+        'и я отвечу по тому, что сейчас в кадре.</div>' +
+      '</div>' +
+    '</div></div>';
+  return card;
 }
-function renderSanctions() {
-  const pane = $('#dpane-sanctions');
-  setCount('#sanctCount', S.approvals.length, true);
-  if (!S.approvals.length) {
-    pane.innerHTML = '<div class="empty"><span class="e-ico">⛨</span>Нет запросов на подтверждение.<br>' +
-      'Опасные действия — оплата, удаление, управление компьютером — я всегда спрашиваю здесь.</div>';
-    return;
+
+async function startCam() {
+  if (S.camNode) return;
+  showView('chat');
+  killWelcome();
+  S.camNode = buildCamCard();
+  stream().appendChild(S.camNode);
+  scrollDown(true);
+  try {
+    S.camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 } }, audio: false,
+    });
+    $('#cam').srcObject = S.camStream;
+    camState('трансляция · смотрю', true);
+    camSay('Камера включена. Смотрю, что происходит.', 'sys');
+    beep(720, 0.09);
+    S.camPrevPix = null;
+    S.camTimer = setInterval(camTick, CAM_TICK);
+  } catch (e) {
+    camState('нет доступа к камере', false);
+    camSay('Не получилось включить камеру: браузер не дал доступ. Разреши камеру для этого сайта.', 'err');
+    toast('Нет доступа к камере', 'error');
   }
-  pane.innerHTML = '';
+}
+
+function stopCam() {
+  if (S.camTimer) { clearInterval(S.camTimer); S.camTimer = null; }
+  if (S.camStream) { S.camStream.getTracks().forEach((t) => t.stop()); S.camStream = null; }
+  const v = $('#cam');
+  if (v) v.srcObject = null;
+  if (S.camNode) {
+    S.camNode.classList.add('done');
+    camState('трансляция завершена', false);
+    S.camNode = null;
+  }
+  S.camPrevPix = null;
+  S.cameraOn = false;
+  $('#tgCamera').classList.remove('on');
+}
+
+function camState(text, live) {
+  const st = $('#camState');
+  if (st) st.textContent = text;
+  const wrap = S.camNode && S.camNode.querySelector('.cam-live');
+  if (wrap) wrap.classList.toggle('live', !!live);
+}
+
+function camSay(text, kind) {
+  const feed = $('#camFeed');
+  if (!feed) return;
+  const line = el('div', 'cam-line ' + (kind || ''));
+  line.innerHTML = '<span class="cam-t">' +
+    new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) +
+    '</span><span class="cam-x">' + (kind === 'sys' || kind === 'err' ? esc(text) : MD.render(text)) + '</span>';
+  feed.appendChild(line);
+  while (feed.children.length > 40) feed.removeChild(feed.firstChild);
+  feed.scrollTop = feed.scrollHeight;
+  scrollDown();
+}
+
+/* текущий кадр как data-url (для отправки модели) */
+function camFrame(maxW) {
+  const v = $('#cam');
+  if (!v || !v.videoWidth) return null;
+  const w = Math.min(maxW || 900, v.videoWidth);
+  const h = Math.round(v.videoHeight * (w / v.videoWidth));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(v, 0, 0, w, h);
+  return c.toDataURL('image/jpeg', 0.82);
+}
+
+/* грубая оценка «что-то изменилось в кадре» — чтобы не жечь деньги впустую */
+function camMotion() {
+  const v = $('#cam');
+  if (!v || !v.videoWidth) return 0;
+  const c = document.createElement('canvas');
+  c.width = 48; c.height = 36;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(v, 0, 0, 48, 36);
+  const cur = ctx.getImageData(0, 0, 48, 36).data;
+  let diff = 255;
+  if (S.camPrevPix) {
+    let sum = 0;
+    for (let i = 0; i < cur.length; i += 4) {
+      const g1 = (cur[i] + cur[i + 1] + cur[i + 2]) / 3;
+      const p = S.camPrevPix;
+      const g2 = (p[i] + p[i + 1] + p[i + 2]) / 3;
+      sum += Math.abs(g1 - g2);
+    }
+    diff = sum / (cur.length / 4);
+  }
+  S.camPrevPix = cur;
+  return diff;
+}
+
+async function camTick() {
+  if (S.camBusy || S.streaming || !S.camStream) return;
+  const move = camMotion();
+  if (move < CAM_MOTION && S.camLast) { camState('трансляция · кадр без изменений', true); return; }
+  const data = camFrame();
+  if (!data) return;
+  S.camBusy = true;
+  camState('трансляция · распознаю', true);
+  try {
+    const r = await api('/api/vision', {
+      image: data,
+      question: 'Это кадр живой видеотрансляции с камеры. Одним-двумя короткими предложениями по-русски ' +
+        'скажи, что сейчас в кадре: объект, что с ним происходит, важные детали (текст, марка, состояние). ' +
+        'Без вступлений и без «на изображении».',
+    });
+    const txt = (r.answer || r.content || r.text || '').trim();
+    if (r.ok && txt && txt !== S.camLast) { S.camLast = txt; camSay(txt); }
+    else if (!r.ok) camState('трансляция · ' + (r.error || 'модель молчит'), true);
+    if (r.ok) camState('трансляция · смотрю', true);
+  } finally {
+    S.camBusy = false;
+  }
+}
+
+/* если камера включена — к сообщению в чат автоматически прикладывается текущий кадр */
+async function camAttachFrame() {
+  if (!S.camStream) return null;
+  const data = camFrame();
+  if (!data) return null;
+  const r = await api('/api/upload', { name: 'camera_' + Date.now() + '.jpg', data });
+  if (!r.ok) return null;
+  r.data = data;
+  return r;
+}
+
+/* ============================ санкции / уведомления в диалоге ============================ */
+/* Всё, что раньше жило в правой панели, теперь всплывает карточками в чате. */
+function sanctionCard(a) {
+  let args = a.args;
+  try { args = JSON.stringify(JSON.parse(a.args), null, 1); } catch (e) { /* как есть */ }
+  const critical = a.risk === 'danger' || /delete|shell|pay/.test(a.tool || '');
+  const card = el('div', 'chat-card sanction' + (critical ? ' critical' : ''));
+  card.innerHTML =
+    '<div class="s-top">⛨ Санкция · ' + esc(a.tool) + '</div>' +
+    '<div class="s-why">' + esc(a.reason || 'Требуется твоё разрешение.') + '</div>' +
+    '<div class="s-args">' + esc(args) + '</div>' +
+    '<div class="s-acts"><button class="btn primary sm">Разрешить</button>' +
+    '<button class="btn danger sm">Отклонить</button></div>';
+  const [okBtn, noBtn] = $$('.s-acts .btn', card);
+  okBtn.addEventListener('click', () => decideApproval(a.id, 'approved', card));
+  noBtn.addEventListener('click', () => decideApproval(a.id, 'rejected', card));
+  return card;
+}
+
+function closeSanctionCard(card, text) {
+  if (!card) return;
+  const acts = card.querySelector('.s-acts');
+  if (acts) acts.innerHTML = '<span class="muted">' + esc(text) + '</span>';
+  card.classList.add('resolved');
+}
+
+function renderSanctions() {
   S.approvals.forEach((a) => {
-    let args = a.args;
-    try { args = JSON.stringify(JSON.parse(a.args), null, 1); } catch (e) { /* как есть */ }
-    const critical = a.risk === 'danger' || /delete|shell|pay/.test(a.tool || '');
-    const card = el('div', 'sanction' + (critical ? ' critical' : ''));
-    card.innerHTML =
-      '<div class="s-top">⛨ ' + esc(a.tool) + '</div>' +
-      '<div class="s-why">' + esc(a.reason || 'Требуется твоё разрешение.') + '</div>' +
-      '<div class="s-args">' + esc(args) + '</div>' +
-      '<div class="s-acts"><button class="btn primary sm">Разрешить</button>' +
-      '<button class="btn danger sm">Отклонить</button></div>';
-    const [okBtn, noBtn] = $$('.s-acts .btn', card);
-    okBtn.addEventListener('click', () => decideApproval(a.id, 'approved', card));
-    noBtn.addEventListener('click', () => decideApproval(a.id, 'rejected', card));
-    pane.appendChild(card);
+    const key = String(a.id);
+    if (S.shownApprovals.has(key)) return;
+    // подтверждение по ходу стрима рисуется внутри ответа — второй раз не показываем
+    if (S.streamApproval) { S.shownApprovals.add(key); return; }
+    S.shownApprovals.add(key);
+    killWelcome();
+    const card = sanctionCard(a);
+    S.sanctionNodes[key] = card;
+    stream().appendChild(card);
+    scrollDown(true);
+    beep(340, 0.28);
+  });
+  // решённые где-то ещё — закрываем карточку
+  const live = new Set(S.approvals.map((a) => String(a.id)));
+  Object.keys(S.sanctionNodes).forEach((k) => {
+    if (!live.has(k)) { closeSanctionCard(S.sanctionNodes[k], '✓ решено'); delete S.sanctionNodes[k]; }
   });
 }
+
 async function decideApproval(id, decision, card) {
   await api('/api/approvals/decide', { id, decision });
-  if (card) card.remove();
+  closeSanctionCard(card, decision === 'approved' ? '✓ разрешено' : '✕ отклонено');
   toast(decision === 'approved' ? 'Разрешено — продолжаю' : 'Отклонено', decision === 'approved' ? 'success' : 'warn');
   refreshState();
 }
 
+function noteCard(n) {
+  const kind = n.level === 'error' ? 'error' : (n.level === 'success' ? 'success' : '');
+  const card = el('div', 'chat-card note-item ' + kind);
+  card.innerHTML = '<div class="note-ico">' + (kind === 'error' ? '✕' : kind === 'success' ? '✓' : '◆') + '</div>' +
+    '<div style="flex:1;min-width:0"><div class="note-t">' + esc(n.title) + '</div>' +
+    '<div class="note-b">' + esc((n.body || '').slice(0, 900)) + '</div>' +
+    '<div class="note-time">' + fmtTime(n.created_at) + '</div></div>';
+  return card;
+}
+
 function renderNotes() {
-  const pane = $('#dpane-notes');
-  setCount('#notesCount', S.notifications.length, false);
-  if (!S.notifications.length) {
-    pane.innerHTML = '<div class="empty"><span class="e-ico">◔</span>Пока тихо.<br>' +
-      'Здесь появятся отчёты фоновых задач и мои проактивные подсказки.</div>';
+  // при первой загрузке старые уведомления не сыплем в диалог
+  if (!S.notesReady) {
+    S.notifications.forEach((n) => S.shownNotes.add(String(n.id)));
+    S.notesReady = true;
     return;
   }
-  pane.innerHTML = '';
-  S.notifications.forEach((n) => {
-    const kind = n.level === 'error' ? 'error' : (n.level === 'success' ? 'success' : '');
-    const item = el('div', 'note-item ' + kind);
-    item.innerHTML = '<div class="note-ico">' + (kind === 'error' ? '✕' : kind === 'success' ? '✓' : '◆') + '</div>' +
-      '<div style="flex:1;min-width:0"><div class="note-t">' + esc(n.title) + '</div>' +
-      '<div class="note-b">' + esc((n.body || '').slice(0, 400)) + '</div>' +
-      '<div class="note-time">' + fmtTime(n.created_at) + '</div></div>';
-    pane.appendChild(item);
+  const fresh = S.notifications.filter((n) => !S.shownNotes.has(String(n.id)));
+  fresh.reverse().forEach((n) => {
+    S.shownNotes.add(String(n.id));
+    killWelcome();
+    stream().appendChild(noteCard(n));
+    scrollDown();
   });
 }
+
+/* кнопки в шапке: показать сводку прямо в диалоге */
+$('#notifyBtn').addEventListener('click', async () => {
+  showView('chat'); killWelcome();
+  const box = el('div', 'chat-card note-digest');
+  const list = S.notifications.slice(0, 10);
+  box.innerHTML = '<div class="cc-head"><span class="cc-ico ico-notes">◔</span>Уведомления' +
+    '<span class="cc-count">' + list.length + '</span></div>';
+  if (!list.length) {
+    box.appendChild(el('div', 'empty', '<span class="e-ico">◔</span>Пока тихо.<br>' +
+      'Здесь будут отчёты фоновых задач и мои подсказки.'));
+  } else {
+    list.forEach((n) => box.appendChild(noteCard(n)));
+  }
+  stream().appendChild(box); scrollDown(true);
+  await api('/api/notifications/read', {});
+  refreshState();
+});
+
+$('#approvalsBtn').addEventListener('click', () => {
+  showView('chat'); killWelcome();
+  if (!S.approvals.length) {
+    const box = el('div', 'chat-card note-digest');
+    box.innerHTML = '<div class="cc-head"><span class="cc-ico ico-sanct">⛨</span>Санкции' +
+      '<span class="cc-count">0</span></div>' +
+      '<div class="empty"><span class="e-ico">⛨</span>Ничего не жду.<br>' +
+      'Опасные действия — оплата, удаление, управление компьютером — я всегда спрошу здесь.</div>';
+    stream().appendChild(box); scrollDown(true);
+    return;
+  }
+  const last = S.sanctionNodes[String(S.approvals[0].id)];
+  if (last && last.isConnected) {
+    last.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    last.classList.remove('flash'); void last.offsetWidth; last.classList.add('flash');
+  } else {
+    S.approvals.forEach((a) => { S.shownApprovals.delete(String(a.id)); });
+    renderSanctions();
+  }
+});
 
 /* ============================ AUTO ============================ */
 async function loadTasks() {
@@ -1233,7 +1405,7 @@ function renderSettings() {
 /* ============================ старт ============================ */
 window.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); newChat(); }
-  if (e.key === 'Escape') { closeModal(); $('#drawer').classList.remove('open'); }
+  if (e.key === 'Escape') closeModal();
 });
 
 (async function init() {

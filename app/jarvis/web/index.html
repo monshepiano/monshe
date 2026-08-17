@@ -85,7 +85,6 @@
 
     <!-- ВЕРХНЯЯ ПАНЕЛЬ -->
     <header class="topbar">
-      <button class="icon-btn menu-toggle" id="menuToggle">☰</button>
       <div class="status-cluster">
         <div class="status-chip" id="chipConn"><i class="dot"></i><span>соединение</span></div>
         <div class="status-chip" id="chipModel"><i class="dot ok"></i><span>модель</span></div>
@@ -123,7 +122,7 @@
             <button class="toggle" id="tgAgent" data-tip="Разбивает задачу на шаги и выполняет сам">
               <span class="tg-dot"></span>Агент
             </button>
-            <button class="toggle" id="tgCamera" data-tip="Камера и зрение">
+            <button class="toggle" id="tgCamera" data-tip="Живое распознавание: камера прямо в диалоге">
               <span class="tg-dot"></span>Камера
             </button>
             <button class="toggle" id="tgComputer" data-tip="Управление мышью и клавиатурой">
@@ -178,52 +177,6 @@
     </section>
   </main>
 
-  <!-- ================= ПРАВАЯ ПАНЕЛЬ (выезжающая) ================= -->
-  <aside class="drawer" id="drawer">
-    <div class="drawer-head">
-      <div class="drawer-tabs">
-        <button class="dtab active" data-dtab="center">Центр</button>
-        <button class="dtab" data-dtab="camera">Камера</button>
-      </div>
-      <button class="icon-btn" id="drawerClose">✕</button>
-    </div>
-    <div class="drawer-body">
-      <!-- единая панель: сверху уведомления, снизу санкции -->
-      <div class="dpane active" id="dpane-center">
-        <section class="dsection" id="secNotes">
-          <div class="dsec-head">
-            <span class="dsec-ico ico-notes">◔</span>
-            <h3>Уведомления</h3>
-            <span class="dsec-count" id="notesCount">0</span>
-          </div>
-          <div class="dsec-body" id="dpane-notes"></div>
-        </section>
-        <section class="dsection" id="secSanctions">
-          <div class="dsec-head">
-            <span class="dsec-ico ico-sanct">⛨</span>
-            <h3>Санкции</h3>
-            <span class="dsec-count" id="sanctCount">0</span>
-          </div>
-          <div class="dsec-body" id="dpane-sanctions"></div>
-        </section>
-      </div>
-      <div class="dpane" id="dpane-camera">
-        <div class="cam-wrap">
-          <video id="cam" autoplay playsinline muted></video>
-          <div class="cam-scan"></div>
-          <div class="cam-corners"><i></i><i></i><i></i><i></i></div>
-        </div>
-        <div class="cam-menu">
-          <button class="btn" id="camStart">Включить</button>
-          <button class="btn" id="camShot">Что это? / Снимок</button>
-          <button class="btn" id="camBuy">«Купи такую же»</button>
-          <button class="btn ghost" id="camStop">Выключить</button>
-        </div>
-        <div class="cam-note muted">Кадр уходит vision-модели: JARVIS распознаёт объект и может найти его в магазинах.</div>
-        <div class="cam-result" id="camResult"></div>
-      </div>
-    </div>
-  </aside>
 </div>
 
 <!-- ТОСТЫ -->
