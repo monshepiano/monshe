@@ -268,7 +268,21 @@ button,input,textarea,select{font-family:inherit;color:inherit}
 .dots span:nth-child(3){animation-delay:.36s;background:var(--violet)}
 @keyframes bounce{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-5px);opacity:1}}
 .think-stream{font-family:var(--fm);font-size:11.5px;color:var(--tx3);line-height:1.75;white-space:pre-wrap;
-  max-height:220px;overflow:auto;padding:2px 0}
+  max-height:220px;overflow:auto;padding:2px 0;scroll-behavior:smooth}
+/* пока блок «живой» — тонкая бегущая полоска сверху и мягкое свечение рамки */
+.panel-card.live{border-color:rgba(0,200,240,.34);box-shadow:0 0 0 1px rgba(0,200,240,.07),0 6px 22px rgba(0,0,0,.3)}
+.panel-card.live .card-head{position:relative}
+.panel-card.live .card-head::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--cy),transparent);background-size:180% 100%;
+  animation:liveBar 1.5s linear infinite}
+@keyframes liveBar{from{background-position:180% 0}to{background-position:-80% 0}}
+.think-card.live .card-head .k{animation:blink 1.1s infinite}
+/* курсор в конце бегущих мыслей */
+.think-card.live .think-stream::after{content:'▍';color:var(--cy);animation:blink 1s steps(1) infinite}
+/* карточку можно закрыть кликом по любому пустому месту её тела */
+.card-body.open .card-inner{cursor:zoom-out}
+.card-inner pre,.card-inner .kv,.card-inner .think-stream,.card-inner .plan-list,
+.card-inner input,.card-inner button,.card-inner a{cursor:auto}
 
 /* план */
 .plan-list{list-style:none;margin:0;padding:2px 0 4px}
@@ -600,7 +614,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 
 /* тосты */
 .toasts{position:fixed;top:66px;right:20px;z-index:200;display:flex;flex-direction:column;gap:9px;pointer-events:none}
-.toast{display:flex;align-items:center;gap:10px;padding:11px 15px;border-radius:12px;border:1px solid var(--line2);
+.toast{cursor:pointer;display:flex;align-items:center;gap:10px;padding:11px 15px;border-radius:12px;border:1px solid var(--line2);
   background:rgba(8,17,29,.96);backdrop-filter:blur(16px);font-size:12.5px;box-shadow:var(--shadow);
   animation:toastIn .4s cubic-bezier(.2,.9,.3,1) both;pointer-events:auto;max-width:330px}
 .toast.out{animation:toastOut .35s both}
@@ -843,3 +857,24 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .bg-card{margin:10px 0;border:1px solid rgba(47,156,146,.32);border-radius:12px;
   background:rgba(47,156,146,.07)}
 .bg-card b{font-size:12.5px;letter-spacing:.02em}
+
+
+/* ---- переключатель версий отредактированного сообщения ---- */
+.ver-switch{display:flex;align-items:center;gap:6px;justify-content:flex-end;margin:5px 2px 0;opacity:.75;
+  transition:.2s}
+.msg-user:hover .ver-switch{opacity:1}
+.ver-btn{width:20px;height:20px;border-radius:6px;border:1px solid var(--line2);background:transparent;
+  color:var(--tx2);font-size:12px;line-height:1;cursor:pointer;display:grid;place-items:center;transition:.18s}
+.ver-btn:hover:not(:disabled){border-color:var(--cy);color:var(--cy);background:rgba(0,200,240,.1)}
+.ver-btn:disabled{opacity:.3;cursor:default}
+.ver-num{font-family:var(--fm);font-size:10.5px;color:var(--tx3);min-width:26px;text-align:center}
+
+/* ---- плашка «правлю сообщение» над полем ввода ---- */
+.edit-bar{display:flex;align-items:center;gap:9px;margin:0 0 7px;padding:7px 12px;border-radius:11px;
+  border:1px solid rgba(217,164,65,.4);background:rgba(217,164,65,.09);font-size:11.5px;color:var(--tx2);
+  animation:slideIn .25s both}
+.edit-bar .eb-i{color:var(--gold)}
+.edit-bar .eb-t{flex:1}
+.edit-bar .eb-x{border:none;background:transparent;color:var(--tx3);font-size:11px;cursor:pointer;
+  text-decoration:underline;padding:0}
+.edit-bar .eb-x:hover{color:var(--red)}

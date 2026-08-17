@@ -112,6 +112,30 @@ def in_quiet_hours() -> bool:
 
 
 # --------------------------------------------------------------- исполнение
+def _norm(text: str) -> str:
+    """Грубая нормализация фразы: для сравнения задач между собой."""
+    return re.sub(r"[^\w]+", " ", (text or "").lower()).strip()
+
+
+def has_similar_pending(text: str, chat_id: str = "") -> bool:
+    """Уже есть незавершённая задача с тем же смыслом из этого же диалога?
+
+    Спасает от ситуации, когда пользователь повторил просьбу, а модель ещё и
+    сама вызвала schedule_task — и в AUTO появлялось два-три клона.
+    """
+    want = _norm(text)
+    if not want:
+        return False
+    for task in db.list_tasks():
+        if task.get("status") not in ("queued", "scheduled", "running"):
+            continue
+        if chat_id and task.get("chat_id") and task.get("chat_id") != chat_id:
+            continue
+        if _norm(task.get("prompt", "")) == want:
+            return True
+    return False
+
+
 def execute_task(task_id: str) -> None:
     task = db.get_task(task_id)
     if not task or _RUNNING.get(task_id):
@@ -127,6 +151,12 @@ def execute_task(task_id: str) -> None:
         db.update_task(task_id, status="done", progress=1.0, result=content)
         db.append_task_event(task_id, {"type": "done", "text": "Готово"})
         db.notify("AUTO: " + task["title"], content[:300], "success")
+        # пишем ответ прямо в диалог, откуда задачу поставили, — пользователь
+        # просил «напиши мне», значит сообщение должно появиться в переписке
+        if task.get("chat_id"):
+            db.add_message(task["chat_id"], "assistant", content,
+                           {"task_id": task_id, "from_auto": True,
+                            "files": files, "title": task.get("title", "")})
         _telegram_report(task["title"], content, files)
 
         schedule = task.get("schedule") or ""

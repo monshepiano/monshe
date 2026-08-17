@@ -67,13 +67,17 @@ def looks_agentic(text: str) -> bool:
 
 
 def choose_tier(text: str, has_image: bool = False, agent_mode: bool = False,
-                has_tools: bool = False) -> Dict[str, Any]:
+                has_tools: bool = False, computer_use: bool = False) -> Dict[str, Any]:
     """Возвращает {tier, reason, score}."""
     forced = CONFIG.get("orchestrator.force_tier") or ""
     if forced:
         return {"tier": forced, "reason": "принудительно в настройках", "score": 1.0}
     if not CONFIG.get("orchestrator.auto_route", True):
         return {"tier": "base", "reason": "авто-маршрутизация выключена", "score": 0.5}
+    if computer_use:
+        # управлять мышью «на глазок» нельзя: нужна модель, которая видит экран
+        # и уверенно вызывает инструменты, иначе она просто обещает и не делает
+        return {"tier": "vision", "reason": "управление компьютером — смотрю на экран", "score": 1.0}
     if has_image:
         return {"tier": "vision", "reason": "во вложении изображение — нужна vision-модель", "score": 1.0}
 

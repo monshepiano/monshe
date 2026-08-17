@@ -176,6 +176,70 @@ def get_messages(chat_id: str, limit: int = 200) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------- tasks
+def get_message(msg_id: str) -> Optional[Dict[str, Any]]:
+    row = query_one("SELECT * FROM messages WHERE id=?", (msg_id,))
+    if row:
+        try:
+            row["meta"] = json.loads(row.get("meta") or "{}")
+        except Exception:
+            row["meta"] = {}
+    return row
+
+
+def edit_message(msg_id: str, new_content: str) -> Optional[Dict[str, Any]]:
+    """Правка сообщения = НОВАЯ ВЕРСИЯ старого, а не новое сообщение.
+
+    Все варианты текста живут в meta.versions, meta.version — номер активного.
+    Так пользователь может переключаться между «было» и «стало».
+    """
+    msg = get_message(msg_id)
+    if not msg:
+        return None
+    meta = msg.get("meta") or {}
+    versions = list(meta.get("versions") or [msg.get("content", "")])
+    versions.append(new_content)
+    meta["versions"] = versions
+    meta["version"] = len(versions) - 1
+    execute(
+        "UPDATE messages SET content=?, meta=? WHERE id=?",
+        (new_content, json.dumps(meta, ensure_ascii=False), msg_id),
+    )
+    return get_message(msg_id)
+
+
+def switch_message_version(msg_id: str, index: int) -> Optional[Dict[str, Any]]:
+    """Показать другую версию сообщения (переключатель ‹ 2/3 ›)."""
+    msg = get_message(msg_id)
+    if not msg:
+        return None
+    meta = msg.get("meta") or {}
+    versions = list(meta.get("versions") or [msg.get("content", "")])
+    if not versions:
+        return msg
+    index = max(0, min(int(index), len(versions) - 1))
+    meta["versions"] = versions
+    meta["version"] = index
+    execute(
+        "UPDATE messages SET content=?, meta=? WHERE id=?",
+        (versions[index], json.dumps(meta, ensure_ascii=False), msg_id),
+    )
+    return get_message(msg_id)
+
+
+def delete_messages_after(chat_id: str, msg_id: str) -> int:
+    """Убрать всё, что шло после отредактированного сообщения: ответы устарели."""
+    msg = get_message(msg_id)
+    if not msg:
+        return 0
+    rows = query(
+        "SELECT id FROM messages WHERE chat_id=? AND (created_at>? OR (created_at=? AND id>?))",
+        (chat_id, msg["created_at"], msg["created_at"], msg_id),
+    )
+    for row in rows:
+        execute("DELETE FROM messages WHERE id=?", (row["id"],))
+    return len(rows)
+
+
 def create_task(title: str, prompt: str, mode: str = "auto", schedule: str = "", chat_id: str = "") -> Dict[str, Any]:
     task_id = uid("t_")
     ts = now()

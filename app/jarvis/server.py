@@ -209,6 +209,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config/update":
             CONFIG.update(body.get("patch") or {})
             return self._json({"ok": True, "config": CONFIG.public()})
+        if path == "/api/messages/version":
+            msg = db.switch_message_version(body.get("id", ""), int(body.get("index", 0)))
+            return self._json({"ok": bool(msg), "message": msg})
         if path == "/api/memory/add":
             return self._json({"ok": True, "item": db.remember(body.get("kind", "fact"),
                                                                body.get("key", ""), body.get("value", ""))})
@@ -350,7 +353,17 @@ class Handler(BaseHTTPRequestHandler):
         user_meta = {"attachments": [{"name": a.get("name"), "kind": a.get("kind"),
                                       "url": a.get("download_url")} for a in attachments],
                      "agent_mode": agent_mode, "computer_use": computer_use}
-        db.add_message(chat_id, "user", text, user_meta)
+        edit_of = body.get("edit_of") or ""
+        if edit_of and db.get_message(edit_of):
+            # это правка: добавляем ВЕРСИЮ к старому сообщению и убираем
+            # устаревший ответ, вместо того чтобы плодить новую пару реплик
+            db.delete_messages_after(chat_id, edit_of)
+            edited = db.edit_message(edit_of, text)
+            self._sse({"type": "edited", "id": edit_of,
+                       "versions": ((edited or {}).get("meta") or {}).get("versions", []),
+                       "version": ((edited or {}).get("meta") or {}).get("version", 0)})
+        else:
+            db.add_message(chat_id, "user", text, user_meta)
 
         # название диалога придумывает сам JARVIS
         history_all = db.get_messages(chat_id)
@@ -361,6 +374,9 @@ class Handler(BaseHTTPRequestHandler):
 
         # фон?
         decision = auto.should_background(text)
+        # защита от дублей: такая же задача из этого чата, уже стоящая в очереди
+        if decision["background"] and auto.has_similar_pending(text, chat_id):
+            decision = {"background": False, "schedule": "", "reason": ""}
         if decision["background"] and not computer_use and not attachments:
             task_title = orchestrator.make_task_title(text)
             task = auto.create_background_task(title=task_title, prompt=text,
@@ -416,18 +432,29 @@ class Handler(BaseHTTPRequestHandler):
         files: List[Dict[str, Any]] = []
         used_tools: List[str] = []
         alive = True
+        partial: List[str] = []
         try:
             for event in runner.run(messages, user_text=text, has_image=has_image):
-                if event.get("type") == "done":
+                etype = event.get("type")
+                if etype == "delta":
+                    partial.append(event.get("text", ""))
+                elif etype == "reset":
+                    partial = []
+                elif etype == "done":
                     final_text = event.get("content", "")
                     files = event.get("files", [])
                     used_tools = event.get("tools", [])
-                alive = self._sse(event)
-                if not alive:
-                    break
+                if alive:
+                    alive = self._sse(event)
+                # Если пользователь ушёл из диалога, соединение рвётся. Раньше мы
+                # прекращали работу и ответ пропадал. Теперь генерация доводится
+                # до конца молча, а результат сохраняется в переписку.
         except Exception as exc:
-            self._sse({"type": "error", "error": str(exc)})
+            if alive:
+                self._sse({"type": "error", "error": str(exc)})
         finally:
+            if not final_text:
+                final_text = "".join(partial).strip()
             if final_text:
                 db.add_message(chat_id, "assistant", final_text,
                                {"files": files, "tools": used_tools, "model": runner.model_used})

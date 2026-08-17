@@ -42,6 +42,10 @@ const S = {
   camBusy: false,
   camLast: '',
   camPrevPix: null,
+  editing: null,   // {id, node} — какое сообщение правим (новая версия, не новая реплика)
+  editBar: null,
+  detached: null,
+  detachTimer: null,
   sandbox: {},
 };
 
@@ -106,6 +110,12 @@ function toast(text, kind, title) {
   t.innerHTML = '<div class="ti">' + (icons[kind] || '◆') + '</div><div>' +
     (title ? '<div style="font-weight:600;margin-bottom:2px">' + esc(title) + '</div>' : '') +
     '<div>' + esc(text) + '</div></div>';
+  // клик в любое место уведомления убирает его сразу
+  t.title = 'Кликни, чтобы убрать';
+  t.addEventListener('click', () => {
+    t.classList.add('out');
+    setTimeout(() => t.remove(), 300);
+  });
   $('#toasts').appendChild(t);
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 400); }, 5200);
 }
@@ -295,7 +305,8 @@ function renderBalance(b) {
     val.textContent = Number(b.month_rub).toFixed(2) + ' ₽';
     row.querySelector('span').textContent = 'Cloud.ru за месяц';
     row.title = 'Расход по биллинг-API Cloud.ru с начала месяца.\n' +
-      'Баланс лицевого счёта в публичном API не отдаётся.';
+      'Баланс лицевого счёта Cloud.ru через API не отдаёт — смотри его\n' +
+      'в личном кабинете: Биллинг → Обзор.';
     return;
   }
   const local = Number(b.local_month_rub || 0);
@@ -386,6 +397,13 @@ $('#newChatBtn').addEventListener('click', newChat);
 
 async function openChat(id) {
   if (S.camStream) stopCam();
+  // Уходим из диалога во время ответа: генерацию НЕ обрываем — сервер доведёт
+  // её до конца и сохранит в переписку. Просто отпускаем интерфейс.
+  if (S.streaming && id !== S.chatId) {
+    S.detached = S.chatId;
+    setStreaming(false);
+    toast('Ответ дописывается в фоне — вернись в диалог позже', 'info', 'Генерация');
+  }
   S.sanctionNodes = {};
   S.chatId = id;
   S.fdir = '';
@@ -393,7 +411,11 @@ async function openChat(id) {
   const r = await api('/api/messages?chat_id=' + encodeURIComponent(id));
   const stream = $('#stream'); stream.innerHTML = '';
   (r.messages || []).forEach((m) => {
-    if (m.role === 'user') addUserMsg(m.content, (m.meta || {}).attachments || []);
+    if (m.role === 'user') {
+      const mt = m.meta || {};
+      addUserMsg(m.content, mt.attachments || [],
+        { id: m.id, versions: mt.versions || [], version: mt.version || 0 });
+    }
     else if (m.role === 'assistant') {
       const node = addAiMsg();
       node.body.innerHTML = '<div class="md">' + MD.render(m.content) + '</div>';
@@ -406,6 +428,30 @@ async function openChat(id) {
   });
   stream.scrollTop = stream.scrollHeight;
   loadChats();
+  // диалог, который дописывался в фоне: тихо перечитываем, пока не появится ответ
+  if (S.detached === id) watchDetached(id);
+}
+
+/* Ответ дописывается на сервере, а мы уже в другом диалоге. Периодически
+   перечитываем переписку: как только ассистент договорил — показываем. */
+function watchDetached(id) {
+  clearTimeout(S.detachTimer);
+  let tries = 0;
+  const tick = async () => {
+    if (S.chatId !== id) return;
+    const r = await api('/api/messages?chat_id=' + encodeURIComponent(id));
+    const msgs = r.messages || [];
+    const last = msgs[msgs.length - 1];
+    if (last && last.role === 'assistant') {
+      S.detached = null;
+      if (!$$('.msg-ai', stream()).length || stream().lastElementChild.classList.contains('msg-user')) {
+        openChat(id);
+      }
+      return;
+    }
+    if (++tries < 120) S.detachTimer = setTimeout(tick, 1500);
+  };
+  S.detachTimer = setTimeout(tick, 1200);
 }
 
 const SUGGESTIONS = [
@@ -440,7 +486,65 @@ function scrollDown(force) {
 }
 function killWelcome() { const w = $('.welcome'); if (w) w.remove(); }
 
-function addUserMsg(text, atts) {
+/* ================== версии сообщений ==================
+   Правка не создаёт новую реплику: у сообщения появляется вторая версия,
+   между которыми можно переключаться стрелками ‹ 2/2 ›. */
+
+function renderVersions(node, versions, index) {
+  const old = node.querySelector(':scope > .ver-switch');
+  if (old) old.remove();
+  if (!versions || versions.length < 2) return;
+
+  const box = el('div', 'ver-switch');
+  const prev = el('button', 'ver-btn', '‹');
+  const label = el('span', 'ver-num', (index + 1) + '/' + versions.length);
+  const next = el('button', 'ver-btn', '›');
+  prev.disabled = index <= 0;
+  next.disabled = index >= versions.length - 1;
+  prev.title = 'Предыдущая версия';
+  next.title = 'Следующая версия';
+
+  const go = async (to) => {
+    const id = node.dataset.msgId;
+    if (!id) return;
+    const r = await api('/api/messages/version', { id, index: to });
+    if (!r.ok) { toast('Не получилось переключить версию', 'error'); return; }
+    const bubble = node.querySelector('.bubble-user');
+    if (bubble) bubble.textContent = versions[to];
+    renderVersions(node, versions, to);
+    beep(600, 0.05);
+  };
+  prev.addEventListener('click', () => go(index - 1));
+  next.addEventListener('click', () => go(index + 1));
+
+  box.appendChild(prev); box.appendChild(label); box.appendChild(next);
+  node.appendChild(box);
+}
+
+/* Плашка «редактирую сообщение» над полем ввода. */
+function showEditBar(original) {
+  hideEditBar();
+  const bar = el('div', 'edit-bar');
+  bar.innerHTML = '<span class="eb-i">✎</span><span class="eb-t">Правлю сообщение — сохраню как новую версию</span>';
+  const cancel = el('button', 'eb-x', 'отмена');
+  cancel.addEventListener('click', () => {
+    S.editing = null;
+    hideEditBar();
+    $('#input').value = '';
+    autoGrow(); updateSendBtn();
+  });
+  bar.appendChild(cancel);
+  const composer = $('#composer');
+  composer.parentNode.insertBefore(bar, composer);
+  S.editBar = bar;
+}
+
+function hideEditBar() {
+  if (S.editBar) { S.editBar.remove(); S.editBar = null; }
+}
+
+function addUserMsg(text, atts, info) {
+  info = info || {};
   killWelcome();
   const m = el('div', 'msg msg-user');
   let extra = '';
@@ -450,6 +554,8 @@ function addUserMsg(text, atts) {
       fileIcon(a.name) + ' ' + esc(a.name) + '</div>';
   });
   m.innerHTML = '<div class="bubble-user">' + esc(text) + extra + '</div>';
+  m.dataset.msgId = info.id || '';
+  renderVersions(m, info.versions || [], info.version || 0);
 
   // две кнопки под своим сообщением: скопировать и редактировать
   const acts = el('div', 'msg-actions');
@@ -464,6 +570,9 @@ function addUserMsg(text, atts) {
     // если JARVIS ещё печатает — останавливаем поток, иначе кнопка залипает на «стоп»
     if (S.streaming) { await stopStream(); }
     const inp = $('#input');
+    // правка станет ВТОРОЙ ВЕРСИЕЙ этого сообщения, а не новой репликой
+    S.editing = { id: m.dataset.msgId || '', node: m };
+    if (S.editing.id) showEditBar(text);
     inp.value = text;
     autoGrow(); inp.focus();
     try { inp.setSelectionRange(text.length, text.length); } catch (e) {}
@@ -473,7 +582,9 @@ function addUserMsg(text, atts) {
       if (b) b.classList.remove('editing');
     }, 1600);
     updateSendBtn();
-    toast('Текст перенесён в поле ввода — правь и отправляй', 'info');
+    toast(S.editing.id
+      ? 'Правь и отправляй — сохраню как новую версию этого сообщения'
+      : 'Текст перенесён в поле ввода — правь и отправляй', 'info');
   });
   acts.appendChild(copy); acts.appendChild(edit);
   m.appendChild(acts);
@@ -530,8 +641,14 @@ function makeCard(icon, title, cls, openByDefault) {
     '<div class="card-body' + (openByDefault ? ' open' : '') + '"><div class="card-inner"></div></div>';
   const head = card.querySelector('.card-head');
   const body = card.querySelector('.card-body');
-  head.addEventListener('click', () => {
-    head.classList.toggle('open'); body.classList.toggle('open');
+  const toggle = () => { head.classList.toggle('open'); body.classList.toggle('open'); };
+  head.addEventListener('click', toggle);
+  // Свернуть можно кликом по любому пустому месту внутри карточки, а не только
+  // по маленькой стрелке. Клики по тексту, полям и кнопкам не трогаем.
+  body.addEventListener('click', (e) => {
+    if (window.getSelection && String(window.getSelection()).length) return;
+    if (e.target.closest('pre,.kv,.think-stream,.plan-list,input,textarea,button,a,select,img,label,.thumb')) return;
+    toggle();
   });
   card.inner = card.querySelector('.card-inner');
   card.setTitle = (t) => { card.querySelector('.t').innerHTML = t; };
@@ -619,13 +736,25 @@ function addFoldButton(node, opts) {
   if (!node || node.querySelector(':scope > .th-fold')) return;
   node.classList.add('foldable');
   const b = el('i', 'th-fold');
-  b.title = 'Свернуть';
+  b.title = 'Свернуть (или кликни по пустому месту)';
   b.textContent = '⌃';
-  b.addEventListener('click', (e) => {
-    e.stopPropagation();
+  const fold = (e) => {
+    if (e) e.stopPropagation();
     b.remove();
+    node.removeEventListener('click', bgFold);
     collapseToThumb(node, opts);
-  });
+  };
+  b.addEventListener('click', fold);
+  // Клик в ЛЮБУЮ пустую зону окошка тоже сворачивает: попадать в мелкую
+  // стрелку не нужно. Видео, кнопки, поля и выделение текста не задеваем.
+  function bgFold(e) {
+    if (window.getSelection && String(window.getSelection()).length) return;
+    if (e.target.closest(
+      'button,a,input,textarea,select,label,video,canvas,pre,img,' +
+      '.card-head,.card-body,.thumb,.msg-actions,.approve-actions,.cam-feed,.term-feed')) return;
+    fold();
+  }
+  node.addEventListener('click', bgFold);
   node.appendChild(b);
 }
 
@@ -727,7 +856,17 @@ async function send() {
     if (frame) { frame.fromCam = true; S.attachments.push(frame); }
   }
 
-  addUserMsg(text, S.attachments);
+  // правка: подменяем текст на месте и убираем устаревший ответ ниже
+  const editing = S.editing && S.editing.id ? S.editing : null;
+  S.editing = null; hideEditBar();
+  if (editing && editing.node && editing.node.isConnected) {
+    const bubble = editing.node.querySelector('.bubble-user');
+    if (bubble) bubble.textContent = text;
+    let sib = editing.node.nextElementSibling;
+    while (sib) { const nx = sib.nextElementSibling; sib.remove(); sib = nx; }
+  } else {
+    addUserMsg(text, S.attachments);
+  }
   input.value = ''; autoGrow();
   const atts = S.attachments.slice();
   S.attachments = []; renderAttachments();
@@ -763,6 +902,7 @@ async function send() {
       signal: S.abort.signal,
       body: JSON.stringify({
         chat_id: S.chatId, text,
+        edit_of: editing ? editing.id : '',
         agent_mode: S.agentMode,
         computer_use: S.computerUse,
         attachments: atts,
@@ -931,6 +1071,13 @@ function handleEvent(ev, ui) {
       break;
     }
 
+    case 'edited': {
+      // сервер подтвердил: правка сохранена как ещё одна версия
+      const target = $$('.msg-user', stream()).find((n) => n.dataset.msgId === ev.id);
+      if (target) renderVersions(target, ev.versions || [], ev.version || 0);
+      break;
+    }
+
     case 'route': {
       const hint = $('#routeHint');
       hint.textContent = 'маршрут: ' + (TIER_LABEL[ev.tier] || ev.tier) + ' · ' + (ev.reason || '');
@@ -952,13 +1099,18 @@ function handleEvent(ev, ui) {
 
     case 'thinking': {
       if (!ui.thinkCard) {
-        ui.thinkCard = makeCard('◇', 'Ход мыслей', 'think-card', false);
+        // карточка раскрыта сразу: мысли должны бежать на глазах, как в терминале
+        ui.thinkCard = makeCard('◇', 'Ход мыслей', 'think-card live', true);
         ui.thinkCard.inner.appendChild(el('div', 'think-stream'));
         node.body.insertBefore(ui.thinkCard, ui.statusEl);
       }
       const ts = ui.thinkCard.querySelector('.think-stream');
       ts.textContent += ev.text;
-      ts.scrollTop = ts.scrollHeight;
+      // автопрокрутка — только если пользователь сам не отлистал вверх
+      const atEnd = ts.scrollHeight - ts.scrollTop - ts.clientHeight < 60;
+      if (atEnd) ts.scrollTop = ts.scrollHeight;
+      ui.thinkCard.setTitle('Ход мыслей <span class="muted" style="font-size:10.5px">· думаю…</span>');
+      scrollDown();
       break;
     }
 
@@ -985,7 +1137,7 @@ function handleEvent(ev, ui) {
       break;
 
     case 'tool_start': {
-      const card = makeCard('⚙', ev.label || ev.name, 'tool-card', false);
+      const card = makeCard('⚙', ev.label || ev.name, 'tool-card live', true);
       card.querySelector('.card-head').insertBefore(el('span', 'tool-run'), card.querySelector('.chev'));
       const kv = el('div', 'kv');
       Object.keys(ev.args || {}).forEach((k) => {
@@ -1064,6 +1216,14 @@ function handleEvent(ev, ui) {
         else txt = JSON.stringify(r, null, 1).slice(0, 4000);
         pre.textContent = txt || '(пусто)';
         card.inner.appendChild(pre);
+        card.classList.remove('live');
+        // отработал — сворачиваем в миниатюру, чтобы диалог шёл дальше
+        collapseToThumb(card, {
+          cls: ok ? 'th-ok' : 'th-no', icon: ICO.code,
+          title: ev.label || ev.name,
+          sub: ev.elapsed != null ? ev.elapsed + 'с' : '',
+          tag: ok ? 'готово' : 'ошибка',
+        });
       }
       termLine((ok ? '✓ ' : '✕ ') + ev.name + (ev.result && ev.result.error ? ' — ' + ev.result.error : ' — ok'),
         ok ? '' : 'err');
@@ -1100,6 +1260,7 @@ function handleEvent(ev, ui) {
     case 'delta': {
       if (!ui.mdEl) {
         if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
+        if (ui.thinkCard) ui.thinkCard.classList.remove('live');
         // пошёл ответ — ход мыслей сразу убираем в миниатюру, чтобы не мешал читать
         if (ui.thinkCard && ui.thinkCard.isConnected) {
           const ts0 = ui.thinkCard.querySelector('.think-stream');
@@ -1223,7 +1384,57 @@ function renderAttachments() {
 }
 
 /* ============================ голос ============================ */
-$('#micBtn').addEventListener('click', async function () {
+/* ---------------------------------------------------------------- микрофон
+   Два пути: распознавание прямо в браузере (мгновенно, без интернета к нам)
+   и запись с отправкой на сервер. Браузерный путь основной — он работает
+   всегда; серверный включается, если браузер не умеет слушать сам. */
+
+function browserASR(btn) {
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Rec) return false;
+  if (S.asr) { try { S.asr.stop(); } catch (e) {} S.asr = null; return true; }
+
+  const rec = new Rec();
+  rec.lang = 'ru-RU';
+  rec.continuous = true;
+  rec.interimResults = true;
+  S.asr = rec;
+
+  const input = $('#input');
+  const basis = input.value ? input.value.replace(/\s+$/, '') + ' ' : '';
+  let settled = '';
+
+  rec.onresult = (ev) => {
+    let live = '';
+    for (let k = ev.resultIndex; k < ev.results.length; k++) {
+      const chunk = ev.results[k][0].transcript;
+      if (ev.results[k].isFinal) settled += chunk + ' ';
+      else live += chunk;
+    }
+    input.value = (basis + settled + live).replace(/\s+/g, ' ').trimStart();
+    autoGrow();
+  };
+  rec.onerror = (ev) => {
+    if (ev.error === 'not-allowed') toast('Разреши доступ к микрофону', 'error');
+    else if (ev.error !== 'aborted' && ev.error !== 'no-speech') toast('Не расслышал, повтори', 'warn');
+  };
+  rec.onend = () => {
+    S.asr = null;
+    btn.classList.remove('rec');
+    input.value = input.value.trim();
+    autoGrow();
+    if (input.value) input.focus();
+    updateSendBtn();
+  };
+
+  try { rec.start(); } catch (e) { S.asr = null; return false; }
+  btn.classList.add('rec');
+  beep(560, 0.1);
+  toast('Слушаю… нажми ещё раз, чтобы закончить', 'info', 'Микрофон');
+  return true;
+}
+
+async function serverASR(btn) {
   if (S.recorder && S.recorder.state === 'recording') { S.recorder.stop(); return; }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1233,7 +1444,8 @@ $('#micBtn').addEventListener('click', async function () {
     rec.ondataavailable = (e) => S.recChunks.push(e.data);
     rec.onstop = async () => {
       stream.getTracks().forEach((t) => t.stop());
-      this.classList.remove('rec');
+      S.recorder = null;
+      btn.classList.remove('rec');
       const blob = new Blob(S.recChunks, { type: 'audio/webm' });
       const fr = new FileReader();
       fr.onload = async () => {
@@ -1241,20 +1453,27 @@ $('#micBtn').addEventListener('click', async function () {
         const r = await api('/api/transcribe', { audio: fr.result, language: 'ru' });
         if (r.ok && r.text) {
           $('#input').value = ($('#input').value + ' ' + r.text).trim();
-          autoGrow(); $('#input').focus();
+          autoGrow(); $('#input').focus(); updateSendBtn();
+        } else if (r.browser_asr && browserASR(btn)) {
+          /* сервер не умеет — сразу слушаем браузером, без ругани в лицо */
         } else {
-          toast(r.error || 'не удалось распознать', 'error');
+          toast(r.error || 'Не удалось распознать', 'error');
         }
       };
       fr.readAsDataURL(blob);
     };
     rec.start();
-    this.classList.add('rec');
+    btn.classList.add('rec');
     beep(560, 0.1);
     toast('Говори… нажми ещё раз, чтобы остановить', 'info', 'Запись');
   } catch (e) {
     toast('Нет доступа к микрофону', 'error');
   }
+}
+
+$('#micBtn').addEventListener('click', function () {
+  if (browserASR(this)) return;   // основной путь
+  serverASR(this);                // запасной
 });
 
 /* ============================ камера в диалоге ============================ */
@@ -1293,6 +1512,8 @@ async function startCam() {
   killWelcome();
   S.camNode = buildCamCard();
   stream().appendChild(S.camNode);
+  // окно камеры сворачивается кликом по любому пустому месту (не по видео)
+  addFoldButton(S.camNode, { cls: 'th-cam', icon: ICO.cam, title: 'Камера', tag: 'свёрнута' });
   scrollDown(true);
   try {
     S.camStream = await navigator.mediaDevices.getUserMedia({
@@ -2070,10 +2291,16 @@ function renderSettings() {
   const bc = c.billing || {};
   const bs = S.billing || {};
   bl.innerHTML = '<h3>Биллинг Cloud.ru</h3>' +
-    '<div class="sd">Если дать мне ключ личного кабинета, слева я буду показывать реальный расход ' +
-    'из Cloud.ru, а не свою оценку. Ключ создаётся в консоли Cloud.ru: ' +
-    '<b>Профиль → Сервисные аккаунты → Ключи доступа</b>. Аккаунту нужна роль ' +
-    '«Администратор расходов» (platform.customer.expense-admin).</div>' +
+    '<div class="sd">Важно: Cloud.ru <b>не отдаёт баланс лицевого счёта</b> через API — ' +
+    'такого метода просто нет. Доступен только <b>расход</b> за период. Сам баланс ' +
+    'смотри в личном кабинете: <b>Биллинг → Обзор</b> на <b>cloud.ru</b>.</div>' +
+    '<div class="sd" style="margin-top:8px">Чтобы я показывал реальный расход вместо своей ' +
+    'оценки, дай ключ сервисного аккаунта. В консоли Cloud.ru: <b>Пользователи → ' +
+    'Сервисные аккаунты</b> → создай аккаунт (или открой готовый) → в карточке блок ' +
+    '<b>Учетные данные доступа</b> → вкладка <b>Ключи доступа</b> → <b>Создать ключ</b>. ' +
+    'Key Secret показывается один раз — скопируй сразу. Аккаунту нужна роль ' +
+    '<b>Администратор расходов</b> (platform.customer.expense-admin) или Администратор ' +
+    'проекта, иначе придёт ошибка доступа.</div>' +
     '<div class="switch"><span>Показывать баланс и расход</span>' +
     '<div class="sw' + (bc.enabled ? ' on' : '') + '" id="bEn"></div></div>' +
     '<div class="field"><label>Key ID</label><input id="bKid" placeholder="' +

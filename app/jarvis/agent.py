@@ -78,9 +78,24 @@ title (коротко о чём), prompt (что именно сделать, к
 """
     if computer_use:
         base += """
-РЕЖИМ УПРАВЛЕНИЯ КОМПЬЮТЕРОМ:
-Сначала screen_info, затем screenshot, затем анализируй изображение и определяй координаты цели.
-Действуй маленькими шагами: клик → скриншот → проверка результата. Пиши, что видишь на экране.
+РЕЖИМ УПРАВЛЕНИЯ КОМПЬЮТЕРОМ — ЖЕЛЕЗНОЕ ПРАВИЛО:
+Курсор и клавиатура двигаются ТОЛЬКО вызовом инструментов. Текст ответа ничего не делает.
+
+ЗАПРЕЩЕНО писать «сейчас перемещу курсор», «нажал», «открыл», «кликнул», если ты
+не вызвал соответствующий инструмент и не увидел его результат. Это ложь, а не работа.
+Никогда не описывай содержимое экрана по памяти или догадке — только по свежему скриншоту.
+
+ПОРЯДОК ДЕЙСТВИЙ:
+1. screen_info — узнать размер экрана.
+2. screenshot — увидеть, что там сейчас.
+3. Найти цель на изображении и посчитать координаты в пикселях.
+4. Вызвать mouse_move / mouse_click / type_text / press_key / open_app.
+5. Снова screenshot — убедиться, что получилось. Не получилось — поправить и повторить.
+
+Каждый шаг — отдельный вызов инструмента. Между шагами коротко говори, что видишь.
+Итог сообщай только после того, как последний скриншот подтвердил результат.
+Если инструмент вернул ошибку (нет прав, не macOS) — честно скажи об этом
+и объясни, что включить в Системных настройках, вместо выдуманного успеха.
 """
     if agent_mode:
         base += """
@@ -137,6 +152,21 @@ def detect_payment_intent(args: Dict[str, Any]) -> bool:
     return any(word in blob for word in ("оплат", "купить", "payment", "checkout", "оформить заказ", "картой"))
 
 
+COMPUTER_TOOLS = {
+    "mouse_click", "mouse_move", "mouse_scroll", "mouse_drag",
+    "type_text", "press_key", "open_app", "screenshot",
+}
+
+# «сейчас нажму», «кликнул», «открыл окно» — заявка на действие
+_ACTION_CLAIM = re.compile(
+    r"(перемещ|навед|нажал|нажим|кликн|щёлкн|щелкн|открыл|открыва|печата|ввёл|ввел|"
+    r"переключ|прокрут|скролл|курсор)", re.I)
+
+
+def _claims_action(text: str) -> bool:
+    return bool(_ACTION_CLAIM.search(text or ""))
+
+
 class Agent:
     """Один прогон агента (чат-ответ или фоновая задача)."""
 
@@ -170,6 +200,16 @@ class Agent:
     @staticmethod
     def _append_tool_result(convo: List[Dict[str, Any]], call: Dict[str, Any], name: str,
                             result: Any, from_text: bool) -> None:
+        # Скриншот — это картинка, а не текст. Раньше data-url обрезался на 14 000
+        # символов и модель «видела» мусор, поэтому выдумывала содержимое экрана.
+        # Теперь кадр уходит отдельным сообщением как настоящее изображение.
+        data_url = ""
+        if name == "screenshot" and isinstance(result, dict) and result.get("ok"):
+            data_url = result.get("data_url") or ""
+            if data_url:
+                result = {k: v for k, v in result.items() if k != "data_url"}
+                result["note"] = "снимок экрана приложен изображением ниже"
+
         payload = json.dumps(result, ensure_ascii=False)
         if len(payload) > 14000:
             payload = payload[:14000] + "…(обрезано)"
@@ -184,6 +224,17 @@ class Agent:
         else:
             convo.append({"role": "tool", "tool_call_id": call.get("id", ""),
                           "name": name, "content": payload})
+
+        if data_url:
+            convo.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "[Система] Вот текущий экран пользователя. "
+                                             "Найди на нём цель и посчитай координаты клика "
+                                             "в пикселях от левого верхнего угла."},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            })
 
     # ------------------------------------------------------------- planning
     def make_plan(self, task: str) -> List[str]:
@@ -209,11 +260,17 @@ class Agent:
         # каждый диалог работает в своей песочнице
         sandbox.set_chat(self.sandbox_id)
         route = orchestrator.choose_tier(
-            user_text, has_image=has_image, agent_mode=self.agent_mode, has_tools=True)
+            user_text, has_image=has_image, agent_mode=self.agent_mode, has_tools=True,
+            computer_use=self.computer_use)
         tier = route["tier"]
         yield {"type": "route", "tier": tier, "reason": route["reason"]}
 
         available = tools.schemas(_tool_groups(self.computer_use))
+        if self.task_id:
+            # мы УЖЕ внутри фоновой задачи: планировать ещё одну запрещено,
+            # иначе AUTO наполняется клонами одной и той же просьбы
+            available = [t for t in available
+                         if (t.get("function") or {}).get("name") != "schedule_task"]
         max_steps = MAX_STEPS_AGENT if self.agent_mode else MAX_STEPS_CHAT
 
         if self.agent_mode and user_text:
@@ -403,6 +460,21 @@ class Agent:
             final_text = self._fallback_summary()
             yield {"type": "delta", "text": final_text}
 
+        # Режим управления компьютером: модель могла «отчитаться» о кликах, не
+        # тронув мышь. Не выдаём выдумку за правду — честно предупреждаем.
+        if self.computer_use and not any(t in COMPUTER_TOOLS for t in self.used_tools):
+            if _claims_action(final_text):
+                final_text += (
+                    "\n\n---\n⚠️ **Я на самом деле ничего не нажал.** Управление "
+                    "компьютером не сработало: инструменты мыши и клавиатуры не "
+                    "выполнились.\n\nНа macOS это почти всегда права доступа. Открой "
+                    "**Системные настройки → Конфиденциальность и безопасность** и "
+                    "разреши Терминалу (или приложению, из которого запущен JARVIS) "
+                    "два пункта: **Универсальный доступ** и **Запись экрана**. "
+                    "После этого перезапусти JARVIS и повтори просьбу."
+                )
+                yield {"type": "delta", "text": final_text[final_text.index("\n\n---\n"):]}
+
         yield {"type": "done", "content": final_text, "files": self.created_files,
                "tools": self.used_tools, "model": self.model_used, "tier": tier}
 
@@ -426,8 +498,19 @@ def run_headless(prompt: str, task_id: str = "", agent_mode: bool = True,
                  chat_id: str = "") -> Dict[str, Any]:
     """Запуск без UI (для фоновых задач AUTO). Возвращает итог и лог событий."""
     agent = Agent(chat_id=chat_id, task_id=task_id, agent_mode=agent_mode, approvals_auto=False)
+    # Фоновая задача исполняется «сейчас»: время ожидания уже прошло, поэтому
+    # никаких «напомню позже» — нужен готовый текст, который увидит пользователь.
+    extra = (
+        "\n\nСЕЙЧАС ТЫ ВЫПОЛНЯЕШЬ ОТЛОЖЕННУЮ ЗАДАЧУ.\n"
+        "Назначенный момент наступил — выполняй прямо сейчас.\n"
+        "Не планируй задачу заново и не пиши, что напомнишь позже.\n"
+        "Если просили что-то написать или напомнить — просто напиши это "
+        "готовым текстом, обращаясь к пользователю.\n"
+        "Ответ попадёт в диалог и в уведомление, поэтому он должен быть "
+        "самодостаточным и по делу."
+    )
     messages = [
-        {"role": "system", "content": build_system_prompt(agent_mode=agent_mode)},
+        {"role": "system", "content": build_system_prompt(agent_mode=agent_mode) + extra},
         {"role": "user", "content": prompt},
     ]
     events: List[Dict[str, Any]] = []

@@ -61,6 +61,19 @@ def _ffmpeg() -> str | None:
     return None
 
 
+def _pick_audio_model() -> str:
+    """Найти в каталоге провайдера реальную модель распознавания речи."""
+    from .. import llm
+
+    prefs = [p.lower() for p in (llm.CONFIG.get("model_tiers.audio", []) or [])]
+    marks = prefs + ["whisper", "audio", "voxtral", "gigaam", "speech", "asr", "stt"]
+    for name in llm.list_models("cloudru"):
+        low = name.lower()
+        if any(m and m in low for m in marks):
+            return name
+    return ""
+
+
 def transcribe_audio(path_or_data_url: str, language: str = "ru") -> Dict[str, Any]:
     """Распознать речь из аудиофайла через Foundation Models (audio-to-text)."""
     from .. import llm
@@ -95,7 +108,13 @@ def transcribe_audio(path_or_data_url: str, language: str = "ru") -> Dict[str, A
         except Exception:
             pass
 
-    model = llm.pick_model("audio", "cloudru")
+    # Ищем настоящую audio-модель в каталоге. Раньше pick_model мог вернуть
+    # обычную чат-модель — и /audio/transcriptions отвечал 404.
+    model = _pick_audio_model()
+    if not model:
+        return {"ok": False, "browser_asr": True,
+                "error": "В каталоге Cloud.ru нет доступной модели распознавания речи. "
+                         "Переключаюсь на распознавание прямо в браузере."}
     boundary = "----jarvis%d" % int(time.time())
     parts = []
     parts.append(("--%s\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n%s\r\n" % (boundary, model)).encode())
@@ -116,7 +135,8 @@ def transcribe_audio(path_or_data_url: str, language: str = "ru") -> Dict[str, A
         text = payload.get("text") or payload.get("result") or ""
         return {"ok": bool(text), "text": text, "model": model}
     except Exception as exc:
-        return {"ok": False, "error": "ASR недоступен (%s). Используй распознавание речи в браузере." % exc}
+        return {"ok": False, "browser_asr": True,
+                "error": "Сервер распознавания не ответил (%s). Слушаю через браузер." % exc}
 
 
 def analyze_image(image_ref: str, question: str = "Что на изображении? Опиши подробно.") -> Dict[str, Any]:
