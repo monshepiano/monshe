@@ -96,4 +96,14 @@ def run_on_pc_page():
     return HTMLResponse(p.read_text(encoding="utf-8"))
 
 
+@app.get("/")
+def index_page():
+    return HTMLResponse((CLIENT / "index.html").read_text(encoding="utf-8"))
+
+
+@app.get("/index.html")
+def index_file():
+    return HTMLResponse((CLIENT / "index.html").read_text(encoding="utf-8"))
+
+
 app.mount("/", StaticFiles(directory=str(CLIENT), html=True), name="client")
