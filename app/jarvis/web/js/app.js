@@ -174,8 +174,24 @@ function showView(name) {
   if (name === 'settings') renderSettings();
 }
 $$('.nav-item').forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)));
-$('#menuToggle').addEventListener('click', () => $('#app').classList.toggle('nav-open'));
-$('#collapseBtn').addEventListener('click', () => $('#app').classList.toggle('collapsed'));
+/* сворачивание бокового меню.
+   На узком экране меню выезжает поверх (nav-open),
+   на широком — схлопывается колонка сетки (collapsed). */
+function isNarrow() { return window.matchMedia('(max-width:900px)').matches; }
+function toggleSidebar() {
+  const app = $('#app');
+  if (isNarrow()) { app.classList.toggle('nav-open'); return; }
+  app.classList.remove('nav-open');
+  const collapsed = app.classList.toggle('collapsed');
+  try { localStorage.setItem('jarvis.sidebar', collapsed ? 'collapsed' : 'open'); } catch (e) {}
+}
+$('#menuToggle').addEventListener('click', toggleSidebar);
+$('#collapseBtn').addEventListener('click', toggleSidebar);
+try {
+  if (localStorage.getItem('jarvis.sidebar') === 'collapsed' && !isNarrow()) {
+    $('#app').classList.add('collapsed');
+  }
+} catch (e) {}
 
 /* ============================ правая панель ============================ */
 function openDrawer(tab) {
@@ -512,11 +528,16 @@ async function send() {
     if (e.name !== 'AbortError') {
       showError(ui, String(e.message || e));
     } else {
-      if (ui.statusEl) ui.statusEl.remove();
+      if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
       node.body.appendChild(el('div', 'muted', 'Остановлено.'));
     }
+  } finally {
+    // страховка: что бы ни случилось со стримом (обрыв, ошибка разбора,
+    // закрытие сокета) — кнопка обязана вернуться в исходное состояние
+    if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
+    setStreaming(false);
+    S.abort = null;
   }
-  setStreaming(false);
   refreshState();
   loadChats();
 }
@@ -727,6 +748,9 @@ function handleEvent(ev, ui) {
 
     case 'end':
       if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
+      // поток завершён сервером — сразу возвращаем кнопку в «отправить»,
+      // не дожидаясь фактического закрытия сокета
+      setStreaming(false);
       break;
   }
 }

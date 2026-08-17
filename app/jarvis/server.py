@@ -69,10 +69,26 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache, no-transform")
-        self.send_header("Connection", "keep-alive")
+        # поток не имеет Content-Length: завершение обозначаем закрытием
+        # соединения, иначе браузер ждёт продолжения и не считает поток
+        # оконченным (кнопка «Стоп» висит до таймаута)
+        self.send_header("Connection", "close")
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
+        self.close_connection = True
+
+    def _sse_close(self) -> None:
+        """Корректно закрыть поток, чтобы клиент увидел конец."""
+        self.close_connection = True
+        try:
+            self.wfile.flush()
+        except Exception:
+            pass
+        try:
+            self.connection.shutdown(socket.SHUT_WR)
+        except Exception:
+            pass
 
     def _sse(self, event: Dict[str, Any]) -> bool:
         try:
@@ -278,6 +294,7 @@ class Handler(BaseHTTPRequestHandler):
         if not llm.active_providers():
             self._sse({"type": "error", "error": "Не заданы API-ключи. Открой Настройки и вставь ключ Cloud.ru."})
             self._sse({"type": "end"})
+            self._sse_close()
             return
 
         # пользовательское сообщение
@@ -305,6 +322,7 @@ class Handler(BaseHTTPRequestHandler):
             db.add_message(chat_id, "assistant", note, {"task_id": task["id"]})
             self._sse({"type": "done", "content": note, "files": [], "tools": ["schedule_task"]})
             self._sse({"type": "end"})
+            self._sse_close()
             return
 
         # сборка контекста
@@ -357,6 +375,7 @@ class Handler(BaseHTTPRequestHandler):
                                {"files": files, "tools": used_tools, "model": runner.model_used})
             if alive:
                 self._sse({"type": "end"})
+            self._sse_close()
 
 
 class Server(ThreadingHTTPServer):
