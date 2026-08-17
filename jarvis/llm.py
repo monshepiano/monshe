@@ -22,33 +22,72 @@ class LLMError(RuntimeError):
     pass
 
 
+# Какая схема заголовков сработала для провайдера — запоминаем на время
+# работы процесса, чтобы не перебирать варианты на каждом запросе.
+_WORKING_AUTH: dict[str, str] = {}
+
+# Признаки того, что сервер отверг именно авторизацию, а не запрос.
+_AUTH_FAIL = re.compile(
+    r"(401|403|unauthorized|access ?denied|forbidden|api key not found|"
+    r"record not found|project not found|invalid api key|no api key)",
+    re.IGNORECASE,
+)
+
+
+def is_auth_error(err: str) -> bool:
+    """Похоже ли, что сервер не принял ключ/проект (а не сам запрос)."""
+    return bool(_AUTH_FAIL.search(str(err or "")))
+
+
 @dataclass
 class Provider:
     name: str
     base_url: str
     api_key: str
     project_id: str = ""
+    auth_mode: str = "auto"
 
     @property
     def ok(self) -> bool:
         return bool(self.api_key and self.base_url)
 
-    def headers(self, *, json_body: bool = True) -> dict:
-        """Заголовки авторизации.
+    def auth_modes(self) -> list[str]:
+        """Схемы авторизации, которые имеет смысл попробовать, по порядку.
 
-        Cloud.ru Foundation Models требует не только ключ, но и указание
-        проекта: без заголовка x-project-id сервис отвечает
-        "403: Project not found". Ключ дублируем в x-api-key — так делает
-        официальная интеграция Cloud.ru, а обычный Bearer оставляем ради
-        совместимости с остальными OpenAI-совместимыми шлюзами.
+        У Cloud.ru Foundation Models в ходу два рабочих формата:
+
+        * ``bearer``  — только ``Authorization: Bearer <ключ>``. Так написано
+          в официальном примере кода из быстрого старта Cloud.ru.
+        * ``both``    — Bearer плюс ``x-api-key`` и ``x-project-id``. Так
+          делает официальная интеграция Cloud.ru для Home Assistant; без
+          ``x-project-id`` сервис иногда отвечает "403: Project not found".
+
+        Какой из них ждёт конкретный аккаунт — заранее не известно, поэтому
+        по умолчанию (``auto``) перебираем их сами и запоминаем удачный.
         """
-        h = {"Authorization": f"Bearer {self.api_key}"}
+        if self.auth_mode and self.auth_mode != "auto":
+            return [self.auth_mode]
+        remembered = _WORKING_AUTH.get(self.name)
+        order = ["both", "bearer", "apikey"] if self.project_id else ["bearer"]
+        if remembered in order:
+            order = [remembered] + [m for m in order if m != remembered]
+        return order
+
+    def headers(self, *, json_body: bool = True, mode: str | None = None) -> dict:
+        """Заголовки авторизации для выбранной схемы."""
+        mode = mode or self.auth_modes()[0]
+        h: dict[str, str] = {}
         if json_body:
             h["Content-Type"] = "application/json"
-        if self.project_id:
+        if mode != "apikey":
+            h["Authorization"] = f"Bearer {self.api_key}"
+        if mode in ("both", "apikey") and self.project_id:
             h["x-api-key"] = self.api_key
             h["x-project-id"] = self.project_id
         return h
+
+    def remember_auth(self, mode: str) -> None:
+        _WORKING_AUTH[self.name] = mode
 
 
 def providers() -> list[Provider]:
@@ -151,6 +190,22 @@ def explain_error(err: str) -> str:
     """Переводит ошибку API на человеческий язык с готовым решением."""
     e = str(err or "")
     low = e.lower()
+    if "api key not found" in low or "record not found" in low:
+        return (
+            "Cloud.ru не нашёл такой ключ. Проект определился правильно, "
+            "а вот сам ключ сервис не узнаёт.\n\n"
+            "Что проверить по порядку:\n"
+            "1. Вставлен именно Key Secret, а не Key ID. Key Secret "
+            "показывают ровно один раз — в окне сразу после создания ключа. "
+            "Если вы его не сохранили, ключ надо создать заново.\n"
+            "2. Ключ создан в том же проекте, ID которого указан выше.\n"
+            "3. При создании ключа в поле «Сервисы» выбран FoundationModels.\n"
+            "4. Ключ в статусе «Активен» и срок действия не истёк.\n\n"
+            "Проще всего: cloud.ru → Пользователи → Сервисные аккаунты → "
+            "ваш аккаунт → вкладка «API-ключи» → Создать API-ключ → "
+            "Сервисы: FoundationModels → Создать → скопировать Key Secret "
+            "целиком и вставить сюда."
+        )
     if "project not found" in low or ("403" in e and "project" in low):
         return (
             "Cloud.ru не видит проект. Обычно это значит, что в настройках "
@@ -182,13 +237,24 @@ def explain_error(err: str) -> str:
 
 async def _post(provider: Provider, path: str, payload: dict,
                 timeout: float = 180.0) -> dict:
+    """POST с автоподбором схемы авторизации.
+
+    Если сервер отвечает 401/403, пробуем следующий формат заголовков —
+    у Cloud.ru их два, и какой ждёт конкретный аккаунт, заранее не ясно.
+    """
     url = provider.base_url.rstrip("/") + path
-    headers = provider.headers()
+    last_err = ""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(url, headers=headers, json=payload)
-        if r.status_code >= 400:
-            raise LLMError(f"{provider.name} {r.status_code}: {r.text[:400]}")
-        return r.json()
+        for mode in provider.auth_modes():
+            r = await client.post(url, headers=provider.headers(mode=mode),
+                                  json=payload)
+            if r.status_code < 400:
+                provider.remember_auth(mode)
+                return r.json()
+            last_err = f"{provider.name} {r.status_code}: {r.text[:400]}"
+            if not is_auth_error(last_err):
+                break
+    raise LLMError(last_err)
 
 
 async def complete(
@@ -299,37 +365,42 @@ async def stream(
     last_err = None
     for provider in provs:
         url = provider.base_url.rstrip("/") + "/chat/completions"
-        headers = provider.headers()
-        try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                async with client.stream("POST", url, headers=headers,
-                                         json=payload) as r:
-                    if r.status_code >= 400:
-                        body = (await r.aread()).decode("utf-8", "ignore")
-                        last_err = f"{r.status_code}: {body[:300]}"
-                        continue
-                    yield {"type": "meta", "model": decision.model,
-                           "provider": provider.name, "reason": decision.reason}
-                    async for line in r.aiter_lines():
-                        if not line or not line.startswith("data:"):
-                            continue
-                        chunk = line[5:].strip()
-                        if chunk == "[DONE]":
-                            yield {"type": "done"}
-                            return
-                        try:
-                            obj = json.loads(chunk)
-                        except json.JSONDecodeError:
-                            continue
-                        delta = (obj.get("choices") or [{}])[0].get("delta", {})
-                        piece = delta.get("content")
-                        if piece:
-                            yield {"type": "delta", "text": piece}
-                    yield {"type": "done"}
-                    return
-        except Exception as e:
-            last_err = str(e)
-            continue
+        for mode in provider.auth_modes():
+            try:
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    async with client.stream("POST", url,
+                                             headers=provider.headers(mode=mode),
+                                             json=payload) as r:
+                        if r.status_code >= 400:
+                            body = (await r.aread()).decode("utf-8", "ignore")
+                            last_err = f"{r.status_code}: {body[:300]}"
+                            if is_auth_error(last_err):
+                                continue  # пробуем следующую схему заголовков
+                            break
+                        provider.remember_auth(mode)
+                        yield {"type": "meta", "model": decision.model,
+                               "provider": provider.name,
+                               "reason": decision.reason}
+                        async for line in r.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            chunk = line[5:].strip()
+                            if chunk == "[DONE]":
+                                yield {"type": "done"}
+                                return
+                            try:
+                                obj = json.loads(chunk)
+                            except json.JSONDecodeError:
+                                continue
+                            delta = (obj.get("choices") or [{}])[0].get("delta", {})
+                            piece = delta.get("content")
+                            if piece:
+                                yield {"type": "delta", "text": piece}
+                        yield {"type": "done"}
+                        return
+            except Exception as e:
+                last_err = str(e)
+                break
     hint = explain_error(str(last_err))
     text = f"Модели недоступны: {last_err}"
     if hint:
@@ -371,12 +442,19 @@ async def list_models() -> list[str]:
         url = provider.base_url.rstrip("/") + "/models"
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                r = await client.get(url, headers=provider.headers(json_body=False))
-                if r.status_code < 400:
-                    for m in r.json().get("data", []):
-                        mid = m.get("id")
-                        if mid and mid not in out:
-                            out.append(mid)
+                for mode in provider.auth_modes():
+                    r = await client.get(
+                        url, headers=provider.headers(json_body=False, mode=mode)
+                    )
+                    if r.status_code < 400:
+                        provider.remember_auth(mode)
+                        for m in r.json().get("data", []):
+                            mid = m.get("id")
+                            if mid and mid not in out:
+                                out.append(mid)
+                        break
+                    if not is_auth_error(f"{r.status_code}: {r.text[:200]}"):
+                        break
         except Exception:
             continue
     return out

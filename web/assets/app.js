@@ -856,6 +856,7 @@ function init() {
     box.className = 'test-result ' + (r.ok ? 'ok' : 'err');
     box.textContent = r.ok
       ? `✓ Ключ работает. Доступно моделей: ${r.count}`
+        + (r.auth ? `\nСпособ подключения: ${r.auth}` : '')
       : (r.hint ? `✗ ${r.hint}\n\n(${r.error})` : `✗ ${r.error}`);
     box.style.whiteSpace = 'pre-wrap';
   };

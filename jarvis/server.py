@@ -360,8 +360,12 @@ async def api_config_set(payload: dict) -> dict:
     """Принимает частичный конфиг и сливает его с текущим."""
     def merge(base: dict, patch: dict) -> dict:
         for k, v in patch.items():
-            if isinstance(v, str) and v.startswith("••••"):
-                continue  # не затираем ключ маской
+            if isinstance(v, str):
+                if v.startswith("••••"):
+                    continue  # не затираем ключ маской
+                # Пользователи часто копируют ключ с пробелом или переносом
+                # строки на конце — молча убираем.
+                v = v.strip()
             if isinstance(v, dict) and isinstance(base.get(k), dict):
                 merge(base[k], v)
             else:
@@ -370,6 +374,8 @@ async def api_config_set(payload: dict) -> dict:
 
     merge(config.data, payload or {})
     config.save()
+    # Ключ или проект могли смениться — заново подберём схему авторизации.
+    llm._WORKING_AUTH.clear()
     telegram_bot.start()
     scheduler.start()
     return {"ok": True}
@@ -427,20 +433,43 @@ async def api_test_key(payload: dict) -> dict:
         }
 
     import httpx
-    from .llm import Provider, explain_error
+    from .llm import Provider, explain_error, is_auth_error
 
     prov = Provider("cloudru", base, key, project)
+    labels = {
+        "both": "ключ + ID проекта в заголовках",
+        "bearer": "только ключ (Bearer)",
+        "apikey": "только x-api-key",
+    }
+    err = ""
+    tried: list[str] = []
     try:
         async with httpx.AsyncClient(timeout=25) as c:
-            r = await c.get(base.rstrip("/") + "/models",
-                            headers=prov.headers(json_body=False))
-            if r.status_code >= 400:
+            for mode in prov.auth_modes():
+                r = await c.get(base.rstrip("/") + "/models",
+                                headers=prov.headers(json_body=False, mode=mode))
+                tried.append(labels.get(mode, mode))
+                if r.status_code < 400:
+                    prov.remember_auth(mode)
+                    models = [m.get("id") for m in r.json().get("data", [])]
+                    return {
+                        "ok": True,
+                        "count": len(models),
+                        "models": models[:60],
+                        "auth": labels.get(mode, mode),
+                    }
                 err = f"{r.status_code}: {r.text[:200]}"
-                return {"ok": False, "error": err, "hint": explain_error(err)}
-            models = [m.get("id") for m in r.json().get("data", [])]
-            return {"ok": True, "count": len(models), "models": models[:60]}
+                if not is_auth_error(err):
+                    break
     except Exception as e:
         return {"ok": False, "error": str(e), "hint": explain_error(str(e))}
+
+    hint = explain_error(err)
+    if len(tried) > 1:
+        hint = (hint + "\n\nДжарвис попробовал все способы передать ключ ("
+                + ", ".join(tried) + ") — сервис не принял ни один, "
+                "значит дело в самом ключе.").strip()
+    return {"ok": False, "error": err, "hint": hint}
 
 
 def main() -> None:
