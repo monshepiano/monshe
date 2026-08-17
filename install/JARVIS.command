@@ -224,7 +224,7 @@ say ""
 read -r -p "  Нажмите Enter, чтобы закрыть окно… " _ || true
 exit 0
 __JARVIS_PAYLOAD_BELOW__
-H4sIAFNsg2oC/+y9a3db15UgWJ/xK+7cLLUBCQRBipJsJEyGlhlbFb1alPJYFBsFApfktfAKLiCJ
+H4sIAA1tg2oC/+y9a3db15UgWJ/xK+7cLLUBCQRBipJsJEyGlhlbFb1alPJYFBsFApfktfAKLiCJ
 kTlLjzh2xi47dsWddDpxKk5P1fSq6mlKFiPqRa2VXwD+Bf+C+QmzX+d1HwAoy67qNVZVzIv7OGef
 ffbZZ+999uPNWu9qGE1Xq2E77Ferpe7m37zwf2X4d3xujv7Cv/jf8szsjL6m+zNz5fLc33jlv/ka
 /g2ifq0H3b9JiMh+b9zz/0X/+b7/twsXfnhqyfvi5q+94bPhzv7N/VvDveHT4fbw8f77w6f77w0f
