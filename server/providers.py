@@ -3,6 +3,8 @@
 Без тяжёлых SDK — чистый HTTP (httpx), поэтому зависимости минимальны,
 а смена движка сводится к одной строчке конфига.
 """
+import json
+
 import httpx
 
 from . import config
@@ -10,6 +12,30 @@ from . import config
 
 class ProviderError(Exception):
     pass
+
+
+def friendly_error(status, text):
+    """Человеческое описание типовых ошибок API."""
+    msg = ""
+    try:
+        data = json.loads(text)
+        err = data.get("error")
+        if isinstance(err, dict):
+            msg = err.get("message") or ""
+        elif isinstance(err, str):
+            msg = err
+    except Exception:
+        pass
+    if status == 401:
+        return "неверный API-ключ (401). Проверьте ключ в .env или в «Настройках»."
+    if status == 402:
+        return ("на балансе DeepSeek недостаточно средств (402). Пополните счёт "
+                "на platform.deepseek.com — это копейки, и Джарвис сразу оживёт.")
+    if status == 429:
+        return "слишком много запросов (429). Подождите минуту и повторите."
+    if status >= 500:
+        return f"сбой на стороне провайдера ({status}). Попробуйте позже."
+    return f"API {status}: {msg or text[:300]}"
 
 
 def _post_json(url, headers, payload, timeout=180):
@@ -27,7 +53,7 @@ def _post_json(url, headers, payload, timeout=180):
     except httpx.HTTPError as e:
         raise ProviderError(f"нет связи с провайдером ({e.__class__.__name__})") from e
     if r.status_code >= 400:
-        raise ProviderError(f"API {r.status_code}: {r.text[:500]}")
+        raise ProviderError(friendly_error(r.status_code, r.text))
     return r.json()
 
 
