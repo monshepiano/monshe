@@ -126,10 +126,14 @@ function handleEvent(ev) {
       setThinkingText(`Шаг ${ev.step} · размышляю`);
       break;
 
-    case 'model':
-      $('#statModel').textContent = shortModel(ev.model);
-      term(`Модель: ${shortModel(ev.model)} — ${ev.reason}`, '');
+    case 'model': {
+      const sm = shortModel(ev.model);
+      $('#statModel').textContent = sm;
+      const hm = $('#hudModel');
+      if (hm) { hm.textContent = sm; hm.title = ev.model || ''; }
+      term(`Модель: ${sm} — ${ev.reason}`, '');
       break;
+    }
 
     case 'thought':
       term(ev.text, 'thought');
@@ -157,6 +161,7 @@ function handleEvent(ev) {
 
     case 'approval_request':
       renderApproval(ev);
+      hudAddApproval(ev);
       term('⏸ Жду вашего разрешения: ' + ev.human, 'warn');
       break;
 
@@ -328,6 +333,9 @@ function setBusy(on, label = 'Думаю') {
   $('#statDot').className = 'dot' + (on ? ' busy' : (State.connected ? '' : ' off'));
   if (on) setThinkingText(label);
   else { removeThinking(); State.currentPlanCard = null; }
+  if (typeof hudSetLevel === 'function' && !Hud.pending) {
+    hudSetLevel(on ? label.toLowerCase() : 'в норме', on ? 'warn' : '');
+  }
 }
 
 /* ------------------------------------------------------------ отправка */
@@ -443,6 +451,154 @@ async function camShot() {
   } catch (e) {
     $('#camResult').innerHTML = `<div class="bubble">⚠️ ${esc(String(e))}</div>`;
   }
+}
+
+/* ============================================================ HUD-панели
+   Правая колонка: ОПТИКА · КАМЕРА / САНКЦИИ / СИСТЕМА
+   ------------------------------------------------------------------- */
+
+const Hud = {
+  stream: null,
+  scanning: false,
+  pending: 0,
+  pingTimer: null,
+};
+
+function hudSetLevel(text, cls = '') {
+  const el = $('#hudLevel'); if (!el) return;
+  el.textContent = text;
+  el.className = cls;
+}
+
+/* --- Оптика --- */
+async function hudCamStart() {
+  if (Hud.stream) { hudCamStop(); return; }
+  try {
+    Hud.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 } },
+    });
+    $('#hudCamVideo').srcObject = Hud.stream;
+    $('#hudCam').classList.add('live');
+    $('#hudCamDot').classList.add('on');
+    $('#hudBtnCam').textContent = '■ Выкл. камеру';
+    $('#hudBtnCam').classList.add('on');
+  } catch (e) {
+    toast('Камера', 'Нет доступа к камере. Разрешите её в браузере.', true);
+  }
+}
+
+function hudCamStop() {
+  Hud.stream?.getTracks().forEach(t => t.stop());
+  Hud.stream = null;
+  const v = $('#hudCamVideo'); if (v) v.srcObject = null;
+  $('#hudCam')?.classList.remove('live', 'scanning');
+  $('#hudCamDot')?.classList.remove('on');
+  const b = $('#hudBtnCam');
+  if (b) { b.textContent = '▶ Вкл. камеру'; b.classList.remove('on'); }
+}
+
+async function hudScan() {
+  if (!Hud.stream) { await hudCamStart(); }
+  const v = $('#hudCamVideo');
+  if (!v || !v.videoWidth) { toast('Оптика', 'Сначала включите камеру.', true); return; }
+  if (Hud.scanning) return;
+
+  Hud.scanning = true;
+  $('#hudCam').classList.add('scanning');
+  $('#hudBtnScan').disabled = true;
+  $('#hudCamOut').innerHTML =
+    '<div class="thinking-row"><div class="spinner"></div><div class="thinking-text">Анализирую кадр</div></div>';
+
+  const c = document.createElement('canvas');
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  const blob = await new Promise(res => c.toBlob(res, 'image/jpeg', 0.88));
+  const fd = new FormData();
+  fd.append('file', blob, 'frame.jpg');
+  fd.append('prompt', 'Что изображено на этом кадре? Опиши подробно и по делу.');
+
+  try {
+    const r = await (await fetch('/api/vision', { method: 'POST', body: fd })).json();
+    $('#hudCamOut').innerHTML = r.ok
+      ? md(r.text)
+      : `<span style="color:var(--red)">⚠️ ${esc(r.error || 'Не удалось распознать')}</span>`;
+  } catch (e) {
+    $('#hudCamOut').innerHTML = `<span style="color:var(--red)">⚠️ ${esc(String(e))}</span>`;
+  } finally {
+    Hud.scanning = false;
+    $('#hudCam').classList.remove('scanning');
+    $('#hudBtnScan').disabled = false;
+  }
+}
+
+/* --- Санкции --- */
+function hudAddApproval(ev) {
+  const list = $('#hudApprList'); if (!list) return;
+  if (!Hud.pending) list.innerHTML = '';
+  Hud.pending++;
+  $('#hudApprDot')?.classList.add('on');
+
+  const el = document.createElement('div');
+  el.className = 'hud-appr';
+  el.innerHTML = `
+    <div class="hud-appr-tool">⚠ ${esc(ev.tool || 'действие')}</div>
+    <div class="hud-appr-text">${esc(ev.human || '')}</div>
+    <div class="hud-appr-btns">
+      <button class="ok" data-d="approve">Разрешить</button>
+      <button data-d="always">Всегда</button>
+      <button class="no" data-d="reject">Отклонить</button>
+    </div>`;
+
+  el.querySelectorAll('button').forEach(b => b.onclick = () => {
+    if (ev.approval_id !== 'demo') {
+      send({ type: 'approval', approval_id: ev.approval_id, decision: b.dataset.d });
+    }
+    const rej = b.dataset.d === 'reject';
+    el.querySelector('.hud-appr-btns').outerHTML =
+      `<div class="hud-appr-done" style="color:${rej ? 'var(--red)' : 'var(--green)'}">
+        ${rej ? '✗ Отклонено' : '✓ Разрешено'}</div>`;
+    hudApprovalResolved(el);
+  });
+
+  list.appendChild(el);
+  hudSetLevel('ожидание санкции', 'warn');
+}
+
+function hudApprovalResolved(el) {
+  Hud.pending = Math.max(0, Hud.pending - 1);
+  if (!Hud.pending) $('#hudApprDot')?.classList.remove('on');
+  setTimeout(() => {
+    el.remove();
+    if (!$('#hudApprList').children.length) {
+      $('#hudApprList').innerHTML = '<div class="hud-empty">Нет ожидающих действий</div>';
+    }
+  }, 2600);
+}
+
+/* --- Система --- */
+function hudPingStart() {
+  clearInterval(Hud.pingTimer);
+  const beat = async () => {
+    const t0 = performance.now();
+    try {
+      const r = await fetch('/health', { cache: 'no-store' });
+      const ms = Math.round(performance.now() - t0);
+      const el = $('#hudPing'); if (!el) return;
+      el.textContent = ms + ' мс';
+      el.className = ms < 200 ? '' : ms < 800 ? 'warn' : 'bad';
+      const j = await r.json();
+      $('#hudSysDot')?.classList.toggle('on', !!j.ok);
+      if (!j.has_llm) hudSetLevel('нет ключа', 'bad');
+      else if (!State.busy && !Hud.pending) hudSetLevel('в норме');
+    } catch (_) {
+      const el = $('#hudPing');
+      if (el) { el.textContent = 'нет связи'; el.className = 'bad'; }
+      $('#hudSysDot')?.classList.remove('on');
+      hudSetLevel('офлайн', 'bad');
+    }
+  };
+  beat();
+  Hud.pingTimer = setInterval(beat, 10000);
 }
 
 /* ------------------------------------------------------- боковые данные */
@@ -750,6 +906,15 @@ function init() {
   $('#btnCamStart').onclick = camStart;
   $('#btnCamStop').onclick = camStop;
   $('#btnCamShot').onclick = camShot;
+
+  // HUD: оптика + системные метрики
+  $('#hudBtnCam').onclick = hudCamStart;
+  $('#hudBtnScan').onclick = hudScan;
+  hudPingStart();
+  fetch('/api/config').then(r => r.json()).then(c => {
+    const m = c?.config?.models?.chat || c?.models?.chat;
+    if (m) { $('#hudModel').textContent = shortModel(m); $('#hudModel').title = m; }
+  }).catch(() => {});
 
   // Восстановление истории
   loadHistory();

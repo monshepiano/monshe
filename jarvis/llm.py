@@ -59,8 +59,8 @@ def providers() -> list[Provider]:
             continue
         p = Provider(
             key,
-            node.get("base_url", ""),
-            node.get("api_key", ""),
+            (node.get("base_url") or "").strip().rstrip("/"),
+            (node.get("api_key") or "").strip(),
             (node.get("project_id") or "").strip(),
         )
         if p.ok:

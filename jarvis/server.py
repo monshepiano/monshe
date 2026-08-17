@@ -392,9 +392,39 @@ async def api_test_key(payload: dict) -> dict:
     project = payload.get("project_id")
     if project is None:
         project = config.get("providers", "cloudru", "project_id", default="")
+    base = (base or "").strip().rstrip("/")
+    key = (key or "").strip()
     project = (project or "").strip()
     if not key:
         return {"ok": False, "error": "Ключ пустой", "hint": "Вставьте Key Secret."}
+
+    import re as _re
+
+    uuid_re = _re.compile(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", _re.I
+    )
+    if not project:
+        return {
+            "ok": False,
+            "error": "Не указан ID проекта",
+            "hint": (
+                "Cloud.ru не примет запрос без ID проекта.\n"
+                "Где взять: cloud.ru → вверху раскрыть список проектов → "
+                "в строке нужного проекта нажать «⋮» → «Скопировать ID проекта»."
+            ),
+        }
+    if not uuid_re.match(project):
+        return {
+            "ok": False,
+            "error": f"ID проекта выглядит неправильно: {project[:40]}",
+            "hint": (
+                "ID проекта — это длинный код из букв и цифр с дефисами, например\n"
+                "50000000-4000-3000-2000-100000000001\n\n"
+                "Похоже, вы вставили название проекта или что-то другое. "
+                "Откройте cloud.ru → вверху раскрыть список проектов → «⋮» у нужного "
+                "проекта → «Скопировать ID проекта»."
+            ),
+        }
 
     import httpx
     from .llm import Provider, explain_error

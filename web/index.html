@@ -193,12 +193,73 @@
   <!-- ================= ПРАВАЯ ПАНЕЛЬ ================= -->
   <aside class="side" id="side">
     <div class="side-tabs">
-      <button class="side-tab active" data-pane="term">Мысли</button>
+      <button class="side-tab active" data-pane="hud">Оптика</button>
+      <button class="side-tab" data-pane="term">Мысли</button>
       <button class="side-tab" data-pane="files">Файлы</button>
       <button class="side-tab" data-pane="events">Журнал</button>
     </div>
     <div class="side-body">
-      <div class="side-pane active" id="pane-term">
+
+      <!-- ===== HUD: ОПТИКА / САНКЦИИ / СИСТЕМА ===== -->
+      <div class="side-pane active" id="pane-hud">
+
+        <!-- ОПТИКА · КАМЕРА -->
+        <div class="hud-panel">
+          <div class="hud-head">
+            <span class="hud-dot" id="hudCamDot"></span>
+            <span class="hud-title">Оптика · Камера</span>
+          </div>
+          <div class="hud-body">
+            <div class="hud-cam" id="hudCam">
+              <video id="hudCamVideo" autoplay playsinline muted></video>
+              <div class="hud-cross">
+                <span class="hc-h"></span><span class="hc-v"></span>
+                <span class="hc-ring"></span>
+                <i class="hc-c tl"></i><i class="hc-c tr"></i>
+                <i class="hc-c bl"></i><i class="hc-c br"></i>
+              </div>
+              <div class="hud-camlabel" id="hudCamLabel">Камера выключена</div>
+              <div class="hud-scanline" id="hudScanline"></div>
+            </div>
+            <div class="hud-btns">
+              <button class="hud-btn" id="hudBtnCam">▶ Вкл. камеру</button>
+              <button class="hud-btn accent" id="hudBtnScan">◉ Сканировать</button>
+            </div>
+            <div class="hud-camout" id="hudCamOut"></div>
+          </div>
+        </div>
+
+        <!-- САНКЦИИ · ПОДТВЕРЖДЕНИЯ -->
+        <div class="hud-panel">
+          <div class="hud-head">
+            <span class="hud-dot gold" id="hudApprDot"></span>
+            <span class="hud-title">Санкции · Подтверждения</span>
+          </div>
+          <div class="hud-body">
+            <div id="hudApprList">
+              <div class="hud-empty">Нет ожидающих действий</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- СИСТЕМА -->
+        <div class="hud-panel">
+          <div class="hud-head">
+            <span class="hud-dot" id="hudSysDot"></span>
+            <span class="hud-title">Система</span>
+          </div>
+          <div class="hud-body">
+            <div class="hud-rows">
+              <div class="hud-row"><span>Уровень</span><b id="hudLevel">—</b></div>
+              <div class="hud-row"><span>Модель</span><b id="hudModel">—</b></div>
+              <div class="hud-row"><span>Отклик</span><b id="hudPing">—</b></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="side-pane" id="pane-term">
         <div class="empty-note" id="termEmpty">
           Здесь будет виден ход мыслей Джарвиса:<br>какие инструменты он
           запускает и что находит.
