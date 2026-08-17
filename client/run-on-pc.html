@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JARVIS — запуск на вашем компьютере</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #03070d; --panel: rgba(9,22,38,.6); --line: rgba(0,212,255,.16);
+      --cyan: #39f6ff; --cyan2: #00a8ff; --amber: #ffb03a; --ok: #37ffb0;
+      --text: #d8f6ff; --dim: #7aa6b8;
+      --mono: 'Share Tech Mono', Consolas, monospace; --disp: 'Orbitron', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh; color: var(--text); font-family: var(--mono); font-size: 15px;
+      background:
+        radial-gradient(1000px 500px at 15% -10%, rgba(0,168,255,.14), transparent 60%),
+        radial-gradient(800px 450px at 90% 110%, rgba(57,246,255,.08), transparent 60%),
+        var(--bg);
+      background-attachment: fixed;
+      padding: 28px 20px 60px;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; }
+    .head { text-align: center; margin-bottom: 22px; }
+    .head h1 { font-family: var(--disp); font-weight: 900; letter-spacing: .3em; font-size: 26px;
+      text-shadow: 0 0 18px rgba(57,246,255,.55); }
+    .head p { color: var(--dim); letter-spacing: .18em; font-size: 12px; margin-top: 8px; }
+    .banner { border: 1px solid rgba(255,176,58,.4); background: rgba(255,176,58,.07);
+      border-radius: 8px; padding: 12px 14px; font-size: 13px; line-height: 1.5; margin-bottom: 20px; }
+    .banner b { color: var(--amber); }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+      padding: 18px 20px; margin-bottom: 14px; backdrop-filter: blur(3px); }
+    .step { display: flex; gap: 14px; align-items: flex-start; }
+    .num { flex: 0 0 34px; height: 34px; border-radius: 50%; border: 1px solid var(--cyan);
+      display: flex; align-items: center; justify-content: center; color: var(--cyan);
+      font-family: var(--disp); font-weight: 700; box-shadow: 0 0 12px rgba(57,246,255,.35); }
+    .step h2 { font-family: var(--disp); font-size: 15px; letter-spacing: .08em; color: var(--cyan); margin-bottom: 8px; }
+    .step p { line-height: 1.6; color: var(--text); margin: 6px 0; }
+    .step .dim { color: var(--dim); font-size: 13px; }
+    code.inline { color: #7ffcff; background: rgba(0,168,255,.1); padding: 1px 6px; border-radius: 4px; }
+    pre { background: rgba(3,7,13,.85); border: 1px solid var(--line); border-radius: 8px;
+      padding: 12px 14px; overflow-x: auto; font-family: var(--mono); font-size: 13px;
+      line-height: 1.6; color: #a8f0ff; margin: 10px 0; }
+    pre .cm { color: var(--dim); }
+    ul { margin: 6px 0 6px 20px; }
+    li { margin: 4px 0; line-height: 1.55; }
+    .ok { color: var(--ok); }
+    a { color: var(--cyan); }
+    .foot { text-align: center; color: var(--dim); font-size: 12px; letter-spacing: .1em; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <h1>JARVIS</h1>
+      <p>ЗАПУСК НА ВАШЕМ КОМПЬЮТЕРЕ · 5 ШАГОВ</p>
+    </div>
+
+    <div class="banner">
+      <b>Зачем это нужно.</b> В облачном превью Джарвис работает в демо-режиме —
+      песочница не выпускает сеть до DeepSeek и Ozon. На вашем компьютере всё
+      заработает по-настоящему: живой «мозг», поиск, камера, покупки, VPN, Telegram.
+    </div>
+
+    <div class="card">
+      <div class="step">
+        <div class="num">1</div>
+        <div>
+          <h2>Забрать проект</h2>
+          <p>Скопируйте репозиторий себе на компьютер (или скачайте ZIP на GitHub:
+          кнопка <code class="inline">Code → Download ZIP</code> и распакуйте).</p>
+<pre><span class="cm"># в терминале на вашем ПК:</span>
+git clone https://github.com/monshepiano/monshe.git
+cd monshe</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="step">
+        <div class="num">2</div>
+        <div>
+          <h2>Установить Python и зависимости</h2>
+          <p>Нужен Python 3.10 или новее — с <a href="https://www.python.org/downloads/" target="_blank">python.org</a>
+          (при установке поставьте галочку <b>Add Python to PATH</b>). Затем в папке проекта:</p>
+<pre><span class="cm"># Windows (PowerShell) / macOS / Linux</span>
+pip install -r requirements.txt</pre>
+          <p class="dim">Всё, что нужно для «мозга» и интерфейса, поставится автоматически.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="step">
+        <div class="num">3</div>
+        <div>
+          <h2>Вставить ключ DeepSeek</h2>
+          <p>Скопируйте файл <code class="inline">.env.example</code> в новый файл
+          <code class="inline">.env</code> (в той же папке) и впишите свой ключ:</p>
+<pre>DEEPSEEK_API_KEY=sk-...   <span class="cm">← ваш ключ с platform.deepseek.com</span></pre>
+          <p class="dim">Ключ бесплатно выдаётся на <a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a>
+          после регистрации. Это дёшево и работает из РФ без VPN.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="step">
+        <div class="num">4</div>
+        <div>
+          <h2>Запустить</h2>
+<pre>python run.py</pre>
+          <p>Откройте в браузере: <code class="inline">http://localhost:8000</code></p>
+          <p class="ok">Готово — это тот же интерфейс HUD, но теперь с живым «мозгом».</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="step">
+        <div class="num">5</div>
+        <div>
+          <h2>«Руки»: Ozon, VPN, Telegram <span class="dim">(по желанию)</span></h2>
+          <p>Чтобы Джарвис реально управлял компьютером — ставим браузер-автоматизацию
+          и включаем режим ПК:</p>
+<pre>pip install playwright pyautogui pillow
+playwright install chromium</pre>
+<pre><span class="cm"># допишите в .env:</span>
+JARVIS_ENABLE_PC=1</pre>
+          <p class="dim">Готовые сниппеты (Ozon-корзина, VPN вкл/выкл, сообщение в Telegram) —
+          в файле <code class="inline">docs/RUN_ON_PC.md</code>.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="step">
+        <div class="num">?</div>
+        <div>
+          <h2>Частые вопросы</h2>
+          <ul>
+            <li><b>Камера не «видит»?</b> У DeepSeek нет зрения. Добавьте в <code class="inline">.env</code>
+                ключ <code class="inline">GOOGLE_API_KEY=...</code> (Gemini) — и Джарвис начнёт описывать кадры.</li>
+            <li><b>Покупки безопасны?</b> Джарвис всегда сначала показывает план и ждёт вашего
+                «ОДОБРИТЬ», а оплату на Ozon делаете только вы сами.</li>
+            <li><b>Хочу сменить «мозг».</b> Меняется в <code class="inline">.env</code> (переменные
+                <code class="inline">JARVIS_FAST_*</code>, <code class="inline">JARVIS_SMART_*</code>,
+                <code class="inline">JARVIS_VISION_*</code>) или в «Настройках» интерфейса.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">JARVIS · ЛИЧНЫЙ АССИСТЕНТ · К ВАШИМ УСЛУГАМ</div>
+  </div>
+</body>
+</html>

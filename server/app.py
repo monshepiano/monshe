@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -88,6 +88,12 @@ def deny(aid: str):
 def run_on_pc_doc():
     p = BASE / "docs" / "RUN_ON_PC.md"
     return PlainTextResponse(p.read_text(encoding="utf-8"))
+
+
+@app.get("/run-on-pc")
+def run_on_pc_page():
+    p = CLIENT / "run-on-pc.html"
+    return HTMLResponse(p.read_text(encoding="utf-8"))
 
 
 app.mount("/", StaticFiles(directory=str(CLIENT), html=True), name="client")

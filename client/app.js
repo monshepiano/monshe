@@ -388,20 +388,7 @@
     return html;
   }
 
-  $('#docsBtn').onclick = async () => {
-    docsModal.classList.remove('hidden');
-    if (docsContent.dataset.loaded) return;
-    docsContent.textContent = 'Загрузка…';
-    try {
-      const r = await fetch('/api/docs/run-on-pc');
-      const text = await r.text();
-      docsContent.innerHTML = mdToHtml(text);
-      docsContent.dataset.loaded = '1';
-    } catch (e) {
-      docsContent.innerHTML = '<p class="doc-p">Не удалось загрузить документацию.</p>';
-    }
-  };
-  $('#closeDocs').onclick = () => docsModal.classList.add('hidden');
+  $('#docsBtn').onclick = () => window.open('/run-on-pc', '_blank');
 
   /* ---------------- старт ---------------- */
   boot();
