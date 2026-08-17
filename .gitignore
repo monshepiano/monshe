@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# секреты: ключи API для сборки установщика
+install/keys.json

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#04070d">
+<title>JARVIS</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='42' fill='none' stroke='%2300d4ff' stroke-width='6'/><circle cx='50' cy='50' r='18' fill='%2300d4ff'/></svg>">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+
+<!-- фоновая HUD-сетка -->
+<div class="bg-layer">
+  <div class="grid-plane"></div>
+  <div class="glow glow-a"></div>
+  <div class="glow glow-b"></div>
+  <canvas id="particles"></canvas>
+</div>
+
+<!-- ЭКРАН ЗАГРУЗКИ -->
+<div id="boot" class="boot">
+  <div class="boot-core">
+    <div class="reactor big">
+      <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
+      <div class="core"></div>
+    </div>
+    <div class="boot-title">J A R V I S</div>
+    <div class="boot-log" id="bootLog"></div>
+  </div>
+</div>
+
+<div class="app" id="app">
+
+  <!-- ================= ЛЕВОЕ МЕНЮ ================= -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="reactor sm" id="brandReactor">
+        <div class="ring r1"></div><div class="ring r2"></div><div class="core"></div>
+      </div>
+      <div class="brand-text">
+        <div class="brand-name">JARVIS</div>
+        <div class="brand-sub" id="brandSub">система активна</div>
+      </div>
+      <button class="icon-btn collapse-btn" id="collapseBtn" title="Свернуть меню">‹</button>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-item active" data-view="chat">
+        <span class="nav-ico">◈</span><span class="nav-label">Чат</span>
+      </button>
+      <button class="nav-item" data-view="auto">
+        <span class="nav-ico">◎</span><span class="nav-label">AUTO</span>
+        <span class="badge" id="autoBadge">0</span>
+      </button>
+      <button class="nav-item" data-view="files">
+        <span class="nav-ico">▤</span><span class="nav-label">Песочница</span>
+      </button>
+      <button class="nav-item" data-view="memory">
+        <span class="nav-ico">◇</span><span class="nav-label">Память</span>
+      </button>
+      <button class="nav-item" data-view="settings">
+        <span class="nav-ico">⚙</span><span class="nav-label">Настройки</span>
+      </button>
+    </nav>
+
+    <div class="chats-block">
+      <div class="block-head">
+        <span>Диалоги</span>
+        <button class="icon-btn" id="newChatBtn" title="Новый диалог">+</button>
+      </div>
+      <div class="chat-list" id="chatList"></div>
+    </div>
+
+    <div class="side-foot">
+      <div class="stat-row"><span>Модель</span><b id="footModel">—</b></div>
+      <div class="stat-row"><span>Расход 24ч</span><b id="footCost">0 ₽</b></div>
+      <div class="power" id="powerLine"><i></i></div>
+    </div>
+  </aside>
+
+  <!-- ================= ОСНОВНАЯ ОБЛАСТЬ ================= -->
+  <main class="main">
+
+    <!-- ВЕРХНЯЯ ПАНЕЛЬ -->
+    <header class="topbar">
+      <button class="icon-btn menu-toggle" id="menuToggle">☰</button>
+      <div class="status-cluster">
+        <div class="status-chip" id="chipConn"><i class="dot"></i><span>соединение</span></div>
+        <div class="status-chip" id="chipModel"><i class="dot ok"></i><span>модель</span></div>
+        <div class="status-chip" id="chipAuto"><i class="dot"></i><span>AUTO</span></div>
+      </div>
+      <div class="top-title" id="topTitle">Диалог</div>
+      <div class="top-actions">
+        <button class="icon-btn pulse-on-new" id="approvalsBtn" title="Подтверждения">
+          ⛨<span class="mini-badge hidden" id="approvalsBadge">0</span>
+        </button>
+        <button class="icon-btn" id="notifyBtn" title="Уведомления">
+          ◔<span class="mini-badge hidden" id="notifyBadge">0</span>
+        </button>
+        <button class="icon-btn" id="sandboxBtn" title="Панель песочницы">▣</button>
+      </div>
+    </header>
+
+    <!-- ---------- VIEW: ЧАТ ---------- -->
+    <section class="view view-chat active" id="view-chat">
+      <div class="stream" id="stream">
+        <div class="welcome" id="welcome">
+          <div class="reactor xl">
+            <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
+            <div class="core"></div>
+          </div>
+          <h1 class="hello">Добрый день. Я <span>JARVIS</span>.</h1>
+          <p class="hello-sub">Спрашивай что угодно — или включи <b>Агент</b>, и я сделаю всё сам.</p>
+          <div class="suggestions" id="suggestions"></div>
+        </div>
+      </div>
+
+      <!-- ПОЛЕ ВВОДА -->
+      <div class="composer-wrap">
+        <div class="attachments" id="attachments"></div>
+        <div class="composer" id="composer">
+          <div class="composer-inner">
+            <button class="comp-btn" id="attachBtn" title="Прикрепить файл">＋</button>
+            <textarea id="input" rows="1" placeholder="Сообщение для JARVIS…"></textarea>
+            <button class="comp-btn mic" id="micBtn" title="Голос">🎙</button>
+            <button class="send-btn" id="sendBtn" title="Отправить">
+              <svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg>
+            </button>
+          </div>
+          <div class="toggles">
+            <button class="toggle" id="tgAgent" data-tip="Разбивает задачу на шаги и выполняет сам">
+              <span class="tg-dot"></span>Агент
+            </button>
+            <button class="toggle" id="tgCamera" data-tip="Камера и зрение">
+              <span class="tg-dot"></span>Камера
+            </button>
+            <button class="toggle" id="tgComputer" data-tip="Управление мышью и клавиатурой">
+              <span class="tg-dot"></span>Компьютер
+            </button>
+            <div class="spacer"></div>
+            <div class="hint" id="routeHint"></div>
+          </div>
+        </div>
+      </div>
+      <input type="file" id="fileInput" multiple hidden>
+    </section>
+
+    <!-- ---------- VIEW: AUTO ---------- -->
+    <section class="view view-auto" id="view-auto">
+      <div class="panel-head">
+        <div>
+          <h2>AUTO · фоновые задачи</h2>
+          <p class="muted">JARVIS сам решает, что уходит в фон, и присылает результат.</p>
+        </div>
+        <button class="btn primary" id="addTaskBtn">Новая задача</button>
+      </div>
+      <div class="task-grid" id="taskGrid"></div>
+    </section>
+
+    <!-- ---------- VIEW: ПЕСОЧНИЦА ---------- -->
+    <section class="view view-files" id="view-files">
+      <div class="panel-head">
+        <div><h2>Песочница</h2><p class="muted">Файлы, которые JARVIS создал или скачал.</p></div>
+        <button class="btn" id="refreshFiles">Обновить</button>
+      </div>
+      <div class="file-grid" id="fileGrid"></div>
+    </section>
+
+    <!-- ---------- VIEW: ПАМЯТЬ ---------- -->
+    <section class="view view-memory" id="view-memory">
+      <div class="panel-head">
+        <div><h2>Память</h2><p class="muted">Что JARVIS знает о тебе. Он пополняет её сам.</p></div>
+        <button class="btn primary" id="addMemBtn">Добавить факт</button>
+      </div>
+      <div class="mem-grid" id="memGrid"></div>
+    </section>
+
+    <!-- ---------- VIEW: НАСТРОЙКИ ---------- -->
+    <section class="view view-settings" id="view-settings">
+      <div class="panel-head"><div><h2>Настройки</h2><p class="muted">Ключи, модели, безопасность, Telegram.</p></div></div>
+      <div class="settings-grid" id="settingsGrid"></div>
+    </section>
+  </main>
+
+  <!-- ================= ПРАВАЯ ПАНЕЛЬ (выезжающая) ================= -->
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <div class="drawer-tabs">
+        <button class="dtab active" data-dtab="sanctions">Санкции</button>
+        <button class="dtab" data-dtab="notes">Уведомления</button>
+        <button class="dtab" data-dtab="sandbox">Песочница</button>
+        <button class="dtab" data-dtab="camera">Камера</button>
+      </div>
+      <button class="icon-btn" id="drawerClose">✕</button>
+    </div>
+    <div class="drawer-body">
+      <div class="dpane active" id="dpane-sanctions"></div>
+      <div class="dpane" id="dpane-notes"></div>
+      <div class="dpane" id="dpane-sandbox">
+        <div class="term" id="termFeed"></div>
+      </div>
+      <div class="dpane" id="dpane-camera">
+        <div class="cam-wrap">
+          <video id="cam" autoplay playsinline muted></video>
+          <div class="cam-scan"></div>
+          <div class="cam-corners"><i></i><i></i><i></i><i></i></div>
+        </div>
+        <div class="cam-menu">
+          <button class="btn" id="camStart">Включить</button>
+          <button class="btn" id="camShot">Что это? / Снимок</button>
+          <button class="btn" id="camBuy">«Купи такую же»</button>
+          <button class="btn ghost" id="camStop">Выключить</button>
+        </div>
+        <div class="cam-note muted">Кадр уходит vision-модели: JARVIS распознаёт объект и может найти его в магазинах.</div>
+        <div class="cam-result" id="camResult"></div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- ТОСТЫ -->
+<div class="toasts" id="toasts"></div>
+
+<!-- МОДАЛКА -->
+<div class="modal-back" id="modalBack">
+  <div class="modal" id="modal"></div>
+</div>
+
+<script src="/static/js/markdown.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
