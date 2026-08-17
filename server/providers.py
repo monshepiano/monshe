@@ -16,8 +16,16 @@ def _post_json(url, headers, payload, timeout=180):
     try:
         with httpx.Client(timeout=timeout, follow_redirects=True) as c:
             r = c.post(url, headers=headers, json=payload)
+    except httpx.ConnectError as e:
+        raise ProviderError(
+            "нет доступа к API провайдера: из этой облачной песочницы сеть до "
+            f"{url.split('/')[2] if '://' in url else url} заблокирована "
+            "(это ограничение превью-окружения, а НЕ ошибка ключа). "
+            "Запустите JARVIS на своём ПК — docs/RUN_ON_PC.md.") from e
+    except httpx.TimeoutException as e:
+        raise ProviderError("провайдер не ответил за отведённое время (таймаут)") from e
     except httpx.HTTPError as e:
-        raise ProviderError(f"нет связи с провайдером ({e.__class__.__name__})")
+        raise ProviderError(f"нет связи с провайдером ({e.__class__.__name__})") from e
     if r.status_code >= 400:
         raise ProviderError(f"API {r.status_code}: {r.text[:500]}")
     return r.json()
