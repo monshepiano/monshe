@@ -18,23 +18,24 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from ..config import WORKSPACE, CONFIG
+from .. import sandbox
 
 IS_MAC = platform.system() == "Darwin"
 IS_WIN = platform.system() == "Windows"
 
 
+def _ws() -> Path:
+    """Текущая песочница: своя у каждого диалога."""
+    return sandbox.root()
+
+
 def _safe_path(name: str) -> Path:
     """Не выпускаем агента за пределы песочницы."""
-    clean = (name or "").strip().lstrip("/")
-    path = (WORKSPACE / clean).resolve()
-    root = WORKSPACE.resolve()
-    if not str(path).startswith(str(root)):
-        raise ValueError("Путь вне песочницы: " + name)
-    return path
+    return sandbox.safe_path(name)
 
 
 def _dl(name: str) -> str:
-    return "/api/files/download?name=" + urllib.parse.quote(name)
+    return sandbox.dl(name)
 
 
 # ------------------------------------------------------------------ файлы
@@ -42,7 +43,7 @@ def write_file(path: str, content: str) -> Dict[str, Any]:
     dest = _safe_path(path)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(content, "utf-8")
-    rel = str(dest.relative_to(WORKSPACE.resolve()))
+    rel = str(dest.relative_to(_ws().resolve()))
     return {"ok": True, "path": rel, "size": dest.stat().st_size, "download_url": _dl(rel)}
 
 
@@ -57,13 +58,13 @@ def read_file(path: str, limit: int = 20000) -> Dict[str, Any]:
 
 
 def list_files(subdir: str = "") -> Dict[str, Any]:
-    base = _safe_path(subdir) if subdir else WORKSPACE
+    base = _safe_path(subdir) if subdir else _ws()
     if not base.exists():
         return {"ok": True, "files": []}
     files = []
     for item in sorted(base.rglob("*"))[:400]:
         if item.is_file():
-            rel = str(item.relative_to(WORKSPACE))
+            rel = str(item.relative_to(_ws()))
             files.append({"name": rel, "size": item.stat().st_size,
                           "modified": item.stat().st_mtime, "download_url": _dl(rel)})
     return {"ok": True, "files": files}
@@ -85,20 +86,20 @@ def make_archive(paths_csv: str, archive_name: str = "jarvis_bundle.zip") -> Dic
     archive_name = re.sub(r"[^\w.\-]+", "_", archive_name) or "bundle.zip"
     if not archive_name.endswith(".zip"):
         archive_name += ".zip"
-    dest = WORKSPACE / archive_name
+    dest = _ws() / archive_name
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
         if not names:
-            for item in WORKSPACE.rglob("*"):
+            for item in _ws().rglob("*"):
                 if item.is_file() and item != dest:
-                    zf.write(item, item.relative_to(WORKSPACE))
+                    zf.write(item, item.relative_to(_ws()))
         for name in names:
             src = _safe_path(name)
             if src.is_dir():
                 for item in src.rglob("*"):
                     if item.is_file():
-                        zf.write(item, item.relative_to(WORKSPACE))
+                        zf.write(item, item.relative_to(_ws()))
             elif src.exists():
-                zf.write(src, src.relative_to(WORKSPACE))
+                zf.write(src, src.relative_to(_ws()))
     return {"ok": True, "path": archive_name, "size": dest.stat().st_size, "download_url": _dl(archive_name)}
 
 
@@ -106,7 +107,7 @@ def make_archive(paths_csv: str, archive_name: str = "jarvis_bundle.zip") -> Dic
 def run_shell(command: str, timeout: int = 90) -> Dict[str, Any]:
     """Выполнить команду в песочнице (рабочая папка ~/JARVIS/workspace)."""
     try:
-        proc = subprocess.run(command, shell=True, cwd=str(WORKSPACE), capture_output=True,
+        proc = subprocess.run(command, shell=True, cwd=str(_ws()), capture_output=True,
                               text=True, timeout=timeout)
         return {"ok": proc.returncode == 0, "code": proc.returncode,
                 "stdout": (proc.stdout or "")[-8000:], "stderr": (proc.stderr or "")[-4000:],
@@ -119,10 +120,10 @@ def run_shell(command: str, timeout: int = 90) -> Dict[str, Any]:
 
 def run_python(code: str, timeout: int = 90) -> Dict[str, Any]:
     """Выполнить python-код в песочнице (анализ данных, расчёты, генерация файлов)."""
-    script = WORKSPACE / ("_run_%d.py" % int(time.time() * 1000))
+    script = _ws() / ("_run_%d.py" % int(time.time() * 1000))
     script.write_text(code, "utf-8")
     try:
-        proc = subprocess.run([sys.executable, str(script)], cwd=str(WORKSPACE),
+        proc = subprocess.run([sys.executable, str(script)], cwd=str(_ws()),
                               capture_output=True, text=True, timeout=timeout)
         return {"ok": proc.returncode == 0, "stdout": (proc.stdout or "")[-8000:],
                 "stderr": (proc.stderr or "")[-4000:], "code": proc.returncode}
@@ -166,7 +167,7 @@ _JXA_PRELUDE = (
 
 def screenshot(scale: float = 0.5) -> Dict[str, Any]:
     """Снимок экрана. Возвращает data-url (для vision-модели) и файл в песочнице."""
-    out = WORKSPACE / ("screen_%d.png" % int(time.time()))
+    out = _ws() / ("screen_%d.png" % int(time.time()))
     try:
         if IS_MAC:
             subprocess.run(["screencapture", "-x", "-C", str(out)], timeout=25, check=True)
@@ -399,6 +400,28 @@ def system_info() -> Dict[str, Any]:
         "os": platform.system(),
         "release": platform.release(),
         "python": sys.version.split()[0],
-        "workspace": str(WORKSPACE),
+        "workspace": str(_ws()),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+# --------------------------------------------------- управление песочницей
+def sandbox_info() -> Dict[str, Any]:
+    """Что сейчас лежит в песочнице этого диалога."""
+    data = sandbox.info()
+    data["files_list"] = [f["name"] for f in sandbox.listing()][:80]
+    return data
+
+
+def sandbox_clear(confirm: str = "") -> Dict[str, Any]:
+    """Полностью стереть песочницу текущего диалога."""
+    before = len(sandbox.listing())
+    res = sandbox.wipe()
+    res["before"] = before
+    res["message"] = "Песочница «%s» очищена: удалено объектов — %d." % (res.get("name", ""), res.get("removed", 0))
+    return res
+
+
+def sandbox_rename(name: str) -> Dict[str, Any]:
+    """Переименовать песочницу этого диалога."""
+    return sandbox.rename(name)

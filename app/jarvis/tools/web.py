@@ -146,12 +146,12 @@ def deep_research(query: str, pages: int = 3) -> Dict[str, Any]:
 
 def download_file(url: str, filename: str = "") -> Dict[str, Any]:
     """Скачать файл в песочницу JARVIS."""
-    from ..config import WORKSPACE
+    from .. import sandbox
     if not url.startswith("http"):
         url = "https://" + url
     name = filename or urllib.parse.unquote(url.split("/")[-1].split("?")[0]) or "download.bin"
     name = re.sub(r"[^\w.\-() ]+", "_", name)[:120]
-    dest = WORKSPACE / name
+    dest = sandbox.root() / name
     try:
         req = urllib.request.Request(url, headers={"User-Agent": _UA})
         with urllib.request.urlopen(req, timeout=90, context=_CTX) as resp, open(dest, "wb") as fh:
@@ -165,7 +165,7 @@ def download_file(url: str, filename: str = "") -> Dict[str, Any]:
                     break
                 fh.write(chunk)
         return {"ok": True, "path": str(dest), "name": name, "size": dest.stat().st_size,
-                "download_url": "/api/files/download?name=" + urllib.parse.quote(name)}
+                "download_url": sandbox.dl(name)}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

@@ -125,3 +125,45 @@ def summarize_history(messages: List[Dict[str, Any]], keep_last: int = 12) -> Li
     if not summary:
         return tail
     return [{"role": "system", "content": "Краткая память о предыдущей части диалога:\n" + summary}] + tail
+
+
+# ------------------------------------------------------------- имя диалога
+_TITLE_STOP = re.compile(r"^[\s\"'«»`*#>\-–—.]+|[\s\"'«»`*#>\-–—.]+$")
+
+
+def _fallback_title(text: str) -> str:
+    """Если модель недоступна — аккуратно подрезаем первую фразу."""
+    clean = re.sub(r"\s+", " ", (text or "").strip())
+    if not clean:
+        return "Новый диалог"
+    first = re.split(r"[.!?\n]", clean)[0].strip() or clean
+    if len(first) > 38:
+        cut = first[:38].rsplit(" ", 1)[0]
+        first = (cut or first[:38]).rstrip(",;:-") + "…"
+    return first[:40]
+
+
+def make_chat_title(text: str) -> str:
+    """Название диалога придумывает сама модель — коротко и по смыслу."""
+    from . import llm  # локальный импорт, чтобы избежать циклов
+
+    snippet = re.sub(r"\s+", " ", (text or "").strip())[:900]
+    if not snippet:
+        return "Новый диалог"
+    try:
+        raw = llm.chat(
+            [
+                {"role": "system", "content":
+                 "Ты придумываешь названия диалогов. По первому сообщению пользователя дай короткое "
+                 "название на русском: 2-4 слова, до 32 символов, суть темы, без кавычек, без точки "
+                 "в конце, без слов «запрос», «вопрос», «диалог». Ответь ТОЛЬКО названием."},
+                {"role": "user", "content": snippet},
+            ],
+            tier="nano", max_tokens=24, temperature=0.3,
+        ).get("content", "")
+    except Exception:
+        return _fallback_title(text)
+    title = _TITLE_STOP.sub("", (raw or "").split("\n")[0]).strip()
+    if not title or len(title) > 48:
+        return _fallback_title(text)
+    return title[:40]

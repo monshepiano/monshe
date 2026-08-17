@@ -102,6 +102,18 @@ register("run_shell", system.run_shell,
          "Выполнить команду в терминале песочницы.",
          {"command": S("команда", True)}, "danger", "sandbox", "Терминал")
 
+register("sandbox_info", system.sandbox_info,
+         "Посмотреть состояние песочницы этого диалога: имя, сколько файлов, размер, список файлов.",
+         {}, "safe", "sandbox", "Песочница")
+
+register("sandbox_clear", system.sandbox_clear,
+         "Полностью очистить песочницу этого диалога — удалить все файлы. Только по прямой просьбе пользователя.",
+         {"confirm": S("подтверждение словом да")}, "danger", "sandbox", "Очистка песочницы")
+
+register("sandbox_rename", system.sandbox_rename,
+         "Переименовать песочницу этого диалога (дать ей понятное название).",
+         {"name": S("новое название", True)}, "safe", "sandbox", "Имя песочницы")
+
 register("make_archive", system.make_archive,
          "Упаковать файлы песочницы в zip, чтобы прислать пользователю.",
          {"paths_csv": S("файлы через запятую, пусто = всё"), "archive_name": S("имя архива")},

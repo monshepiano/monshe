@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import agent, auto, db, llm, orchestrator, tools
+from . import agent, auto, db, llm, orchestrator, sandbox, tools
 from .config import CONFIG, WORKSPACE, HOME
 from .tools import media
 
@@ -143,9 +143,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/memory":
             return self._json({"ok": True, "memory": db.recall()})
         if path == "/api/files":
-            return self._json(tools.call("list_files", {}))
+            chat_id = (params.get("chat_id") or params.get("chat") or [""])[0]
+            return self._json({"ok": True, "files": sandbox.listing(chat_id),
+                               "sandbox": sandbox.info(chat_id)})
+        if path == "/api/sandbox":
+            chat_id = (params.get("chat_id") or params.get("chat") or [""])[0]
+            return self._json(sandbox.info(chat_id))
+        if path == "/api/files/view":
+            chat_id = (params.get("chat_id") or params.get("chat") or [""])[0]
+            return self._json(sandbox.view((params.get("name") or [""])[0], chat_id))
         if path == "/api/files/download":
-            return self._download((params.get("name") or [""])[0])
+            return self._download((params.get("name") or [""])[0],
+                                  (params.get("chat") or params.get("chat_id") or [""])[0])
         if path == "/api/usage":
             return self._json({"ok": True, **db.usage_summary()})
 
@@ -164,7 +173,9 @@ class Handler(BaseHTTPRequestHandler):
             db.rename_chat(body.get("chat_id", ""), body.get("title", ""))
             return self._json({"ok": True})
         if path == "/api/chats/delete":
-            db.delete_chat(body.get("chat_id", ""))
+            chat_id = body.get("chat_id", "")
+            db.delete_chat(chat_id)
+            sandbox.drop(chat_id)
             return self._json({"ok": True})
         if path == "/api/tasks/new":
             task = db.create_task(body.get("title") or "Задача",
@@ -195,6 +206,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/memory/delete":
             db.forget(body.get("id", ""))
             return self._json({"ok": True})
+        if path == "/api/sandbox/clear":
+            sandbox.set_chat(body.get("chat_id") or "")
+            return self._json(sandbox.wipe(body.get("chat_id") or ""))
+        if path == "/api/sandbox/rename":
+            return self._json(sandbox.rename(body.get("name") or "", body.get("chat_id") or ""))
+        if path == "/api/sandbox/delete_file":
+            sandbox.set_chat(body.get("chat_id") or "")
+            return self._json(tools.call("delete_file", {"path": body.get("name") or ""}))
         if path == "/api/upload":
             return self._json(self._upload(body))
         if path == "/api/vision":
@@ -202,6 +221,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/transcribe":
             return self._json(media.transcribe_audio(body.get("audio", ""), body.get("language", "ru")))
         if path == "/api/tool":
+            sandbox.set_chat(body.get("chat_id") or "")
             return self._json(tools.call(body.get("name", ""), body.get("args") or {}))
         if path == "/api/computer/screenshot":
             return self._json(tools.call("screenshot", {}))
@@ -218,12 +238,20 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         self._send(200, target.read_bytes(), ctype)
 
-    def _download(self, name: str) -> None:
+    def _download(self, name: str, chat_id: str = "") -> None:
         if not name:
             return self._json({"ok": False, "error": "нет имени файла"}, 400)
-        target = (WORKSPACE / name).resolve()
-        if not str(target).startswith(str(WORKSPACE.resolve())) or not target.exists():
+        try:
+            target = sandbox.safe_path(name, chat_id)
+        except ValueError:
             return self._json({"ok": False, "error": "файл не найден"}, 404)
+        if not target.exists():
+            # старые ссылки могли указывать на общий каталог
+            legacy = (WORKSPACE / name).resolve()
+            if str(legacy).startswith(str(WORKSPACE.resolve())) and legacy.is_file():
+                target = legacy
+            else:
+                return self._json({"ok": False, "error": "файл не найден"}, 404)
         ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
         disposition = "inline" if ctype.startswith("image/") else "attachment"
         self._send(200, target.read_bytes(), ctype,
@@ -239,7 +267,8 @@ class Handler(BaseHTTPRequestHandler):
             raw = base64.b64decode(data_url)
         except Exception:
             return {"ok": False, "error": "не удалось прочитать файл"}
-        dest = WORKSPACE / name
+        chat_id = body.get("chat_id") or ""
+        dest = sandbox.root(chat_id) / name
         dest.write_bytes(raw)
         kind = "image" if name.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")) else "file"
         preview = ""
@@ -249,7 +278,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 preview = ""
         return {"ok": True, "name": name, "size": len(raw), "kind": kind, "preview": preview,
-                "download_url": "/api/files/download?name=" + urllib.parse.quote(name)}
+                "download_url": sandbox.dl(name, chat_id)}
 
     def _vision(self, body: Dict[str, Any]) -> Dict[str, Any]:
         image = body.get("image") or ""
@@ -286,8 +315,9 @@ class Handler(BaseHTTPRequestHandler):
         attachments: List[Dict[str, Any]] = body.get("attachments") or []
 
         if not chat_id:
-            chat_id = db.create_chat(text[:40] or "Новый диалог")["id"]
+            chat_id = db.create_chat("Новый диалог")["id"]
 
+        sandbox.set_chat(chat_id)
         self._sse_open()
         self._sse({"type": "chat", "chat_id": chat_id})
 
@@ -303,11 +333,12 @@ class Handler(BaseHTTPRequestHandler):
                      "agent_mode": agent_mode, "computer_use": computer_use}
         db.add_message(chat_id, "user", text, user_meta)
 
-        # авто-название чата
+        # название диалога придумывает сам JARVIS
         history_all = db.get_messages(chat_id)
         if len([m for m in history_all if m["role"] == "user"]) == 1:
-            db.rename_chat(chat_id, (text[:38] or "Новый диалог"))
-            self._sse({"type": "chat_title", "title": text[:38] or "Новый диалог"})
+            title = orchestrator.make_chat_title(text)
+            db.rename_chat(chat_id, title)
+            self._sse({"type": "chat_title", "title": title, "chat_id": chat_id})
 
         # фон?
         decision = auto.should_background(text)

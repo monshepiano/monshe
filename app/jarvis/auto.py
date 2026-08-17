@@ -56,7 +56,8 @@ def execute_task(task_id: str) -> None:
     db.update_task(task_id, status="running", progress=0.05)
     db.append_task_event(task_id, {"type": "status", "text": "Задача запущена"})
     try:
-        result = agent.run_headless(task["prompt"], task_id=task_id, agent_mode=True)
+        result = agent.run_headless(task["prompt"], task_id=task_id, agent_mode=True,
+                                    chat_id=task.get("chat_id") or "")
         content = result.get("content") or "Задача выполнена."
         files = result.get("files") or []
         db.update_task(task_id, status="done", progress=1.0, result=content)

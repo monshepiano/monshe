@@ -13,13 +13,18 @@ from pathlib import Path
 from typing import Any, Dict
 
 from ..config import CONFIG, WORKSPACE
+from .. import sandbox
 
 _CTX = ssl.create_default_context()
 _UA = "Mozilla/5.0 JARVIS/1.0"
 
 
+def _ws() -> Path:
+    return sandbox.root()
+
+
 def _dl(name: str) -> str:
-    return "/api/files/download?name=" + urllib.parse.quote(name)
+    return sandbox.dl(name)
 
 
 def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: str = "") -> Dict[str, Any]:
@@ -32,7 +37,7 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: st
     url = "%s%s?width=%d&height=%d&nologo=true&seed=%d" % (
         base, urllib.parse.quote(full_prompt[:900]), width, height, int(time.time()) % 100000)
     name = "img_%d.jpg" % int(time.time())
-    dest = WORKSPACE / name
+    dest = _ws() / name
     try:
         req = urllib.request.Request(url, headers={"User-Agent": _UA})
         with urllib.request.urlopen(req, timeout=180, context=_CTX) as resp:
@@ -68,12 +73,12 @@ def transcribe_audio(path_or_data_url: str, language: str = "ru") -> Dict[str, A
         header, _, b64 = path_or_data_url.partition(",")
         raw = base64.b64decode(b64)
         ext = "webm" if "webm" in header else ("mp3" if "mpeg" in header else "wav")
-        src = WORKSPACE / ("voice_%d.%s" % (int(time.time()), ext))
+        src = _ws() / ("voice_%d.%s" % (int(time.time()), ext))
         src.write_bytes(raw)
     else:
         src = Path(path_or_data_url)
         if not src.is_absolute():
-            src = WORKSPACE / path_or_data_url
+            src = _ws() / path_or_data_url
         if not src.exists():
             return {"ok": False, "error": "аудиофайл не найден"}
 
@@ -122,7 +127,7 @@ def analyze_image(image_ref: str, question: str = "Что на изображе�
     if not image_ref.startswith("data:"):
         path = Path(image_ref)
         if not path.is_absolute():
-            path = WORKSPACE / image_ref
+            path = _ws() / image_ref
         if not path.exists():
             return {"ok": False, "error": "изображение не найдено: " + image_ref}
         mime = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
@@ -139,12 +144,12 @@ def analyze_video(path: str, question: str = "Что происходит на �
     ff = _ffmpeg()
     src = Path(path)
     if not src.is_absolute():
-        src = WORKSPACE / path
+        src = _ws() / path
     if not src.exists():
         return {"ok": False, "error": "видео не найдено"}
     if not ff:
         return {"ok": False, "error": "нужен ffmpeg: brew install ffmpeg"}
-    outdir = WORKSPACE / ("frames_%d" % int(time.time()))
+    outdir = _ws() / ("frames_%d" % int(time.time()))
     outdir.mkdir(exist_ok=True)
     try:
         subprocess.run([ff, "-y", "-i", str(src), "-vf", "fps=1/5,scale=768:-1",
@@ -197,7 +202,7 @@ def telegram_send_file(path: str, caption: str = "") -> Dict[str, Any]:
     conf = CONFIG.get("telegram", {}) or {}
     if not conf.get("enabled") or not conf.get("bot_token") or not conf.get("chat_id"):
         return {"ok": False, "error": "Telegram не настроен"}
-    src = WORKSPACE / path
+    src = _ws() / path
     if not src.exists():
         return {"ok": False, "error": "файл не найден"}
     boundary = "----jarvisfile%d" % int(time.time())

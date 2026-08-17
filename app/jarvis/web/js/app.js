@@ -42,6 +42,7 @@ const S = {
   camBusy: false,
   camLast: '',
   camPrevPix: null,
+  sandbox: {},
 };
 
 /* ============================ утилиты ============================ */
@@ -66,17 +67,35 @@ function fmtTime(ts) {
   if (d.toDateString() === today.toDateString()) return t;
   return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) + ' ' + t;
 }
+/* Иконки файлов — тонкая линейная графика, каждый тип со своим сдержанным
+   цветом (класс c-*). Никаких эмодзи: они выглядят по-детски и по-разному
+   рисуются в разных системах. */
+const F_SVG = {
+  img: '<rect x="3" y="4.5" width="18" height="15" rx="2.4"/><circle cx="8.5" cy="10" r="1.6"/><path d="M4 17l4.8-4.6 3.4 3.1 3-2.6L20 17"/>',
+  vid: '<rect x="2.8" y="5.5" width="12.6" height="13" rx="2.2"/><path d="M15.4 11l5.5-3v8l-5.5-3z"/>',
+  aud: '<path d="M9 17.5V5.6l10-2v11.4"/><circle cx="6.6" cy="17.6" r="2.6"/><circle cx="16.6" cy="14.6" r="2.6"/>',
+  zip: '<path d="M6 3.2h9.2L20 8v12.8H6z"/><path d="M15 3.2V8h5"/><path d="M10.5 4v2M10.5 8v2M10.5 12v2"/>',
+  pdf: '<path d="M6 3.2h8.2L19 8v12.8H6z"/><path d="M14 3.2V8h5"/><path d="M9 15.5c3-.6 4.6-4 4-5.4-.6-1.4-2 .3-1.4 2.6.6 2.3 2.4 4 4.4 4.2"/>',
+  tab: '<rect x="3.4" y="4.4" width="17.2" height="15.2" rx="2.2"/><path d="M3.4 9.4h17.2M9 9.4v10.2M15 9.4v10.2"/>',
+  doc: '<path d="M6 3.2h8.2L19 8v12.8H6z"/><path d="M14 3.2V8h5"/><path d="M9 12.6h7M9 16h5"/>',
+  code: '<path d="M9 8.4L4.6 12 9 15.6"/><path d="M15 8.4L19.4 12 15 15.6"/><path d="M13.2 5.6l-2.4 12.8"/>',
+  any: '<path d="M6 3.2h8.2L19 8v12.8H6z"/><path d="M14 3.2V8h5"/>',
+};
+function fsvg(kind, cls) {
+  return '<span class="fico ' + cls + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' + F_SVG[kind] + '</svg></span>';
+}
 function fileIcon(name) {
   const n = String(name || '').toLowerCase();
-  if (/\.(png|jpe?g|gif|webp|svg)$/.test(n)) return '🖼';
-  if (/\.(mp4|mov|avi|mkv|webm)$/.test(n)) return '🎬';
-  if (/\.(mp3|wav|ogg|m4a|opus)$/.test(n)) return '🎵';
-  if (/\.(zip|tar|gz|rar|7z)$/.test(n)) return '🗜';
-  if (/\.(pdf)$/.test(n)) return '📕';
-  if (/\.(xlsx?|csv)$/.test(n)) return '📊';
-  if (/\.(docx?|txt|md|rtf)$/.test(n)) return '📄';
-  if (/\.(py|js|ts|html|css|json|sh|go|rs|java)$/.test(n)) return '⌨';
-  return '📎';
+  if (/\.(png|jpe?g|gif|webp|svg|bmp)$/.test(n)) return fsvg('img', 'c-img');
+  if (/\.(mp4|mov|avi|mkv|webm)$/.test(n)) return fsvg('vid', 'c-vid');
+  if (/\.(mp3|wav|ogg|m4a|opus|flac)$/.test(n)) return fsvg('aud', 'c-aud');
+  if (/\.(zip|tar|gz|rar|7z)$/.test(n)) return fsvg('zip', 'c-zip');
+  if (/\.(pdf)$/.test(n)) return fsvg('pdf', 'c-pdf');
+  if (/\.(xlsx?|csv)$/.test(n)) return fsvg('tab', 'c-tab');
+  if (/\.(docx?|txt|md|rtf)$/.test(n)) return fsvg('doc', 'c-doc');
+  if (/\.(py|js|ts|html|css|json|sh|go|rs|java|yml|yaml|xml)$/.test(n)) return fsvg('code', 'c-code');
+  return fsvg('any', 'c-any');
 }
 function isImg(name) { return /\.(png|jpe?g|gif|webp)$/i.test(String(name || '')); }
 
@@ -246,15 +265,6 @@ async function refreshState() {
   setChip('#chipModel', st.providers_ready ? 'ok' : 'err',
     st.providers_ready ? 'модели готовы' : 'нет ключа');
 
-  const ab = $('#approvalsBadge');
-  ab.textContent = S.approvals.length;
-  ab.classList.toggle('hidden', S.approvals.length === 0);
-  $('#approvalsBtn').classList.toggle('alert', S.approvals.length > 0);
-
-  const nb = $('#notifyBadge');
-  nb.textContent = S.unread;
-  nb.classList.toggle('hidden', S.unread === 0);
-
   const cost = ((st.usage || {}).total || {}).cost || 0;
   $('#footCost').textContent = cost.toFixed(2) + ' ₽';
 
@@ -275,19 +285,56 @@ async function loadChats() {
   S.chats.forEach((c, i) => {
     const item = el('div', 'chat-item' + (c.id === S.chatId ? ' active' : ''));
     item.style.animationDelay = (i * 0.02) + 's';
-    item.innerHTML = '<span>' + esc(c.title || 'Диалог') + '</span><i class="chat-x">✕</i>';
-    item.addEventListener('click', (e) => {
-      if (e.target.classList.contains('chat-x')) {
-        api('/api/chats/delete', { chat_id: c.id }).then(() => {
-          if (S.chatId === c.id) newChat(); else loadChats();
-        });
-        e.stopPropagation(); return;
-      }
-      openChat(c.id);
+    item.innerHTML = '<span>' + esc(c.title || 'Диалог') + '</span>' +
+      '<span class="chat-acts"><i class="chat-r" title="Переименовать">✎</i>' +
+      '<i class="chat-x" title="Удалить">✕</i></span>';
+
+    item.querySelector('.chat-r').addEventListener('click', (e) => {
+      e.stopPropagation();
+      startRenameChat(item, c);
     });
+    item.querySelector('.chat-x').addEventListener('click', (e) => {
+      e.stopPropagation();
+      confirmBox('Удалить диалог?',
+        'Диалог «' + esc(c.title || 'Диалог') + '» и его песочница будут удалены безвозвратно.', () => {
+          api('/api/chats/delete', { chat_id: c.id }).then(() => {
+            toast('Диалог удалён', 'success');
+            if (S.chatId === c.id) newChat(); else loadChats();
+          });
+        });
+    });
+    item.addEventListener('click', () => openChat(c.id));
     list.appendChild(item);
   });
 }
+/* переименование диалога прямо в списке: поле вместо названия */
+function startRenameChat(item, c) {
+  const label = item.querySelector('span');
+  if (!label || item.querySelector('.chat-edit')) return;
+  const inp = el('input', 'chat-edit');
+  inp.value = c.title || '';
+  label.replaceWith(inp);
+  inp.focus(); inp.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const val = inp.value.trim();
+    if (save && val && val !== c.title) {
+      const r = await api('/api/chats/rename', { chat_id: c.id, title: val });
+      if (r.ok) toast('Название изменено', 'success');
+    }
+    loadChats();
+  };
+  inp.addEventListener('click', (e) => e.stopPropagation());
+  inp.addEventListener('blur', () => finish(true));
+  inp.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') { finish(false); }
+  });
+}
+
 function newChat() {
   if (S.camStream) stopCam();          // камера жила в старом диалоге — гасим
   S.sanctionNodes = {};
@@ -364,6 +411,31 @@ function addUserMsg(text, atts) {
       fileIcon(a.name) + ' ' + esc(a.name) + '</div>';
   });
   m.innerHTML = '<div class="bubble-user">' + esc(text) + extra + '</div>';
+
+  // две кнопки под своим сообщением: скопировать и редактировать
+  const acts = el('div', 'msg-actions');
+  const copy = el('button', 'act act-copy', ICO.copy + '<span>Скопировать</span>');
+  copy.addEventListener('click', () => {
+    navigator.clipboard.writeText(text).then(
+      () => toast('Скопировано', 'success'),
+      () => toast('Буфер обмена недоступен', 'error'));
+  });
+  const edit = el('button', 'act act-edit', ICO.edit + '<span>Редактировать</span>');
+  edit.addEventListener('click', () => {
+    const inp = $('#input');
+    inp.value = text;
+    autoGrow(); inp.focus();
+    try { inp.setSelectionRange(text.length, text.length); } catch (e) {}
+    m.querySelector('.bubble-user').classList.add('editing');
+    setTimeout(() => {
+      const b = m.querySelector('.bubble-user');
+      if (b) b.classList.remove('editing');
+    }, 1600);
+    toast('Текст перенесён в поле ввода — правь и отправляй', 'info');
+  });
+  acts.appendChild(copy); acts.appendChild(edit);
+  m.appendChild(acts);
+
   stream().appendChild(m);
   scrollDown(true);
   return m;
@@ -388,11 +460,11 @@ function addAiMsg() {
 
 function addMsgActions(node, text) {
   const acts = el('div', 'msg-actions');
-  const copy = el('button', 'act', 'Копировать');
+  const copy = el('button', 'act act-copy', ICO.copy + '<span>Копировать</span>');
   copy.addEventListener('click', () => {
     navigator.clipboard.writeText(text).then(() => toast('Скопировано', 'success'));
   });
-  const speak = el('button', 'act', 'Озвучить');
+  const speak = el('button', 'act act-speak', ICO.speak + '<span>Озвучить</span>');
   speak.addEventListener('click', () => {
     try {
       const u = new SpeechSynthesisUtterance(text.replace(/[#*`>|\-]/g, '').slice(0, 900));
@@ -400,7 +472,7 @@ function addMsgActions(node, text) {
       speechSynthesis.cancel(); speechSynthesis.speak(u);
     } catch (e) { toast('Синтез речи недоступен', 'error'); }
   });
-  const again = el('button', 'act', 'Ещё раз');
+  const again = el('button', 'act act-again', ICO.again + '<span>Ещё раз</span>');
   again.addEventListener('click', () => { $('#input').value = S.lastPrompt || ''; autoGrow(); send(); });
   acts.appendChild(copy); acts.appendChild(speak); acts.appendChild(again);
   node.body.appendChild(acts);
@@ -442,10 +514,55 @@ function attachFileChip(container, f) {
 function termLine(text, cls) {
   const feed = $('#termFeed');
   if (!feed) return;
+  // если в терминале открыт файл — освобождаем место под живой лог
+  if (feed.querySelector('.term-file')) closeFileView();
   const line = el('div', 'term-line ' + (cls || ''), esc(text));
   feed.appendChild(line);
   feed.scrollTop = feed.scrollHeight;
   while (feed.children.length > 400) feed.removeChild(feed.firstChild);
+}
+
+/* ============================ иконки и миниатюры ============================ */
+/* Единый набор тонких линейных иконок — без «детских» эмодзи. */
+const ICO = {
+  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.4"/><path d="M5.5 15H5a1.9 1.9 0 0 1-1.9-1.9V5A1.9 1.9 0 0 1 5 3.1h8.1A1.9 1.9 0 0 1 15 5v.5"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h8"/><path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L7.5 18.5 3.5 20l1.5-4z"/></svg>',
+  speak: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M16 8.6a4.6 4.6 0 0 1 0 6.8"/><path d="M18.6 6a8 8 0 0 1 0 12"/></svg>',
+  again: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1"/><path d="M20.6 4.4v4.4h-4.4"/></svg>',
+  cam: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.8" y="6.5" width="13" height="11" rx="2.2"/><path d="M15.8 11l5.4-3v8l-5.4-3z"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 5-2 6.5-2 6.5h16S18 14 18 9z"/><path d="M10.3 19.5a2 2 0 0 0 3.4 0"/></svg>',
+  shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7.5 3v5.6c0 4.6-3.1 8-7.5 9.4-4.4-1.4-7.5-4.8-7.5-9.4V6z"/></svg>',
+};
+
+/* Свернуть блок в компактную строку-миниатюру.
+   Клик по миниатюре разворачивает исходный блок обратно. */
+function collapseToThumb(node, opts) {
+  if (!node || !node.isConnected || node.dataset.collapsed === '1') return null;
+  node.dataset.collapsed = '1';
+  const thumb = el('div', 'thumb ' + (opts.cls || ''));
+  const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  thumb.innerHTML =
+    '<span class="th-ico">' + (opts.icon || ICO.bell) + '</span>' +
+    '<span class="th-t"><b>' + esc(opts.title || '') + '</b>' +
+    (opts.sub ? ' · ' + esc(opts.sub) : '') + '</span>' +
+    (opts.tag ? '<span class="th-tag">' + esc(opts.tag) + '</span>' : '') +
+    '<span class="th-time">' + time + '</span>' +
+    '<span class="th-open">›</span>';
+  node.classList.add('collapsing');
+  const parent = node.parentNode;
+  setTimeout(() => {
+    if (!parent) return;
+    parent.insertBefore(thumb, node);
+    node.style.display = 'none';
+    node.classList.remove('collapsing');
+  }, 260);
+  thumb.addEventListener('click', () => {
+    node.style.display = '';
+    node.dataset.collapsed = '0';
+    thumb.remove();
+    node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+  return thumb;
 }
 
 /* ============================ отправка ============================ */
@@ -574,8 +691,15 @@ function handleEvent(ev, ui) {
     case 'chat':
       S.chatId = ev.chat_id; break;
 
-    case 'chat_title':
-      loadChats(); break;
+    case 'chat_title': {
+      // название диалога придумал сам JARVIS
+      loadChats();
+      const cur = S.chats.find((c) => c.id === ev.chat_id);
+      if (!cur || cur.title !== ev.title) {
+        toast('Диалог назван: ' + ev.title, 'info');
+      }
+      break;
+    }
 
     case 'route': {
       const hint = $('#routeHint');
@@ -786,7 +910,7 @@ function uploadFile(file) {
   if (file.size > 25 * 1024 * 1024) { toast('Файл больше 25 МБ', 'error'); return; }
   const fr = new FileReader();
   fr.onload = async () => {
-    const r = await api('/api/upload', { name: file.name, data: fr.result });
+    const r = await api('/api/upload', { name: file.name, data: fr.result, chat_id: S.chatId || '' });
     if (!r.ok) { toast(r.error || 'не загрузилось', 'error'); return; }
     if (r.kind === 'image') r.data = fr.result;
     S.attachments.push(r);
@@ -902,8 +1026,15 @@ function stopCam() {
   const v = $('#cam');
   if (v) v.srcObject = null;
   if (S.camNode) {
-    S.camNode.classList.add('done');
+    const node = S.camNode;
+    node.classList.add('done');
     camState('трансляция завершена', false);
+    // блок камеры отработал — сворачиваем его в компактную строку
+    const seen = (node.querySelectorAll('.cam-line') || []).length;
+    collapseToThumb(node, {
+      cls: 'th-cam', icon: ICO.cam, title: 'Камера',
+      sub: seen ? 'наблюдений: ' + seen : 'трансляция завершена', tag: 'закрыта',
+    });
     S.camNode = null;
   }
   S.camPrevPix = null;
@@ -996,7 +1127,7 @@ async function camAttachFrame() {
   if (!S.camStream) return null;
   const data = camFrame();
   if (!data) return null;
-  const r = await api('/api/upload', { name: 'camera_' + Date.now() + '.jpg', data });
+  const r = await api('/api/upload', { name: 'camera_' + Date.now() + '.jpg', data, chat_id: S.chatId || '' });
   if (!r.ok) return null;
   r.data = data;
   return r;
@@ -1016,16 +1147,23 @@ function sanctionCard(a) {
     '<div class="s-acts"><button class="btn primary sm">Разрешить</button>' +
     '<button class="btn danger sm">Отклонить</button></div>';
   const [okBtn, noBtn] = $$('.s-acts .btn', card);
-  okBtn.addEventListener('click', () => decideApproval(a.id, 'approved', card));
-  noBtn.addEventListener('click', () => decideApproval(a.id, 'rejected', card));
+  okBtn.addEventListener('click', () => decideApproval(a.id, 'approved', card, a.tool));
+  noBtn.addEventListener('click', () => decideApproval(a.id, 'rejected', card, a.tool));
   return card;
 }
 
-function closeSanctionCard(card, text) {
+function closeSanctionCard(card, text, tool) {
   if (!card) return;
   const acts = card.querySelector('.s-acts');
   if (acts) acts.innerHTML = '<span class="muted">' + esc(text) + '</span>';
   card.classList.add('resolved');
+  // решение принято — карточка больше не нужна, оставляем компактный след
+  const ok = text.indexOf('✕') === -1;
+  setTimeout(() => collapseToThumb(card, {
+    cls: ok ? 'th-ok' : 'th-no', icon: ICO.shield,
+    title: 'Санкция' + (tool ? ' · ' + tool : ''),
+    sub: text.replace(/[✓✕]\s*/, ''), tag: ok ? 'разрешено' : 'отклонено',
+  }), 900);
 }
 
 function renderSanctions() {
@@ -1045,13 +1183,13 @@ function renderSanctions() {
   // решённые где-то ещё — закрываем карточку
   const live = new Set(S.approvals.map((a) => String(a.id)));
   Object.keys(S.sanctionNodes).forEach((k) => {
-    if (!live.has(k)) { closeSanctionCard(S.sanctionNodes[k], '✓ решено'); delete S.sanctionNodes[k]; }
+    if (!live.has(k)) { closeSanctionCard(S.sanctionNodes[k], '✓ решено', ''); delete S.sanctionNodes[k]; }
   });
 }
 
-async function decideApproval(id, decision, card) {
+async function decideApproval(id, decision, card, tool) {
   await api('/api/approvals/decide', { id, decision });
-  closeSanctionCard(card, decision === 'approved' ? '✓ разрешено' : '✕ отклонено');
+  closeSanctionCard(card, decision === 'approved' ? '✓ разрешено' : '✕ отклонено', tool);
   toast(decision === 'approved' ? 'Разрешено — продолжаю' : 'Отклонено', decision === 'approved' ? 'success' : 'warn');
   refreshState();
 }
@@ -1062,7 +1200,17 @@ function noteCard(n) {
   card.innerHTML = '<div class="note-ico">' + (kind === 'error' ? '✕' : kind === 'success' ? '✓' : '◆') + '</div>' +
     '<div style="flex:1;min-width:0"><div class="note-t">' + esc(n.title) + '</div>' +
     '<div class="note-b">' + esc((n.body || '').slice(0, 900)) + '</div>' +
-    '<div class="note-time">' + fmtTime(n.created_at) + '</div></div>';
+    '<div class="note-time">' + fmtTime(n.created_at) + '</div></div>' +
+    '<i class="note-x" title="Свернуть">✕</i>';
+  // крестик не удаляет уведомление, а сворачивает его в компактную строку
+  card.querySelector('.note-x').addEventListener('click', (e) => {
+    e.stopPropagation();
+    collapseToThumb(card, {
+      cls: 'th-note', icon: ICO.bell, title: n.title || 'Уведомление',
+      sub: (n.body || '').slice(0, 70), tag: 'прочитано',
+    });
+    api('/api/notifications/read', {});
+  });
   return card;
 }
 
@@ -1081,45 +1229,6 @@ function renderNotes() {
     scrollDown();
   });
 }
-
-/* кнопки в шапке: показать сводку прямо в диалоге */
-$('#notifyBtn').addEventListener('click', async () => {
-  showView('chat'); killWelcome();
-  const box = el('div', 'chat-card note-digest');
-  const list = S.notifications.slice(0, 10);
-  box.innerHTML = '<div class="cc-head"><span class="cc-ico ico-notes">◔</span>Уведомления' +
-    '<span class="cc-count">' + list.length + '</span></div>';
-  if (!list.length) {
-    box.appendChild(el('div', 'empty', '<span class="e-ico">◔</span>Пока тихо.<br>' +
-      'Здесь будут отчёты фоновых задач и мои подсказки.'));
-  } else {
-    list.forEach((n) => box.appendChild(noteCard(n)));
-  }
-  stream().appendChild(box); scrollDown(true);
-  await api('/api/notifications/read', {});
-  refreshState();
-});
-
-$('#approvalsBtn').addEventListener('click', () => {
-  showView('chat'); killWelcome();
-  if (!S.approvals.length) {
-    const box = el('div', 'chat-card note-digest');
-    box.innerHTML = '<div class="cc-head"><span class="cc-ico ico-sanct">⛨</span>Санкции' +
-      '<span class="cc-count">0</span></div>' +
-      '<div class="empty"><span class="e-ico">⛨</span>Ничего не жду.<br>' +
-      'Опасные действия — оплата, удаление, управление компьютером — я всегда спрошу здесь.</div>';
-    stream().appendChild(box); scrollDown(true);
-    return;
-  }
-  const last = S.sanctionNodes[String(S.approvals[0].id)];
-  if (last && last.isConnected) {
-    last.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    last.classList.remove('flash'); void last.offsetWidth; last.classList.add('flash');
-  } else {
-    S.approvals.forEach((a) => { S.shownApprovals.delete(String(a.id)); });
-    renderSanctions();
-  }
-});
 
 /* ============================ AUTO ============================ */
 async function loadTasks() {
@@ -1190,10 +1299,14 @@ $('#addTaskBtn').addEventListener('click', () => {
 });
 
 /* ============================ песочница ============================ */
+/* У каждого диалога — своя песочница. Клик по файлу открывает его
+   прямо в терминале ниже, панель сверху умеет переименовать и очистить. */
 async function loadFiles() {
-  const r = await api('/api/files');
+  const q = S.chatId ? '?chat_id=' + encodeURIComponent(S.chatId) : '';
+  const r = await api('/api/files' + q);
   const grid = $('#fileGrid');
   const files = r.files || [];
+  renderSbxBar(r.sandbox || {}, files);
   if (!files.length) {
     grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><span class="e-ico">▤</span>' +
       'Песочница пуста.<br>Здесь появятся файлы, которые я создам: отчёты, таблицы, картинки, архивы.</div>';
@@ -1205,14 +1318,115 @@ async function loadFiles() {
     c.style.animationDelay = (i * 0.02) + 's';
     c.innerHTML = (isImg(f.name) ? '<img src="' + f.download_url + '" loading="lazy">' :
       '<div class="fi">' + fileIcon(f.name) + '</div>') +
-      '<div class="fn">' + esc(f.name) + '</div><div class="fs">' + fmtSize(f.size) + '</div>';
-    c.addEventListener('click', () => {
-      if (isImg(f.name)) lightbox(f.download_url); else window.open(f.download_url, '_blank');
+      '<div class="fn">' + esc(f.name) + '</div><div class="fs">' + fmtSize(f.size) + '</div>' +
+      '<i class="fx" title="Удалить файл">✕</i>';
+    c.querySelector('.fx').addEventListener('click', (e) => {
+      e.stopPropagation();
+      confirmBox('Удалить файл?', esc(f.name) + ' будет удалён из песочницы безвозвратно.', async () => {
+        const res = await api('/api/sandbox/delete_file', { name: f.name, chat_id: S.chatId || '' });
+        if (res.ok) { toast('Файл удалён', 'success'); loadFiles(); }
+        else toast(res.error || 'не удалось удалить', 'error');
+      });
     });
+    c.addEventListener('click', () => viewFile(f, c));
     grid.appendChild(c);
   });
 }
+
+function renderSbxBar(info, files) {
+  const nameEl = $('#sbxName'), metaEl = $('#sbxMeta');
+  if (!nameEl) return;
+  S.sandbox = info || {};
+  nameEl.textContent = info.name || 'Песочница';
+  const total = files.reduce((a, f) => a + (f.size || 0), 0);
+  metaEl.textContent = (info.shared ? 'общая · ' : 'диалог · ') +
+    files.length + ' файл(ов) · ' + fmtSize(info.size != null ? info.size : total);
+}
+
+async function viewFile(f, card) {
+  $$('.fcard.viewing').forEach((n) => n.classList.remove('viewing'));
+  if (card) card.classList.add('viewing');
+  const feed = $('#termFeed');
+  const title = $('#termTitle');
+  feed.classList.add('big');
+  feed.innerHTML = '<div class="muted">открываю ' + esc(f.name) + '…</div>';
+  title.textContent = 'ФАЙЛ · ' + f.name.toUpperCase();
+  const dlBtn = $('#termDownload'), closeBtn = $('#termClose');
+  dlBtn.hidden = false; closeBtn.hidden = false;
+  dlBtn.onclick = () => window.open(f.download_url, '_blank');
+  closeBtn.onclick = closeFileView;
+
+  const q = '/api/files/view?name=' + encodeURIComponent(f.name) +
+    (S.chatId ? '&chat_id=' + encodeURIComponent(S.chatId) : '');
+  const r = await api(q);
+  if (!r.ok) { feed.innerHTML = '<div class="term-line err">' + esc(r.error || 'не открылось') + '</div>'; return; }
+  const head = '<div class="tf-head">' + esc(f.name) + ' · ' + fmtSize(r.size) + ' · ' +
+    (r.kind === 'text' ? 'текст' : r.kind === 'image' ? 'изображение' : 'двоичный файл') + '</div>';
+  if (r.kind === 'image') {
+    feed.innerHTML = '<div class="term-file">' + head + '<img src="' + esc(r.download_url) + '"></div>';
+    const im = feed.querySelector('img');
+    if (im) im.addEventListener('click', () => lightbox(r.download_url));
+  } else if (r.kind === 'text') {
+    feed.innerHTML = '<div class="term-file">' + head + '<pre>' + esc(r.content || '(пусто)') + '</pre></div>';
+  } else {
+    feed.innerHTML = '<div class="term-file">' + head +
+      '<div class="muted">Двоичный файл — показать в терминале нельзя. Нажми «Скачать».</div></div>';
+  }
+  feed.scrollTop = 0;
+}
+
+function closeFileView() {
+  const feed = $('#termFeed');
+  feed.classList.remove('big');
+  feed.innerHTML = '';
+  $('#termTitle').textContent = 'ТЕРМИНАЛ';
+  $('#termDownload').hidden = true;
+  $('#termClose').hidden = true;
+  $$('.fcard.viewing').forEach((n) => n.classList.remove('viewing'));
+}
+
 $('#refreshFiles').addEventListener('click', loadFiles);
+
+$('#sbxRename').addEventListener('click', () => {
+  if (!S.chatId) { toast('Общую песочницу переименовать нельзя — открой диалог', 'warn'); return; }
+  promptBox('Название песочницы', (S.sandbox || {}).name || '', async (val) => {
+    const r = await api('/api/sandbox/rename', { name: val, chat_id: S.chatId });
+    if (r.ok) { toast('Песочница переименована', 'success'); loadFiles(); }
+    else toast(r.error || 'не удалось', 'error');
+  });
+});
+
+$('#sbxWipe').addEventListener('click', () => {
+  confirmBox('Очистить песочницу?',
+    'Все файлы этой песочницы будут удалены безвозвратно. Действие нельзя отменить.', async () => {
+      const r = await api('/api/sandbox/clear', { chat_id: S.chatId || '' });
+      if (r.ok) { toast('Удалено файлов: ' + (r.removed || 0), 'success'); closeFileView(); loadFiles(); }
+      else toast(r.error || 'не удалось очистить', 'error');
+    });
+});
+
+/* маленькие диалоги подтверждения и ввода — на базе общего модального окна */
+function confirmBox(title, text, onYes) {
+  modal('<h3>' + esc(title) + '</h3><div class="md-sub">' + text + '</div>' +
+    '<div class="modal-acts"><button class="btn" id="cbNo">Отмена</button>' +
+    '<button class="btn danger" id="cbYes">Да, продолжить</button></div>', (m) => {
+    $('#cbNo', m).addEventListener('click', closeModal);
+    $('#cbYes', m).addEventListener('click', () => { closeModal(); onYes(); });
+  });
+}
+function promptBox(title, value, onOk) {
+  modal('<h3>' + esc(title) + '</h3><div class="md-sub">Коротко и по делу — так проще искать.</div>' +
+    '<div class="field"><input id="pbVal" value="' + esc(value) + '"></div>' +
+    '<div class="modal-acts"><button class="btn" id="pbNo">Отмена</button>' +
+    '<button class="btn primary" id="pbOk">Сохранить</button></div>', (m) => {
+    const inp = $('#pbVal', m);
+    inp.focus(); inp.select();
+    const ok = () => { const v = inp.value.trim(); if (!v) return; closeModal(); onOk(v); };
+    $('#pbNo', m).addEventListener('click', closeModal);
+    $('#pbOk', m).addEventListener('click', ok);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
+  });
+}
 
 /* ============================ память ============================ */
 async function loadMemory() {
@@ -1364,7 +1578,7 @@ function renderSettings() {
     toast('Telegram настроен', 'success');
   });
   $('#testTg', tg).addEventListener('click', async () => {
-    const r = await api('/api/tool', { name: 'send_telegram', args: { text: 'JARVIS на связи. Проверка уведомлений ✅' } });
+    const r = await api('/api/tool', { name: 'send_telegram', args: { text: 'JARVIS на связи. Проверка уведомлений — всё работает.' } });
     toast(r.ok ? 'Сообщение отправлено' : (r.error || 'не отправилось'), r.ok ? 'success' : 'error');
   });
 

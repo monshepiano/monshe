@@ -10,7 +10,7 @@ import re
 import time
 from typing import Any, Dict, Generator, Iterable, List, Optional
 
-from . import db, llm, orchestrator, tools
+from . import db, llm, orchestrator, sandbox, tools
 from .config import CONFIG
 
 MAX_STEPS_CHAT = 6
@@ -41,7 +41,8 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) ->
 
 ТЫ УМЕЕШЬ ДЕЙСТВОВАТЬ, а не только говорить. У тебя есть инструменты:
 • интернет: web_search, open_url, deep_research, download_file, http_request;
-• песочница на сервере: write_file, read_file, run_python, run_shell, make_archive (файлы можно прислать пользователю);
+• песочница на сервере: write_file, read_file, list_files, run_python, run_shell, make_archive (файлы можно прислать пользователю);
+• управление песочницей: sandbox_info (что внутри), delete_file (убрать лишнее), sandbox_clear (стереть всё), sandbox_rename (дать имя);
 • медиа: generate_image, analyze_image, analyze_video, transcribe_audio;
 • память: remember (сохраняй важные факты о пользователе САМ, без напоминаний), recall;
 • фон: schedule_task — если задача долгая, регулярная или пользователь не должен ждать, отправь её в AUTO;
@@ -55,6 +56,7 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) ->
 5. Форматируй ответ markdown: заголовки, списки, **жирный**, таблицы, ```блоки кода```.
 6. Замечаешь личные факты (предпочтения, планы, имена) — вызывай remember.
 7. Не выдумывай результаты инструментов: если инструмент вернул ошибку — честно скажи и предложи обход.
+8. Песочница у каждого диалога своя. Просят «удали файл», «почисти песочницу», «сотри всё» — делай это инструментами delete_file / sandbox_clear, а не отговорками. Просят «назови песочницу» — sandbox_rename.
 """
     if computer_use:
         base += """
@@ -127,6 +129,7 @@ class Agent:
         self.agent_mode = agent_mode
         self.computer_use = computer_use
         self.approvals_auto = approvals_auto
+        self.sandbox_id = chat_id or ""
         self.created_files: List[Dict[str, Any]] = []
         self.used_tools: List[str] = []
         self.model_used = ""
@@ -166,6 +169,8 @@ class Agent:
     # ------------------------------------------------------------------ run
     def run(self, messages: List[Dict[str, Any]], user_text: str = "",
             has_image: bool = False) -> Generator[Dict[str, Any], None, None]:
+        # каждый диалог работает в своей песочнице
+        sandbox.set_chat(self.sandbox_id)
         route = orchestrator.choose_tier(
             user_text, has_image=has_image, agent_mode=self.agent_mode, has_tools=True)
         tier = route["tier"]
@@ -310,9 +315,10 @@ class Agent:
                "tools": self.used_tools, "model": self.model_used, "tier": tier}
 
 
-def run_headless(prompt: str, task_id: str = "", agent_mode: bool = True) -> Dict[str, Any]:
+def run_headless(prompt: str, task_id: str = "", agent_mode: bool = True,
+                 chat_id: str = "") -> Dict[str, Any]:
     """Запуск без UI (для фоновых задач AUTO). Возвращает итог и лог событий."""
-    agent = Agent(task_id=task_id, agent_mode=agent_mode, approvals_auto=False)
+    agent = Agent(chat_id=chat_id, task_id=task_id, agent_mode=agent_mode, approvals_auto=False)
     messages = [
         {"role": "system", "content": build_system_prompt(agent_mode=agent_mode)},
         {"role": "user", "content": prompt},
