@@ -5,7 +5,16 @@ cd "$(dirname "$0")"
 
 echo "== JARVIS · автозапуск =="
 
-command -v python3 >/dev/null 2>&1 || { echo "[!] Установите Python 3.10+"; exit 1; }
+# найти Python (python3 или python)
+PY=python3
+command -v python3 >/dev/null 2>&1 || PY=python
+command -v "$PY" >/dev/null 2>&1 || {
+  echo "[!] Python не найден."
+  echo "    Скачайте установщик с https://www.python.org/downloads/"
+  echo "    (поставьте галочку 'Add Python to PATH') и запустите скрипт ещё раз."
+  exit 1
+}
+"$PY" --version
 
 if [ ! -d monshe/server ]; then
   echo "[*] Скачиваю проект..."
@@ -21,8 +30,9 @@ if [ ! -f .env ]; then
   echo "DEEPSEEK_API_KEY=$k" > .env
 fi
 
-python3 -m venv .venv
+"$PY" -m venv .venv
 . .venv/bin/activate
 pip install -q -r requirements.txt
 (open "http://localhost:8000" 2>/dev/null || xdg-open "http://localhost:8000" 2>/dev/null || true) &
-python3 run.py
+"$PY" run.py
+
