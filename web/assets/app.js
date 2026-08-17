@@ -701,6 +701,8 @@ async function openSettings() {
   setV('#cfgKey', ''); $('#cfgKey').placeholder =
     c.providers?.cloudru?.api_key_set ? 'ключ сохранён (••••)' : 'вставьте ключ';
   setV('#cfgProject', c.providers?.cloudru?.project_id);
+  setV('#cfgKeyId', c.providers?.cloudru?.key_id);
+  setV('#cfgKeySecret', '');
   setV('#cfgFbUrl', c.providers?.fallback?.base_url);
   setV('#cfgFbKey', '');
   setV('#cfgMChat', c.models?.chat); setV('#cfgMSmart', c.models?.smart);
@@ -758,6 +760,8 @@ async function saveSettings() {
   };
   if (val('#cfgKey')) patch.providers.cloudru.api_key = val('#cfgKey');
   patch.providers.cloudru.project_id = val('#cfgProject');
+  patch.providers.cloudru.key_id = val('#cfgKeyId');
+  if (val('#cfgKeySecret')) patch.providers.cloudru.key_secret = val('#cfgKeySecret');
   if (val('#cfgFbKey')) { patch.providers.fallback.api_key = val('#cfgFbKey'); patch.providers.fallback.enabled = true; }
   if (val('#cfgTgToken')) patch.telegram.bot_token = val('#cfgTgToken');
   if (val('#cfgFbApiKey')) patch.image_gen.api_key = val('#cfgFbApiKey');
@@ -851,6 +855,8 @@ function init() {
       body: JSON.stringify({
         api_key: $('#cfgKey').value.trim(),
         project_id: $('#cfgProject').value.trim(),
+        key_id: $('#cfgKeyId').value.trim(),
+        key_secret: $('#cfgKeySecret').value.trim(),
       }),
     })).json();
     box.className = 'test-result ' + (r.ok ? 'ok' : 'err');

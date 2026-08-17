@@ -304,6 +304,17 @@
           Где взять: личный кабинет Cloud.ru → раздел <b>Проекты</b> →
           откройте свой проект → скопируйте <b>ID проекта</b> (длинная строка с дефисами).
         </div>
+      </div>
+      <div class="field">
+        <label>Запасной вход: ключ доступа <span style="opacity:.6">(если API-ключ не принимается)</span></label>
+        <input type="text" id="cfgKeyId" placeholder="Key ID (логин)" spellcheck="false">
+        <input type="password" id="cfgKeySecret" placeholder="Key Secret (пароль)" spellcheck="false" style="margin-top:6px">
+        <div class="hint">
+          Это <b>другой</b> вид ключа: пара логин+пароль из раздела
+          «Учётные данные доступа» → <b>Ключи доступа</b>.
+          Джарвис сам обменяет их на временный токен.
+          Заполняйте, только если обычный API-ключ выдаёт ошибку.
+        </div>
         <button class="btn" id="btnTestKey" style="margin-top:9px">Проверить ключ</button>
         <div class="test-result" id="testResult"></div>
       </div>

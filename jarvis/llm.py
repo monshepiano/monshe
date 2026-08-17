@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Iterable
 
@@ -46,29 +47,48 @@ class Provider:
     api_key: str
     project_id: str = ""
     auth_mode: str = "auto"
+    # Пара «ключ доступа»: Key ID (логин) + Key Secret (пароль).
+    # Если заполнена — меняем её на временный токен через IAM.
+    key_id: str = ""
+    key_secret: str = ""
+    _token: str = ""
+    _token_exp: float = 0.0
 
     @property
     def ok(self) -> bool:
-        return bool(self.api_key and self.base_url)
+        has_creds = bool(self.api_key) or bool(self.key_id and self.key_secret)
+        return bool(has_creds and self.base_url)
 
     def auth_modes(self) -> list[str]:
         """Схемы авторизации, которые имеет смысл попробовать, по порядку.
 
-        У Cloud.ru Foundation Models в ходу два рабочих формата:
+        У Cloud.ru в ходу сразу несколько несовместимых форматов:
 
-        * ``bearer``  — только ``Authorization: Bearer <ключ>``. Так написано
-          в официальном примере кода из быстрого старта Cloud.ru.
-        * ``both``    — Bearer плюс ``x-api-key`` и ``x-project-id``. Так
+        * ``apikey_hdr`` — ``Authorization: Api-Key <ключ>``. Официальный
+          формат для статических API-ключей (документация "Аутентификация
+          в API Cloud.ru").
+        * ``bearer``     — ``Authorization: Bearer <ключ>``. Так написано
+          в примере кода из быстрого старта Foundation Models.
+        * ``both``       — Bearer плюс ``x-api-key`` и ``x-project-id``. Так
           делает официальная интеграция Cloud.ru для Home Assistant; без
           ``x-project-id`` сервис иногда отвечает "403: Project not found".
+        * ``apikey``     — только ``x-api-key`` и ``x-project-id``.
+        * ``iam_token``  — пара Key ID + Key Secret меняется на временный
+          токен через iam.api.cloud.ru, дальше обычный Bearer.
 
         Какой из них ждёт конкретный аккаунт — заранее не известно, поэтому
         по умолчанию (``auto``) перебираем их сами и запоминаем удачный.
         """
         if self.auth_mode and self.auth_mode != "auto":
             return [self.auth_mode]
+        order = ["bearer", "apikey_hdr"]
+        if self.project_id:
+            order = ["both", "bearer", "apikey_hdr", "apikey"]
+        if self.key_secret:
+            # Задана пара логин+пароль — это точно ключ доступа, а не
+            # статический API-ключ: сразу идём за токеном.
+            order = ["iam_token"] + order
         remembered = _WORKING_AUTH.get(self.name)
-        order = ["both", "bearer", "apikey"] if self.project_id else ["bearer"]
         if remembered in order:
             order = [remembered] + [m for m in order if m != remembered]
         return order
@@ -79,12 +99,50 @@ class Provider:
         h: dict[str, str] = {}
         if json_body:
             h["Content-Type"] = "application/json"
-        if mode != "apikey":
+        if mode == "iam_token":
+            h["Authorization"] = f"Bearer {self._token or self.api_key}"
+        elif mode == "apikey_hdr":
+            h["Authorization"] = f"Api-Key {self.api_key}"
+        elif mode != "apikey":
             h["Authorization"] = f"Bearer {self.api_key}"
         if mode in ("both", "apikey") and self.project_id:
             h["x-api-key"] = self.api_key
             h["x-project-id"] = self.project_id
+        if mode in ("iam_token", "apikey_hdr") and self.project_id:
+            h["x-project-id"] = self.project_id
         return h
+
+    async def prepare(self, mode: str) -> bool:
+        """Догрузить то, что нужно схеме. Для iam_token — получить токен."""
+        if mode != "iam_token":
+            return True
+        if self._token and time.time() < self._token_exp:
+            return True
+        key_id = (self.key_id or self.api_key).strip()
+        secret = (self.key_secret or "").strip()
+        if not (key_id and secret):
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as c:
+                r = await c.post(
+                    "https://iam.api.cloud.ru/api/v1/auth/token",
+                    headers={"Content-Type": "application/json"},
+                    json={"keyId": key_id, "secret": secret},
+                )
+                if r.status_code >= 400:
+                    return False
+                data = r.json()
+                tok = data.get("access_token") or data.get("accessToken")
+                if not tok:
+                    return False
+                self._token = tok
+                # Токен живёт час, обновим чуть раньше.
+                self._token_exp = time.time() + float(
+                    data.get("expires_in") or 3600
+                ) - 120
+                return True
+        except Exception:
+            return False
 
     def remember_auth(self, mode: str) -> None:
         _WORKING_AUTH[self.name] = mode
@@ -101,6 +159,8 @@ def providers() -> list[Provider]:
             (node.get("base_url") or "").strip().rstrip("/"),
             (node.get("api_key") or "").strip(),
             (node.get("project_id") or "").strip(),
+            key_id=(node.get("key_id") or "").strip(),
+            key_secret=(node.get("key_secret") or "").strip(),
         )
         if p.ok:
             out.append(p)
@@ -204,7 +264,11 @@ def explain_error(err: str) -> str:
             "Проще всего: cloud.ru → Пользователи → Сервисные аккаунты → "
             "ваш аккаунт → вкладка «API-ключи» → Создать API-ключ → "
             "Сервисы: FoundationModels → Создать → скопировать Key Secret "
-            "целиком и вставить сюда."
+            "целиком и вставить сюда.\n\n"
+            "Если это не помогает — воспользуйтесь запасным входом в "
+            "настройках: поля «Key ID» и «Key Secret» из раздела "
+            "«Учётные данные доступа» → «Ключи доступа». Это другой тип "
+            "ключа (логин + пароль), Джарвис сам обменяет его на токен."
         )
     if "project not found" in low or ("403" in e and "project" in low):
         return (
@@ -246,6 +310,8 @@ async def _post(provider: Provider, path: str, payload: dict,
     last_err = ""
     async with httpx.AsyncClient(timeout=timeout) as client:
         for mode in provider.auth_modes():
+            if not await provider.prepare(mode):
+                continue
             r = await client.post(url, headers=provider.headers(mode=mode),
                                   json=payload)
             if r.status_code < 400:
@@ -367,6 +433,8 @@ async def stream(
         url = provider.base_url.rstrip("/") + "/chat/completions"
         for mode in provider.auth_modes():
             try:
+                if not await provider.prepare(mode):
+                    continue
                 async with httpx.AsyncClient(timeout=300.0) as client:
                     async with client.stream("POST", url,
                                              headers=provider.headers(mode=mode),
@@ -443,6 +511,8 @@ async def list_models() -> list[str]:
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 for mode in provider.auth_modes():
+                    if not await provider.prepare(mode):
+                        continue
                     r = await client.get(
                         url, headers=provider.headers(json_body=False, mode=mode)
                     )

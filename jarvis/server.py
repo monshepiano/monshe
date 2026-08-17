@@ -350,6 +350,9 @@ async def api_config() -> dict:
         if node.get("api_key"):
             node["api_key_set"] = True
             node["api_key"] = "••••" + node["api_key"][-4:]
+        if node.get("key_secret"):
+            node["key_secret_set"] = True
+            node["key_secret"] = "••••" + node["key_secret"][-4:]
     if data.get("telegram", {}).get("bot_token"):
         data["telegram"]["bot_token"] = "••••" + data["telegram"]["bot_token"][-4:]
     return {"ok": True, "config": data}
@@ -398,10 +401,18 @@ async def api_test_key(payload: dict) -> dict:
     project = payload.get("project_id")
     if project is None:
         project = config.get("providers", "cloudru", "project_id", default="")
+    key_id = payload.get("key_id")
+    if key_id is None:
+        key_id = config.get("providers", "cloudru", "key_id", default="")
+    key_secret = payload.get("key_secret")
+    if key_secret is None:
+        key_secret = config.get("providers", "cloudru", "key_secret", default="")
     base = (base or "").strip().rstrip("/")
     key = (key or "").strip()
     project = (project or "").strip()
-    if not key:
+    key_id = (key_id or "").strip()
+    key_secret = (key_secret or "").strip()
+    if not key and not (key_id and key_secret):
         return {"ok": False, "error": "Ключ пустой", "hint": "Вставьте Key Secret."}
 
     import re as _re
@@ -435,17 +446,24 @@ async def api_test_key(payload: dict) -> dict:
     import httpx
     from .llm import Provider, explain_error, is_auth_error
 
-    prov = Provider("cloudru", base, key, project)
+    prov = Provider("cloudru", base, key, project,
+                    key_id=key_id, key_secret=key_secret)
     labels = {
         "both": "ключ + ID проекта в заголовках",
         "bearer": "только ключ (Bearer)",
+        "apikey_hdr": "Authorization: Api-Key",
         "apikey": "только x-api-key",
+        "iam_token": "обмен Key ID + Key Secret на токен",
     }
     err = ""
     tried: list[str] = []
     try:
         async with httpx.AsyncClient(timeout=25) as c:
             for mode in prov.auth_modes():
+                if not await prov.prepare(mode):
+                    err = ("Не удалось обменять Key ID + Key Secret на токен "
+                           "(iam.api.cloud.ru отклонил пару).")
+                    continue
                 r = await c.get(base.rstrip("/") + "/models",
                                 headers=prov.headers(json_body=False, mode=mode))
                 tried.append(labels.get(mode, mode))
