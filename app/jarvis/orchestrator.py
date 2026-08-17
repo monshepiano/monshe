@@ -128,42 +128,139 @@ def summarize_history(messages: List[Dict[str, Any]], keep_last: int = 12) -> Li
 
 
 # ------------------------------------------------------------- имя диалога
-_TITLE_STOP = re.compile(r"^[\s\"'«»`*#>\-–—.]+|[\s\"'«»`*#>\-–—.]+$")
+_TITLE_STOP = re.compile(r"^[\s\"'«»`*#>\-–—.:]+|[\s\"'«»`*#>\-–—.:]+$")
+
+# такие «названия» бессмысленны — их не принимаем ни от модели, ни как фолбэк
+_BAD_TITLES = {
+    "новый диалог", "новый чат", "диалог", "чат", "беседа", "разговор", "без названия",
+    "название", "заголовок", "тема", "новая тема", "запрос", "вопрос", "сообщение",
+    "new chat", "new dialog", "untitled", "conversation", "chat", "title",
+    "привет", "здравствуйте", "ответ", "текст", "задача", "разное", "общение",
+}
+_STOPWORDS = {
+    "а", "бы", "в", "во", "все", "вот", "да", "для", "до", "его", "ее", "её", "если",
+    "есть", "ещё", "еще", "же", "за", "и", "из", "или", "как", "мне", "мной", "мы",
+    "на", "над", "не", "нет", "но", "о", "об", "она", "они", "от", "по", "под",
+    "пожалуйста", "при", "про", "с", "со", "так", "также", "те", "то", "ты", "у",
+    "уже", "что", "чтобы", "это", "я", "мой", "моя", "меня", "нам", "вы", "ваш",
+    "такое", "такой", "такая", "мне", "нужно", "надо", "хочу", "давай", "можешь",
+}
+_VERB_HINTS = ("напиши", "сделай", "создай", "найди", "посчитай", "собери", "объясни",
+               "переведи", "проверь", "покажи", "расскажи", "составь", "подбери",
+               "сравни", "проанализируй", "помоги", "придумай", "оформи", "скачай")
+
+
+def _is_bad_title(title: str) -> bool:
+    t = re.sub(r"[^\wа-яё ]+", "", (title or "").lower()).strip()
+    if not t or len(t) < 3:
+        return True
+    if t in _BAD_TITLES:
+        return True
+    # «Новый диалог 2», «Чат №3»
+    if re.fullmatch(r"(новый диалог|новый чат|чат|диалог|беседа)\s*[№#]?\s*\d*", t):
+        return True
+    return False
+
+
+def _keyword_title(text: str) -> str:
+    """Осмысленный заголовок из ключевых слов, если модель не помогла."""
+    clean = re.sub(r"\s+", " ", (text or "").strip())
+    if not clean:
+        return ""
+    greet = ("джарвис", "jarvis", "привет", "здравствуй", "здравствуйте", "слушай",
+             "эй", "пожалуйста", "окей", "ок", "плиз", "будь", "добр", "доброе", "утро",
+             "добрый", "день", "вечер")
+    # первая фраза; если она — только приветствие, берём следующую
+    sentences = [s.strip() for s in re.split(r"[.!?\n]", clean) if s.strip()]
+    first = clean
+    for sent in sentences:
+        rest = [w for w in re.findall(r"[\wА-Яа-яЁё\-\+#\.]+", sent)
+                if w.lower().strip(",.!") not in greet]
+        if rest:
+            first = sent
+            break
+    words = re.findall(r"[\wА-Яа-яЁё\-\+#\.]+", first)
+    while words and words[0].lower().strip(",.!") in greet:
+        words.pop(0)
+    if not words:
+        words = re.findall(r"[\wА-Яа-яЁё\-\+#\.]+", first)
+    keep = [w for w in words if w.lower() not in _STOPWORDS]
+    if not keep:
+        keep = words
+    picked = keep[:6]
+    title = " ".join(picked)
+    if len(title) > 38:
+        out: List[str] = []
+        for w in picked:
+            if len(" ".join(out + [w])) > 38:
+                break
+            out.append(w)
+        title = " ".join(out) or title[:38]
+    title = title.strip(" ,;:—-")
+    if not title:
+        return ""
+    return title[0].upper() + title[1:]
 
 
 def _fallback_title(text: str) -> str:
-    """Если модель недоступна — аккуратно подрезаем первую фразу."""
+    """Если модель недоступна — собираем заголовок из ключевых слов."""
+    title = _keyword_title(text)
+    if title and not _is_bad_title(title):
+        return title[:40]
     clean = re.sub(r"\s+", " ", (text or "").strip())
     if not clean:
-        return "Новый диалог"
-    first = re.split(r"[.!?\n]", clean)[0].strip() or clean
-    if len(first) > 38:
-        cut = first[:38].rsplit(" ", 1)[0]
-        first = (cut or first[:38]).rstrip(",;:-") + "…"
-    return first[:40]
+        return "Диалог " + __import__("time").strftime("%d.%m %H:%M")
+    return clean[:38].rstrip(" ,;:-") or "Диалог"
 
 
-def make_chat_title(text: str) -> str:
-    """Название диалога придумывает сама модель — коротко и по смыслу."""
+def _clean_model_title(raw: str) -> str:
+    title = (raw or "").split("\n")[0]
+    title = re.sub(r"^\s*(название|заголовок|title)\s*[:\-—]\s*", "", title, flags=re.I)
+    title = _TITLE_STOP.sub("", title).strip()
+    title = re.sub(r"\s+", " ", title)
+    return title
+
+
+def _make_title(text: str, kind: str = "chat") -> str:
+    """Название придумывает сама модель — коротко и по смыслу."""
     from . import llm  # локальный импорт, чтобы избежать циклов
 
     snippet = re.sub(r"\s+", " ", (text or "").strip())[:900]
     if not snippet:
-        return "Новый диалог"
-    try:
-        raw = llm.chat(
-            [
-                {"role": "system", "content":
-                 "Ты придумываешь названия диалогов. По первому сообщению пользователя дай короткое "
-                 "название на русском: 2-4 слова, до 32 символов, суть темы, без кавычек, без точки "
-                 "в конце, без слов «запрос», «вопрос», «диалог». Ответь ТОЛЬКО названием."},
-                {"role": "user", "content": snippet},
-            ],
-            tier="nano", max_tokens=24, temperature=0.3,
-        ).get("content", "")
-    except Exception:
         return _fallback_title(text)
-    title = _TITLE_STOP.sub("", (raw or "").split("\n")[0]).strip()
-    if not title or len(title) > 48:
-        return _fallback_title(text)
-    return title[:40]
+
+    what = ("названия диалогов" if kind == "chat" else "названия фоновых задач")
+    system = (
+        "Ты придумываешь %s. По сообщению пользователя дай короткое название на русском.\n"
+        "ПРАВИЛА:\n"
+        "1. 2-5 слов, до 34 символов, по сути темы — чтобы через неделю было понятно, о чём речь.\n"
+        "2. Без кавычек, без точки в конце, без эмодзи, без пояснений.\n"
+        "3. ЗАПРЕЩЕНО отвечать общими словами: «Новый диалог», «Чат», «Диалог», «Беседа», "
+        "«Вопрос», «Запрос», «Без названия», «Разное», «Общение», «Тема».\n"
+        "4. Если тема непонятна — назови её по ключевым словам сообщения.\n"
+        "5. Ответь ТОЛЬКО названием, одной строкой." % what
+    )
+    for attempt in range(2):
+        try:
+            raw = llm.chat(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": snippet},
+                ],
+                tier="nano", max_tokens=24, temperature=0.2 if attempt == 0 else 0.7,
+            ).get("content", "")
+        except Exception:
+            break
+        title = _clean_model_title(raw)
+        if title and len(title) <= 48 and not _is_bad_title(title):
+            return title[:40]
+    return _fallback_title(text)
+
+
+def make_chat_title(text: str) -> str:
+    return _make_title(text, "chat")
+
+
+def make_task_title(text: str) -> str:
+    title = _make_title(text, "task")
+    return title or (text[:48] or "Фоновая задача")

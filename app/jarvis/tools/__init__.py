@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List
+import re
+from typing import Any, Callable, Dict, List, Tuple
 
 from . import media, system, web
 
@@ -209,11 +210,22 @@ def _recall(kind: str = "") -> Dict[str, Any]:
 
 
 def _schedule_task(title: str, prompt: str, schedule: str = "") -> Dict[str, Any]:
-    from .. import db
-    task = db.create_task(title=title, prompt=prompt, mode="auto", schedule=schedule or "")
+    from .. import auto, db, sandbox
+    schedule = (schedule or "").strip()
+    # модель могла прислать расписание словами — нормализуем
+    if schedule and auto.parse_schedule(schedule) is None:
+        schedule = auto.detect_schedule(schedule) or ""
+    chat_id = ""
+    try:
+        chat_id = sandbox.current_chat() or ""
+    except Exception:
+        chat_id = ""
+    task = auto.create_background_task(title=title, prompt=prompt, schedule=schedule, chat_id=chat_id)
+    human = auto.describe_schedule(schedule)
     db.notify("Задача в фоне: " + title, prompt[:200], "info")
-    return {"ok": True, "task_id": task["id"], "title": title,
-            "note": "Задача отправлена во вкладку AUTO и выполняется в фоне."}
+    return {"ok": True, "task_id": task["id"], "title": title, "schedule": schedule,
+            "when": human,
+            "note": "Задача создана во вкладке AUTO (%s). Результат придёт уведомлением." % human}
 
 
 register("remember", _remember,
@@ -226,10 +238,13 @@ register("recall", _recall, "Вспомнить сохранённые факт�
          {"kind": S("тип памяти (необязательно)")}, "safe", "memory", "Вспомнить")
 
 register("schedule_task", _schedule_task,
-         "Отправить задачу в фон (вкладка AUTO). Используй для долгих задач, мониторинга, "
-         "напоминаний. schedule: 'every 30m', 'every 2h', 'daily 09:00' или пусто для разового.",
-         {"title": S("короткое название", True), "prompt": S("что именно сделать", True),
-          "schedule": S("расписание")},
+         "Отправить задачу в фон (вкладка AUTO). ОБЯЗАТЕЛЬНО вызывай для просьб вида "
+         "'напомни', 'напиши мне через N минут', 'проверяй каждый день', 'следи за', "
+         "'пришли утром', а также для долгих задач и мониторинга.",
+         {"title": S("короткое название задачи", True),
+          "prompt": S("что именно сделать, когда придёт время", True),
+          "schedule": S("когда: 'in 10s', 'in 5m', 'in 2h', 'every 30m', 'every 1h', "
+                        "'every 2d', 'daily 09:00'; пусто — выполнить сразу в фоне")},
          "safe", "auto", "Фоновая задача")
 
 
@@ -263,3 +278,282 @@ def call(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": "неверные аргументы (%s): %s" % (name, exc)}
     except Exception as exc:
         return {"ok": False, "error": "ошибка инструмента %s: %s" % (name, exc)}
+
+
+# ------------------------------------------- ПЕРЕХВАТ ТЕКСТОВЫХ ВЫЗОВОВ
+# Некоторые модели вместо структурного tool_call печатают вызов текстом:
+#   function schedule_task({"title": "…"})
+#   function callopen_url("https://…")
+#   <tool_call>{"name": "web_search", "arguments": {"query": "…"}}</tool_call>
+# Такое нельзя показывать пользователю — надо распознать и выполнить.
+
+_PREFIX_RE = (
+    r"(?:<\s*tool_call\s*>\s*|```(?:json|tool_code|python|tool)?\s*)?"
+    r"(?:(?:functions?|tool_call|tool|инструмент)\s*[.:>=]?\s*)?"
+    r"(?:call\s*[.:]?\s*)?"
+)
+
+
+def _param_order(name: str) -> List[str]:
+    props = TOOLS.get(name, {}).get("schema", {}).get("function", {}).get("parameters", {})
+    required = list(props.get("required") or [])
+    keys = list((props.get("properties") or {}).keys())
+    return required + [k for k in keys if k not in required]
+
+
+def _split_top(text: str) -> List[str]:
+    """Делит строку аргументов по запятым верхнего уровня."""
+    parts: List[str] = []
+    buf: List[str] = []
+    depth = 0
+    quote = ""
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            buf.append(ch)
+            if ch == "\\" and i + 1 < len(text):
+                buf.append(text[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+            buf.append(ch)
+        elif ch in "([{":
+            depth += 1
+            buf.append(ch)
+        elif ch in ")]}":
+            depth -= 1
+            buf.append(ch)
+        elif ch == "," and depth == 0:
+            parts.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    if buf:
+        parts.append("".join(buf))
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _lit(value: str) -> Any:
+    v = (value or "").strip()
+    if not v:
+        return ""
+    try:
+        return json.loads(v)
+    except Exception:
+        pass
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+        return v[1:-1]
+    low = v.lower()
+    if low in ("true", "да"):
+        return True
+    if low in ("false", "нет"):
+        return False
+    if low in ("null", "none"):
+        return None
+    if re.fullmatch(r"-?\d+", v):
+        return int(v)
+    if re.fullmatch(r"-?\d+\.\d+", v):
+        return float(v)
+    return v
+
+
+def _parse_args(name: str, raw: str) -> Dict[str, Any]:
+    raw = (raw or "").strip().rstrip(";")
+    if not raw:
+        return {}
+    # чистый JSON-объект
+    if raw.startswith("{"):
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, dict):
+                if set(obj.keys()) <= {"name", "arguments", "parameters"} and (
+                        "arguments" in obj or "parameters" in obj):
+                    inner = obj.get("arguments") or obj.get("parameters") or {}
+                    if isinstance(inner, str):
+                        try:
+                            inner = json.loads(inner)
+                        except Exception:
+                            inner = {}
+                    return inner if isinstance(inner, dict) else {}
+                return obj
+        except Exception:
+            pass
+    order = _param_order(name)
+    out: Dict[str, Any] = {}
+    positional = 0
+    for piece in _split_top(raw):
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*[=:]\s*(.+)$", piece, re.S)
+        if m and m.group(1) in order:
+            out[m.group(1)] = _lit(m.group(2))
+        else:
+            if positional < len(order):
+                out[order[positional]] = _lit(piece)
+            positional += 1
+    return out
+
+
+def _balanced(text: str, start: int) -> int:
+    """Индекс закрывающей скобки для открывающей в позиции start (или -1)."""
+    depth = 0
+    quote = ""
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+_CALL_STARTS = ("<tool_call", "```json", "```tool", "```python", "functions.", "functions ",
+                "function ", "function.", "functioncall", "function call", "call ",
+                "tool_call", "tool:", '{"name"', "{'name'", "{\"tool\"")
+
+
+def looks_like_call_prefix(text: str) -> bool:
+    """Похоже ли начало ответа на псевдо-вызов инструмента (для придержки стрима)."""
+    s = (text or "").lstrip()
+    if not s:
+        return True
+    head = s[:64].lower()
+    for p in _CALL_STARTS:
+        if head.startswith(p) or p.startswith(head):
+            return True
+    for name in TOOLS:
+        low = name.lower()
+        if head.startswith(low) or low.startswith(head):
+            return True
+    return False
+
+
+_FENCE_RE = re.compile(r"```[A-Za-z0-9_+-]*\n.*?```", re.S)
+_INLINE_RE = re.compile(r"`[^`\n]+`")
+
+
+def _looks_like_call(body: str) -> bool:
+    b = (body or "").strip()
+    if b.startswith("{") and b.endswith("}"):
+        return bool(re.search(r"\"(?:name|tool|function)\"\s*:", b))
+    m = re.match(_PREFIX_RE + r"([A-Za-z_][A-Za-z0-9_]*)\s*\(", b)
+    return bool(m and m.group(1) in TOOLS)
+
+
+def _mask_code(text: str) -> Tuple[str, Dict[str, str]]:
+    """Прячет блоки кода, чтобы не принять пример кода за вызов инструмента."""
+    masked: Dict[str, str] = {}
+    counter = [0]
+
+    def hide(match: "re.Match[str]") -> str:
+        blob = match.group(0)
+        inner = blob
+        if blob.startswith("```"):
+            inner = blob.split("\n", 1)[1][:-3] if "\n" in blob else ""
+            if _looks_like_call(inner):
+                return "\n" + inner.strip() + "\n"
+        counter[0] += 1
+        key = "\x00CODE%d\x00" % counter[0]
+        masked[key] = blob
+        return key
+
+    out = _FENCE_RE.sub(hide, text)
+    out = _INLINE_RE.sub(hide, out)
+    return out, masked
+
+
+def _unmask(text: str, masked: Dict[str, str]) -> str:
+    for key, blob in masked.items():
+        text = text.replace(key, blob)
+    return text
+
+
+def parse_text_calls(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """Находит в тексте псевдо-вызовы инструментов.
+
+    Возвращает (текст без вызовов, список {name, args}).
+    """
+    if not text:
+        return "", []
+    if "(" not in text and "{" not in text:
+        return text, []
+    found: List[Dict[str, Any]] = []
+    out, masked = _mask_code(text)
+
+    # 1) JSON-конверт: {"name": "web_search", "arguments": {...}}
+    env = re.compile(r"\{\s*\"(?:name|tool|function)\"\s*:\s*\"([A-Za-z_][A-Za-z0-9_]*)\"")
+    guard = 0
+    while guard < 8:
+        guard += 1
+        m = env.search(out)
+        if not m or m.group(1) not in TOOLS:
+            break
+        close_idx = _balanced(out, m.start())
+        if close_idx < 0:
+            break
+        blob = out[m.start():close_idx + 1]
+        try:
+            obj = json.loads(blob)
+        except Exception:
+            break
+        name = m.group(1)
+        inner = obj.get("arguments")
+        if inner is None:
+            inner = obj.get("parameters")
+        if isinstance(inner, str):
+            try:
+                inner = json.loads(inner)
+            except Exception:
+                inner = {}
+        if not isinstance(inner, dict):
+            inner = {k: v for k, v in obj.items() if k not in ("name", "tool", "function", "type")}
+        found.append({"name": name, "args": inner})
+        out = out[:m.start()] + out[close_idx + 1:]
+
+    # 2) синтаксис вызова: function name(...) / name({...})
+    names = sorted(TOOLS.keys(), key=len, reverse=True)
+    pattern = re.compile(_PREFIX_RE + r"(" + "|".join(re.escape(n) for n in names) + r")\s*(\(|\{)")
+    guard = 0
+    pos = 0
+    while guard < 8:
+        guard += 1
+        m = pattern.search(out, pos)
+        if not m:
+            break
+        prefix = out[m.start():m.start(1)]
+        before = out[m.start() - 1] if m.start() > 0 else " "
+        if not prefix.strip() and (before.isalnum() or before == "_"):
+            pos = m.start(1) + 1
+            continue
+        open_idx = m.start(2)
+        close_idx = _balanced(out, open_idx)
+        if close_idx < 0:
+            break
+        raw = out[open_idx + 1:close_idx] if m.group(2) == "(" else out[open_idx:close_idx + 1]
+        name = m.group(1)
+        found.append({"name": name, "args": _parse_args(name, raw)})
+        tail = out[close_idx + 1:]
+        tail = re.sub(r"^\s*(</\s*tool_call\s*>|```|;)", "", tail)
+        out = out[:m.start()] + tail
+        pos = 0
+
+    if found:
+        out = re.sub(r"</?\s*tool_call\s*>", "", out)
+        out = re.sub(r"```[a-z_]*\s*```", "", out)
+        out = re.sub(r"^\s*```[a-z_]*\s*$", "", out, flags=re.M)
+    return _unmask(out, masked).strip(), found

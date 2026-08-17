@@ -99,6 +99,17 @@ DEFAULTS: Dict[str, Any] = {
         "quiet_hours": [1, 8],
     },
     "telegram": {"enabled": False, "bot_token": "", "chat_id": ""},
+    # Баланс/расходы личного кабинета Cloud.ru (необязательно).
+    # key_id/key_secret — ключ доступа сервисного аккаунта или персональный ключ,
+    # agreement_id — из адресной строки личного кабинета.
+    "billing": {
+        "enabled": False,
+        "key_id": "",
+        "key_secret": "",
+        "agreement_id": "",
+        "customer_id": "",
+        "refresh_minutes": 30,
+    },
     "media": {
         "image_provider": "pollinations",   # pollinations | fm | off
         "image_base": "https://image.pollinations.ai/prompt/",
@@ -196,6 +207,11 @@ class Config:
         token = data.get("telegram", {}).get("bot_token") or ""
         if token:
             data["telegram"]["bot_token"] = token[:8] + "…"
+        billing = data.get("billing") or {}
+        if billing:
+            secret = billing.get("key_secret") or ""
+            billing["key_secret"] = ("…" if secret else "")
+            billing["has_secret"] = bool(self._data.get("billing", {}).get("key_secret"))
         return data
 
 

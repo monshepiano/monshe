@@ -196,79 +196,90 @@ def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[D
             continue
         model = pick_model(tier, prov)
         payload = _build_payload(model, messages, tools, True, temperature, max_tokens)
-        try:
-            with _request(conf["base_url"].rstrip("/") + "/chat/completions", conf["api_key"], payload) as resp:
-                acc_content: List[str] = []
-                acc_reasoning: List[str] = []
-                tool_acc: Dict[int, Dict[str, Any]] = {}
-                usage: Dict[str, Any] = {}
-                yield {"type": "model", "model": model, "provider": prov, "tier": tier}
-                for raw in resp:
-                    line = raw.decode("utf-8", "ignore").strip()
-                    if not line or not line.startswith("data:"):
-                        continue
-                    chunk = line[5:].strip()
-                    if chunk == "[DONE]":
-                        break
-                    try:
-                        obj = json.loads(chunk)
-                    except Exception:
-                        continue
-                    if obj.get("usage"):
-                        usage = obj["usage"]
-                    for choice in obj.get("choices") or []:
-                        delta = choice.get("delta") or {}
-                        piece = delta.get("content")
-                        if piece:
-                            acc_content.append(piece)
-                            yield {"type": "delta", "text": piece}
-                        think = delta.get("reasoning_content") or delta.get("reasoning")
-                        if think:
-                            acc_reasoning.append(think)
-                            yield {"type": "reasoning", "text": think}
-                        for tc in delta.get("tool_calls") or []:
-                            idx = tc.get("index", 0)
-                            slot = tool_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
-                            if tc.get("id"):
-                                slot["id"] = tc["id"]
-                            fn = tc.get("function") or {}
-                            if fn.get("name"):
-                                slot["name"] = fn["name"]
-                            if fn.get("arguments"):
-                                slot["arguments"] += fn["arguments"]
-                                yield {"type": "tool_partial", "name": slot["name"], "args": slot["arguments"]}
-            pt = int((usage or {}).get("prompt_tokens") or 0)
-            ct = int((usage or {}).get("completion_tokens") or 0)
-            if pt or ct:
-                db.log_usage(prov, model, tier, pt, ct, estimate_cost(model, pt, ct))
-            calls = []
-            for idx in sorted(tool_acc):
-                slot = tool_acc[idx]
-                if slot.get("name"):
-                    calls.append({
-                        "id": slot.get("id") or ("call_%d" % idx),
-                        "type": "function",
-                        "function": {"name": slot["name"], "arguments": slot.get("arguments") or "{}"},
-                    })
-            yield {
-                "type": "done",
-                "content": "".join(acc_content),
-                "reasoning": "".join(acc_reasoning),
-                "tool_calls": calls,
-                "model": model,
-                "provider": prov,
-                "usage": usage,
-            }
-            return
-        except urllib.error.HTTPError as exc:
-            detail = ""
+        # попытка 1 — с инструментами; попытка 2 — без них (если модель их не умеет)
+        for attempt in range(2):
+            started_output = False
             try:
-                detail = exc.read().decode("utf-8")[:300]
-            except Exception:
-                pass
-            last_error = LLMError("HTTP %s: %s" % (exc.code, detail))
-        except Exception as exc:
-            last_error = exc
+                with _request(conf["base_url"].rstrip("/") + "/chat/completions", conf["api_key"], payload) as resp:
+                    acc_content: List[str] = []
+                    acc_reasoning: List[str] = []
+                    tool_acc: Dict[int, Dict[str, Any]] = {}
+                    usage: Dict[str, Any] = {}
+                    started_output = True
+                    yield {"type": "model", "model": model, "provider": prov, "tier": tier}
+                    for raw in resp:
+                        line = raw.decode("utf-8", "ignore").strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        chunk = line[5:].strip()
+                        if chunk == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(chunk)
+                        except Exception:
+                            continue
+                        if obj.get("usage"):
+                            usage = obj["usage"]
+                        for choice in obj.get("choices") or []:
+                            delta = choice.get("delta") or {}
+                            piece = delta.get("content")
+                            if piece:
+                                acc_content.append(piece)
+                                yield {"type": "delta", "text": piece}
+                            think = delta.get("reasoning_content") or delta.get("reasoning")
+                            if think:
+                                acc_reasoning.append(think)
+                                yield {"type": "reasoning", "text": think}
+                            for tc in delta.get("tool_calls") or []:
+                                idx = tc.get("index", 0)
+                                slot = tool_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                                if tc.get("id"):
+                                    slot["id"] = tc["id"]
+                                fn = tc.get("function") or {}
+                                if fn.get("name"):
+                                    slot["name"] = fn["name"]
+                                if fn.get("arguments"):
+                                    slot["arguments"] += fn["arguments"]
+                                    yield {"type": "tool_partial", "name": slot["name"], "args": slot["arguments"]}
+                pt = int((usage or {}).get("prompt_tokens") or 0)
+                ct = int((usage or {}).get("completion_tokens") or 0)
+                if pt or ct:
+                    db.log_usage(prov, model, tier, pt, ct, estimate_cost(model, pt, ct))
+                calls = []
+                for idx in sorted(tool_acc):
+                    slot = tool_acc[idx]
+                    if slot.get("name"):
+                        calls.append({
+                            "id": slot.get("id") or ("call_%d" % idx),
+                            "type": "function",
+                            "function": {"name": slot["name"], "arguments": slot.get("arguments") or "{}"},
+                        })
+                yield {
+                    "type": "done",
+                    "content": "".join(acc_content),
+                    "reasoning": "".join(acc_reasoning),
+                    "tool_calls": calls,
+                    "model": model,
+                    "provider": prov,
+                    "usage": usage,
+                }
+                return
+            except urllib.error.HTTPError as exc:
+                detail = ""
+                try:
+                    detail = exc.read().decode("utf-8")[:300]
+                except Exception:
+                    pass
+                last_error = LLMError("HTTP %s: %s" % (exc.code, detail))
+                if exc.code in (400, 404, 422) and payload.get("tools") and not started_output:
+                    # модель не переваривает function calling — повторяем без инструментов
+                    payload.pop("tools", None)
+                    payload.pop("tool_choice", None)
+                    continue
+                break
+            except Exception as exc:
+                last_error = exc
+                break
     yield {"type": "error", "error": "Модели недоступны: %s" % last_error}
 
 

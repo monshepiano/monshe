@@ -57,6 +57,24 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) ->
 6. Замечаешь личные факты (предпочтения, планы, имена) — вызывай remember.
 7. Не выдумывай результаты инструментов: если инструмент вернул ошибку — честно скажи и предложи обход.
 8. Песочница у каждого диалога своя. Просят «удали файл», «почисти песочницу», «сотри всё» — делай это инструментами delete_file / sandbox_clear, а не отговорками. Просят «назови песочницу» — sandbox_rename.
+
+КАК ВЫЗЫВАТЬ ИНСТРУМЕНТЫ (это критично):
+Инструмент вызывается ТОЛЬКО штатным механизмом function calling твоего API.
+НИКОГДА не печатай вызов текстом в ответ пользователю. Запрещены строки вида
+«function call open_url("…")», «schedule_task(…)», «tool_call», а также
+JSON-описание вызова прямо в тексте. Любые их варианты запрещены.
+Если хочешь применить инструмент — примени его, а не описывай.
+После того как инструмент вернул результат, напиши пользователю нормальный
+человеческий ответ по этому результату. Пустой ответ недопустим: если инструмент
+не сработал, скажи об этом словами.
+
+КОГДА ОТПРАВЛЯТЬ ЗАДАЧУ В ФОН:
+Просьбы «напомни», «напиши мне через N минут», «проверяй каждый день», «следи за…»,
+«пришли утром» — это schedule_task. Вызови его сразу, одним вызовом, с полями
+title (коротко о чём), prompt (что именно сделать, когда придёт время)
+и schedule в одном из форматов: «in 10s», «in 5m», «in 2h», «every 30m»,
+«every 1h», «every 2d», «daily 09:00». Ничего не переспрашивай — просто поставь
+задачу и подтверди человеку одной фразой, когда она сработает.
 """
     if computer_use:
         base += """
@@ -148,6 +166,25 @@ class Agent:
         db.decide_approval(approval["id"], "expired")
         return {**approval, "status": "expired"}
 
+    # ---------------------------------------------------- результат вызова
+    @staticmethod
+    def _append_tool_result(convo: List[Dict[str, Any]], call: Dict[str, Any], name: str,
+                            result: Any, from_text: bool) -> None:
+        payload = json.dumps(result, ensure_ascii=False)
+        if len(payload) > 14000:
+            payload = payload[:14000] + "…(обрезано)"
+        if from_text:
+            convo.append({
+                "role": "user",
+                "content": ("[Система] Результат инструмента %s:\n%s\n\n"
+                            "Продолжай. Никогда не печатай вызовы инструментов текстом — "
+                            "используй только штатный механизм вызова функций."
+                            % (name, payload)),
+            })
+        else:
+            convo.append({"role": "tool", "tool_call_id": call.get("id", ""),
+                          "name": name, "content": payload})
+
     # ------------------------------------------------------------- planning
     def make_plan(self, task: str) -> List[str]:
         try:
@@ -198,6 +235,10 @@ class Agent:
             acc_text: List[str] = []
             tool_calls: List[Dict[str, Any]] = []
             stream_failed = None
+            # «шлюз»: пока начало ответа похоже на текстовый вызов инструмента,
+            # ничего не показываем пользователю — иначе в чат попадёт мусор
+            # вида function schedule_task({...}).
+            gate_open = False
 
             for event in llm.chat_stream(convo, tier=tier, tools=available):
                 etype = event.get("type")
@@ -208,7 +249,13 @@ class Agent:
                     yield {"type": "thinking", "text": event["text"]}
                 elif etype == "delta":
                     acc_text.append(event["text"])
-                    yield {"type": "delta", "text": event["text"]}
+                    if gate_open:
+                        yield {"type": "delta", "text": event["text"]}
+                    else:
+                        joined = "".join(acc_text)
+                        if not tools.looks_like_call_prefix(joined):
+                            gate_open = True
+                            yield {"type": "delta", "text": joined}
                 elif etype == "tool_partial":
                     yield {"type": "tool_hint", "name": event.get("name", "")}
                 elif etype == "done":
@@ -228,16 +275,50 @@ class Agent:
                 return
 
             text_piece = "".join(acc_text)
+            from_text = False
+
+            # модель напечатала вызов инструмента текстом — распознаём и выполняем
+            if text_piece.strip():
+                cleaned, text_calls = tools.parse_text_calls(text_piece)
+                if text_calls:
+                    from_text = True
+                    if gate_open:
+                        # уже что-то показали — стираем и перерисовываем
+                        yield {"type": "reset"}
+                        gate_open = False
+                    text_piece = cleaned
+                    if cleaned:
+                        gate_open = True
+                        yield {"type": "delta", "text": cleaned}
+                    for i, tc in enumerate(text_calls):
+                        tool_calls.append({
+                            "id": "txt_%d_%d" % (step, i),
+                            "type": "function",
+                            "function": {"name": tc["name"],
+                                         "arguments": json.dumps(tc["args"], ensure_ascii=False)},
+                        })
+
+            # шлюз так и не открылся, а вызовов нет — показываем придержанный текст
+            if not gate_open and text_piece and not tool_calls:
+                yield {"type": "delta", "text": text_piece}
+                gate_open = True
+
             if not tool_calls:
                 final_text = text_piece
                 break
 
             # модель решила вызвать инструменты
-            convo.append({
-                "role": "assistant",
-                "content": text_piece or None,
-                "tool_calls": tool_calls,
-            })
+            if from_text:
+                # вызов был напечатан текстом: у модели нет полноценного tool-протокола,
+                # поэтому результаты вернём обычным системным сообщением
+                convo.append({"role": "assistant",
+                              "content": text_piece or "Вызываю инструменты."})
+            else:
+                convo.append({
+                    "role": "assistant",
+                    "content": text_piece or None,
+                    "tool_calls": tool_calls,
+                })
             if text_piece.strip():
                 final_text = text_piece
 
@@ -269,8 +350,7 @@ class Agent:
                             "error": "Пользователь отклонил действие" if decision.get("status") == "rejected"
                             else "Время ожидания подтверждения истекло",
                         }
-                        convo.append({"role": "tool", "tool_call_id": call.get("id", ""),
-                                      "name": name, "content": json.dumps(result, ensure_ascii=False)})
+                        self._append_tool_result(convo, call, name, result, from_text)
                         yield {"type": "tool_result", "id": call.get("id"), "name": name, "result": result}
                         continue
 
@@ -287,14 +367,18 @@ class Agent:
                     self.created_files.append(file_info)
                     yield {"type": "file", **file_info}
 
+                # задача ушла в AUTO — показываем это карточкой, а не сухим результатом
+                if name == "schedule_task" and isinstance(result, dict) and result.get("ok"):
+                    yield {"type": "background", "task_id": result.get("task_id", ""),
+                           "title": result.get("title", ""),
+                           "schedule": result.get("schedule", ""),
+                           "when": result.get("when", ""),
+                           "reason": "я решил выполнить это в фоне"}
+
                 yield {"type": "tool_result", "id": call.get("id"), "name": name,
                        "result": result, "elapsed": elapsed}
 
-                payload = json.dumps(result, ensure_ascii=False)
-                if len(payload) > 14000:
-                    payload = payload[:14000] + "…(обрезано)"
-                convo.append({"role": "tool", "tool_call_id": call.get("id", ""),
-                              "name": name, "content": payload})
+                self._append_tool_result(convo, call, name, result, from_text)
 
         if not final_text:
             yield {"type": "status", "text": "Формулирую ответ"}
@@ -302,17 +386,40 @@ class Agent:
                 closing = llm.chat(convo + [{
                     "role": "user",
                     "content": "Подведи итог выполненной работы для пользователя: что сделано и результат. "
-                               "Кратко, markdown, по-русски.",
+                               "Кратко, markdown, по-русски. Не печатай вызовы инструментов.",
                 }], tier=tier, max_tokens=1400)
                 final_text = closing.get("content", "")
-                if final_text:
-                    yield {"type": "delta", "text": final_text}
             except Exception as exc:
                 yield {"type": "error", "error": str(exc)}
                 return
+            # итог тоже может прийти с напечатанным вызовом — вычищаем
+            if final_text:
+                final_text = tools.parse_text_calls(final_text)[0]
+            if final_text:
+                yield {"type": "delta", "text": final_text}
+
+        # последняя страховка: пустой ответ пользователь видит как поломку
+        if not final_text.strip():
+            final_text = self._fallback_summary()
+            yield {"type": "delta", "text": final_text}
 
         yield {"type": "done", "content": final_text, "files": self.created_files,
                "tools": self.used_tools, "model": self.model_used, "tier": tier}
+
+    def _fallback_summary(self) -> str:
+        """Что показать, если модель не выдала ни слова."""
+        parts = []
+        if self.used_tools:
+            names = ", ".join(dict.fromkeys(self.used_tools))
+            parts.append("Готово. Что я сделал: %s." % names)
+        if self.created_files:
+            files = ", ".join(f.get("name", "") for f in self.created_files if f.get("name"))
+            if files:
+                parts.append("Файлы: %s — их можно скачать выше." % files)
+        if not parts:
+            parts.append("Я обработал запрос, но модель вернула пустой ответ. "
+                         "Повтори вопрос — попробую другой моделью.")
+        return "\n\n".join(parts)
 
 
 def run_headless(prompt: str, task_id: str = "", agent_mode: bool = True,

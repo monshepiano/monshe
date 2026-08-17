@@ -54,8 +54,8 @@
         <span class="nav-ico">◎</span><span class="nav-label">AUTO</span>
         <span class="badge" id="autoBadge">0</span>
       </button>
-      <button class="nav-item" data-view="files" data-name="Песочница">
-        <span class="nav-ico">▤</span><span class="nav-label">Песочница</span>
+      <button class="nav-item" data-view="files" data-name="Файлы">
+        <span class="nav-ico">▤</span><span class="nav-label">Файлы</span>
       </button>
       <button class="nav-item" data-view="memory" data-name="Память">
         <span class="nav-ico">◇</span><span class="nav-label">Память</span>
@@ -76,6 +76,9 @@
     <div class="side-foot">
       <div class="stat-row"><span>Модель</span><b id="footModel">—</b></div>
       <div class="stat-row"><span>Расход 24ч</span><b id="footCost">0 ₽</b></div>
+      <div class="stat-row balance-row" id="footBalRow" title="Баланс и расходы аккаунта Cloud.ru">
+        <span>Cloud.ru</span><b id="footBalance">—</b>
+      </div>
       <div class="power" id="powerLine"><i></i></div>
     </div>
   </aside>
@@ -91,6 +94,18 @@
         <div class="status-chip" id="chipAuto"><i class="dot"></i><span>AUTO</span></div>
       </div>
       <div class="top-title" id="topTitle">Диалог</div>
+      <div class="top-acts">
+        <button class="icon-btn voice-btn" id="voiceBtn" title="Голос Джарвиса: озвучивать ответы"
+                aria-label="Голос Джарвиса">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/>
+            <path class="w1" d="M15.7 8.8a4.6 4.6 0 0 1 0 6.4"/>
+            <path class="w2" d="M18.4 6.1a8 8 0 0 1 0 11.8"/>
+            <path class="mute" d="M16 9.5l5 5M21 9.5l-5 5"/>
+          </svg>
+        </button>
+      </div>
     </header>
 
     <!-- ---------- VIEW: ЧАТ ---------- -->
@@ -155,11 +170,15 @@
       <div class="task-grid" id="taskGrid"></div>
     </section>
 
-    <!-- ---------- VIEW: ПЕСОЧНИЦА ---------- -->
+    <!-- ---------- VIEW: ФАЙЛЫ ---------- -->
     <section class="view view-files" id="view-files">
       <div class="panel-head">
-        <div><h2>Песочница</h2><p class="muted">У каждого диалога — своя. Файлы, которые JARVIS создал или скачал.</p></div>
-        <button class="btn" id="refreshFiles">Обновить</button>
+        <div><h2>Файлы</h2><p class="muted">Рабочая папка диалога. Перетаскивай, переименовывай, создавай папки — как в Finder.</p></div>
+        <div class="head-acts">
+          <button class="btn" id="newFolderBtn">Новая папка</button>
+          <button class="btn" id="uploadHere">Загрузить</button>
+          <button class="btn" id="refreshFiles">Обновить</button>
+        </div>
       </div>
 
       <div class="sbx-bar" id="sbxBar">
@@ -171,7 +190,7 @@
             </svg>
           </span>
           <div>
-            <div class="sbx-name" id="sbxName">Песочница</div>
+            <div class="sbx-name" id="sbxName">Файлы</div>
             <div class="sbx-meta" id="sbxMeta">—</div>
           </div>
         </div>
@@ -181,7 +200,9 @@
         </div>
       </div>
 
+      <div class="crumbs" id="crumbs"></div>
       <div class="file-grid" id="fileGrid"></div>
+      <input type="file" id="filesUpload" multiple hidden>
 
       <div class="term-block">
         <div class="term-head">

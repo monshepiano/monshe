@@ -80,6 +80,7 @@ const F_SVG = {
   doc: '<path d="M6 3.2h8.2L19 8v12.8H6z"/><path d="M14 3.2V8h5"/><path d="M9 12.6h7M9 16h5"/>',
   code: '<path d="M9 8.4L4.6 12 9 15.6"/><path d="M15 8.4L19.4 12 15 15.6"/><path d="M13.2 5.6l-2.4 12.8"/>',
   any: '<path d="M6 3.2h8.2L19 8v12.8H6z"/><path d="M14 3.2V8h5"/>',
+  dir: '<path d="M3.2 6.6a1.8 1.8 0 011.8-1.8h4l2 2.4h7a1.8 1.8 0 011.8 1.8v9.6a1.8 1.8 0 01-1.8 1.8H5a1.8 1.8 0 01-1.8-1.8z"/>',
 };
 function fsvg(kind, cls) {
   return '<span class="fico ' + cls + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
@@ -194,7 +195,7 @@ const BOOT_LINES = [
 function showView(name) {
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + name));
   $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
-  const titles = { chat: 'Диалог', auto: 'AUTO · фоновые задачи', files: 'Песочница', memory: 'Память', settings: 'Настройки' };
+  const titles = { chat: 'Диалог', auto: 'AUTO · фоновые задачи', files: 'Файлы', memory: 'Память', settings: 'Настройки' };
   $('#topTitle').textContent = titles[name] || '';
   $('#app').classList.remove('nav-open');
   if (name === 'auto') loadTasks();
@@ -267,10 +268,45 @@ async function refreshState() {
 
   const cost = ((st.usage || {}).total || {}).cost || 0;
   $('#footCost').textContent = cost.toFixed(2) + ' ₽';
+  renderBalance(st.billing || {});
 
   renderSanctions(); renderNotes();
   if ($('#view-auto').classList.contains('active')) renderTasks();
 }
+/* Баланс и расход аккаунта Cloud.ru в подвале сайдбара.
+   Публичного метода «баланс лицевого счёта» у Cloud.ru нет, поэтому
+   показываем то, что реально доступно: расход за месяц по биллинг-API,
+   а если ключи биллинга не заданы — свою локальную оценку. */
+function renderBalance(b) {
+  const row = $('#footBalRow'), val = $('#footBalance');
+  if (!row || !val) return;
+  S.billing = b || {};
+  row.classList.toggle('off', !b.configured);
+  row.classList.remove('warn');
+  if (b.account_rub != null) {
+    val.textContent = Number(b.account_rub).toFixed(2) + ' ₽';
+    row.querySelector('span').textContent = 'Баланс Cloud.ru';
+    row.title = 'Баланс лицевого счёта Cloud.ru' +
+      (b.month_rub != null ? '\nРасход за месяц: ' + Number(b.month_rub).toFixed(2) + ' ₽' : '');
+    if (Number(b.account_rub) < 100) row.classList.add('warn');
+    return;
+  }
+  if (b.month_rub != null) {
+    val.textContent = Number(b.month_rub).toFixed(2) + ' ₽';
+    row.querySelector('span').textContent = 'Cloud.ru за месяц';
+    row.title = 'Расход по биллинг-API Cloud.ru с начала месяца.\n' +
+      'Баланс лицевого счёта в публичном API не отдаётся.';
+    return;
+  }
+  const local = Number(b.local_month_rub || 0);
+  val.textContent = local.toFixed(2) + ' ₽';
+  row.querySelector('span').textContent = 'Расход 30д';
+  row.title = b.configured
+    ? 'Биллинг-API недоступен' + (b.error ? ': ' + b.error : '') + '. Показан мой собственный подсчёт.'
+    : 'Моя оценка расхода за 30 дней. Подключи биллинг Cloud.ru в Настройках, ' +
+      'чтобы видеть данные из личного кабинета.';
+}
+
 function setChip(sel, cls, text) {
   const chip = $(sel);
   chip.querySelector('.dot').className = 'dot ' + (cls || '');
@@ -285,7 +321,7 @@ async function loadChats() {
   S.chats.forEach((c, i) => {
     const item = el('div', 'chat-item' + (c.id === S.chatId ? ' active' : ''));
     item.style.animationDelay = (i * 0.02) + 's';
-    item.innerHTML = '<span>' + esc(c.title || 'Диалог') + '</span>' +
+    item.innerHTML = '<span class="chat-title">' + esc(c.title || 'Диалог') + '</span>' +
       '<span class="chat-acts"><i class="chat-r" title="Переименовать">✎</i>' +
       '<i class="chat-x" title="Удалить">✕</i></span>';
 
@@ -296,7 +332,7 @@ async function loadChats() {
     item.querySelector('.chat-x').addEventListener('click', (e) => {
       e.stopPropagation();
       confirmBox('Удалить диалог?',
-        'Диалог «' + esc(c.title || 'Диалог') + '» и его песочница будут удалены безвозвратно.', () => {
+        'Диалог «' + esc(c.title || 'Диалог') + '» и все его файлы будут удалены безвозвратно.', () => {
           api('/api/chats/delete', { chat_id: c.id }).then(() => {
             toast('Диалог удалён', 'success');
             if (S.chatId === c.id) newChat(); else loadChats();
@@ -309,7 +345,7 @@ async function loadChats() {
 }
 /* переименование диалога прямо в списке: поле вместо названия */
 function startRenameChat(item, c) {
-  const label = item.querySelector('span');
+  const label = item.querySelector('.chat-title');
   if (!label || item.querySelector('.chat-edit')) return;
   const inp = el('input', 'chat-edit');
   inp.value = c.title || '';
@@ -339,6 +375,7 @@ function newChat() {
   if (S.camStream) stopCam();          // камера жила в старом диалоге — гасим
   S.sanctionNodes = {};
   S.chatId = null;
+  S.fdir = '';
   $('#stream').innerHTML = '';
   $('#stream').appendChild(buildWelcome());
   loadChats();
@@ -351,6 +388,7 @@ async function openChat(id) {
   if (S.camStream) stopCam();
   S.sanctionNodes = {};
   S.chatId = id;
+  S.fdir = '';
   showView('chat');
   const r = await api('/api/messages?chat_id=' + encodeURIComponent(id));
   const stream = $('#stream'); stream.innerHTML = '';
@@ -359,6 +397,7 @@ async function openChat(id) {
     else if (m.role === 'assistant') {
       const node = addAiMsg();
       node.body.innerHTML = '<div class="md">' + MD.render(m.content) + '</div>';
+      foldCodeBlocks(node.body);
       const meta = m.meta || {};
       if (meta.model) node.modelEl.textContent = meta.model;
       (meta.files || []).forEach((f) => attachFileChip(node.body, f));
@@ -421,7 +460,9 @@ function addUserMsg(text, atts) {
       () => toast('Буфер обмена недоступен', 'error'));
   });
   const edit = el('button', 'act act-edit', ICO.edit + '<span>Редактировать</span>');
-  edit.addEventListener('click', () => {
+  edit.addEventListener('click', async () => {
+    // если JARVIS ещё печатает — останавливаем поток, иначе кнопка залипает на «стоп»
+    if (S.streaming) { await stopStream(); }
     const inp = $('#input');
     inp.value = text;
     autoGrow(); inp.focus();
@@ -431,6 +472,7 @@ function addUserMsg(text, atts) {
       const b = m.querySelector('.bubble-user');
       if (b) b.classList.remove('editing');
     }, 1600);
+    updateSendBtn();
     toast('Текст перенесён в поле ввода — правь и отправляй', 'info');
   });
   acts.appendChild(copy); acts.appendChild(edit);
@@ -531,6 +573,8 @@ const ICO = {
   again: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1"/><path d="M20.6 4.4v4.4h-4.4"/></svg>',
   cam: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.8" y="6.5" width="13" height="11" rx="2.2"/><path d="M15.8 11l5.4-3v8l-5.4-3z"/></svg>',
   bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 5-2 6.5-2 6.5h16S18 14 18 9z"/><path d="M10.3 19.5a2 2 0 0 0 3.4 0"/></svg>',
+  code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17.5L3.5 12 9 6.5"/><path d="M15 6.5L20.5 12 15 17.5"/></svg>',
+  think: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2l2.6 5.6 6 .7-4.5 4.1 1.3 6-5.4-3-5.4 3 1.3-6L3.4 9.5l6-.7z"/></svg>',
   shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7.5 3v5.6c0 4.6-3.1 8-7.5 9.4-4.4-1.4-7.5-4.8-7.5-9.4V6z"/></svg>',
 };
 
@@ -538,6 +582,7 @@ const ICO = {
    Клик по миниатюре разворачивает исходный блок обратно. */
 function collapseToThumb(node, opts) {
   if (!node || !node.isConnected || node.dataset.collapsed === '1') return null;
+  opts = opts || {};
   node.dataset.collapsed = '1';
   const thumb = el('div', 'thumb ' + (opts.cls || ''));
   const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -548,21 +593,70 @@ function collapseToThumb(node, opts) {
     (opts.tag ? '<span class="th-tag">' + esc(opts.tag) + '</span>' : '') +
     '<span class="th-time">' + time + '</span>' +
     '<span class="th-open">›</span>';
-  node.classList.add('collapsing');
-  const parent = node.parentNode;
-  setTimeout(() => {
-    if (!parent) return;
-    parent.insertBefore(thumb, node);
+  const put = () => {
+    if (!node.parentNode) return;
+    node.parentNode.insertBefore(thumb, node);
     node.style.display = 'none';
     node.classList.remove('collapsing');
-  }, 260);
+  };
+  if (opts.instant) { put(); } else {
+    node.classList.add('collapsing');
+    setTimeout(put, 260);
+  }
   thumb.addEventListener('click', () => {
     node.style.display = '';
     node.dataset.collapsed = '0';
     thumb.remove();
+    addFoldButton(node, opts);              // развернули — даём чем свернуть обратно
     node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
   return thumb;
+}
+
+/* Кнопка «свернуть» в углу развёрнутого блока: любую миниатюру
+   можно закрыть обратно, а не только развернуть. */
+function addFoldButton(node, opts) {
+  if (!node || node.querySelector(':scope > .th-fold')) return;
+  node.classList.add('foldable');
+  const b = el('i', 'th-fold');
+  b.title = 'Свернуть';
+  b.textContent = '⌃';
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    b.remove();
+    collapseToThumb(node, opts);
+  });
+  node.appendChild(b);
+}
+
+/* Крупные блоки кода из ответа сразу прячем в миниатюру. */
+function foldCodeBlocks(root) {
+  if (!root) return;
+  $$('pre', root).forEach((pre) => {
+    if (pre.dataset.folded === '1' || pre.closest('.code-block')) return;
+    pre.dataset.folded = '1';
+    const code = pre.textContent || '';
+    const lines = code.split('\n').length;
+    if (lines < 4 && code.length < 200) return;      // короткие сниппеты оставляем как есть
+    const lang = pre.getAttribute('data-lang') || '';
+    const wrap = el('div', 'code-block');
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+    const bar = el('div', 'code-bar');
+    bar.appendChild(el('span', 'cb-lang', lang || 'код'));
+    const cp = el('button', 'cb-copy', 'Копировать');
+    cp.addEventListener('click', (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(code).then(() => toast('Код скопирован', 'success'));
+    });
+    bar.appendChild(cp);
+    wrap.insertBefore(bar, pre);
+    collapseToThumb(wrap, {
+      instant: true, cls: 'th-code inline-thumb', icon: ICO.code,
+      title: lang ? 'Код · ' + lang : 'Код',
+      sub: lines + ' стр. · ' + fmtSize(code.length), tag: 'развернуть',
+    });
+  });
 }
 
 /* ============================ отправка ============================ */
@@ -570,6 +664,7 @@ function autoGrow() {
   const t = $('#input');
   t.style.height = 'auto';
   t.style.height = Math.min(t.scrollHeight, 190) + 'px';
+  updateSendBtn();
 }
 $('#input').addEventListener('input', autoGrow);
 $('#input').addEventListener('focus', () => $('#composer').classList.add('focus'));
@@ -578,14 +673,52 @@ $('#input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 });
 $('#sendBtn').addEventListener('click', () => {
-  if (S.streaming) { if (S.abort) S.abort.abort(); return; }
+  // стоп — только когда поле пустое; если текст набран, отправляем (прервав старый поток)
+  if (S.streaming && !$('#input').value.trim() && !S.attachments.length) {
+    if (S.abort) S.abort.abort();
+    setStreaming(false);
+    return;
+  }
   send();
 });
+
+/* Прервать текущий поток и дождаться, пока интерфейс освободится. */
+function stopStream() {
+  return new Promise((resolve) => {
+    if (!S.streaming) { resolve(); return; }
+    try { if (S.abort) S.abort.abort(); } catch (e) { /* уже закрыт */ }
+    let waited = 0;
+    const t = setInterval(() => {
+      waited += 60;
+      if (!S.streaming || waited > 1800) {
+        clearInterval(t);
+        setStreaming(false);
+        resolve();
+      }
+    }, 60);
+  });
+}
+
+/* Вид кнопки зависит и от потока, и от того, набран ли текст. */
+function updateSendBtn() {
+  const btn = $('#sendBtn');
+  if (!btn) return;
+  const hasText = !!$('#input').value.trim() || S.attachments.length > 0;
+  const stopMode = S.streaming && !hasText;
+  btn.classList.toggle('stop', stopMode);
+  btn.title = stopMode ? 'Остановить' : 'Отправить';
+  btn.innerHTML = stopMode
+    ? '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'
+    : '<svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg>';
+}
 
 async function send() {
   const input = $('#input');
   const text = input.value.trim();
-  if ((!text && !S.attachments.length) || S.streaming) return;
+  if (!text && !S.attachments.length) return;
+  // предыдущий ответ ещё идёт — аккуратно прерываем и отправляем новый
+  if (S.streaming) { await stopStream(); }
+  if (S.streaming) return;
   S.lastPrompt = text;
 
   // камера включена — молча прикладываем текущий кадр, чтобы вопрос был «про то, что вижу»
@@ -612,6 +745,9 @@ async function send() {
     planItems: [],
     mdEl: null,
     buffer: '',
+    shown: '',
+    typer: null,
+    onTyped: null,
     tools: {},
     files: [],
   };
@@ -652,6 +788,8 @@ async function send() {
     if (e.name !== 'AbortError') {
       showError(ui, String(e.message || e));
     } else {
+      typerStop(ui);
+      if (ui.mdEl) { ui.mdEl.classList.remove('typing'); ui.mdEl.innerHTML = MD.render(ui.shown || ui.buffer); }
       if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
       node.body.appendChild(el('div', 'muted', 'Остановлено.'));
     }
@@ -668,11 +806,7 @@ async function send() {
 
 function setStreaming(on) {
   S.streaming = on;
-  const btn = $('#sendBtn');
-  btn.classList.toggle('stop', on);
-  btn.innerHTML = on
-    ? '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'
-    : '<svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg>';
+  updateSendBtn();
   $('#composer').classList.toggle('busy', on);
 }
 
@@ -681,6 +815,102 @@ function showError(ui, msg) {
   const c = el('div', 'panel-card', '<div class="card-inner" style="padding:12px 13px;color:#ffb3c1">⚠ ' + esc(msg) + '</div>');
   ui.node.body.appendChild(c);
   toast(msg, 'error', 'Ошибка');
+}
+
+/* ================== плавная печать ответа ==================
+   Сервер шлёт текст кусками, а показываем мы его по буквам:
+   отдельный таймер догоняет буфер со скоростью, зависящей от отставания. */
+const TYPE_MS = 16;          // такт печати
+
+function typeInto(ui, chunk) {
+  ui.buffer += chunk;
+  if (ui.shown == null) ui.shown = '';
+  typerStart(ui);
+}
+
+function typerStart(ui) {
+  if (ui.typer) return;
+  ui.typer = setInterval(() => {
+    const left = ui.buffer.length - ui.shown.length;
+    if (left <= 0) {
+      clearInterval(ui.typer); ui.typer = null;
+      if (ui.onTyped) { const cb = ui.onTyped; ui.onTyped = null; cb(); }
+      return;
+    }
+    // чем больше отставание, тем крупнее шаг — иначе на длинных ответах не догоним
+    let step = 1;
+    if (left > 1200) step = Math.ceil(left / 40);
+    else if (left > 400) step = 6;
+    else if (left > 120) step = 3;
+    else if (left > 40) step = 2;
+    ui.shown = ui.buffer.slice(0, ui.shown.length + step);
+    if (ui.mdEl) ui.mdEl.innerHTML = MD.render(ui.shown);
+    scrollDown();
+  }, TYPE_MS);
+}
+
+/* дописать всё, что осталось (в конце ответа) */
+function typerFlush(ui) {
+  if (ui.shown == null) ui.shown = '';
+  typerStart(ui);
+}
+
+function typerStop(ui) {
+  if (ui.typer) { clearInterval(ui.typer); ui.typer = null; }
+  ui.onTyped = null;
+}
+
+/* ================== голос Джарвиса ================== */
+function voiceOn() { return localStorage.getItem('jarvisVoice') === '1'; }
+
+function syncVoiceBtn() {
+  const b = $('#voiceBtn');
+  if (!b) return;
+  const on = voiceOn();
+  b.classList.toggle('on', on);
+  b.classList.toggle('off', !on);
+  b.title = on ? 'Голос включён — я озвучиваю ответы' : 'Голос выключен';
+}
+
+function speakReply(text) {
+  if (!voiceOn() || !text) return;
+  try {
+    const clean = String(text)
+      .replace(/```[\s\S]*?```/g, ' ... код ... ')
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .replace(/https?:\/\/\S+/g, ' ссылка ')
+      .replace(/[#*`>_|]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 1200);
+    if (!clean) return;
+    const u = new SpeechSynthesisUtterance(clean);
+    u.lang = 'ru-RU'; u.rate = 1.04; u.pitch = 0.95;
+    const btn = $('#voiceBtn');
+    if (btn) {
+      btn.classList.add('speaking');
+      u.onend = u.onerror = () => btn.classList.remove('speaking');
+    }
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  } catch (e) { /* браузер без синтеза — молчим */ }
+}
+
+if ($('#voiceBtn')) {
+  $('#voiceBtn').addEventListener('click', () => {
+    const next = !voiceOn();
+    localStorage.setItem('jarvisVoice', next ? '1' : '0');
+    syncVoiceBtn();
+    if (next) {
+      toast('Голос включён — буду озвучивать ответы', 'success', 'Голос');
+      speakReply('Голос включён, сэр. Я на связи.');
+    } else {
+      try { speechSynthesis.cancel(); } catch (e) {}
+      toast('Голос выключен', 'info', 'Голос');
+    }
+    api('/api/config/update', { patch: { ui: { voice_reply: next } } });
+  });
 }
 
 const TIER_LABEL = { nano: 'экономный', base: 'базовый', smart: 'усиленный', coder: 'кодовый', vision: 'зрение' };
@@ -791,6 +1021,12 @@ function handleEvent(ev, ui) {
         if (pend) api('/api/approvals/decide', { id: pend.id, decision: d });
         card.querySelector('.approve-actions').innerHTML =
           '<span class="muted">' + (d === 'approved' ? '✓ разрешено' : '✕ отклонено') + '</span>';
+        // решение принято — карточка сразу сворачивается в миниатюру
+        collapseToThumb(card, {
+          instant: true, cls: d === 'approved' ? 'th-ok' : 'th-no', icon: ICO.shield,
+          title: 'Санкция · ' + (ev.label || ev.tool || ''),
+          tag: d === 'approved' ? 'разрешено' : 'отклонено',
+        });
       };
       card.querySelector('.ok').addEventListener('click', () => decide('approved'));
       card.querySelector('.no').addEventListener('click', () => decide('rejected'));
@@ -844,21 +1080,52 @@ function handleEvent(ev, ui) {
       break;
     }
 
-    case 'background':
-      toast('Задача «' + ev.title + '» ушла в фон' + (ev.schedule ? ' (' + ev.schedule + ')' : ''),
-        'info', 'AUTO');
+    case 'background': {
+      const when = ev.when || ev.schedule || '';
+      toast('Задача «' + ev.title + '» ушла в фон' + (when ? ' · ' + when : ''), 'info', 'AUTO');
+      if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
+      const bg = el('div', 'panel-card bg-card');
+      bg.innerHTML = '<div class="card-inner" style="padding:12px 14px">' +
+        '<b style="color:var(--teal)">В фоне: ' + esc(ev.title || 'задача') + '</b>' +
+        (when ? '<div class="muted" style="margin-top:5px">Когда: ' + esc(when) + '</div>' : '') +
+        (ev.reason ? '<div class="muted" style="margin-top:3px">' + esc(ev.reason) + '</div>' : '') +
+        '<div class="muted" style="margin-top:6px">Результат придёт уведомлением и во вкладке AUTO.</div>' +
+        '</div>';
+      node.body.appendChild(bg);
       refreshState();
+      scrollDown();
       break;
+    }
 
     case 'delta': {
       if (!ui.mdEl) {
         if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
-        ui.mdEl = el('div', 'md');
+        // пошёл ответ — ход мыслей сразу убираем в миниатюру, чтобы не мешал читать
+        if (ui.thinkCard && ui.thinkCard.isConnected) {
+          const ts0 = ui.thinkCard.querySelector('.think-stream');
+          collapseToThumb(ui.thinkCard, {
+            instant: true, cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
+            sub: ts0 ? fmtSize((ts0.textContent || '').length) : '', tag: 'развернуть',
+          });
+        }
+        ui.mdEl = el('div', 'md typing');
         node.body.appendChild(ui.mdEl);
       }
-      ui.buffer += ev.text;
-      ui.mdEl.innerHTML = MD.render(ui.buffer) + '<span class="cursor-blink"></span>';
-      scrollDown();
+      typeInto(ui, ev.text);
+      break;
+    }
+
+    case 'reset': {
+      // сервер понял, что модель напечатала вызов инструмента текстом,
+      // и просит стереть уже показанное — начинаем ответ заново
+      typerStop(ui);
+      ui.buffer = ''; ui.shown = '';
+      if (ui.mdEl) { ui.mdEl.remove(); ui.mdEl = null; }
+      if (!ui.statusEl) {
+        ui.statusEl = el('div', 'thinking-line');
+        ui.statusEl.innerHTML = '<div class="spinner"></div><span>Переигрываю: беру инструмент…</span>';
+        node.body.appendChild(ui.statusEl);
+      }
       break;
     }
 
@@ -866,10 +1133,33 @@ function handleEvent(ev, ui) {
       if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
       const content = ev.content || ui.buffer;
       if (!ui.mdEl) { ui.mdEl = el('div', 'md'); node.body.appendChild(ui.mdEl); }
-      ui.mdEl.innerHTML = MD.render(content);
+      // догоняем печать: остаток дописываем плавно, финальную отделку делаем в конце
+      ui.buffer = content;
+      ui.onTyped = () => {
+        ui.mdEl.classList.remove('typing');
+        ui.mdEl.innerHTML = MD.render(content);
+        foldCodeBlocks(ui.mdEl);
+        $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click', () => lightbox(im.src)));
+        // ход мыслей отработал — прячем в миниатюру
+        if (ui.thinkCard && ui.thinkCard.isConnected) {
+          const ts = ui.thinkCard.querySelector('.think-stream');
+          collapseToThumb(ui.thinkCard, {
+            instant: true, cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
+            sub: ts ? fmtSize((ts.textContent || '').length) : '', tag: 'развернуть',
+          });
+        }
+        if (ui.planCard && ui.planCard.isConnected) {
+          collapseToThumb(ui.planCard, {
+            instant: true, cls: 'th-plan', icon: ICO.think,
+            title: 'План · ' + ui.planItems.length + ' шаг(ов)', tag: 'выполнен',
+          });
+        }
+        addMsgActions(node, content);
+        speakReply(content);
+        scrollDown();
+      };
+      typerFlush(ui);
       ui.planItems.forEach((li) => li.classList.add('done'));
-      $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click', () => lightbox(im.src)));
-      addMsgActions(node, content);
       beep(760, 0.13);
       $('#routeHint').classList.remove('show');
       scrollDown();
@@ -929,6 +1219,7 @@ function renderAttachments() {
     n.querySelector('.x').addEventListener('click', () => { S.attachments.splice(i, 1); renderAttachments(); });
     box.appendChild(n);
   });
+  updateSendBtn();
 }
 
 /* ============================ голос ============================ */
@@ -1159,11 +1450,11 @@ function closeSanctionCard(card, text, tool) {
   card.classList.add('resolved');
   // решение принято — карточка больше не нужна, оставляем компактный след
   const ok = text.indexOf('✕') === -1;
-  setTimeout(() => collapseToThumb(card, {
-    cls: ok ? 'th-ok' : 'th-no', icon: ICO.shield,
+  collapseToThumb(card, {
+    instant: true, cls: ok ? 'th-ok' : 'th-no', icon: ICO.shield,
     title: 'Санкция' + (tool ? ' · ' + tool : ''),
     sub: text.replace(/[✓✕]\s*/, ''), tag: ok ? 'разрешено' : 'отклонено',
-  }), 900);
+  });
 }
 
 function renderSanctions() {
@@ -1298,49 +1589,190 @@ $('#addTaskBtn').addEventListener('click', () => {
   );
 });
 
-/* ============================ песочница ============================ */
-/* У каждого диалога — своя песочница. Клик по файлу открывает его
-   прямо в терминале ниже, панель сверху умеет переименовать и очистить. */
-async function loadFiles() {
-  const q = S.chatId ? '?chat_id=' + encodeURIComponent(S.chatId) : '';
-  const r = await api('/api/files' + q);
+/* ============================ ФАЙЛЫ (как Finder) ============================
+   У каждого диалога — своя рабочая папка. Здесь можно ходить по папкам,
+   перетаскивать файлы мышью, переименовывать, создавать папки и удалять. */
+
+async function loadFiles(dir) {
+  if (dir != null) S.fdir = dir;
+  const q = '/api/files/browse?dir=' + encodeURIComponent(S.fdir || '') +
+    (S.chatId ? '&chat_id=' + encodeURIComponent(S.chatId) : '');
+  const r = await api(q);
   const grid = $('#fileGrid');
-  const files = r.files || [];
-  renderSbxBar(r.sandbox || {}, files);
-  if (!files.length) {
-    grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><span class="e-ico">▤</span>' +
-      'Песочница пуста.<br>Здесь появятся файлы, которые я создам: отчёты, таблицы, картинки, архивы.</div>';
+  if (!r.ok) { grid.innerHTML = '<div class="file-empty">' + esc(r.error || 'не удалось открыть папку') + '</div>'; return; }
+  S.fdir = r.cwd || '';
+  S.fparent = r.parent || '';
+  renderSbxBar(r.sandbox || {}, r.entries || []);
+  renderCrumbs(S.fdir);
+  const entries = r.entries || [];
+  grid.innerHTML = '';
+  if (!entries.length) {
+    grid.innerHTML = '<div class="file-empty">Пусто.<br>Перетащи сюда файлы с компьютера или ' +
+      'нажми «Загрузить». Здесь же появятся файлы, которые я создам.</div>';
     return;
   }
-  grid.innerHTML = '';
-  files.slice().reverse().forEach((f, i) => {
-    const c = el('div', 'fcard');
-    c.style.animationDelay = (i * 0.02) + 's';
-    c.innerHTML = (isImg(f.name) ? '<img src="' + f.download_url + '" loading="lazy">' :
-      '<div class="fi">' + fileIcon(f.name) + '</div>') +
-      '<div class="fn">' + esc(f.name) + '</div><div class="fs">' + fmtSize(f.size) + '</div>' +
-      '<i class="fx" title="Удалить файл">✕</i>';
-    c.querySelector('.fx').addEventListener('click', (e) => {
-      e.stopPropagation();
-      confirmBox('Удалить файл?', esc(f.name) + ' будет удалён из песочницы безвозвратно.', async () => {
-        const res = await api('/api/sandbox/delete_file', { name: f.name, chat_id: S.chatId || '' });
-        if (res.ok) { toast('Файл удалён', 'success'); loadFiles(); }
-        else toast(res.error || 'не удалось удалить', 'error');
-      });
+  entries.forEach((f, i) => grid.appendChild(fileCard(f, i)));
+}
+
+function renderCrumbs(dir) {
+  const box = $('#crumbs');
+  if (!box) return;
+  box.innerHTML = '';
+  const parts = (dir || '').split('/').filter(Boolean);
+  const mk = (label, path, here) => {
+    const b = el('span', 'cr' + (here ? ' here' : ''), esc(label));
+    if (!here) b.addEventListener('click', () => loadFiles(path));
+    // на «хлебную крошку» тоже можно бросить файл — это перенос вверх по дереву
+    b.addEventListener('dragover', (e) => { e.preventDefault(); b.classList.add('drop-on'); });
+    b.addEventListener('dragleave', () => b.classList.remove('drop-on'));
+    b.addEventListener('drop', async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      b.classList.remove('drop-on');
+      await dropOnto(e, path);
     });
-    c.addEventListener('click', () => viewFile(f, c));
-    grid.appendChild(c);
+    box.appendChild(b);
+  };
+  mk((S.sandbox || {}).name || 'Файлы', '', !parts.length);
+  let acc = '';
+  parts.forEach((p, i) => {
+    acc = acc ? acc + '/' + p : p;
+    box.appendChild(el('span', 'sep', '›'));
+    mk(p, acc, i === parts.length - 1);
   });
 }
 
-function renderSbxBar(info, files) {
+function fileCard(f, i) {
+  const c = el('div', 'fcard' + (f.is_dir ? ' dir' : ''));
+  c.style.animationDelay = (i * 0.02) + 's';
+  c.draggable = true;
+  c.dataset.path = f.path;
+  const icon = f.is_dir
+    ? '<div class="fi">' + fsvg('dir', 'c-any') + '</div>'
+    : (isImg(f.name) ? '<img src="' + f.download_url + '" loading="lazy">'
+                     : '<div class="fi">' + fileIcon(f.name) + '</div>');
+  c.innerHTML = icon +
+    '<div class="fn">' + esc(f.name) + '</div>' +
+    '<div class="fs">' + (f.is_dir ? (f.items || 0) + ' объект(ов)' : fmtSize(f.size)) + '</div>' +
+    '<div class="fx-bar"><i class="r" title="Переименовать">✎</i>' +
+    (f.is_dir ? '' : '<i class="dl" title="Скачать">↓</i>') +
+    '<i class="d" title="Удалить">✕</i></div>';
+
+  c.querySelector('.r').addEventListener('click', (e) => { e.stopPropagation(); startRenameFile(c, f); });
+  const dlBtn = c.querySelector('.dl');
+  if (dlBtn) dlBtn.addEventListener('click', (e) => { e.stopPropagation(); window.open(f.download_url, '_blank'); });
+  c.querySelector('.d').addEventListener('click', (e) => {
+    e.stopPropagation();
+    confirmBox(f.is_dir ? 'Удалить папку?' : 'Удалить файл?',
+      '«' + esc(f.name) + '» будет удалён' + (f.is_dir ? 'а вместе со всем содержимым' : '') + ' безвозвратно.',
+      async () => {
+        const res = await api('/api/sandbox/delete_file', { name: f.path, chat_id: S.chatId || '' });
+        if (res.ok) { toast('Удалено', 'success'); closeFileView(); loadFiles(); }
+        else toast(res.error || 'не удалось удалить', 'error');
+      });
+  });
+
+  c.addEventListener('click', () => {
+    if (f.is_dir) { closeFileView(); loadFiles(f.path); }
+    else viewFile(f, c);
+  });
+  c.addEventListener('dblclick', () => { if (!f.is_dir) window.open(f.download_url, '_blank'); });
+
+  // перетаскивание внутри песочницы
+  c.addEventListener('dragstart', (e) => {
+    c.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/jarvis-path', f.path);
+    e.dataTransfer.setData('text/plain', f.name);
+  });
+  c.addEventListener('dragend', () => c.classList.remove('dragging'));
+
+  if (f.is_dir) {
+    c.addEventListener('dragover', (e) => { e.preventDefault(); c.classList.add('drop-on'); });
+    c.addEventListener('dragleave', () => c.classList.remove('drop-on'));
+    c.addEventListener('drop', async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      c.classList.remove('drop-on');
+      await dropOnto(e, f.path);
+    });
+  }
+  return c;
+}
+
+/* Обработка броска: либо перенос внутри песочницы, либо загрузка с компьютера. */
+async function dropOnto(e, destDir) {
+  const inner = e.dataTransfer.getData('text/jarvis-path');
+  if (inner) {
+    if (inner === destDir) return;
+    const r = await api('/api/sandbox/move', { path: inner, dest: destDir, chat_id: S.chatId || '' });
+    if (r.ok) { toast('Перемещено', 'success'); loadFiles(); }
+    else toast(r.error || 'не удалось переместить', 'error');
+    return;
+  }
+  const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+  if (files.length) await uploadToSandbox(files, destDir);
+}
+
+function startRenameFile(card, f) {
+  const label = card.querySelector('.fn');
+  if (!label || card.querySelector('.f-edit')) return;
+  const inp = el('input', 'f-edit');
+  inp.value = f.name;
+  label.replaceWith(inp);
+  inp.focus();
+  const dot = f.is_dir ? -1 : f.name.lastIndexOf('.');
+  try { inp.setSelectionRange(0, dot > 0 ? dot : f.name.length); } catch (err) {}
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const val = inp.value.trim();
+    if (save && val && val !== f.name) {
+      const r = await api('/api/sandbox/rename_file', { path: f.path, name: val, chat_id: S.chatId || '' });
+      if (r.ok) toast('Переименовано', 'success');
+      else toast(r.error || 'не удалось', 'error');
+    }
+    loadFiles();
+  };
+  inp.addEventListener('click', (e) => e.stopPropagation());
+  inp.addEventListener('blur', () => finish(true));
+  inp.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') finish(false);
+  });
+}
+
+/* загрузка файлов с компьютера прямо в текущую папку */
+async function uploadToSandbox(files, destDir) {
+  let done = 0;
+  for (const file of files) {
+    if (file.size > 50 * 1024 * 1024) { toast(file.name + ' больше 50 МБ', 'error'); continue; }
+    const data = await new Promise((res) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.onerror = () => res(null);
+      fr.readAsDataURL(file);
+    });
+    if (!data) continue;
+    const r = await api('/api/upload', { name: file.name, data, chat_id: S.chatId || '' });
+    if (!r.ok) { toast(r.error || 'не загрузилось: ' + file.name, 'error'); continue; }
+    const target = destDir != null ? destDir : (S.fdir || '');
+    if (target) await api('/api/sandbox/move', { path: r.name, dest: target, chat_id: S.chatId || '' });
+    done++;
+  }
+  if (done) toast('Загружено файлов: ' + done, 'success');
+  loadFiles();
+}
+
+function renderSbxBar(info, entries) {
   const nameEl = $('#sbxName'), metaEl = $('#sbxMeta');
   if (!nameEl) return;
   S.sandbox = info || {};
-  nameEl.textContent = info.name || 'Песочница';
-  const total = files.reduce((a, f) => a + (f.size || 0), 0);
-  metaEl.textContent = (info.shared ? 'общая · ' : 'диалог · ') +
-    files.length + ' файл(ов) · ' + fmtSize(info.size != null ? info.size : total);
+  nameEl.textContent = info.name || 'Файлы';
+  const here = (entries || []).length;
+  metaEl.textContent = (info.shared ? 'общая папка · ' : 'папка диалога · ') +
+    'всего ' + (info.files || 0) + ' файл(ов) · ' + fmtSize(info.size || 0) +
+    (S.fdir ? ' · здесь ' + here : '');
 }
 
 async function viewFile(f, card) {
@@ -1350,13 +1782,13 @@ async function viewFile(f, card) {
   const title = $('#termTitle');
   feed.classList.add('big');
   feed.innerHTML = '<div class="muted">открываю ' + esc(f.name) + '…</div>';
-  title.textContent = 'ФАЙЛ · ' + f.name.toUpperCase();
+  title.textContent = 'ФАЙЛ · ' + String(f.name).toUpperCase();
   const dlBtn = $('#termDownload'), closeBtn = $('#termClose');
   dlBtn.hidden = false; closeBtn.hidden = false;
   dlBtn.onclick = () => window.open(f.download_url, '_blank');
   closeBtn.onclick = closeFileView;
 
-  const q = '/api/files/view?name=' + encodeURIComponent(f.name) +
+  const q = '/api/files/view?name=' + encodeURIComponent(f.path || f.name) +
     (S.chatId ? '&chat_id=' + encodeURIComponent(S.chatId) : '');
   const r = await api(q);
   if (!r.ok) { feed.innerHTML = '<div class="term-line err">' + esc(r.error || 'не открылось') + '</div>'; return; }
@@ -1377,6 +1809,7 @@ async function viewFile(f, card) {
 
 function closeFileView() {
   const feed = $('#termFeed');
+  if (!feed) return;
   feed.classList.remove('big');
   feed.innerHTML = '';
   $('#termTitle').textContent = 'ТЕРМИНАЛ';
@@ -1385,22 +1818,55 @@ function closeFileView() {
   $$('.fcard.viewing').forEach((n) => n.classList.remove('viewing'));
 }
 
-$('#refreshFiles').addEventListener('click', loadFiles);
+$('#refreshFiles').addEventListener('click', () => loadFiles());
+
+$('#newFolderBtn').addEventListener('click', () => {
+  promptBox('Название новой папки', 'Новая папка', async (val) => {
+    const r = await api('/api/sandbox/mkdir', { name: val, parent: S.fdir || '', chat_id: S.chatId || '' });
+    if (r.ok) { toast('Папка создана', 'success'); loadFiles(); }
+    else toast(r.error || 'не удалось', 'error');
+  });
+});
+
+$('#uploadHere').addEventListener('click', () => $('#filesUpload').click());
+$('#filesUpload').addEventListener('change', (e) => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = '';
+  if (files.length) uploadToSandbox(files, S.fdir || '');
+});
+
+/* бросок в пустое место сетки = положить в текущую папку */
+(function initGridDnd() {
+  const grid = $('#fileGrid');
+  if (!grid) return;
+  grid.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    grid.classList.add('drop-root');
+  });
+  grid.addEventListener('dragleave', (e) => {
+    if (e.target === grid) grid.classList.remove('drop-root');
+  });
+  grid.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    grid.classList.remove('drop-root');
+    await dropOnto(e, S.fdir || '');
+  });
+})();
 
 $('#sbxRename').addEventListener('click', () => {
-  if (!S.chatId) { toast('Общую песочницу переименовать нельзя — открой диалог', 'warn'); return; }
-  promptBox('Название песочницы', (S.sandbox || {}).name || '', async (val) => {
+  if (!S.chatId) { toast('Общую папку переименовать нельзя — открой диалог', 'warn'); return; }
+  promptBox('Название рабочей папки', (S.sandbox || {}).name || '', async (val) => {
     const r = await api('/api/sandbox/rename', { name: val, chat_id: S.chatId });
-    if (r.ok) { toast('Песочница переименована', 'success'); loadFiles(); }
+    if (r.ok) { toast('Переименовано', 'success'); loadFiles(); }
     else toast(r.error || 'не удалось', 'error');
   });
 });
 
 $('#sbxWipe').addEventListener('click', () => {
-  confirmBox('Очистить песочницу?',
-    'Все файлы этой песочницы будут удалены безвозвратно. Действие нельзя отменить.', async () => {
+  confirmBox('Очистить рабочую папку?',
+    'Все файлы этого диалога будут удалены безвозвратно. Действие нельзя отменить.', async () => {
       const r = await api('/api/sandbox/clear', { chat_id: S.chatId || '' });
-      if (r.ok) { toast('Удалено файлов: ' + (r.removed || 0), 'success'); closeFileView(); loadFiles(); }
+      if (r.ok) { toast('Удалено файлов: ' + (r.removed || 0), 'success'); closeFileView(); loadFiles(''); }
       else toast(r.error || 'не удалось очистить', 'error');
     });
 });
@@ -1599,9 +2065,60 @@ function renderSettings() {
     S.config = r.config || S.config; toast('Профиль сохранён', 'success');
   });
 
+  // Биллинг Cloud.ru — данные из личного кабинета
+  const bl = el('div', 'sset');
+  const bc = c.billing || {};
+  const bs = S.billing || {};
+  bl.innerHTML = '<h3>Биллинг Cloud.ru</h3>' +
+    '<div class="sd">Если дать мне ключ личного кабинета, слева я буду показывать реальный расход ' +
+    'из Cloud.ru, а не свою оценку. Ключ создаётся в консоли Cloud.ru: ' +
+    '<b>Профиль → Сервисные аккаунты → Ключи доступа</b>. Аккаунту нужна роль ' +
+    '«Администратор расходов» (platform.customer.expense-admin).</div>' +
+    '<div class="switch"><span>Показывать баланс и расход</span>' +
+    '<div class="sw' + (bc.enabled ? ' on' : '') + '" id="bEn"></div></div>' +
+    '<div class="field"><label>Key ID</label><input id="bKid" placeholder="' +
+      esc(bc.key_id || 'например 1a2b3c4d-…') + '"></div>' +
+    '<div class="field"><label>Секрет ключа</label><input id="bSec" type="password" placeholder="' +
+      (bc.has_secret ? '••••••••  (сохранён)' : 'секрет сервисного аккаунта') + '"></div>' +
+    '<div class="field"><label>ID договора (необязательно)</label><input id="bAgr" placeholder="' +
+      esc(bc.agreement_id || 'agreement_id из личного кабинета') + '"></div>' +
+    '<div class="sd" style="margin-top:6px">Состояние: <b style="color:' +
+      (bs.account_rub != null || bs.month_rub != null ? 'var(--green)' : 'var(--tx2)') + '">' +
+      esc(bs.account_rub != null ? 'баланс ' + Number(bs.account_rub).toFixed(2) + ' ₽'
+          : bs.month_rub != null ? 'расход за месяц ' + Number(bs.month_rub).toFixed(2) + ' ₽'
+          : bs.error ? 'ошибка: ' + bs.error
+          : 'показываю собственный подсчёт') + '</b></div>' +
+    '<button class="btn primary" id="saveBill">Сохранить</button> ' +
+    '<button class="btn" id="testBill">Проверить</button>';
+  grid.appendChild(bl);
+  $('#bEn', bl).addEventListener('click', () => $('#bEn', bl).classList.toggle('on'));
+  $('#saveBill', bl).addEventListener('click', async () => {
+    const patch = { billing: { enabled: $('#bEn', bl).classList.contains('on') } };
+    const kid = $('#bKid', bl).value.trim();
+    const sec = $('#bSec', bl).value.trim();
+    const agr = $('#bAgr', bl).value.trim();
+    if (kid) patch.billing.key_id = kid;
+    if (sec) patch.billing.key_secret = sec;
+    if (agr) patch.billing.agreement_id = agr;
+    const r = await api('/api/config/update', { patch });
+    S.config = r.config || S.config;
+    toast('Биллинг сохранён', 'success');
+    await api('/api/billing?refresh=1');
+    refreshState(); renderSettings();
+  });
+  $('#testBill', bl).addEventListener('click', async () => {
+    toast('Спрашиваю Cloud.ru…', 'info');
+    const r = await api('/api/billing?refresh=1');
+    const b = r.billing || r;
+    if (b.error) toast('Cloud.ru: ' + b.error, 'error', 'Биллинг');
+    else if (b.month_rub != null) toast('Расход за месяц: ' + Number(b.month_rub).toFixed(2) + ' ₽', 'success', 'Биллинг');
+    else toast('Данные не пришли — проверь ключ и роль аккаунта', 'warn', 'Биллинг');
+    refreshState(); renderSettings();
+  });
+
   // Расходы
   const us = el('div', 'sset');
-  us.innerHTML = '<h3>Расходы</h3><div class="sd">Сколько потрачено на модели за 24 часа.</div><div id="usageBox" class="muted">загрузка…</div>';
+  us.innerHTML = '<h3>Мой подсчёт расходов</h3><div class="sd">Сколько я сам насчитал по токенам за 24 часа.</div><div id="usageBox" class="muted">загрузка…</div>';
   grid.appendChild(us);
   api('/api/usage').then((r) => {
     const t = r.total || {};
@@ -1623,6 +2140,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 (async function init() {
+  syncVoiceBtn();
   await refreshState();
   await loadChats();
   $('#stream').appendChild(buildWelcome());

@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import agent, auto, db, llm, orchestrator, sandbox, tools
+from . import agent, auto, billing, db, llm, orchestrator, sandbox, tools
 from .config import CONFIG, WORKSPACE, HOME
 from .tools import media
 
@@ -149,6 +149,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/sandbox":
             chat_id = (params.get("chat_id") or params.get("chat") or [""])[0]
             return self._json(sandbox.info(chat_id))
+        if path == "/api/files/browse":
+            chat_id = (params.get("chat_id") or params.get("chat") or [""])[0]
+            subdir = (params.get("dir") or params.get("path") or [""])[0]
+            data = sandbox.browse(subdir, chat_id)
+            data["sandbox"] = sandbox.info(chat_id)
+            return self._json(data)
         if path == "/api/files/view":
             chat_id = (params.get("chat_id") or params.get("chat") or [""])[0]
             return self._json(sandbox.view((params.get("name") or [""])[0], chat_id))
@@ -157,6 +163,9 @@ class Handler(BaseHTTPRequestHandler):
                                   (params.get("chat") or params.get("chat_id") or [""])[0])
         if path == "/api/usage":
             return self._json({"ok": True, **db.usage_summary()})
+        if path == "/api/billing":
+            force = (params.get("force") or ["0"])[0] in ("1", "true", "yes")
+            return self._json({"ok": True, "billing": billing.snapshot(force=force)})
 
         self._json({"ok": False, "error": "not found"}, 404)
 
@@ -213,7 +222,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(sandbox.rename(body.get("name") or "", body.get("chat_id") or ""))
         if path == "/api/sandbox/delete_file":
             sandbox.set_chat(body.get("chat_id") or "")
-            return self._json(tools.call("delete_file", {"path": body.get("name") or ""}))
+            return self._json(sandbox.remove(body.get("name") or "", body.get("chat_id") or ""))
+        if path == "/api/sandbox/mkdir":
+            return self._json(sandbox.mkdir(body.get("name") or "", body.get("chat_id") or "",
+                                            body.get("parent") or ""))
+        if path == "/api/sandbox/rename_file":
+            return self._json(sandbox.rename_entry(body.get("path") or "", body.get("name") or "",
+                                                   body.get("chat_id") or ""))
+        if path == "/api/sandbox/move":
+            return self._json(sandbox.move(body.get("path") or "", body.get("dest") or "",
+                                           body.get("chat_id") or ""))
         if path == "/api/upload":
             return self._json(self._upload(body))
         if path == "/api/vision":
@@ -301,6 +319,7 @@ class Handler(BaseHTTPRequestHandler):
             "notifications": notes,
             "unread": len([n for n in notes if not n.get("read")]),
             "usage": db.usage_summary(),
+            "billing": billing.snapshot(),
             "config": CONFIG.public(),
             "providers_ready": bool(llm.active_providers()),
             "home": str(HOME),
@@ -342,13 +361,21 @@ class Handler(BaseHTTPRequestHandler):
 
         # фон?
         decision = auto.should_background(text)
-        if decision["background"] and not computer_use:
-            task = db.create_task(title=text[:48] or "Фоновая задача", prompt=text,
-                                  schedule=decision["schedule"], chat_id=chat_id)
-            note = ("Задача ушла в фон — вкладка **AUTO**. Пришлю результат, как только будет готово."
-                    + (" Расписание: `%s`." % decision["schedule"] if decision["schedule"] else ""))
+        if decision["background"] and not computer_use and not attachments:
+            task_title = orchestrator.make_task_title(text)
+            task = auto.create_background_task(title=task_title, prompt=text,
+                                               schedule=decision["schedule"], chat_id=chat_id)
+            human = auto.describe_schedule(decision["schedule"])
+            if decision["schedule"]:
+                note = ("Принято. Задача **%s** поставлена в **AUTO** — %s.\n\n"
+                        "Пришлю результат уведомлением, как только выполню."
+                        % (task_title, human))
+            else:
+                note = ("Принято. Задача **%s** ушла в фон — вкладка **AUTO**.\n\n"
+                        "Пришлю результат, как только будет готово." % task_title)
             self._sse({"type": "background", "task_id": task["id"], "title": task["title"],
-                       "schedule": decision["schedule"]})
+                       "schedule": decision["schedule"], "when": human,
+                       "reason": decision.get("reason", "")})
             self._sse({"type": "delta", "text": note})
             db.add_message(chat_id, "assistant", note, {"task_id": task["id"]})
             self._sse({"type": "done", "content": note, "files": [], "tools": ["schedule_task"]})

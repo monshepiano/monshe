@@ -85,7 +85,7 @@ def _save_names(data: Dict[str, str]) -> None:
 def name_of(chat_id: Optional[str] = None) -> str:
     cid = _clean_id(chat_id if chat_id is not None else current_chat())
     if not cid:
-        return "Общая песочница"
+        return "Общие файлы"
     return _load_names().get(cid) or "Песочница диалога"
 
 
@@ -116,6 +116,115 @@ def listing(chat_id: Optional[str] = None, limit: int = 400) -> List[Dict[str, A
                 "download_url": dl(rel, chat_id),
             })
     return out
+
+
+def browse(subdir: str = "", chat_id: Optional[str] = None) -> Dict[str, Any]:
+    """Содержимое одной папки — как в Finder: сначала папки, потом файлы."""
+    base = root(chat_id)
+    try:
+        here = safe_path(subdir, chat_id) if subdir else base
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if not here.exists() or not here.is_dir():
+        here = base
+        subdir = ""
+    rel_base = str(here.relative_to(base)) if here != base else ""
+    dirs: List[Dict[str, Any]] = []
+    files: List[Dict[str, Any]] = []
+    for item in sorted(here.iterdir(), key=lambda p: p.name.lower()):
+        rel = str(item.relative_to(base))
+        try:
+            stat = item.stat()
+        except OSError:
+            continue
+        if item.is_dir():
+            inner = [x for x in item.iterdir()]
+            dirs.append({"name": item.name, "path": rel, "is_dir": True,
+                         "size": 0, "items": len(inner), "modified": stat.st_mtime})
+        else:
+            files.append({"name": item.name, "path": rel, "is_dir": False,
+                          "size": stat.st_size, "modified": stat.st_mtime,
+                          "download_url": dl(rel, chat_id)})
+    parent = str(Path(rel_base).parent) if rel_base else ""
+    if parent == ".":
+        parent = ""
+    return {"ok": True, "cwd": rel_base, "parent": parent,
+            "entries": dirs + files, "count": len(dirs) + len(files)}
+
+
+def mkdir(name: str, chat_id: Optional[str] = None, parent: str = "") -> Dict[str, Any]:
+    clean = (name or "").strip().strip("/")
+    if not clean or "/" in clean or clean in (".", ".."):
+        return {"ok": False, "error": "недопустимое имя папки"}
+    try:
+        target = safe_path((parent + "/" + clean) if parent else clean, chat_id)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if target.exists():
+        return {"ok": False, "error": "уже существует"}
+    target.mkdir(parents=True, exist_ok=True)
+    return {"ok": True, "path": str(target.relative_to(root(chat_id)))}
+
+
+def rename_entry(src: str, new_name: str, chat_id: Optional[str] = None) -> Dict[str, Any]:
+    """Переименовать файл или папку внутри её же каталога."""
+    clean = (new_name or "").strip().strip("/")
+    if not clean or "/" in clean or clean in (".", ".."):
+        return {"ok": False, "error": "недопустимое имя"}
+    try:
+        source = safe_path(src, chat_id)
+        target = safe_path(str(Path(src).parent / clean) if str(Path(src).parent) != "." else clean, chat_id)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if not source.exists():
+        return {"ok": False, "error": "не найдено"}
+    if target.exists():
+        return {"ok": False, "error": "такое имя уже занято"}
+    source.rename(target)
+    return {"ok": True, "path": str(target.relative_to(root(chat_id)))}
+
+
+def move(src: str, dest_dir: str, chat_id: Optional[str] = None) -> Dict[str, Any]:
+    """Перетаскивание: перенести файл/папку в другой каталог песочницы."""
+    base = root(chat_id)
+    try:
+        source = safe_path(src, chat_id)
+        dest = safe_path(dest_dir, chat_id) if dest_dir else base
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if not source.exists():
+        return {"ok": False, "error": "не найдено"}
+    if not dest.exists() or not dest.is_dir():
+        return {"ok": False, "error": "папка назначения не найдена"}
+    if source == dest or str(dest).startswith(str(source) + "/"):
+        return {"ok": False, "error": "нельзя переместить папку внутрь себя"}
+    target = dest / source.name
+    if target.exists():
+        stem, suffix = target.stem, target.suffix
+        idx = 2
+        while target.exists():
+            target = dest / ("%s (%d)%s" % (stem, idx, suffix))
+            idx += 1
+    shutil.move(str(source), str(target))
+    return {"ok": True, "path": str(target.relative_to(base))}
+
+
+def remove(name: str, chat_id: Optional[str] = None) -> Dict[str, Any]:
+    """Удалить файл или папку (с содержимым)."""
+    try:
+        target = safe_path(name, chat_id)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    base = root(chat_id)
+    if target == base:
+        return {"ok": False, "error": "нельзя удалить корень песочницы"}
+    if not target.exists():
+        return {"ok": False, "error": "не найдено"}
+    if target.is_dir():
+        shutil.rmtree(target, ignore_errors=True)
+    else:
+        target.unlink()
+    return {"ok": True, "name": name}
 
 
 def size_of(chat_id: Optional[str] = None) -> int:

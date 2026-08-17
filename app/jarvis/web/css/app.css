@@ -145,9 +145,8 @@ button,input,textarea,select{font-family:inherit;color:inherit}
   font-size:12.5px;color:var(--tx2);transition:.18s;border:1px solid transparent;animation:slideIn .3s both}
 .chat-item:hover{background:rgba(0,212,255,.07);color:var(--tx)}
 .chat-item.active{background:rgba(0,212,255,.12);border-color:var(--line2);color:#fff}
-.chat-item span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chat-x{opacity:0;font-size:14px;color:var(--tx3);transition:.15s}
-.chat-item:hover .chat-x{opacity:1}
+.chat-item>span.chat-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-x{font-size:12px;color:var(--tx3);transition:.15s}
 .chat-x:hover{color:var(--red)}
 @keyframes slideIn{from{opacity:0;transform:translateX(-10px)}}
 
@@ -723,10 +722,11 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .term-block .term.big{max-height:52vh}
 
 /* переименование диалога */
-.chat-item .chat-acts{display:flex;gap:2px;opacity:0;transition:.15s;flex-shrink:0}
-.chat-item:hover .chat-acts{opacity:1}
-.chat-item .chat-acts i{width:19px;height:19px;border-radius:6px;display:grid;place-items:center;
-  font-size:11px;font-style:normal;color:var(--tx3);transition:.15s}
+.chat-item .chat-acts{display:flex;align-items:center;gap:3px;flex:0 0 auto;margin-left:auto;
+  opacity:0;transition:.15s}
+.chat-item:hover .chat-acts,.chat-item.active .chat-acts{opacity:1}
+.chat-item .chat-acts i{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;
+  font-size:11px;line-height:1;font-style:normal;color:var(--tx3);transition:.15s;flex:0 0 auto}
 .chat-item .chat-acts i:hover{background:rgba(0,200,240,.14);color:var(--cy)}
 .chat-item .chat-acts i.chat-x:hover{background:rgba(221,85,102,.16);color:var(--red)}
 .chat-item input.chat-edit{flex:1;min-width:0;background:rgba(0,0,0,.35);border:1px solid var(--line2);
@@ -752,3 +752,94 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .fico.c-any{color:var(--tx2)}
 .fcard .fi{font-size:26px;line-height:1;margin-bottom:8px}
 .fcard .fi .fico svg{width:28px;height:28px}
+
+/* =================== ПАКЕТ ПРАВОК №3 =================== */
+
+/* --- кнопка голоса справа сверху --- */
+.top-acts{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.voice-btn svg{width:19px;height:19px}
+.voice-btn .mute{opacity:0;transition:.2s}
+.voice-btn.off{color:var(--tx3);border-color:var(--line)}
+.voice-btn.off .w1,.voice-btn.off .w2{opacity:0}
+.voice-btn.off .mute{opacity:1;color:var(--red)}
+.voice-btn.on{color:var(--cy);border-color:var(--line2);background:rgba(0,212,255,.14)}
+.voice-btn.on .w1{animation:vwave 1.6s ease-in-out infinite}
+.voice-btn.on .w2{animation:vwave 1.6s ease-in-out .25s infinite}
+.voice-btn.speaking{box-shadow:0 0 0 0 rgba(0,212,255,.4);animation:vpulse 1.3s ease-out infinite}
+@keyframes vwave{0%,100%{opacity:.35}50%{opacity:1}}
+@keyframes vpulse{to{box-shadow:0 0 0 12px rgba(0,212,255,0)}}
+
+/* --- баланс Cloud.ru в подвале сайдбара --- */
+.side-foot .balance-row b{color:var(--gold)}
+.side-foot .balance-row.warn b{color:var(--red)}
+.side-foot .balance-row.off{opacity:.45}
+
+/* --- «Файлы»: панель как в Finder --- */
+.head-acts{display:flex;gap:8px;flex-shrink:0}
+.crumbs{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:0 26px 10px;font-size:11.5px;color:var(--tx3)}
+.crumbs .cr{padding:4px 9px;border-radius:8px;border:1px solid transparent;cursor:pointer;transition:.15s;
+  color:var(--tx2);background:rgba(0,200,240,.05)}
+.crumbs .cr:hover{color:var(--cy);border-color:var(--line2);background:rgba(0,200,240,.12)}
+.crumbs .cr.here{color:#dcf5a8;background:rgba(143,179,90,.12);border-color:rgba(143,179,90,.3);cursor:default}
+.crumbs .cr.drop-on{background:rgba(143,179,90,.28);border-color:var(--lime);color:#fff}
+.crumbs .sep{color:var(--tx3);opacity:.6}
+
+.file-grid.drop-root{outline:2px dashed rgba(143,179,90,.5);outline-offset:-10px;border-radius:14px;
+  background:rgba(143,179,90,.05)}
+.fcard{position:relative;user-select:none}
+.fcard[draggable="true"]{cursor:grab}
+.fcard.dragging{opacity:.4;transform:scale(.96)}
+.fcard.dir{border-color:rgba(217,164,65,.3);background:rgba(217,164,65,.05)}
+.fcard.dir:hover{border-color:rgba(217,164,65,.55);background:rgba(217,164,65,.1);
+  box-shadow:0 14px 32px rgba(217,164,65,.12)}
+.fcard.dir .fi{color:var(--gold)}
+.fcard.drop-on{border-color:var(--lime);background:rgba(143,179,90,.2);transform:scale(1.03)}
+.fcard .fx-bar{position:absolute;top:6px;right:6px;display:flex;gap:4px;opacity:0;transition:.18s}
+.fcard:hover .fx-bar{opacity:1}
+.fcard .fx-bar i{width:20px;height:20px;border-radius:6px;border:1px solid var(--line);font-style:normal;
+  background:rgba(4,7,13,.8);color:var(--tx3);display:grid;place-items:center;font-size:11px;transition:.15s}
+.fcard .fx-bar i:hover{color:var(--cy);border-color:var(--line2);background:rgba(0,200,240,.2)}
+.fcard .fx-bar i.d:hover{color:var(--red);border-color:rgba(221,85,102,.5);background:rgba(221,85,102,.2)}
+.fcard input.f-edit{width:100%;background:rgba(0,0,0,.4);border:1px solid var(--line2);border-radius:7px;
+  padding:3px 6px;font-size:11.5px;color:var(--tx);outline:none;text-align:center;font-family:var(--ff)}
+.file-empty{grid-column:1/-1;padding:36px 10px;text-align:center;color:var(--tx3);font-size:12.5px;
+  border:1px dashed var(--line);border-radius:14px}
+
+/* --- миниатюры: кнопка сворачивания у развёрнутого блока --- */
+.th-fold{position:absolute;top:8px;right:9px;z-index:6;width:22px;height:22px;border-radius:7px;
+  border:1px solid var(--line);background:rgba(4,7,13,.82);color:var(--tx3);cursor:pointer;
+  display:grid;place-items:center;font-size:12px;font-style:normal;line-height:1;transition:.16s;opacity:.55}
+.th-fold:hover{opacity:1;color:var(--cy);border-color:var(--line2);background:rgba(0,200,240,.18)}
+.foldable{position:relative}
+.foldable.cam-msg .th-fold{top:10px;right:12px}
+
+/* --- код и крупные блоки: сразу свёрнуты в миниатюру --- */
+.thumb.th-code .th-ico{background:rgba(0,200,240,.14);color:var(--cy)}
+.thumb.th-code .th-tag{border-color:rgba(0,200,240,.35);color:var(--cy)}
+.thumb.th-think .th-ico{background:rgba(143,134,207,.16);color:var(--violet)}
+.thumb.th-think .th-tag{border-color:rgba(143,134,207,.35);color:var(--violet)}
+.thumb.th-plan .th-ico{background:rgba(87,179,159,.14);color:var(--teal)}
+.thumb.inline-thumb{max-width:100%;margin:10px 0}
+
+/* --- курсор набора текста --- */
+.md.typing>:last-child::after{content:"▍";color:var(--cy);opacity:.75;
+  animation:caret 1s steps(1) infinite;margin-left:2px;font-weight:400}
+@keyframes caret{50%{opacity:0}}
+
+/* --- обёртка блока кода: шапка с языком и кнопкой «Копировать» --- */
+.code-block{position:relative;margin:12px 0;border:1px solid var(--line);border-radius:12px;
+  overflow:hidden;background:rgba(2,5,10,.55)}
+.code-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:7px 12px;background:rgba(0,200,240,.06);border-bottom:1px solid var(--line);
+  font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--tx3)}
+.code-bar .cb-lang{color:var(--cy);opacity:.85}
+.code-bar .cb-copy{border:1px solid var(--line);background:transparent;color:var(--tx2);
+  border-radius:7px;padding:3px 9px;font-size:10px;letter-spacing:.06em;cursor:pointer;
+  font-family:var(--ff);transition:.15s;text-transform:none}
+.code-bar .cb-copy:hover{color:var(--cy);border-color:var(--line2);background:rgba(0,200,240,.15)}
+.code-block pre{margin:0;border:0;border-radius:0;max-height:460px}
+
+/* --- карточка «задача ушла в фон» --- */
+.bg-card{margin:10px 0;border:1px solid rgba(47,156,146,.32);border-radius:12px;
+  background:rgba(47,156,146,.07)}
+.bg-card b{font-size:12.5px;letter-spacing:.02em}
