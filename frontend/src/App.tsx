@@ -234,7 +234,7 @@ export default function App() {
   const liveThoughts = trace.filter(t => t.kind === 'thought')
   const liveTerm = trace.filter(t => t.kind === 'term')
 
-  const SIDE_TABS: any[] = [
+  const RAIL: any[] = [
     ['notif', <IcBell size={18} />, 'Уведомления'],
     ['tasks', <IcTask size={18} />, 'Фоновые задачи'],
     ['files', <IcFile size={18} />, 'Песочница'],
@@ -276,6 +276,21 @@ export default function App() {
         </div>
 
         <div className="body">
+          {/* -------------------------------------------------- левая рельса */}
+          <div className="rail">
+            {RAIL.map(([id, icon, title]: any) => (
+              <div key={id} title={title}
+                className={`iconbtn ${side === id ? 'active' : ''}`}
+                onClick={() => setSide(side === id ? '' : id)}>
+                {icon}
+                {id === 'notif' && unread > 0 && <span className="badge">{unread}</span>}
+              </div>
+            ))}
+            <span style={{ flex: 1 }} />
+            <div className="iconbtn" title="Настройки" onClick={() => setShowSettings(true)}>
+              <IcGear size={18} /></div>
+          </div>
+
           {/* -------------------------------------------------- центр */}
           <div className="center">
             <div className="stream" ref={streamRef}>
@@ -381,17 +396,9 @@ export default function App() {
           {side && (
             <div className="side">
               <Corners />
-              <div className="side-tabs">
-                {SIDE_TABS.map(([id, icon, title]) => (
-                  <div key={id} title={title}
-                    className={`iconbtn ${side === id ? 'active' : ''}`}
-                    onClick={() => setSide(id)}>
-                    {icon}
-                    {id === 'notif' && unread > 0 && <span className="badge">{unread}</span>}
-                  </div>
-                ))}
-                <span style={{ flex: 1 }} />
-                <div className="iconbtn" title="Закрыть" onClick={() => setSide('')}><IcX size={16} /></div>
+              <div className="side-close">
+                <div className="iconbtn" title="Закрыть панель" onClick={() => setSide('')}>
+                  <IcX size={15} /></div>
               </div>
               <div className="side-body">
                 {side === 'notif' && <NotifPanel items={notifs} approvals={approvals} onDecide={decide}
