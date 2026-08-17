@@ -12,8 +12,22 @@ echo "${CYAN}Обновление Джарвиса${OFF}"
 echo
 
 if [ ! -d ".git" ]; then
-  echo "${RED}Это не git-копия проекта — обновлять нечего.${OFF}"
-  read -r -p "Enter..."; exit 1
+  echo "${GOLD}Эта копия установлена из архива.${OFF}"
+  echo
+  echo "Чтобы обновиться — просто попросите у меня новый архив"
+  echo "и распакуйте его поверх этой папки (заменив файлы)."
+  echo
+  echo "${DIM}Ваши настройки, память и файлы лежат отдельно (~/.jarvis)"
+  echo "и при замене папки не пострадают.${OFF}"
+  echo
+  echo "${DIM}Обновлю только компоненты, если они устарели…${OFF}"
+  if [ -d ".venv" ]; then
+    .venv/bin/python -m pip install --quiet --upgrade -r requirements.txt \
+      && echo "${GOLD}Компоненты в порядке.${OFF}"
+  fi
+  echo
+  read -r -p "Нажмите Enter, чтобы закрыть окно..."
+  exit 0
 fi
 
 echo "${DIM}Скачиваю изменения…${OFF}"
