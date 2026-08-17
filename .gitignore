@@ -5,8 +5,8 @@ __pycache__/
 *.pyc
 .DS_Store
 jarvis/data/
-dist/
-jarvis/static/assets/JARVIS.zip
+dist/*.tmp
+dist/*.command
 installer/_payload/
 *.log
 .arena/
