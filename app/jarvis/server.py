@@ -240,6 +240,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/sandbox/move":
             return self._json(sandbox.move(body.get("path") or "", body.get("dest") or "",
                                            body.get("chat_id") or ""))
+        if path == "/api/sandbox/delete_many":
+            sandbox.set_chat(body.get("chat_id") or "")
+            return self._json(sandbox.remove_many(body.get("paths") or [],
+                                                  body.get("chat_id") or ""))
+        if path == "/api/sandbox/move_many":
+            sandbox.set_chat(body.get("chat_id") or "")
+            return self._json(sandbox.move_many(body.get("paths") or [], body.get("dest") or "",
+                                                body.get("chat_id") or ""))
         if path == "/api/upload":
             return self._json(self._upload(body))
         if path == "/api/vision":

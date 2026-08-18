@@ -237,6 +237,12 @@ button,input,textarea,select{font-family:inherit;color:inherit}
 .ai-name{font-size:10.5px;letter-spacing:2.2px;color:var(--cy);text-transform:uppercase;margin-bottom:7px;
   display:flex;align-items:center;gap:8px}
 .ai-model{color:var(--tx3);letter-spacing:.2px;text-transform:none;font-size:10px;font-family:var(--fm)}
+/* время у каждого сообщения: у ответа — в строке имени справа,
+   у своей реплики — отдельной строкой под пузырём */
+.msg-time{font-family:var(--fm);font-size:10px;letter-spacing:.4px;color:var(--tx3);
+  text-transform:none;opacity:.75}
+.msg-ai .ai-name .msg-time{margin-left:auto}
+.msg-user .msg-time{margin-top:5px;padding-right:2px}
 
 /* блоки внутри ответа */
 .panel-card{border:1px solid var(--line);border-radius:13px;background:var(--panel2);margin:9px 0;
@@ -579,20 +585,19 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   white-space:pre-wrap;word-break:break-all}
 
 /* ---------- камера прямо в диалоге ---------- */
-.cam-msg .ai-content{max-width:640px}
-/* Карточка камеры — собственный экран с прокруткой: видео закреплено сверху
-   (position:sticky работает относительно ЭТОГО контейнера), а описания и
-   переписка листаются под ним. Раньше прокручивалась вся лента, и камера
-   уезжала за верхний край. */
+.cam-msg .ai-content{max-width:820px}
+/* Карточка камеры — две колонки в одном блоке: слева небольшое видео,
+   справа сверху закреплён комментарий «что вижу», а под ним прокручивается
+   переписка. Так картинка всегда на виду, а лента растёт только справа. */
 .cam-live{border:1px solid var(--line2);border-radius:16px;padding:11px;background:rgba(0,0,0,.28);
   box-shadow:0 0 0 1px rgba(0,212,255,.05),0 14px 40px rgba(0,0,0,.4);animation:slideIn .35s both;
-  max-height:78vh;overflow-y:auto;overscroll-behavior:contain}
-.cam-live::-webkit-scrollbar{width:6px}
-.cam-live::-webkit-scrollbar-thumb{background:rgba(0,200,240,.22);border-radius:4px}
-/* Картинка закреплена: диалог под ней прокручивается, а сама камера
-   остаётся на виду и не уезжает вверх при новых сообщениях. */
-.cam-wrap{position:sticky;top:0;z-index:3;border-radius:13px;overflow:hidden;border:1px solid var(--line2);
-  background:#000;aspect-ratio:4/3;margin-bottom:10px}
+  display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:12px;align-items:start;
+  max-height:62vh;overflow:hidden}
+.cam-col-left{display:flex;flex-direction:column;gap:8px;min-width:0}
+.cam-col-right{display:flex;flex-direction:column;gap:8px;min-width:0;max-height:100%;
+  min-height:0;align-self:stretch}
+.cam-wrap{position:relative;border-radius:13px;overflow:hidden;border:1px solid var(--line2);
+  background:#000;aspect-ratio:4/3}
 /* зеркалим картинку — так привычнее, как в зеркале */
 #cam{width:100%;height:100%;object-fit:cover;display:block;transform:scaleX(-1)}
 .cam-scan{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--cy),transparent);
@@ -610,8 +615,8 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .cam-live.live .cam-rec{background:var(--red);box-shadow:0 0 10px var(--red);animation:blink 1.4s infinite}
 .cam-msg.done .cam-wrap{filter:grayscale(1) brightness(.5)}
 .cam-msg.done .cam-scan{display:none}
-/* прокрутка теперь общая — у карточки; свои скроллы больше не нужны */
-.cam-feed{display:flex;flex-direction:column;gap:6px;margin-bottom:9px}
+/* «Что вижу» — закреплённая шапка правой колонки: не прокручивается */
+.cam-feed{display:flex;flex-direction:column;gap:6px;flex:0 0 auto}
 .cam-feed:empty{display:none}
 .cam-line{display:flex;gap:9px;font-size:12.5px;line-height:1.6;color:var(--tx);padding:7px 10px;
   border-radius:10px;background:rgba(0,212,255,.05);border:1px solid var(--line);animation:slideIn .3s both}
@@ -620,9 +625,11 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .cam-t{font-family:var(--fm);font-size:10px;color:var(--tx3);flex-shrink:0;padding-top:2px}
 .cam-x{min-width:0}
 .cam-x p{margin:0}
-/* Диалог во время работы камеры живёт внутри её карточки: своя прокрутка,
-   поэтому вкладка не уезжает вверх, сколько бы вопросов ни задали. */
-.cam-chat{display:flex;flex-direction:column;margin:2px 0 9px;padding-right:4px}
+/* Диалог во время работы камеры живёт в правой колонке под комментарием:
+   прокручивается только он, видео и «что вижу» остаются на месте. */
+.cam-chat{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;
+  overflow-y:auto;overscroll-behavior:contain;padding-right:4px;
+  border-top:1px solid var(--line);padding-top:8px}
 .cam-chat:empty{display:none}
 .cam-chat .msg{max-width:100%;margin:0 0 8px}
 .cam-chat .msg-user{justify-content:flex-end}
@@ -630,6 +637,12 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .cam-chat::-webkit-scrollbar{width:6px}
 .cam-chat::-webkit-scrollbar-thumb{background:rgba(0,200,240,.22);border-radius:4px}
 .cam-note{font-size:11px;line-height:1.55;color:var(--tx3)}
+/* узкий экран: колонки складываются в одну, видео сверху */
+@media (max-width:760px){
+  .cam-live{grid-template-columns:1fr;max-height:78vh;overflow-y:auto}
+  .cam-col-right{max-height:none}
+  .cam-chat{overflow:visible;max-height:none}
+}
 
 /* тосты */
 .toasts{position:fixed;top:66px;right:20px;z-index:200;display:flex;flex-direction:column;gap:9px;pointer-events:none}
@@ -854,6 +867,21 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   padding:3px 6px;font-size:11.5px;color:var(--tx);outline:none;text-align:center;font-family:var(--ff)}
 .file-empty{grid-column:1/-1;padding:36px 10px;text-align:center;color:var(--tx3);font-size:12.5px;
   border:1px dashed var(--line);border-radius:14px}
+
+/* --- выделение файлов: подсветка карточки и панель групповых действий --- */
+.fcard.selected{border-color:rgba(0,200,240,.62);background:rgba(0,200,240,.13);
+  box-shadow:0 0 0 1px rgba(0,200,240,.35),0 12px 28px rgba(0,140,200,.18)}
+.fcard.selected .fn{color:var(--cy2)}
+.fcard.selected::before{content:'✓';position:absolute;top:6px;left:6px;width:18px;height:18px;
+  border-radius:6px;background:var(--cy);color:#03121b;font-size:11px;line-height:18px;
+  text-align:center;font-weight:700;z-index:2}
+.sel-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  margin:0 26px 10px;padding:8px 13px;border-radius:12px;border:1px solid rgba(0,200,240,.32);
+  background:rgba(0,200,240,.08);animation:popIn .22s both}
+.sel-bar[hidden]{display:none}
+.sel-count{font-size:11.5px;color:var(--cy);font-family:var(--fm);letter-spacing:.4px}
+.sel-acts{display:flex;gap:7px;flex-wrap:wrap}
+@media (max-width:900px){.sel-bar{margin-left:14px;margin-right:14px}}
 
 /* --- миниатюры: кнопка сворачивания у развёрнутого блока --- */
 .th-fold{position:absolute;top:8px;right:9px;z-index:6;width:22px;height:22px;border-radius:7px;

@@ -227,6 +227,34 @@ def remove(name: str, chat_id: Optional[str] = None) -> Dict[str, Any]:
     return {"ok": True, "name": name}
 
 
+def remove_many(paths: List[str], chat_id: Optional[str] = None) -> Dict[str, Any]:
+    """Удалить несколько выделенных объектов за один запрос.
+
+    Единый источник истины — remove(): здесь только перебор, чтобы интерфейс
+    не слал десяток запросов подряд и получал один понятный ответ.
+    """
+    done, errors = [], []
+    for item in paths or []:
+        res = remove(item, chat_id)
+        if res.get("ok"):
+            done.append(item)
+        else:
+            errors.append({"path": item, "error": res.get("error", "не удалось")})
+    return {"ok": not errors, "removed": len(done), "done": done, "errors": errors}
+
+
+def move_many(paths: List[str], dest_dir: str, chat_id: Optional[str] = None) -> Dict[str, Any]:
+    """Перенести несколько выделенных объектов в одну папку."""
+    done, errors = [], []
+    for item in paths or []:
+        res = move(item, dest_dir, chat_id)
+        if res.get("ok"):
+            done.append(res.get("path") or item)
+        else:
+            errors.append({"path": item, "error": res.get("error", "не удалось")})
+    return {"ok": not errors, "moved": len(done), "done": done, "errors": errors}
+
+
 def size_of(chat_id: Optional[str] = None) -> int:
     total = 0
     for item in root(chat_id).rglob("*"):

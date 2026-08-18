@@ -201,6 +201,18 @@
       </div>
 
       <div class="crumbs" id="crumbs"></div>
+
+      <!-- панель появляется, когда что-то выделено (как в Finder) -->
+      <div class="sel-bar" id="selBar" hidden>
+        <span class="sel-count" id="selCount">Выделено: 0</span>
+        <div class="sel-acts">
+          <button class="btn sm" id="selAll">Выделить всё</button>
+          <button class="btn sm" id="selDownload">Скачать</button>
+          <button class="btn sm danger" id="selDelete">Удалить</button>
+          <button class="btn sm" id="selNone">Снять выделение</button>
+        </div>
+      </div>
+
       <div class="file-grid" id="fileGrid"></div>
       <input type="file" id="filesUpload" multiple hidden>
 

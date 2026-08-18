@@ -52,6 +52,10 @@ const S = {
   detached: null,
   detachTimer: null,
   sandbox: {},
+  // выделение в файлах: набор путей + якорь для Shift-диапазона (как в Finder)
+  fsel: new Set(),
+  fanchor: '',
+  frows: [],
 };
 
 /* ============================ утилиты ============================ */
@@ -76,6 +80,22 @@ function fmtTime(ts) {
   if (d.toDateString() === today.toDateString()) return t;
   return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) + ' ' + t;
 }
+/* Время сообщения. Единственный источник истины — created_at из базы: он
+   приходит вместе с перепиской и одинаков во всех вкладках. У только что
+   отправленной реплики его ещё нет (сервер сохранит её через миг), поэтому
+   берём текущий момент — расхождение меньше секунды. */
+function stampTime(node, ts) {
+  if (!node) return null;
+  const sec = Number(ts) || (Date.now() / 1000);
+  const prev = node.querySelector(':scope > .msg-time, :scope .ai-name > .msg-time');
+  if (prev) prev.remove();
+  const t = el('span', 'msg-time', esc(fmtTime(sec)));
+  t.title = new Date(sec * 1000).toLocaleString('ru-RU');
+  const name = node.querySelector(':scope > .ai-body > .ai-name');
+  if (name) name.appendChild(t); else node.appendChild(t);
+  return t;
+}
+
 /* Иконки файлов — тонкая линейная графика, каждый тип со своим сдержанным
    цветом (класс c-*). Никаких эмодзи: они выглядят по-детски и по-разному
    рисуются в разных системах. */
@@ -316,7 +336,7 @@ async function syncChatTail() {
     if (m.role !== 'assistant') return;
     const meta = m.meta || {};
     if (!meta.from_auto) return;          // свои ответы рисует сам стрим
-    const node = addAiMsg();
+    const node = addAiMsg(m.created_at);
     node.root.dataset.msgId = m.id;
     node.body.innerHTML = '<div class="md">' + MD.render(m.content) + '</div>';
     foldCodeBlocks(node.body);
@@ -456,10 +476,10 @@ async function openChat(id) {
     if (m.role === 'user') {
       const mt = m.meta || {};
       addUserMsg(m.content, mt.attachments || [],
-        { id: m.id, versions: mt.versions || [], version: mt.version || 0 });
+        { id: m.id, versions: mt.versions || [], version: mt.version || 0, ts: m.created_at });
     }
     else if (m.role === 'assistant') {
-      const node = addAiMsg();
+      const node = addAiMsg(m.created_at);
       node.root.dataset.msgId = m.id;
       const meta = m.meta || {};
       // ход мыслей и действия из прошлого ответа — свёрнутыми строчками
@@ -539,8 +559,9 @@ function msgHost() {
   return stream();
 }
 function scrollDown(force) {
-  // прокручивается сама карточка камеры (видео в ней закреплено сверху)
-  const cl = S.camNode && S.camNode.isConnected ? S.camNode.querySelector('.cam-live') : null;
+  // в карточке камеры прокручивается только колонка переписки: видео слева и
+  // комментарий «что вижу» справа сверху закреплены и никуда не уезжают
+  const cl = S.camNode && S.camNode.isConnected ? S.camNode.querySelector('.cam-chat') : null;
   if (cl) {
     const nearC = cl.scrollHeight - cl.scrollTop - cl.clientHeight < 220;
     if (nearC || force) cl.scrollTop = cl.scrollHeight;
@@ -678,6 +699,7 @@ function addUserMsg(text, atts, info) {
   m.innerHTML = '<div class="bubble-user">' + esc(text) + extra + '</div>';
   m.dataset.msgId = info.id || '';
   renderVersions(m, info.versions || [], info.version || 0);
+  stampTime(m, info.ts);
 
   // две кнопки под своим сообщением: скопировать и редактировать
   const acts = el('div', 'msg-actions');
@@ -701,7 +723,7 @@ function addUserMsg(text, atts, info) {
   return m;
 }
 
-function addAiMsg() {
+function addAiMsg(ts) {
   killWelcome();
   const m = el('div', 'msg msg-ai');
   m.innerHTML =
@@ -709,6 +731,7 @@ function addAiMsg() {
     '<div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div></div>' +
     '<div class="ai-body"><div class="ai-name">JARVIS<span class="ai-model"></span></div>' +
     '<div class="ai-content"></div></div>';
+  stampTime(m, ts);
   msgHost().appendChild(m);
   scrollDown(true);
   return {
@@ -1770,17 +1793,20 @@ function buildCamCard() {
     '<div class="ai-body"><div class="ai-name">JARVIS<span class="ai-model"> · зрение</span></div>' +
     '<div class="ai-content">' +
       '<div class="cam-live">' +
-        '<div class="cam-wrap">' +
-          '<video id="cam" autoplay playsinline muted></video>' +
-          '<div class="cam-scan"></div>' +
-          '<div class="cam-corners"><i></i><i></i><i></i><i></i></div>' +
-          '<div class="cam-hud"><span class="cam-rec"></span><span id="camState">включаю камеру…</span></div>' +
+        '<div class="cam-col-left">' +
+          '<div class="cam-wrap">' +
+            '<video id="cam" autoplay playsinline muted></video>' +
+            '<div class="cam-scan"></div>' +
+            '<div class="cam-corners"><i></i><i></i><i></i><i></i></div>' +
+            '<div class="cam-hud"><span class="cam-rec"></span><span id="camState">включаю камеру…</span></div>' +
+          '</div>' +
+          '<div class="cam-note muted">Смотрю трансляцию и комментирую справа. ' +
+          'Спроси прямо в чате — «что это?», «где купить» — отвечу по тому, что сейчас в кадре.</div>' +
         '</div>' +
-        '<div class="cam-feed" id="camFeed"></div>' +
-        '<div class="cam-chat" id="camChat"></div>' +
-        '<div class="cam-note muted">Трансляция идёт в реальном времени: я смотрю кадры и комментирую, ' +
-        'что вижу. Спроси прямо в чате — например «что это?» или «где такое купить» — ' +
-        'и я отвечу по тому, что сейчас в кадре.</div>' +
+        '<div class="cam-col-right">' +
+          '<div class="cam-feed" id="camFeed"></div>' +
+          '<div class="cam-chat" id="camChat"></div>' +
+        '</div>' +
       '</div>' +
     '</div></div>';
   return card;
@@ -2111,12 +2137,96 @@ async function loadFiles(dir) {
   renderCrumbs(S.fdir);
   const entries = r.entries || [];
   grid.innerHTML = '';
+  // список того, что сейчас на экране — по нему считается диапазон Shift,
+  // и из выделения выпадает всё, чего в этой папке уже нет
+  S.frows = entries.map((f) => f.path);
+  S.fsel = new Set([...S.fsel].filter((p) => S.frows.indexOf(p) >= 0));
   if (!entries.length) {
     grid.innerHTML = '<div class="file-empty">Пусто.<br>Перетащи сюда файлы с компьютера или ' +
       'нажми «Загрузить». Здесь же появятся файлы, которые я создам.</div>';
+    syncSelection();
     return;
   }
   entries.forEach((f, i) => grid.appendChild(fileCard(f, i)));
+  syncSelection();
+}
+
+/* ======================= выделение файлов (как в Finder) =======================
+   Один источник истины — множество путей S.fsel. Классы на карточках, панель
+   действий и перетаскивание читают только его; никакой второй «памяти» о том,
+   что выделено, в интерфейсе нет.
+     клик            — выделить один (и открыть предпросмотр/папку),
+     Cmd/Ctrl+клик   — добавить или убрать один,
+     Shift+клик      — выделить диапазон от предыдущего клика,
+     Cmd/Ctrl+A      — выделить всё, Escape — снять, Delete — удалить. */
+function selInfo() {
+  const paths = [...S.fsel];
+  return { paths, count: paths.length };
+}
+
+function syncSelection() {
+  $$('#fileGrid .fcard').forEach((c) => {
+    c.classList.toggle('selected', S.fsel.has(c.dataset.path));
+  });
+  const bar = $('#selBar'), label = $('#selCount');
+  if (!bar) return;
+  const n = S.fsel.size;
+  bar.hidden = n === 0;
+  if (label) label.textContent = 'Выделено: ' + n + ' из ' + S.frows.length;
+}
+
+function selectOnly(path) {
+  S.fsel = new Set(path ? [path] : []);
+  S.fanchor = path || '';
+  syncSelection();
+}
+
+function selectToggle(path) {
+  if (S.fsel.has(path)) S.fsel.delete(path); else S.fsel.add(path);
+  S.fanchor = path;
+  syncSelection();
+}
+
+function selectRange(path) {
+  const rows = S.frows;
+  const to = rows.indexOf(path);
+  let from = rows.indexOf(S.fanchor);
+  if (from < 0) from = to;
+  if (to < 0) return;
+  const [a, b] = from <= to ? [from, to] : [to, from];
+  for (let i = a; i <= b; i++) S.fsel.add(rows[i]);
+  syncSelection();
+}
+
+function clearSelection() {
+  if (!S.fsel.size) return;
+  S.fsel.clear();
+  syncSelection();
+}
+
+async function deleteSelection() {
+  const { paths, count } = selInfo();
+  if (!count) return;
+  confirmBox(count === 1 ? 'Удалить объект?' : 'Удалить ' + count + ' объекта(ов)?',
+    'Выделенное будет удалено безвозвратно.', async () => {
+      const r = await api('/api/sandbox/delete_many', { paths, chat_id: S.chatId || '' });
+      if (r.removed) toast('Удалено: ' + r.removed, 'success');
+      if ((r.errors || []).length) toast('Не удалось удалить: ' + r.errors.length, 'error');
+      clearSelection(); closeFileView(); loadFiles();
+    });
+}
+
+function downloadSelection() {
+  const cards = $$('#fileGrid .fcard.selected');
+  let n = 0;
+  cards.forEach((c) => {
+    if (c.classList.contains('dir')) return;      // папку одним файлом не скачать
+    const url = c.dataset.dl;
+    if (!url) return;
+    n++;
+    setTimeout(() => window.open(url, '_blank'), n * 250);
+  });
+  if (!n) toast('Папки скачиваются только по одной — открой её и выбери файлы', 'warn');
 }
 
 function renderCrumbs(dir) {
@@ -2151,6 +2261,7 @@ function fileCard(f, i) {
   c.style.animationDelay = (i * 0.02) + 's';
   c.draggable = true;
   c.dataset.path = f.path;
+  if (!f.is_dir) c.dataset.dl = f.download_url || '';
   const icon = f.is_dir
     ? '<div class="fi">' + fsvg('dir', 'c-any') + '</div>'
     : (isImg(f.name) ? '<img src="' + f.download_url + '" loading="lazy">'
@@ -2176,20 +2287,29 @@ function fileCard(f, i) {
       });
   });
 
-  c.addEventListener('click', () => {
+  c.addEventListener('click', (e) => {
+    // Cmd/Ctrl и Shift — только выделение, без открытия: в Finder так же
+    if (e.metaKey || e.ctrlKey) { e.preventDefault(); selectToggle(f.path); return; }
+    if (e.shiftKey) { e.preventDefault(); selectRange(f.path); return; }
+    selectOnly(f.path);
     if (f.is_dir) { closeFileView(); loadFiles(f.path); }
     else viewFile(f, c);
   });
   c.addEventListener('dblclick', () => { if (!f.is_dir) window.open(f.download_url, '_blank'); });
 
-  // перетаскивание внутри песочницы
+  // перетаскивание внутри песочницы: тянем всё выделенное, а не одну карточку
   c.addEventListener('dragstart', (e) => {
-    c.classList.add('dragging');
+    if (!S.fsel.has(f.path)) selectOnly(f.path);
+    const paths = [...S.fsel];
+    $$('#fileGrid .fcard.selected').forEach((n) => n.classList.add('dragging'));
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/jarvis-path', f.path);
-    e.dataTransfer.setData('text/plain', f.name);
+    e.dataTransfer.setData('text/jarvis-paths', JSON.stringify(paths));
+    e.dataTransfer.setData('text/plain', paths.length > 1 ? paths.length + ' объекта(ов)' : f.name);
   });
-  c.addEventListener('dragend', () => c.classList.remove('dragging'));
+  c.addEventListener('dragend', () => {
+    $$('#fileGrid .fcard.dragging').forEach((n) => n.classList.remove('dragging'));
+  });
 
   if (f.is_dir) {
     c.addEventListener('dragover', (e) => { e.preventDefault(); c.classList.add('drop-on'); });
@@ -2207,10 +2327,18 @@ function fileCard(f, i) {
 async function dropOnto(e, destDir) {
   const inner = e.dataTransfer.getData('text/jarvis-path');
   if (inner) {
-    if (inner === destDir) return;
-    const r = await api('/api/sandbox/move', { path: inner, dest: destDir, chat_id: S.chatId || '' });
-    if (r.ok) { toast('Перемещено', 'success'); loadFiles(); }
-    else toast(r.error || 'не удалось переместить', 'error');
+    let paths = [inner];
+    try {
+      const many = JSON.parse(e.dataTransfer.getData('text/jarvis-paths') || '[]');
+      if (Array.isArray(many) && many.length) paths = many;
+    } catch (err) { /* тянули одну карточку */ }
+    paths = paths.filter((p) => p && p !== destDir);
+    if (!paths.length) return;
+    const r = await api('/api/sandbox/move_many', { paths, dest: destDir, chat_id: S.chatId || '' });
+    if (r.moved) toast('Перемещено: ' + r.moved, 'success');
+    if ((r.errors || []).length) toast(r.errors[0].error || 'не удалось переместить', 'error');
+    clearSelection();
+    loadFiles();
     return;
   }
   const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
@@ -2340,10 +2468,36 @@ $('#filesUpload').addEventListener('change', (e) => {
   if (files.length) uploadToSandbox(files, S.fdir || '');
 });
 
+/* кнопки панели выделения */
+if ($('#selAll')) {
+  $('#selAll').addEventListener('click', () => { S.fsel = new Set(S.frows); syncSelection(); });
+  $('#selNone').addEventListener('click', clearSelection);
+  $('#selDelete').addEventListener('click', deleteSelection);
+  $('#selDownload').addEventListener('click', downloadSelection);
+}
+
+/* Клавиши работают, когда открыта вкладка «Файлы» и курсор не в поле ввода:
+   Cmd/Ctrl+A — выделить всё, Escape — снять, Delete/Backspace — удалить. */
+window.addEventListener('keydown', (e) => {
+  const view = $('#view-files');
+  if (!view || !view.classList.contains('active')) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+    e.preventDefault(); S.fsel = new Set(S.frows); syncSelection(); return;
+  }
+  if (e.key === 'Escape' && S.fsel.size) { e.preventDefault(); clearSelection(); return; }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && S.fsel.size) {
+    e.preventDefault(); deleteSelection();
+  }
+});
+
 /* бросок в пустое место сетки = положить в текущую папку */
 (function initGridDnd() {
   const grid = $('#fileGrid');
   if (!grid) return;
+  // клик по пустому месту снимает выделение — как по рабочему столу в Finder
+  grid.addEventListener('click', (e) => { if (e.target === grid) clearSelection(); });
   grid.addEventListener('dragover', (e) => {
     e.preventDefault();
     grid.classList.add('drop-root');
