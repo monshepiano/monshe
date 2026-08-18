@@ -389,7 +389,12 @@ class Handler(BaseHTTPRequestHandler):
         attachments: List[Dict[str, Any]] = body.get("attachments") or []
 
         if not chat_id:
-            chat_id = db.create_chat("Новый диалог")["id"]
+            # Камера ведёт СВОЙ разговор: он нужен ради отдельного контекста,
+            # но в списке диалогов ему не место — помечаем видом 'cam'.
+            if body.get("kind") == "cam":
+                chat_id = db.create_chat("Камера", kind="cam")["id"]
+            else:
+                chat_id = db.create_chat("Новый диалог")["id"]
 
         sandbox.set_chat(chat_id)
         self._sse_open()

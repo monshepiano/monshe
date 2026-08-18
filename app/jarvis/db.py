@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS chats (
     title TEXT,
     created_at REAL,
     updated_at REAL,
-    pinned INTEGER DEFAULT 0
+    pinned INTEGER DEFAULT 0,
+    kind TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
@@ -109,6 +110,10 @@ def _connect() -> sqlite3.Connection:
 _CONN = _connect()
 with _LOCK:
     _CONN.executescript(SCHEMA)
+    # База, созданная прошлой версией, колонки kind не знает: добавляем на месте.
+    cols = {r[1] for r in _CONN.execute("PRAGMA table_info(chats)")}
+    if "kind" not in cols:
+        _CONN.execute("ALTER TABLE chats ADD COLUMN kind TEXT DEFAULT ''")
     _CONN.commit()
 
 
@@ -138,18 +143,21 @@ def query_one(sql: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------- chats
-def create_chat(title: str = "Новый диалог") -> Dict[str, Any]:
+def create_chat(title: str = "Новый диалог", kind: str = "") -> Dict[str, Any]:
+    """kind='cam' — служебный разговор камеры: свой контекст, но вне списка чатов."""
     chat_id = uid("c_")
     ts = now()
     execute(
-        "INSERT INTO chats(id,title,created_at,updated_at) VALUES(?,?,?,?)",
-        (chat_id, title, ts, ts),
+        "INSERT INTO chats(id,title,created_at,updated_at,kind) VALUES(?,?,?,?,?)",
+        (chat_id, title, ts, ts, kind),
     )
-    return {"id": chat_id, "title": title, "created_at": ts, "updated_at": ts}
+    return {"id": chat_id, "title": title, "created_at": ts, "updated_at": ts, "kind": kind}
 
 
 def list_chats(limit: int = 60) -> List[Dict[str, Any]]:
-    return query("SELECT * FROM chats ORDER BY updated_at DESC LIMIT ?", (limit,))
+    # служебные разговоры (камера) в боковой список не попадают
+    return query("SELECT * FROM chats WHERE COALESCE(kind,'')='' "
+                 "ORDER BY updated_at DESC LIMIT ?", (limit,))
 
 
 def rename_chat(chat_id: str, title: str) -> None:

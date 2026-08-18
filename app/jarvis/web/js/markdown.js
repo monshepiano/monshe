@@ -44,7 +44,7 @@
       // блок кода
       var fence = ln.match(/^\s*```+\s*([\w+-]*)\s*$/);
       if (fence) {
-        var lang = fence[1] || '';
+        var lang = (fence[1] || '').toLowerCase();
         var buf = [];
         i++;
         while (i < lines.length && !/^\s*```+\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
@@ -53,7 +53,7 @@
         // переключатели, плитки. Разметку в HTML не превращаем здесь: она
         // перерисовывается на каждом такте печати и стёрла бы состояние.
         // Оставляем спецификацию в data-атрибуте, оживляет её app.js один раз.
-        if (lang === 'ui') {
+        if (lang === 'ui' || lang === 'ui-panel' || lang === 'jarvis-ui') {
           out.push('<div class="ui-panel" data-ui="' + esc(buf.join('\n')) + '"></div>');
           continue;
         }

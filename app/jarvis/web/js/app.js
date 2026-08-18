@@ -633,6 +633,21 @@ function stream() { return $('#stream'); }
 /* Пока камера включена, диалог идёт ВНУТРИ её вкладки: карточка не уезжает
    вверх от новых вопросов, а переписка остаётся в ней и видна, когда
    окошко разворачивают обратно. */
+/* Камера — ОТДЕЛЬНЫЙ разговор, а не продолжение текущего.
+   Раньше карточка камеры рисовала реплики у себя, но отправляла их в общий
+   chat_id: в переписку основного диалога подмешивались «вижу кружку, вижу
+   руку», а модель тащила этот мусор в ответы на обычные вопросы. Причина —
+   у камеры был свой ВИД, но не было своего КОНТЕКСТА. Заводим ей собственный
+   chat_id и держим единственную точку, которая отвечает на вопрос
+   «в какой разговор сейчас пишем». */
+function camLive() { return !!(S.camNode && S.camNode.isConnected); }
+
+function activeChatId() { return camLive() ? (S.camChatId || null) : S.chatId; }
+
+function setActiveChat(id) {
+  if (camLive()) S.camChatId = id; else S.chatId = id;
+}
+
 function msgHost() {
   // перерисовка может идти в явно заданный контейнер (например, в переписку
   // внутри карточки камеры) — тогда он важнее общих правил
@@ -776,14 +791,14 @@ function startInlineEdit(node, text) {
     if (bubble) { bubble.style.display = ''; bubble.classList.add('edit-back'); }
     if (acts) acts.style.display = '';
     if (vers) vers.style.display = '';
-    if (bubble) setTimeout(() => bubble.classList.remove('edit-back'), 300);
+    if (bubble) setTimeout(() => bubble.classList.remove('edit-back'), 240);
   };
   const close = (animated) => {
     if (box.dataset.closing === '1') return;
     box.dataset.closing = '1';
     if (animated === false) { restore(); return; }
     box.classList.add('edit-out');
-    setTimeout(restore, 200);       // = длительность editOut в CSS
+    setTimeout(restore, 220);       // = длительность editOut в CSS
   };
   cancel.addEventListener('click', () => close(true));
   save.addEventListener('click', () => {
@@ -876,22 +891,21 @@ function addMsgActions(node, text) {
     } catch (e) { toast('Синтез речи недоступен', 'error'); }
   });
   const again = el('button', 'act act-again', ICO.again + '<span>Ещё раз</span>');
-  // «Ещё раз» — это переспросить то же самое, а не завести новую ветку разговора.
-  // Раньше отправлялась новая реплика и лента росла дублями. Теперь открываем
-  // правку исходного вопроса: ответ станет новой версией того же сообщения.
+  // «Ещё раз» значит ровно одно: переспросить то же самое прямо сейчас.
+  // Раньше нажатие открывало правку и ждало подтверждения — но правка уже
+  // есть отдельной кнопкой под вопросом, и лишний шаг только мешал: человек
+  // просил повтор, а получал форму. Отправляем немедленно, тем же текстом,
+  // и ответ становится новой версией того же вопроса, а не дублем в ленте.
   again.addEventListener('click', () => {
     let ask = node.root.previousElementSibling;
     while (ask && !ask.classList.contains('msg-user')) ask = ask.previousElementSibling;
     if (!ask) { $('#input').value = S.lastPrompt || ''; autoGrow(); send(); return; }
-    const text = bubbleText(ask.querySelector('.bubble-user')) || S.lastPrompt || '';
-    // Первое нажатие даёт шанс поправить вопрос. Но если правка уже открыта,
-    // человек нажал «ещё раз» второй раз подряд — значит менять он ничего не
-    // собирался и ждёт повтора. Спрашивать подтверждение второй раз — держать
-    // его на пустом месте: отправляем немедленно, с тем же текстом.
+    // если правка этого вопроса открыта — берём то, что человек уже набрал
     const open = ask.querySelector('.edit-box');
+    let text = bubbleText(ask.querySelector('.bubble-user')) || S.lastPrompt || '';
     if (open) {
       const ta = open.querySelector('.edit-ta');
-      const val = (ta && ta.value.trim()) || text;
+      if (ta && ta.value.trim()) text = ta.value.trim();
       open.remove();
       const bubble = ask.querySelector('.bubble-user');
       const acts2 = ask.querySelector('.msg-actions');
@@ -899,11 +913,8 @@ function addMsgActions(node, text) {
       if (bubble) bubble.style.display = '';
       if (acts2) acts2.style.display = '';
       if (vers) vers.style.display = '';
-      submitEdit(ask, val);
-      return;
     }
-    startInlineEdit(ask, text);
-    ask.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    submitEdit(ask, text);
   });
   acts.appendChild(copy); acts.appendChild(speak); acts.appendChild(again);
   node.body.appendChild(acts);
@@ -1052,10 +1063,8 @@ function collapseToThumb(node, opts) {
     node.classList.remove('collapsing', 'shrinking');
   };
   if (opts.instant) { put(); } else {
-    // 400 мс = длительность shrinkClose с паузой посередине (см. CSS).
-    // Снимем класс раньше — и «подвисание» оборвётся на полукадре.
     node.classList.add('shrinking');
-    setTimeout(() => { node.classList.remove('shrinking'); put(); }, 400);
+    setTimeout(() => { node.classList.remove('shrinking'); put(); }, 170);  // = shrinkClose
   }
   thumb.addEventListener('click', () => {
     node.style.display = '';
@@ -1072,7 +1081,7 @@ function collapseToThumb(node, opts) {
     // рост из строки в полноразмерный блок — тот же объект, а не подмена
     node.classList.remove('shrinking');
     node.classList.add('unfolding');
-    setTimeout(() => node.classList.remove('unfolding'), 520);   // = growOpen
+    setTimeout(() => node.classList.remove('unfolding'), 300);   // = growOpen
     addFoldButton(node, opts);              // развернули — даём чем свернуть обратно
     node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
@@ -1386,7 +1395,7 @@ async function send(opts) {
       headers: { 'Content-Type': 'application/json' },
       signal: S.abort.signal,
       body: JSON.stringify({
-        chat_id: S.chatId, text,
+        chat_id: activeChatId() || '', kind: camLive() ? 'cam' : '', text,
         edit_of: editing ? editing.id : '',
         agent_mode: S.agentMode,
         computer_use: S.computerUse,
@@ -1435,8 +1444,8 @@ async function send(opts) {
    показывает мерцающие заглушки: пусто было бы похоже на «ничего не будет». */
 async function fetchReplies() {
   const box = $('#replyBar');
-  if (!box || !S.chatId) return;
-  const chat = S.chatId;
+  const chat = activeChatId();
+  if (!box || !chat) return;
   // Пока подсказки считаются, пользователь может отправить своё сообщение.
   // Без метки заказа опоздавший ответ всплыл бы поверх нового разговора.
   const ticket = (S.replyTicket = (S.replyTicket || 0) + 1);
@@ -1451,7 +1460,7 @@ async function fetchReplies() {
   }, 22000);
   try {
     const r = await api('/api/replies', { chat_id: chat });
-    if (S.replyTicket !== ticket || S.chatId !== chat) return;
+    if (S.replyTicket !== ticket || activeChatId() !== chat) return;
     showReplies(r.items || []);
   } catch (e) {
     if (S.replyTicket === ticket) showReplies([]);
@@ -1553,11 +1562,15 @@ function showError(ui, msg) {
 /* ================== плавная печать ответа ==================
    Сервер шлёт текст кусками, а показываем мы его по буквам:
    отдельный таймер догоняет буфер со скоростью, зависящей от отставания. */
-/* Такт печати. Был 16 мс со ступенчатым ускорением до «step = left/40» —
-   на обычном ответе это 200+ символов в секунду, то есть текст появлялся
-   блоками, а курсор не успевал прорисоваться ни разу. Теперь такт чаще, но
-   шаг мельче и с потолком: печать видно как печать, а не как вспышку. */
-const TYPE_MS = 12;          // такт печати
+/* Скорость печати зависит от того, ЧТО печатается, а не от отставания.
+   Разговорный текст человек читает по мере появления — его гоним медленно,
+   с отчётливыми паузами на знаках препинания. Код, таблицы и длинные
+   технические простыни читать «на лету» никто не будет: их выдаём быстро,
+   чтобы не заставлять ждать. Раньше единственным критерием было отставание,
+   поэтому длинный ответ всегда «улетал» — вместе с ним пропадал и курсор. */
+const TYPE_MS = 14;              // такт печати
+const SPEED_TALK = 1;            // разговор: по букве за такт (~70 зн/с)
+const SPEED_FAST = 7;            // код и прочее длинное: быстро
 
 function typeInto(ui, chunk) {
   ui.buffer += chunk;
@@ -1566,9 +1579,62 @@ function typeInto(ui, chunk) {
 }
 
 /* B. Печать с характером: на знаках препинания печать на миг замирает, как
-   будто собеседник переводит дыхание. Пауза действует, только когда мы не
-   отстаём — иначе догоняем ровно, паузы не должны копить задержку. */
-const PAUSE_AFTER = { '.': 7, '!': 7, '?': 7, ',': 3, ';': 4, ':': 4, '\n': 5, '—': 3 };
+   будто собеседник переводит дыхание. Паузы стали отчётливее — это те самые
+   микроостановки, которые делают печать живой (в отличие от подвисания
+   анимации, которое просто раздражает). */
+const PAUSE_AFTER = { '.': 14, '!': 14, '?': 14, ',': 6, ';': 8, ':': 8, '\n': 9, '—': 6 };
+
+/* Внутри блока кода? Считаем незакрытые ``` в уже показанном тексте.
+   Источник истины — сам текст, а не догадка по длине. */
+function inCodeBlock(text) {
+  let fences = 0, i = 0;
+  while ((i = text.indexOf('```', i)) !== -1) { fences++; i += 3; }
+  return fences % 2 === 1;
+}
+
+/* Строка похожа на таблицу или очень длинный технический блок? */
+function fastLine(text) {
+  const nl = text.lastIndexOf('\n');
+  const line = text.slice(nl + 1);
+  return line.startsWith('|') || line.startsWith('    ');
+}
+
+/* Инкрементальный рендер печати. Раньше каждый такт (70 раз в секунду)
+   перестраивался markdown ВСЕГО ответа: на длинном тексте это O(n²) работы
+   в главном потоке — браузеру не оставалось времени на кадры, и анимации
+   (крутилка статуса, мигающий курсор, живое ядро) буквально замирали. Это и
+   был «виснущий кружочек», а вовсе не ошибка в самой анимации.
+   Теперь всё, что дальше последнего завершённого абзаца, уже не изменится:
+   его HTML считаем один раз и запоминаем, а пересобираем только хвост. */
+function renderTyped(ui) {
+  if (!ui.mdEl) return;
+  const text = ui.shown;
+  if (ui.frozen && !text.startsWith(ui.frozen.src)) ui.frozen = null;
+  let src = ui.frozen ? ui.frozen.src : '';
+  let html = ui.frozen ? ui.frozen.html : '';
+  const idx = text.lastIndexOf('\n\n');
+  if (idx >= 0 && idx + 2 > src.length) {
+    const cand = text.slice(0, idx + 2);
+    // границу нельзя ставить внутри блока кода — он рендерится целиком
+    if (!inCodeBlock(cand)) {
+      src = cand;
+      html = MD.render(cand);
+      ui.frozen = { src, html };
+    }
+  }
+  ui.mdEl.innerHTML = html + MD.render(text.slice(src.length));
+}
+
+/* Прокрутка читает геометрию страницы, а чтение сразу после записи HTML
+   заставляет браузер пересчитывать разметку внеочередно. Каждый такт это
+   недопустимо дорого, поэтому догоняем ленту не чаще ~12 раз в секунду —
+   глазу этого хватает с запасом. */
+function scrollSoon(ui) {
+  const now = performance.now();
+  if (now - (ui.lastScroll || 0) < 80) return;
+  ui.lastScroll = now;
+  scrollDown();
+}
 
 function typerStart(ui) {
   if (ui.typer) return;
@@ -1582,23 +1648,27 @@ function typerStart(ui) {
       return;
     }
     if (ui.hold > 0) { ui.hold--; return; }
-    // Шаг растёт с отставанием, но ограничен сверху: даже на очень длинном
-    // ответе печать остаётся печатью. 4 символа за 12 мс ≈ 330 зн/с — быстро,
-    // однако буквы всё ещё появляются по одной, и курсор виден.
-    let step = 1;
-    if (left > 1200) step = 4;
-    else if (left > 400) step = 3;
-    else if (left > 120) step = 2;
+
+    const code = inCodeBlock(ui.shown) || fastLine(ui.shown);
+    let step = code ? SPEED_FAST : SPEED_TALK;
+    // Страховка от «стены текста»: если модель уже отдала целую простыню,
+    // а мы всё ещё в начале, разговор тоже придётся ускорить — иначе
+    // догонять будем минутами. Порог высокий, обычный ответ его не задевает.
+    if (!code && left > 2000) step = 4;
+    else if (!code && left > 900) step = 2;
+
     ui.shown = ui.buffer.slice(0, ui.shown.length + step);
     if (ui.mdEl) {
       ui.mdEl.classList.add('typing');
-      ui.mdEl.innerHTML = MD.render(ui.shown);
+      renderTyped(ui);
     }
-    if (step === 1 && left < 400) {
+    // Паузы — только в разговорной части и только когда идём по букве:
+    // в коде «дыхание» неуместно, оно там читается как подтормаживание.
+    if (step === SPEED_TALK && !code) {
       const last = ui.shown[ui.shown.length - 1];
       ui.hold = PAUSE_AFTER[last] || 0;
     }
-    scrollDown();
+    scrollSoon(ui);
   }, TYPE_MS);
 }
 
@@ -1698,7 +1768,7 @@ function handleEvent(ev, ui) {
   const node = ui.node;
   switch (ev.type) {
     case 'chat':
-      S.chatId = ev.chat_id; break;
+      setActiveChat(ev.chat_id); break;
 
     case 'user_msg': {
       // сервер сообщил id только что сохранённой реплики — привязываем к пузырю,
@@ -1967,7 +2037,7 @@ function handleEvent(ev, ui) {
       // сервер понял, что модель напечатала вызов инструмента текстом,
       // и просит стереть уже показанное — начинаем ответ заново
       typerStop(ui);
-      ui.buffer = ''; ui.shown = '';
+      ui.buffer = ''; ui.shown = ''; ui.frozen = null;
       if (ui.mdEl) { ui.mdEl.remove(); ui.mdEl = null; }
       if (!ui.statusEl) {
         ui.statusEl = el('div', 'thinking-line');
@@ -2291,6 +2361,9 @@ async function startCam() {
   if (S.camNode) return;
   showView('chat');
   killWelcome();
+  // Каждое включение камеры — чистый лист: разговор «что я вижу» не должен
+  // ни продолжать прошлый сеанс, ни примешиваться к основному диалогу.
+  S.camChatId = null;
   S.camNode = buildCamCard();
   stream().appendChild(S.camNode);
   // окно камеры сворачивается кликом по любому пустому месту (не по видео)
@@ -2424,7 +2497,7 @@ async function camAttachFrame() {
   if (!S.camStream) return null;
   const data = camFrame();
   if (!data) return null;
-  const r = await api('/api/upload', { name: 'camera_' + Date.now() + '.jpg', data, chat_id: S.chatId || '' });
+  const r = await api('/api/upload', { name: 'camera_' + Date.now() + '.jpg', data, chat_id: activeChatId() || '' });
   if (!r.ok) return null;
   r.data = data;
   return r;
@@ -2635,24 +2708,35 @@ function flyToFiles(chip, name) {
   // дуга: сначала вверх и вбок, потом к цели — прямой перелёт выглядит мёртвым
   const dx = (b.left + b.width / 2) - (a.left + Math.min(a.width, 260) / 2);
   const dy = (b.top + b.height / 2) - (a.top + a.height / 2);
-  // Файл не срывается с места мгновенно: сначала он еле заметно приподнимается
-  // над диалогом (отрыв), на миг зависает — и только потом уходит по дуге.
-  // Без этой паузы движение выглядело так, будто плашку выдернули.
+
+  // ДВЕ ОТДЕЛЬНЫЕ ФАЗЫ, а не одна длинная анимация. В прошлый раз пауза была
+  // вставлена кадрами внутрь общего полёта — из-за этого растянулся весь
+  // перелёт (стал вялым), а сама задержка занимала долю времени и глазом не
+  // читалась. Теперь отрыв с зависанием живёт своей короткой жизнью, а полёт
+  // остался ровно таким же быстрым, каким нравился.
+  const LIFT = 260;    // отрыв от диалога + короткое зависание
+  const FLIGHT = 880;  // сам перелёт — прежняя быстрая анимация
+
   fly.animate([
-    { transform: 'translate(0,0) scale(1)', opacity: 1, offset: 0 },
-    // отрыв: приподнялся и чуть подрос
-    { transform: 'translate(0,-7px) scale(1.05)', opacity: 1, offset: .13,
+    { transform: 'translate(0,0) scale(1)', filter: 'brightness(1)', offset: 0 },
+    // отделился: приподнялся, чуть подрос и подсветился — видно, что оторвался
+    { transform: 'translate(0,-11px) scale(1.06)', filter: 'brightness(1.35)', offset: .55,
       easing: 'cubic-bezier(.2,.9,.3,1)' },
-    // задержка: тот же кадр повторён — висит неподвижно
-    { transform: 'translate(0,-7px) scale(1.05)', opacity: 1, offset: .28,
-      easing: 'cubic-bezier(.4,0,.2,1)' },
-    { transform: 'translate(' + (dx * 0.45) + 'px,' + (dy * 0.35 - 46) + 'px) scale(.78)', opacity: .95, offset: .62 },
-    { transform: 'translate(' + (dx * 0.92) + 'px,' + (dy * 0.92) + 'px) scale(.42)', opacity: .5, offset: .88 },
-    { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(.2)', opacity: 0, offset: 1 }
-  ], { duration: 1180, easing: 'cubic-bezier(.3,.7,.3,1)' }).onfinish = () => {
-    fly.remove();
-    target.classList.add('nav-lit');
-    setTimeout(() => target.classList.remove('nav-lit'), 900);
+    // висит: тот же кадр — неподвижная пауза перед броском
+    { transform: 'translate(0,-11px) scale(1.06)', filter: 'brightness(1.35)', offset: 1 }
+  ], { duration: LIFT, fill: 'forwards' }).onfinish = () => {
+    fly.animate([
+      { transform: 'translate(0,-11px) scale(1.06)', opacity: 1, offset: 0 },
+      { transform: 'translate(' + (dx * 0.45) + 'px,' + (dy * 0.35 - 46) + 'px) scale(.78)',
+        opacity: .95, offset: .5 },
+      { transform: 'translate(' + (dx * 0.92) + 'px,' + (dy * 0.92) + 'px) scale(.42)',
+        opacity: .5, offset: .82 },
+      { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(.2)', opacity: 0, offset: 1 }
+    ], { duration: FLIGHT, easing: 'cubic-bezier(.3,.7,.3,1)' }).onfinish = () => {
+      fly.remove();
+      target.classList.add('nav-lit');
+      setTimeout(() => target.classList.remove('nav-lit'), 900);
+    };
   };
 }
 
@@ -2689,20 +2773,26 @@ function renderNotePanel() {
   items.forEach((n) => list.appendChild(noteRow(n)));
 }
 
-/* Одна строка уведомления. Тянем влево — из-под неё выезжает «Удалить»,
-   отпустили за половину ширины — улетает совсем, как в iOS. */
+/* Одна строка уведомления. Удаление — кнопкой-крестиком: на компьютере это
+   удобнее свайпа. Сама анимация ухода осталась «смахивающей»: строка уезжает
+   влево и схлопывается, как это делал бы палец на телефоне. */
 function noteRow(n) {
   const kind = n.level === 'error' ? 'error' : (n.level === 'success' ? 'success' : 'info');
   const row = el('div', 'np-item ' + kind + (n.read ? '' : ' fresh'));
   row.innerHTML =
-    '<div class="np-del">Удалить</div>' +
     '<div class="np-face">' +
-      '<div class="np-t">' + esc(n.title || 'Уведомление') + '</div>' +
-      '<div class="np-b">' + esc((n.body || '').slice(0, 260)) + '</div>' +
-      '<div class="np-time">' + fmtTime(n.created_at) + '</div>' +
+      '<div class="np-body">' +
+        '<div class="np-t">' + esc(n.title || 'Уведомление') + '</div>' +
+        '<div class="np-b">' + esc((n.body || '').slice(0, 260)) + '</div>' +
+        '<div class="np-time">' + fmtTime(n.created_at) + '</div>' +
+      '</div>' +
+      '<button class="np-x" title="Удалить">✕</button>' +
     '</div>';
-  const face = row.querySelector('.np-face');
-  const kill = async () => {
+  row.querySelector('.np-x').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (row.dataset.gone === '1') return;
+    row.dataset.gone = '1';
+    row.style.maxHeight = row.offsetHeight + 'px';   // фиксируем высоту для схлопывания
     row.classList.add('np-gone');
     setTimeout(() => {
       row.remove();
@@ -2710,38 +2800,10 @@ function noteRow(n) {
       if (list && !list.querySelector('.np-item')) {
         list.appendChild(el('div', 'np-empty', 'Пока пусто'));
       }
-    }, 240);
+    }, 260);
     S.notifications = (S.notifications || []).filter((x) => String(x.id) !== String(n.id));
     await api('/api/notifications/delete', { id: n.id });
-  };
-
-  let x0 = null, dx = 0;
-  const start = (e) => {
-    x0 = (e.touches ? e.touches[0].clientX : e.clientX);
-    dx = 0;
-    face.style.transition = 'none';
-  };
-  const move = (e) => {
-    if (x0 == null) return;
-    const x = (e.touches ? e.touches[0].clientX : e.clientX);
-    dx = Math.min(0, x - x0);                 // тянем только влево
-    face.style.transform = 'translateX(' + dx + 'px)';
-    row.classList.toggle('np-armed', dx < -row.offsetWidth * 0.45);
-  };
-  const end = () => {
-    if (x0 == null) return;
-    x0 = null;
-    face.style.transition = '';
-    if (dx < -row.offsetWidth * 0.45) { face.style.transform = 'translateX(-110%)'; kill(); }
-    else { face.style.transform = ''; row.classList.remove('np-armed'); }
-  };
-  face.addEventListener('mousedown', start);
-  window.addEventListener('mousemove', move);
-  window.addEventListener('mouseup', end);
-  face.addEventListener('touchstart', start, { passive: true });
-  face.addEventListener('touchmove', move, { passive: true });
-  face.addEventListener('touchend', end);
-  row.querySelector('.np-del').addEventListener('click', kill);
+  });
   return row;
 }
 

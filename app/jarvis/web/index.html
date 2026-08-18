@@ -116,15 +116,19 @@
         </button>
       </div>
 
-      <!-- выпадающая панель уведомлений (правый верхний угол) -->
-      <div class="note-panel" id="notePanel" hidden>
-        <div class="np-head">
-          <span>Уведомления</span>
-          <button class="np-clear" id="npClear">Очистить все</button>
-        </div>
-        <div class="np-list" id="npList"></div>
-      </div>
     </header>
+
+    <!-- Центр уведомлений. Живёт вне <header> намеренно: у топбара есть
+         backdrop-filter, а он создаёт контекст наложения — панель внутри
+         него не могла надёжно перекрыть ленту диалога, и курсор «протыкал»
+         её верхнюю часть, задевая сообщения под ней. -->
+    <div class="note-panel" id="notePanel" hidden>
+      <div class="np-head">
+        <span>Уведомления</span>
+        <button class="np-clear" id="npClear">Очистить все</button>
+      </div>
+      <div class="np-list" id="npList"></div>
+    </div>
 
     <!-- ---------- VIEW: ЧАТ ---------- -->
     <section class="view view-chat active" id="view-chat">
