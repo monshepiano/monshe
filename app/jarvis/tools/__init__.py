@@ -318,6 +318,17 @@ def silent_names() -> List[str]:
     return [n for n, t in TOOLS.items() if t.get("silent")]
 
 
+def group_of(name: str) -> str:
+    """Тема инструмента (web, sandbox, computer, media, memory, auto, base).
+
+    Группа уже объявлена при регистрации — это и есть закрытый источник правды
+    о том, «про что» инструмент. Фронтенду она нужна, чтобы показать бегущую
+    строку по теме, а не гадать по имени: список имён открытый и устареет с
+    первым же новым инструментом, список групп — закрытый.
+    """
+    return (TOOLS.get(name) or {}).get("group", "base")
+
+
 def risk_of(name: str) -> str:
     return TOOLS.get(name, {}).get("risk", "danger")
 

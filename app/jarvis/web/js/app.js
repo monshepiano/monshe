@@ -889,6 +889,14 @@ function startInlineEdit(node, text) {
     if (box.dataset.closing === '1') return;
     box.dataset.closing = '1';
     if (animated === false) { box.remove(); restoreNow(); return; }
+    // Замораживаем коробку РОВНО в тех размерах и координатах, что сейчас на
+    // экране, и только потом вынимаем её из потока. Иначе в момент перехода
+    // в absolute ширина пересчитается и поле прыгнет.
+    const r = { w: box.offsetWidth, h: box.offsetHeight, t: box.offsetTop, l: box.offsetLeft };
+    box.style.width = r.w + 'px';
+    box.style.height = r.h + 'px';
+    box.style.top = r.t + 'px';
+    box.style.left = r.l + 'px';
     box.classList.add('edit-out');
     // пузырь проявляется ПАРАЛЛЕЛЬНО уходу поля, а не после него
     if (bubble) { bubble.style.display = ''; bubble.classList.add('edit-back'); }
@@ -1071,6 +1079,55 @@ function restoreTrace(node, meta) {
   });
 }
 
+/* ============ РАСКРЫТИЕ И ЗАКРЫТИЕ ТЕЛА КАРТОЧКИ ============
+   ГЛУБИННАЯ ПРИЧИНА ВСЕХ «ЛАГОВ» ПРИ РАСКРЫТИИ. Высота анимировалась через
+   max-height от 0 до ВЫДУМАННОЙ константы 900px. Но max-height не равен
+   высоте: пока значение больше реального содержимого, элемент уже стоит на
+   месте и не движется. Считаем честно: содержимое 200px из 900 — блок стоит
+   неподвижно 78% времени анимации (327 мс из 420). Вот это неподвижное
+   ожидание глаз и читает как «подвисло». Никакая подгонка длительности или
+   кривой это не лечит — лечится только отказом от выдуманной константы.
+   Поэтому высота меряется по факту (scrollHeight) и анимируется от реальной
+   к реальной: мёртвого времени не остаётся вовсе. По окончании раскрытия
+   ограничение снимается совсем (max-height:none) — иначе живая карточка,
+   в которую ещё текут мысли, упёрлась бы в потолок. */
+const CARD_OPEN_MS = 260;
+
+function setCardOpen(card, open, instant) {
+  if (!card) return;
+  const head = card.querySelector(':scope > .card-head');
+  const body = card.querySelector(':scope > .card-body');
+  if (!head || !body) return;
+  head.classList.toggle('open', open);
+  body.classList.toggle('open', open);
+  if (body._ct) { clearTimeout(body._ct); body._ct = null; }
+
+  if (instant) {
+    body.style.transition = 'none';
+    body.style.maxHeight = open ? 'none' : '0px';
+    void body.offsetHeight;
+    body.style.transition = '';
+    return;
+  }
+  // старт — фактическая высота сейчас, финиш — фактическая высота содержимого
+  const from = body.getBoundingClientRect().height;
+  const to = open ? body.scrollHeight : 0;
+  body.style.transition = 'none';
+  body.style.maxHeight = from + 'px';
+  void body.offsetHeight;                       // зафиксировать точку отсчёта
+  // короткие блоки не должны ехать столько же, сколько длинные: время
+  // пропорционально реальному пути, иначе маленькая карточка «тянется»
+  const dur = Math.max(140, Math.min(CARD_OPEN_MS, 120 + Math.abs(to - from) * 0.35));
+  body.style.transition = 'max-height ' + Math.round(dur) + 'ms cubic-bezier(.33,1,.68,1)';
+  body.style.maxHeight = to + 'px';
+  body._ct = setTimeout(() => {
+    body._ct = null;
+    body.style.transition = '';
+    // раскрытая карточка живёт без потолка — содержимое может расти дальше
+    body.style.maxHeight = open ? 'none' : '0px';
+  }, Math.round(dur) + 20);
+}
+
 function makeCard(icon, title, cls, openByDefault) {
   const card = el('div', 'panel-card ' + (cls || ''));
   card.innerHTML =
@@ -1080,7 +1137,8 @@ function makeCard(icon, title, cls, openByDefault) {
     '<div class="card-body' + (openByDefault ? ' open' : '') + '"><div class="card-inner"></div></div>';
   const head = card.querySelector('.card-head');
   const body = card.querySelector('.card-body');
-  const toggle = () => { head.classList.toggle('open'); body.classList.toggle('open'); };
+  if (openByDefault) body.style.maxHeight = 'none';
+  const toggle = () => setCardOpen(card, !body.classList.contains('open'));
   head.addEventListener('click', toggle);
   // Свернуть можно кликом в ЛЮБОМ месте карточки — так просил пользователь.
   // Исключение ровно одно и закрытое: интерактивное содержимое (ссылки, поля,
@@ -1173,6 +1231,12 @@ function collapseToThumb(node, opts) {
     node.parentNode.insertBefore(holder, node);
     node.style.display = 'none';
     node.classList.remove('collapsing', 'shrinking');
+    // Скрытый узел с maxHeight:none опасен: при следующем показе браузер
+    // сначала разложит его во всю высоту, и первый кадр анимации уедет.
+    // Возвращаем телу обычное закрытое состояние заранее.
+    const b = node.querySelector(':scope > .card-body');
+    if (b && b._ct) { clearTimeout(b._ct); b._ct = null; }
+    if (b) { b.style.transition = 'none'; b.style.maxHeight = ''; }
   };
   if (opts.instant) { put(); } else {
     node.classList.add('shrinking');
@@ -1187,17 +1251,13 @@ function collapseToThumb(node, opts) {
     // карточку как есть — с закрытым телом, — и пользователь видел один
     // заголовок. Текст был на месте, но требовал второго клика. Теперь
     // разворачивание миниатюры сразу раскрывает и содержимое.
-    const head = node.querySelector(':scope > .card-head');
-    const body = node.querySelector(':scope > .card-body');
-    // Порядок важен: класс unfolding ставим ДО раскрытия тела. Пока он висит,
-    // CSS выключает и переход max-height, и свечение шапки — тело оказывается
-    // раскрытым мгновенно, а наружу идёт единственное движение growOpen.
-    // Иначе три анимации разной длины наезжали друг на друга и раскрытие
-    // выглядело так, будто блок дорос и завис.
+    // Тело раскрываем МГНОВЕННО и без собственной анимации: наружу идёт ровно
+    // одно движение — рост самой карточки. Раньше здесь соревновались рост
+    // блока, переход max-height и свечение шапки; теперь двигается одно.
+    setCardOpen(node, true, true);
     node.classList.remove('shrinking');
     node.classList.add('unfolding');
-    if (head && body) { head.classList.add('open'); body.classList.add('open'); }
-    setTimeout(() => node.classList.remove('unfolding'), 300);   // = growOpen
+    setTimeout(() => node.classList.remove('unfolding'), 240);   // = growOpen
     addFoldButton(node, opts);              // развернули — даём чем свернуть обратно
     node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
@@ -1305,6 +1365,27 @@ function parseUiSpec(src) {
     // text Метка [= подсказка] — свободный ответ, когда варианты не перечислить
     } else if ((m = ln.match(/^text\s+(.+?)(?:\s*=\s*(.*))?$/i))) {
       items.push({ t: 'text', label: m[1], hint: (m[2] || '').trim(), val: '' });
+    // rank Метка: A | B | C — расставить по важности (порядок и есть ответ)
+    } else if ((m = ln.match(/^rank\s+(.+?)\s*:\s*(.+)$/i))) {
+      items.push({ t: 'rank', label: m[1],
+                   opts: m[2].split('|').map((x) => x.trim()).filter(Boolean), val: null });
+    // multi Метка: A | B | C — выбрать НЕСКОЛЬКО, а не одно
+    } else if ((m = ln.match(/^multi\s+(.+?)\s*:\s*(.+)$/i))) {
+      items.push({ t: 'multi', label: m[1],
+                   opts: m[2].split('|').map((x) => x.trim()).filter(Boolean), val: [] });
+    // rate Метка [1..5] — оценка звёздами
+    } else if ((m = ln.match(/^rate\s+(.+?)(?:\s+(\d+)\.\.(\d+))?(?:\s*=\s*(\d+))?$/i))) {
+      items.push({ t: 'rate', label: m[1], max: m[3] ? parseInt(m[3], 10) : 5,
+                   val: m[4] ? parseInt(m[4], 10) : 0 });
+    // date Метка [= 2026-08-18] — дата
+    } else if ((m = ln.match(/^date\s+(.+?)(?:\s*=\s*(\S+))?$/i))) {
+      items.push({ t: 'date', label: m[1], val: m[2] || '' });
+    // color Метка [= #00c8f0]
+    } else if ((m = ln.match(/^color\s+(.+?)(?:\s*=\s*(#[0-9a-f]{3,8}))?$/i))) {
+      items.push({ t: 'color', label: m[1], val: m[2] || '#00c8f0' });
+    // area Метка [= подсказка] — длинный ответ в несколько строк
+    } else if ((m = ln.match(/^area\s+(.+?)(?:\s*=\s*(.*))?$/i))) {
+      items.push({ t: 'area', label: m[1], hint: (m[2] || '').trim(), val: '' });
     } else if ((m = ln.match(/^button\s+(.+)$/i))) {
       items.push({ t: 'button', label: m[1] });
     }
@@ -1326,13 +1407,21 @@ function mountUiPanels(root) {
     // готовых вариантов. Их нельзя отправлять по первому касанию: человек
     // ещё крутит ползунок. Значит, панели с ними нужна кнопка «Отправить»,
     // а панелям с одними плитками/тумблерами — не нужна.
-    const ANALOG = { slider: 1, number: 1, text: 1 };
+    // Всё, где значение ДОКРУЧИВАЮТ (а не выбирают одним касанием), требует
+    // кнопки «Отправить»: человек ещё расставляет порядок, дописывает строку
+    // или выбирает несколько пунктов — отправлять по первому касанию нельзя.
+    const ANALOG = { slider: 1, number: 1, text: 1, area: 1, date: 1,
+                     color: 1, rank: 1, multi: 1, rate: 1 };
     const hasAnalog = items.some((x) => ANALOG[x.t]);
     let touched = false;
     let sendTimer = null;
 
     const summary = () => items.filter((x) => x.t !== 'button').map((x) => {
       if (x.t === 'toggle') return x.label + ': ' + (x.val ? 'да' : 'нет');
+      if (x.t === 'multi') return x.label + ': ' + (x.val.length ? x.val.join(', ') : '—');
+      // порядок и есть ответ — нумеруем, иначе смысл расстановки теряется
+      if (x.t === 'rank') return x.label + ': ' + x.opts.map((o, i) => (i + 1) + ') ' + o).join(', ');
+      if (x.t === 'rate') return x.label + ': ' + (x.val ? x.val + ' из ' + x.max : '—');
       return x.label + ': ' + (x.val == null || x.val === '' ? '—' : x.val);
     });
 
@@ -1411,6 +1500,100 @@ function mountUiPanels(root) {
           if (e.key === 'Enter') { e.preventDefault(); if (touched) fire(); }
         });
         row.appendChild(inp);
+
+      } else if (it.t === 'area') {
+        // длинный ответ: когда одной строки заведомо мало
+        row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) + '</span></div>';
+        const ta = el('textarea', 'ui-area');
+        ta.rows = 3;
+        ta.placeholder = it.hint || 'можно подробно…';
+        ta.addEventListener('input', () => { it.val = ta.value; touched = true; });
+        row.appendChild(ta);
+
+      } else if (it.t === 'date') {
+        row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) + '</span></div>';
+        const inp = el('input', 'ui-text ui-date');
+        inp.type = 'date'; inp.value = it.val || '';
+        inp.addEventListener('input', () => { it.val = inp.value; touched = true; sfx('select'); });
+        row.appendChild(inp);
+
+      } else if (it.t === 'color') {
+        row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) +
+          '</span><b class="ui-val">' + esc(it.val) + '</b></div>';
+        const inp = el('input', 'ui-color');
+        inp.type = 'color'; inp.value = it.val;
+        const out = row.querySelector('.ui-val');
+        inp.addEventListener('input', () => {
+          it.val = inp.value; out.textContent = inp.value; touched = true;
+        });
+        row.appendChild(inp);
+
+      } else if (it.t === 'rate') {
+        // оценка: быстрый способ ответить «насколько», не набирая цифру
+        row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) +
+          '</span><b class="ui-val">' + (it.val || '—') + '</b></div>';
+        const st = el('div', 'ui-stars');
+        const out = row.querySelector('.ui-val');
+        const paint = () => {
+          $$('.ui-star', st).forEach((b, i) => b.classList.toggle('on', i < it.val));
+          out.textContent = it.val ? it.val + ' / ' + it.max : '—';
+        };
+        for (let n = 1; n <= it.max; n++) {
+          const b = el('button', 'ui-star', '★');
+          b.addEventListener('click', () => { it.val = n; paint(); touched = true; sfx('select'); });
+          st.appendChild(b);
+        }
+        paint();
+        row.appendChild(st);
+
+      } else if (it.t === 'multi') {
+        // несколько вариантов сразу — плитки не подходят, там выбор один
+        row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) + '</span></div>';
+        const grid = el('div', 'ui-tiles');
+        it.opts.forEach((o, oi) => {
+          const t = el('button', 'ui-tile ui-multi-t ' + HUES[(oi + idx) % HUES.length], o);
+          t.addEventListener('click', () => {
+            const at = it.val.indexOf(o);
+            if (at >= 0) it.val.splice(at, 1); else it.val.push(o);
+            t.classList.toggle('on', at < 0);
+            touched = true; sfx('select');
+          });
+          grid.appendChild(t);
+        });
+        row.appendChild(grid);
+
+      } else if (it.t === 'rank') {
+        // расстановка по важности: ответ — сам порядок строк
+        row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) +
+          '</span><b class="ui-hint">по важности</b></div>';
+        const list = el('div', 'ui-rank');
+        const paint = () => {
+          $$('.ui-rk', list).forEach((r, i) => {
+            r.querySelector('.rk-n').textContent = i + 1;
+            r.querySelector('.rk-up').disabled = i === 0;
+            r.querySelector('.rk-dn').disabled = i === it.opts.length - 1;
+          });
+          it.val = it.opts.slice();
+        };
+        const move = (from, to) => {
+          if (to < 0 || to >= it.opts.length) return;
+          it.opts.splice(to, 0, it.opts.splice(from, 1)[0]);
+          const rows = $$('.ui-rk', list);
+          list.insertBefore(rows[from], to < from ? rows[to] : rows[to].nextSibling);
+          paint(); touched = true; sfx('select');
+        };
+        it.opts.forEach((o) => {
+          const r = el('div', 'ui-rk');
+          r.innerHTML = '<span class="rk-n"></span><span class="rk-t">' + esc(o) + '</span>';
+          const up = el('button', 'rk-up', '↑');
+          const dn = el('button', 'rk-dn', '↓');
+          up.addEventListener('click', () => move($$('.ui-rk', list).indexOf(r), $$('.ui-rk', list).indexOf(r) - 1));
+          dn.addEventListener('click', () => move($$('.ui-rk', list).indexOf(r), $$('.ui-rk', list).indexOf(r) + 1));
+          r.appendChild(up); r.appendChild(dn);
+          list.appendChild(r);
+        });
+        paint();
+        row.appendChild(list);
 
       } else if (it.t === 'toggle') {
         row.innerHTML = '<span class="ui-lab-t">' + esc(it.label) + '</span>';
@@ -1746,11 +1929,33 @@ function runStatus(ui, lines, opts) {
   }, o.every || 1600);
 }
 
-/* Строки состояния для конкретного вызова инструмента. Никакого списка имён
-   инструментов здесь нет и быть не может — он открытый и устареет с первым
-   же новым инструментом. Источник правды — само событие: человеческий label
-   приходит с сервера, а второй строкой показываем то, с чем инструмент
-   реально работает (запрос, путь, адрес — самый содержательный аргумент). */
+/* Фразы по ТЕМЕ инструмента. Ключ — группа из реестра (web, sandbox,
+   computer, media, memory, auto, base): она приходит с сервера и её набор
+   закрытый. Списка имён инструментов здесь по-прежнему нет — он открытый
+   и устарел бы с первым же новым инструментом, а группа у нового найдётся
+   всегда. Если группа незнакомая, берём base — строка не пропадёт. */
+const GROUP_QUIPS = {
+  web:      ['выхожу в сеть', 'открываю страницы', 'читаю источники',
+             'сверяю факты', 'отбираю главное'],
+  sandbox:  ['работаю с файлами', 'открываю песочницу', 'считаю',
+             'проверяю результат', 'складываю в папку'],
+  computer: ['беру управление', 'смотрю на экран', 'веду курсор',
+             'нажимаю', 'проверяю, что вышло'],
+  media:    ['работаю с медиа', 'разглядываю кадр', 'рисую',
+             'слушаю дорожку', 'собираю результат'],
+  memory:   ['лезу в память', 'вспоминаю', 'сверяюсь с записями',
+             'запоминаю на будущее'],
+  auto:     ['ставлю в расписание', 'завожу будильник', 'проверяю время'],
+  base:     ['работаю', 'уточняю', 'собираю данные', 'ещё секунду'],
+};
+function groupQuips(group) {
+  return GROUP_QUIPS[group] || GROUP_QUIPS.base;
+}
+
+/* Строки состояния для конкретного вызова инструмента. Источник правды —
+   само событие: человеческий label приходит с сервера, вторая строка — то,
+   с чем инструмент реально работает (запрос, путь, адрес), а дальше идут
+   фразы по теме, чтобы строка жила, пока инструмент думает. */
 function toolTicker(ev) {
   const label = ev.label || ev.name || 'работаю';
   const lines = [label];
@@ -1763,8 +1968,39 @@ function toolTicker(ev) {
     if (t && t.length <= 90 && t.length > best.length) best = t;
   });
   if (best) lines.push('· ' + best);
-  lines.push('жду результат');
-  return lines;
+  return lines.concat(groupQuips(ev.group));
+}
+
+/* Печать «хода мыслей». Раньше текст вставлялся кусками как есть: модель
+   отдаёт reasoning пачками по 20-200 символов, и блок дёргался скачками,
+   а не печатался. Здесь тот же приём, что и в основном ответе, но БЕЗ пауз
+   и крупным шагом — мысли должны пролетать, их не читают вдумчиво.
+   Скорость подстраивается под очередь: чем больше не показано, тем крупнее
+   шаг, поэтому поток никогда не отстаёт от модели. */
+/* Досказать всё немедленно и погасить таймер. Нужно в момент сворачивания
+   карточки: иначе таймер тикает на скрытом узле, а в подпись миниатюры
+   попадает длина недопечатанного текста. */
+function thinkFlush(card) {
+  const el = card && card.querySelector('.think-stream');
+  if (!el) return null;
+  if (el._t) { clearInterval(el._t); el._t = null; }
+  if (el._buf != null) el.textContent = el._buf;
+  return el;
+}
+
+function thinkType(el, chunk) {
+  if (!el) return;
+  el._buf = (el._buf || el.textContent || '') + chunk;
+  if (el._t) return;
+  el._t = setInterval(() => {
+    const shown = el.textContent.length;
+    const left = el._buf.length - shown;
+    if (left <= 0) { clearInterval(el._t); el._t = null; return; }
+    const step = Math.max(6, Math.ceil(left / 6));
+    el.textContent = el._buf.slice(0, shown + step);
+    const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    if (atEnd) el.scrollTop = el.scrollHeight;
+  }, 16);
 }
 
 function thinkMode(ui, first) {
@@ -1834,7 +2070,7 @@ function showError(ui, msg) {
    поэтому длинный ответ всегда «улетал» — вместе с ним пропадал и курсор. */
 const TYPE_MS = 11;              // такт печати
 const SPEED_TALK = 1;            // разговор: по букве за такт (~90 зн/с)
-const SPEED_FAST = 7;            // код и прочее длинное: быстро
+const SPEED_FAST = 22;           // код и таблицы: очень быстро, почти сразу
 
 function typeInto(ui, chunk) {
   ui.buffer += chunk;
@@ -2012,14 +2248,20 @@ if ($('#bellBtn')) {
       // Список не должен опустошаться мгновенно: строки улетают волной,
       // сверху вниз, и только потом появляется «пусто».
       const rows = $$('#npList .np-item');
+      // Волна короче: 45 мс на строку при десятке уведомлений — это почти
+      // полсекунды ожидания сверх самой анимации. И высота каждой строки
+      // измеряется по факту, чтобы схлопывание начиналось с движения,
+      // а не с неподвижной паузы (см. npGone).
+      const STEP = 26;
       rows.forEach((r, i) => {
-        r.style.maxHeight = r.offsetHeight + 'px';
-        r.style.animationDelay = (i * 45) + 'ms';
+        r.style.setProperty('--h', r.offsetHeight + 'px');
+        r.style.animationDelay = (i * STEP) + 'ms';
         r.classList.add('np-sweep');
       });
       sfx('pop');
       S.notifications = [];
-      const wait = rows.length ? 240 + rows.length * 45 : 0;
+      S.unread = 0;
+      const wait = rows.length ? 220 + (rows.length - 1) * STEP : 0;
       setTimeout(() => renderNotePanel(), wait);
       await api('/api/notifications/clear', {});
     });
@@ -2093,7 +2335,12 @@ function handleEvent(ev, ui) {
       break;
 
     case 'thinking': {
-      if (!ui.verbose) break;
+      // ПОЧЕМУ «ДУМАЛКА» ОТКРЫВАЛАСЬ НЕ ВЕЗДЕ. Её показ решался ЗАРАНЕЕ, по
+      // длине вопроса (verbose приходит из score). Короткая просьба, которая
+      // на деле разворачивалась в работу с инструментами, получала verbose:false
+      // — и реальный ход мыслей, уже пришедший с сервера, молча выбрасывался.
+      // Предсказание не может отменять факт: если мысли пришли, их показываем.
+      // verbose остаётся только для того, что мы дорисовываем сами (терминал).
       if (!ui.thinkCard) {
         // карточка раскрыта сразу: мысли должны бежать на глазах, как в терминале
         ui.thinkCard = makeCard('◇', 'Ход мыслей', 'think-card live', true);
@@ -2102,10 +2349,7 @@ function handleEvent(ev, ui) {
         node.body.insertBefore(ui.thinkCard, ui.statusEl);
       }
       const ts = ui.thinkCard.querySelector('.think-stream');
-      ts.textContent += ev.text;
-      // автопрокрутка — только если пользователь сам не отлистал вверх
-      const atEnd = ts.scrollHeight - ts.scrollTop - ts.clientHeight < 60;
-      if (atEnd) ts.scrollTop = ts.scrollHeight;
+      thinkType(ts, ev.text);
       ui.thinkCard.setTitle('Ход мыслей <span class="muted" style="font-size:10.5px">· думаю…</span>');
       scrollDown();
       break;
@@ -2129,11 +2373,13 @@ function handleEvent(ev, ui) {
 
     case 'tool_hint':
       if (ui.statusEl) {
-        busyMode(ui, ['Готовлю инструмент', '· ' + (ev.label || ev.name)], 1300);
+        busyMode(ui, [ev.label || 'Готовлю инструмент'].concat(groupQuips(ev.group)), 1300);
       }
       break;
 
     case 'tool_start': {
+      // раз дошло до инструментов — задача не «простая», кухню открываем
+      ui.verbose = true;
       // «Глаза» агента (снимок экрана, параметры экрана) — служебные шаги.
       // Пользователю их видеть незачем: он просил результат, а не отчёт
       // о каждом кадре. Тихо запоминаем и показываем только в терминале.
@@ -2305,7 +2551,7 @@ function handleEvent(ev, ui) {
         if (ui.thinkCard) ui.thinkCard.classList.remove('live');
         // пошёл ответ — ход мыслей сразу убираем в миниатюру, чтобы не мешал читать
         if (ui.thinkCard && ui.thinkCard.isConnected) {
-          const ts0 = ui.thinkCard.querySelector('.think-stream');
+          const ts0 = thinkFlush(ui.thinkCard);
           collapseSoon(ui.thinkCard, {
             cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
             sub: ts0 ? fmtSize((ts0.textContent || '').length) : '', tag: 'развернуть',
@@ -2346,7 +2592,7 @@ function handleEvent(ev, ui) {
         $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click', () => lightbox(im.src)));
         // ход мыслей отработал — прячем в миниатюру
         if (ui.thinkCard && ui.thinkCard.isConnected) {
-          const ts = ui.thinkCard.querySelector('.think-stream');
+          const ts = thinkFlush(ui.thinkCard);
           collapseSoon(ui.thinkCard, {
             cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
             sub: ts ? fmtSize((ts.textContent || '').length) : '', tag: 'развернуть',

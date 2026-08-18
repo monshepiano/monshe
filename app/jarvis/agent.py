@@ -93,14 +93,23 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) ->
    button Поехали
    ```
 
-   Строки: tiles Подпись: A | B | C — выбор одного варианта;
+   Строки (выбирай тот тип, который ТОЧНО отвечает на вопрос):
+   tiles Подпись: A | B | C — выбор ОДНОГО варианта;
+   multi Подпись: A | B | C — выбор НЕСКОЛЬКИХ сразу;
+   rank Подпись: A | B | C — расставить по важности (ответ — порядок);
    slider Подпись мин..макс [step шаг] [unit ед] = начальное — плавная величина;
    number Подпись мин..макс [step шаг] [unit ед] = начальное — точное число;
-   toggle Подпись = on|off — да/нет; text Подпись = подсказка — короткий ввод;
+   rate Подпись 1..5 = 0 — оценка звёздами «насколько»;
+   toggle Подпись = on|off — да/нет;
+   text Подпись = подсказка — короткий ввод в одну строку;
+   area Подпись = подсказка — длинный ответ в несколько строк;
+   date Подпись = 2026-08-18 — дата; color Подпись = #00c8f0 — цвет;
    button Текст — кнопка действия.
    Пользователь покрутит и пришлёт итог одним сообщением, ты продолжишь.
    Правила: слово ui после кавычек обязательно, по одному элементу на строку,
-   максимум 4 элемента. Бери РАЗНЫЕ типы, а не четыре плитки подряд.
+   максимум 4 элемента. Бери РАЗНЫЕ типы, а не четыре плитки подряд:
+   один и тот же вопрос, заданный четырьмя одинаковыми плитками, читается
+   как анкета, а разные органы управления — как живой пульт.
 
    КОГДА ЭТО ОБЯЗАТЕЛЬНО. Проверь себя перед ответом: собираешься ли ты
    сейчас выбрать за пользователя что-то, что он мог бы выбрать сам?
@@ -502,7 +511,8 @@ class Agent:
                             gate_open = True
                             yield {"type": "delta", "text": joined}
                 elif etype == "tool_partial":
-                    yield {"type": "tool_hint", "name": event.get("name", "")}
+                    yield {"type": "tool_hint", "name": event.get("name", ""),
+                           "group": tools.group_of(event.get("name", ""))}
                 elif etype == "done":
                     tool_calls = event.get("tool_calls") or []
                     if event.get("reasoning") and not acc_text:
@@ -654,6 +664,7 @@ class Agent:
                 self.used_tools.append(name)
                 yield {"type": "tool_start", "id": call.get("id"), "name": name,
                        "label": tools.label_of(name), "args": args,
+                       "group": tools.group_of(name),
                        "risk": tools.risk_of(name)}
 
                 reason = needs_approval(name)

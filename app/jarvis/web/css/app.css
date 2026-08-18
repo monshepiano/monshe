@@ -240,9 +240,14 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .np-item.np-gone{animation:npGone .26s cubic-bezier(.4,0,1,1) both}
 /* «Очистить все» — не мгновенное опустошение списка, а волна: строки
    улетают одна за другой сверху вниз. Задержку каждой задаёт JS. */
-.np-item.np-sweep{animation:npGone .24s cubic-bezier(.4,0,1,1) both}
+/* ТА ЖЕ ПРИЧИНА, ЧТО И У КАРТОЧЕК. Кадр начинался с выдуманных max-height:120px,
+   а реальная строка — 54-86px. Пока ограничение больше содержимого, строка не
+   двигается: 43-55% времени анимации она просто стояла. Отсюда «небольшой лаг»
+   при очистке. Реальную высоту проставляет JS в переменную --h, и схлопывание
+   идёт от неё — мёртвого времени нет. */
+.np-item.np-sweep{animation:npGone .22s cubic-bezier(.4,0,1,1) both}
 @keyframes npGone{
-  from{opacity:1;max-height:120px;margin-bottom:6px}
+  from{opacity:1;max-height:var(--h,90px);margin-bottom:6px}
   to  {opacity:0;max-height:0;margin-bottom:0;padding:0}}
 .np-face{position:relative;z-index:1;display:flex;align-items:flex-start;gap:8px;
   padding:10px 11px 10px 13px;border-radius:11px;
@@ -388,9 +393,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .card-head.open .chev{transform:rotate(90deg);color:var(--cy)}
 /* Разворот с лёгким «перелётом»: содержимое въезжает снизу и чуть отпружинивает,
    вместо равнодушного растягивания по высоте. */
-.card-body{max-height:0;overflow:hidden;
-  transition:max-height .42s cubic-bezier(.33,1,.68,1)}
-.card-body.open{max-height:900px;overflow:auto}
+/* Высотой управляет JS (setCardOpen): он меряет реальное содержимое и
+   анимирует от фактической высоты к фактической. Здесь остаётся только
+   закрытое состояние по умолчанию. Константы 900px больше нет — именно она
+   создавала мёртвое время, когда max-height был больше содержимого и блок
+   стоял неподвижно большую часть анимации. */
+.card-body{max-height:0;overflow:hidden}
+.card-body.open{overflow:auto}
 /* Текст НЕ прячем прозрачностью. Раньше содержимое выцветало до нуля и
    всплывало с задержкой — из-за этого при разворачивании казалось, что текст
    «не прогрузился»: он был на месте, но ещё невидим. Двигаем только сдвиг. */
@@ -400,8 +409,11 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 
 /* «думает» */
 .thinking-line{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--tx2);padding:5px 2px}
-.spinner{width:15px;height:15px;border-radius:50%;border:2px solid rgba(143,134,207,.22);
-  border-top-color:var(--violet);border-right-color:var(--cy);animation:spin .8s linear infinite;flex-shrink:0}
+/* Кружок работы — просто синий, одноцветный. Двухцветная «гоночная» окружность
+   спорила за внимание с бегущей строкой справа: смотреть надо на слова, а
+   кружок лишь отмечает, что работа идёт. */
+.spinner{width:13px;height:13px;border-radius:50%;border:2px solid rgba(0,200,240,.2);
+  border-top-color:var(--cy);animation:spin .8s linear infinite;flex-shrink:0}
 .dots span{display:inline-block;width:4px;height:4px;margin:0 1.5px;border-radius:50%;background:var(--cy);
   animation:bounce 1.3s infinite}
 .dots span:nth-child(2){animation-delay:.18s;background:var(--teal)}
@@ -450,7 +462,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 @keyframes liveBar{from{background-position:180% 0}to{background-position:-80% 0}}
 .think-card.live .card-head .k{animation:blink 1.1s infinite}
 /* курсор в конце бегущих мыслей */
-.think-card.live .think-stream::after{content:'▍';color:var(--cy);animation:blink 1s steps(1) infinite}
+.think-card.live .think-stream::after{content:'▍';color:var(--tx3);opacity:.6;
+  animation:blink 1s steps(1) infinite}
 /* карточку можно закрыть кликом по любому пустому месту её тела */
 .card-body.open .card-inner{cursor:zoom-out}
 .card-inner pre,.card-inner .kv,.card-inner .think-stream,.card-inner .plan-list,
@@ -1051,7 +1064,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    кадров ровно два — начало и конец. Любой промежуточный кадр с повтором
    значений читается глазом как «подвисло», поэтому их здесь нет и быть
    не должно: блок раскрывается одним непрерывным жестом. */
-.unfolding{animation:growOpen .3s cubic-bezier(.22,.9,.3,1) both;
+.unfolding{animation:growOpen .24s cubic-bezier(.22,.9,.3,1) both;
   transform-origin:top left;will-change:transform,opacity}
 @keyframes growOpen{
   from{opacity:.3;transform:scale(.97) scaleY(.6) translateY(-5px)}
@@ -1063,14 +1076,9 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   from{opacity:1;transform:none}
   to  {opacity:0;transform:scaleY(.55) scale(.98) translateY(-4px)}}
 
-/* ПОЧЕМУ РАСКРЫТИЕ «ЗАВИСАЛО». Одновременно шли ТРИ движения разной длины:
-   рост блока growOpen (.3с), раскрытие тела по max-height (.42с) и свечение
-   шапки headGlow (.7с). Быстрый рост заканчивался первым, а тело продолжало
-   доезжать — глаз читал это как «доросло и подвисло»; свечение потом ещё
-   полсекунды висело поверх уже неподвижного блока.
-   Лечится не подбором длительностей, а устранением самой гонки: пока идёт
-   growOpen, тело раскрыто СРАЗУ и без собственной анимации, а свечение шапки
-   не запускается. Остаётся ровно один жест. */
+/* Во время роста из миниатюры тело уже раскрыто (JS сделал это мгновенно),
+   а свечение шапки не запускается — иначе оно висело бы ещё полсекунды
+   поверх уже неподвижного блока. Движение ровно одно. */
 .unfolding > .card-body{transition:none}
 .unfolding > .card-head{animation:none}
 
@@ -1270,18 +1278,22 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    печать пролетала так быстро, что он не успевал моргнуть. Теперь он выше
    строки, ярче и с ореолом вокруг — глаз цепляется за бегущую искру. */
 .md.typing>:last-child::after{content:"";display:inline-block;vertical-align:-2px;
-  width:9px;height:17px;margin-left:4px;border-radius:2px;
-  background:linear-gradient(180deg,#fff,var(--cy2) 45%,var(--cy));
-  box-shadow:0 0 12px var(--cy),0 0 28px rgba(0,200,240,.85),0 0 46px rgba(0,200,240,.4);
-  animation:spark 1.05s ease-in-out infinite}
-@keyframes spark{
-  0%,100%{opacity:1;transform:scaleY(1.06);
-    box-shadow:0 0 12px var(--cy),0 0 28px rgba(0,200,240,.85),0 0 46px rgba(0,200,240,.4)}
-  50%    {opacity:.42;transform:scaleY(.66);
-    box-shadow:0 0 5px var(--cy),0 0 12px rgba(0,200,240,.35)}}
+  width:7px;height:15px;margin-left:3px;border-radius:1px;
+  background:var(--cy);opacity:.5;
+  animation:spark 1.05s steps(1) infinite}
+@keyframes spark{50%{opacity:.12}}
 /* пока идёт печать, весь абзац еле заметно «подсвечен изнутри» — видно, что
    текст живой и продолжает расти */
 .md.typing>:last-child{text-shadow:0 0 14px rgba(0,200,240,.18)}
+/* Курсор внутри кода — классический компьютерный: тонкая зелёная черта,
+   моргает ступенькой, без свечения и без ореола. Ставится на блоке кода,
+   а общий курсор абзаца в это время не показывается: он один на строку. */
+.md.typing>:last-child:is(pre,.code-block)::after{display:none}
+.md.typing pre:last-of-type>code::after,
+.md.typing>:last-child pre>code::after{content:"";display:inline-block;
+  width:2px;height:1em;margin-left:1px;vertical-align:-2px;background:#3fbf95;
+  box-shadow:none;animation:codeCaret 1s steps(1) infinite}
+@keyframes codeCaret{50%{opacity:0}}
 
 /* --- обёртка блока кода: шапка с языком и кнопкой «Копировать» --- */
 .code-block{position:relative;margin:12px 0;border:1px solid var(--line);border-radius:12px;
@@ -1325,14 +1337,15 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   background:rgba(0,200,240,.07);
   animation:editIn .22s cubic-bezier(.2,.9,.3,1) both}
 @keyframes editIn{from{opacity:0;transform:translateX(14px) scale(.97)}}
-/* ПРИЧИНА «СООБЩЕНИЕ СЪЕЗЖАЕТ ВНИЗ» при отмене. Пузырь возвращался в поток
-   сразу, а поле правки жило в нём ещё 220 мс — и всё это время в колонке
-   стояли ОБА блока. Высота сообщения на миг удваивалась, лента прыгала, и
-   только после удаления поля всё вставало на место.
-   Уходящее поле больше не занимает места: на время анимации оно выносится
-   из потока и улетает поверх. Пузырь возвращается ровно туда, где стоял. */
+/* Уходящее поле не должно занимать места (иначе сообщение на 220 мс вдвое
+   выше и лента прыгает), но и менять размер при этом не имеет права.
+   ВАЖНО: тут была ошибка — вместе с position:absolute задавалась ширина
+   min(720px,84%). В потоке поле сжато по содержимому, а абсолютное получало
+   фиксированные 84% контейнера и в первый же кадр РАСПАХИВАЛОСЬ на всю
+   ширину. Геометрию нельзя менять одновременно с началом анимации: точные
+   размеры и координаты замеряет JS и проставляет их перед этим классом. */
 .edit-box.edit-out{animation:editOut .22s cubic-bezier(.2,.9,.3,1) both;
-  position:absolute;top:0;right:0;width:min(720px,84%);pointer-events:none;z-index:2}
+  position:absolute;margin:0;pointer-events:none;z-index:2}
 @keyframes editOut{to{opacity:0;transform:translateX(14px) scale(.97)}}
 /* пузырь уходит и возвращается тем же зеркальным движением */
 .bubble-user.edit-hide{animation:editOut .22s cubic-bezier(.2,.9,.3,1) both}
@@ -1480,6 +1493,51 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   border:1px solid rgba(var(--h),.3);outline:none;transition:border-color .18s,box-shadow .18s}
 .ui-text::placeholder{color:var(--tx3)}
 .ui-text:focus{border-color:rgba(var(--h),.65);box-shadow:0 0 0 3px rgba(var(--h),.12)}
+
+/* ---- многострочный ответ (area) ---- */
+.ui-area{width:100%;padding:9px 12px;border-radius:10px;font:inherit;font-size:13px;
+  line-height:1.5;resize:vertical;min-height:64px;max-height:220px;
+  color:var(--tx);background:rgba(255,255,255,.04);
+  border:1px solid rgba(var(--h),.3);outline:none;transition:border-color .18s,box-shadow .18s}
+.ui-area::placeholder{color:var(--tx3)}
+.ui-area:focus{border-color:rgba(var(--h),.65);box-shadow:0 0 0 3px rgba(var(--h),.12)}
+
+/* ---- дата и цвет ---- */
+.ui-date{color-scheme:dark;font-family:var(--fm)}
+.ui-color{width:100%;height:38px;padding:0;border-radius:10px;cursor:pointer;
+  background:transparent;border:1px solid rgba(var(--h),.3)}
+.ui-color::-webkit-color-swatch-wrapper{padding:3px}
+.ui-color::-webkit-color-swatch{border:0;border-radius:7px}
+
+/* ---- оценка звёздами ---- */
+.ui-stars{display:flex;gap:4px}
+.ui-star{font-size:21px;line-height:1;padding:2px 3px;cursor:pointer;background:none;border:0;
+  color:rgba(var(--h),.24);transition:transform .14s,color .18s,text-shadow .18s}
+.ui-star:hover{transform:scale(1.16)}
+.ui-star.on{color:rgb(var(--h));text-shadow:0 0 12px rgba(var(--h),.6)}
+.ui-star:active{transform:scale(.9)}
+
+/* ---- выбор нескольких: галочка отличает от одиночных плиток ---- */
+.ui-multi-t.on::before{content:'✓ ';font-weight:700}
+
+/* ---- расстановка по важности ---- */
+.ui-rank{display:flex;flex-direction:column;gap:6px}
+.ui-rk{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:10px;
+  background:rgba(255,255,255,.03);border:1px solid rgba(var(--h),.22);
+  transition:border-color .18s,background .18s}
+.ui-rk:hover{border-color:rgba(var(--h),.45);background:rgba(var(--h),.07)}
+.ui-rk .rk-n{flex-shrink:0;width:20px;height:20px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font:600 11px/1 var(--fm);color:#08161d;background:rgb(var(--h))}
+.ui-rk .rk-t{flex:1;min-width:0;font-size:13px;color:var(--tx);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ui-rk .rk-up,.ui-rk .rk-dn{flex-shrink:0;width:24px;height:24px;border-radius:7px;cursor:pointer;
+  background:rgba(var(--h),.1);border:1px solid rgba(var(--h),.28);color:rgb(var(--h));
+  font-size:12px;line-height:1;transition:background .16s,transform .12s}
+.ui-rk .rk-up:hover:not(:disabled),.ui-rk .rk-dn:hover:not(:disabled){background:rgba(var(--h),.24)}
+.ui-rk .rk-up:active:not(:disabled),.ui-rk .rk-dn:active:not(:disabled){transform:scale(.9)}
+.ui-rk .rk-up:disabled,.ui-rk .rk-dn:disabled{opacity:.25;cursor:default}
+.ui-lab .ui-hint{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--tx3)}
 
 /* ---- кнопка «Отправить»: ровно та же, что под полем ввода ---- */
 .ui-go{display:flex;align-items:center;justify-content:center;gap:8px;
