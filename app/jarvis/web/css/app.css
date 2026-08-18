@@ -673,18 +673,19 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 /* =================== МИНИАТЮРЫ ОТРАБОТАВШИХ БЛОКОВ ===================
    Камера после закрытия, уведомление после крестика, санкция после решения —
    всё сворачивается в одну компактную строку. Клик разворачивает обратно. */
-.thumb{display:flex;align-items:center;gap:9px;max-width:900px;margin:0 auto 12px;padding:7px 12px;
-  border:1px solid var(--line);border-radius:11px;background:rgba(10,20,34,.55);cursor:pointer;
-  font-size:11.5px;color:var(--tx2);transition:.2s;animation:thumbIn .35s cubic-bezier(.2,.8,.3,1) both}
+.thumb{display:flex;align-items:center;gap:7px;max-width:900px;margin:0 auto 5px;padding:2px 9px;
+  border:1px solid var(--line);border-radius:8px;background:rgba(10,20,34,.45);cursor:pointer;
+  font-size:10.5px;line-height:1.5;color:var(--tx3);transition:.2s;
+  animation:thumbIn .3s cubic-bezier(.2,.8,.3,1) both}
 @keyframes thumbIn{from{opacity:0;transform:translateY(-6px) scaleY(.85)}}
 .thumb:hover{border-color:var(--line2);background:rgba(0,200,240,.07);color:var(--tx)}
-.thumb .th-ico{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;flex-shrink:0;
-  font-size:12px;background:rgba(0,200,240,.12);color:var(--cy)}
-.thumb .th-ico svg{width:13px;height:13px}
+.thumb .th-ico{width:15px;height:15px;border-radius:5px;display:grid;place-items:center;flex-shrink:0;
+  font-size:9.5px;background:rgba(0,200,240,.12);color:var(--cy)}
+.thumb .th-ico svg{width:10px;height:10px}
 .thumb .th-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .thumb .th-t b{font-weight:500;color:var(--tx)}
-.thumb .th-tag{font-family:var(--fm);font-size:9.5px;letter-spacing:1.2px;text-transform:uppercase;
-  padding:2px 7px;border-radius:6px;border:1px solid var(--line);color:var(--tx3);flex-shrink:0}
+.thumb .th-tag{font-family:var(--fm);font-size:8.5px;letter-spacing:1px;text-transform:uppercase;
+  padding:0 5px;border-radius:5px;border:1px solid var(--line);color:var(--tx3);flex-shrink:0;opacity:.8}
 .thumb .th-open{color:var(--tx3);font-size:13px;flex-shrink:0;transition:.2s}
 .thumb:hover .th-open{color:var(--cy);transform:translateX(2px)}
 .thumb.th-cam .th-ico{background:rgba(87,179,159,.14);color:var(--mint)}
@@ -695,7 +696,10 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .thumb.th-ok .th-tag{border-color:rgba(63,191,149,.35);color:var(--green)}
 .thumb.th-no .th-ico{background:rgba(221,85,102,.14);color:var(--red)}
 .thumb.th-no .th-tag{border-color:rgba(221,85,102,.35);color:var(--red)}
-.thumb .th-time{font-family:var(--fm);font-size:9.5px;color:var(--tx3);flex-shrink:0}
+.thumb .th-time{font-family:var(--fm);font-size:8.5px;color:var(--tx3);flex-shrink:0;opacity:.7}
+.thumb .th-open{font-size:11px}
+.thumb.th-think .th-ico{background:rgba(143,134,207,.14);color:var(--violet)}
+.thumb.th-tool .th-ico,.thumb.th-plan .th-ico{background:rgba(0,200,240,.1)}
 .collapsing{animation:foldOut .3s cubic-bezier(.4,0,.2,1) both}
 @keyframes foldOut{to{opacity:0;transform:scaleY(.7);filter:blur(3px)}}
 
@@ -869,12 +873,17 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .ver-btn:disabled{opacity:.3;cursor:default}
 .ver-num{font-family:var(--fm);font-size:10.5px;color:var(--tx3);min-width:26px;text-align:center}
 
-/* ---- плашка «правлю сообщение» над полем ввода ---- */
-.edit-bar{display:flex;align-items:center;gap:9px;margin:0 0 7px;padding:7px 12px;border-radius:11px;
-  border:1px solid rgba(217,164,65,.4);background:rgba(217,164,65,.09);font-size:11.5px;color:var(--tx2);
-  animation:slideIn .25s both}
-.edit-bar .eb-i{color:var(--gold)}
-.edit-bar .eb-t{flex:1}
-.edit-bar .eb-x{border:none;background:transparent;color:var(--tx3);font-size:11px;cursor:pointer;
-  text-decoration:underline;padding:0}
-.edit-bar .eb-x:hover{color:var(--red)}
+
+
+/* ---- правка сообщения прямо в пузыре (как в GPT/DeepSeek) ---- */
+.edit-box{max-width:min(720px,84%);margin-left:auto;display:flex;flex-direction:column;gap:8px;
+  padding:11px 13px;border-radius:16px;border:1px solid rgba(0,200,240,.42);
+  background:rgba(0,200,240,.07);animation:slideIn .2s both}
+.edit-ta{width:100%;resize:none;border:none;outline:none;background:transparent;color:var(--tx);
+  font:inherit;font-size:13.5px;line-height:1.55;max-height:320px;overflow:auto}
+.edit-row{display:flex;gap:8px;justify-content:flex-end}
+.ebtn{padding:5px 13px;border-radius:9px;border:1px solid var(--line2);background:transparent;
+  color:var(--tx2);font-size:11.5px;cursor:pointer;transition:.18s}
+.ebtn:hover{border-color:var(--cy);color:var(--cy)}
+.ebtn.primary{background:var(--cy);border-color:var(--cy);color:#04121b;font-weight:600}
+.ebtn.primary:hover{filter:brightness(1.1)}

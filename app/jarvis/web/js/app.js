@@ -43,7 +43,8 @@ const S = {
   camLast: '',
   camPrevPix: null,
   editing: null,   // {id, node} — какое сообщение правим (новая версия, не новая реплика)
-  editBar: null,
+  asr: null,
+  asrStop: null,
   detached: null,
   detachTimer: null,
   sandbox: {},
@@ -182,23 +183,34 @@ const BOOT_LINES = [
   'контур AUTO…………… <b>активен</b>',
   'протоколы безопасности… <b>ok</b>',
 ];
+/* Заставка больше не «изображает» загрузку: строки идут своим темпом, но экран
+   гаснет, как только сервер реально ответил. Раньше при медленном /api/state
+   пользователь смотрел на бесконечное «соединение». */
+let BOOT_DONE = null;
 (function boot() {
   const log = $('#bootLog');
   let i = 0;
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    $('#boot').classList.add('hide');
+    $('#app').classList.add('ready');
+    beep(880, 0.22);
+  };
+  BOOT_DONE = finish;
+  // что бы ни случилось со связью — дольше 4 секунд заставку не держим
+  setTimeout(finish, 4000);
   const tick = () => {
     if (i < BOOT_LINES.length) {
       const line = el('div', '', BOOT_LINES[i]);
       log.appendChild(line); i++; beep(520 + i * 60, 0.05);
-      setTimeout(tick, 210);
+      setTimeout(tick, 180);
     } else {
-      setTimeout(() => {
-        $('#boot').classList.add('hide');
-        $('#app').classList.add('ready');
-        beep(880, 0.22);
-      }, 320);
+      setTimeout(finish, 260);
     }
   };
-  setTimeout(tick, 380);
+  setTimeout(tick, 300);
 })();
 
 /* ============================ навигация ============================ */
@@ -281,7 +293,33 @@ async function refreshState() {
   renderBalance(st.billing || {});
 
   renderSanctions(); renderNotes();
+  syncChatTail();
   if ($('#view-auto').classList.contains('active')) renderTasks();
+}
+
+/* ================== догрузка сообщений, пришедших извне ==================
+   Фоновая задача AUTO пишет ответ прямо в диалог на сервере. Раньше он
+   появлялся только после переоткрытия чата — теперь подтягиваем на лету. */
+async function syncChatTail() {
+  if (!S.chatId || S.streaming || S.editing) return;
+  const r = await api('/api/messages?chat_id=' + encodeURIComponent(S.chatId));
+  if (!r.ok || !r.messages) return;
+  const known = new Set($$('[data-msg-id]', stream()).map((n) => n.dataset.msgId));
+  let added = false;
+  r.messages.forEach((m) => {
+    if (known.has(String(m.id))) return;
+    if (m.role !== 'assistant') return;
+    const meta = m.meta || {};
+    if (!meta.from_auto) return;          // свои ответы рисует сам стрим
+    const node = addAiMsg();
+    node.root.dataset.msgId = m.id;
+    node.body.innerHTML = '<div class="md">' + MD.render(m.content) + '</div>';
+    foldCodeBlocks(node.body);
+    (meta.files || []).forEach((f) => attachFileChip(node.body, f));
+    addMsgActions(node, m.content);
+    added = true;
+  });
+  if (added) { scrollDown(); beep(660, 0.08); }
 }
 /* Баланс и расход аккаунта Cloud.ru в подвале сайдбара.
    Публичного метода «баланс лицевого счёта» у Cloud.ru нет, поэтому
@@ -418,9 +456,12 @@ async function openChat(id) {
     }
     else if (m.role === 'assistant') {
       const node = addAiMsg();
-      node.body.innerHTML = '<div class="md">' + MD.render(m.content) + '</div>';
-      foldCodeBlocks(node.body);
+      node.root.dataset.msgId = m.id;
       const meta = m.meta || {};
+      // ход мыслей и действия из прошлого ответа — свёрнутыми строчками
+      restoreTrace(node, meta);
+      node.body.appendChild(el('div', 'md', MD.render(m.content)));
+      foldCodeBlocks(node.body);
       if (meta.model) node.modelEl.textContent = meta.model;
       (meta.files || []).forEach((f) => attachFileChip(node.body, f));
       addMsgActions(node, m.content);
@@ -509,9 +550,13 @@ function renderVersions(node, versions, index) {
     if (!id) return;
     const r = await api('/api/messages/version', { id, index: to });
     if (!r.ok) { toast('Не получилось переключить версию', 'error'); return; }
-    const bubble = node.querySelector('.bubble-user');
-    if (bubble) bubble.textContent = versions[to];
-    renderVersions(node, versions, to);
+    // как в GPT: вместе с версией вопроса возвращается и ответ на неё
+    if (S.chatId) { await openChat(S.chatId); }
+    else {
+      const bubble = node.querySelector('.bubble-user');
+      if (bubble) bubble.textContent = versions[to];
+      renderVersions(node, versions, to);
+    }
     beep(600, 0.05);
   };
   prev.addEventListener('click', () => go(index - 1));
@@ -521,26 +566,61 @@ function renderVersions(node, versions, index) {
   node.appendChild(box);
 }
 
-/* Плашка «редактирую сообщение» над полем ввода. */
-function showEditBar(original) {
-  hideEditBar();
-  const bar = el('div', 'edit-bar');
-  bar.innerHTML = '<span class="eb-i">✎</span><span class="eb-t">Правлю сообщение — сохраню как новую версию</span>';
-  const cancel = el('button', 'eb-x', 'отмена');
-  cancel.addEventListener('click', () => {
-    S.editing = null;
-    hideEditBar();
-    $('#input').value = '';
-    autoGrow(); updateSendBtn();
+/* ============ правка сообщения прямо в пузыре (как в GPT/DeepSeek) ============
+   Пузырь превращается в textarea с кнопками «Отмена» и «Сохранить».
+   Сохранение отправляет запрос заново и добавляет вторую версию сообщения. */
+function startInlineEdit(node, text) {
+  if (node.querySelector('.edit-box')) return;
+  const bubble = node.querySelector('.bubble-user');
+  const acts = node.querySelector('.msg-actions');
+  const vers = node.querySelector('.ver-switch');
+  if (bubble) bubble.style.display = 'none';
+  if (acts) acts.style.display = 'none';
+  if (vers) vers.style.display = 'none';
+
+  const box = el('div', 'edit-box');
+  const ta = document.createElement('textarea');
+  ta.className = 'edit-ta';
+  ta.value = text;
+  const row = el('div', 'edit-row');
+  const cancel = el('button', 'ebtn', 'Отмена');
+  const save = el('button', 'ebtn primary', 'Сохранить и отправить');
+  row.appendChild(cancel); row.appendChild(save);
+  box.appendChild(ta); box.appendChild(row);
+  node.insertBefore(box, node.firstChild);
+
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 320) + 'px'; };
+  grow();
+  ta.addEventListener('input', grow);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+
+  const close = () => {
+    box.remove();
+    if (bubble) bubble.style.display = '';
+    if (acts) acts.style.display = '';
+    if (vers) vers.style.display = '';
+  };
+  cancel.addEventListener('click', close);
+  save.addEventListener('click', () => {
+    const val = ta.value.trim();
+    if (!val) { toast('Пустое сообщение', 'warn'); return; }
+    close();
+    submitEdit(node, val);
   });
-  bar.appendChild(cancel);
-  const composer = $('#composer');
-  composer.parentNode.insertBefore(bar, composer);
-  S.editBar = bar;
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); save.click(); }
+  });
 }
 
-function hideEditBar() {
-  if (S.editBar) { S.editBar.remove(); S.editBar = null; }
+/* Отправить исправленный текст: он станет новой версией того же сообщения. */
+async function submitEdit(node, text) {
+  if (S.streaming) await stopStream();
+  S.editing = { id: node.dataset.msgId || '', node };
+  $('#input').value = text;
+  autoGrow();
+  send();
 }
 
 function addUserMsg(text, atts, info) {
@@ -566,25 +646,10 @@ function addUserMsg(text, atts, info) {
       () => toast('Буфер обмена недоступен', 'error'));
   });
   const edit = el('button', 'act act-edit', ICO.edit + '<span>Редактировать</span>');
-  edit.addEventListener('click', async () => {
-    // если JARVIS ещё печатает — останавливаем поток, иначе кнопка залипает на «стоп»
-    if (S.streaming) { await stopStream(); }
-    const inp = $('#input');
-    // правка станет ВТОРОЙ ВЕРСИЕЙ этого сообщения, а не новой репликой
-    S.editing = { id: m.dataset.msgId || '', node: m };
-    if (S.editing.id) showEditBar(text);
-    inp.value = text;
-    autoGrow(); inp.focus();
-    try { inp.setSelectionRange(text.length, text.length); } catch (e) {}
-    m.querySelector('.bubble-user').classList.add('editing');
-    setTimeout(() => {
-      const b = m.querySelector('.bubble-user');
-      if (b) b.classList.remove('editing');
-    }, 1600);
-    updateSendBtn();
-    toast(S.editing.id
-      ? 'Правь и отправляй — сохраню как новую версию этого сообщения'
-      : 'Текст перенесён в поле ввода — правь и отправляй', 'info');
+  edit.addEventListener('click', () => {
+    // правим прямо в пузыре; результат станет новой версией этого сообщения
+    const cur = m.querySelector('.bubble-user');
+    startInlineEdit(m, (cur ? cur.textContent : text).trim());
   });
   acts.appendChild(copy); acts.appendChild(edit);
   m.appendChild(acts);
@@ -632,6 +697,40 @@ function addMsgActions(node, text) {
 }
 
 /* --- составные карточки внутри ответа --- */
+/* Восстановить ход мыслей и список действий у сохранённого ответа.
+   Показываем сразу свёрнутыми строчками — история не теряется, но и не мешает. */
+function restoreTrace(node, meta) {
+  const think = (meta.thinking || '').trim();
+  if (think) {
+    const card = makeCard('◇', 'Ход мыслей', 'think-card', false);
+    const ts = el('div', 'think-stream');
+    ts.textContent = think;
+    card.inner.appendChild(ts);
+    node.body.appendChild(card);
+    collapseToThumb(card, { cls: 'th-think', icon: '◇', title: 'Ход мыслей',
+      sub: think.slice(0, 60), tag: 'свёрнут', instant: true });
+  }
+  (meta.trace || []).forEach((t) => {
+    if (t.kind === 'plan' && (t.steps || []).length) {
+      const card = makeCard('☰', 'План · ' + t.steps.length + ' шаг(ов)', 'plan-card', false);
+      const list = el('ul', 'plan-list');
+      t.steps.forEach((x, i) => list.appendChild(
+        el('li', '', '<span class="plan-num">' + (i + 1) + '</span><span>' + esc(x) + '</span>')));
+      card.inner.appendChild(list);
+      node.body.appendChild(card);
+      collapseToThumb(card, { cls: 'th-plan', icon: '☰', title: 'План',
+        sub: t.steps.length + ' шаг(ов)', tag: 'выполнен', instant: true });
+    } else if (t.kind === 'tool') {
+      const label = t.label || t.name || 'инструмент';
+      const card = makeCard('⚙', label, 'tool-card', false);
+      if (t.args) card.inner.appendChild(el('div', 'kv', esc(JSON.stringify(t.args).slice(0, 400))));
+      node.body.appendChild(card);
+      collapseToThumb(card, { cls: 'th-tool', icon: '⚙', title: label,
+        tag: 'готово', instant: true });
+    }
+  });
+}
+
 function makeCard(icon, title, cls, openByDefault) {
   const card = el('div', 'panel-card ' + (cls || ''));
   card.innerHTML =
@@ -858,7 +957,7 @@ async function send() {
 
   // правка: подменяем текст на месте и убираем устаревший ответ ниже
   const editing = S.editing && S.editing.id ? S.editing : null;
-  S.editing = null; hideEditBar();
+  S.editing = null;
   if (editing && editing.node && editing.node.isConnected) {
     const bubble = editing.node.querySelector('.bubble-user');
     if (bubble) bubble.textContent = text;
@@ -1060,6 +1159,15 @@ function handleEvent(ev, ui) {
   switch (ev.type) {
     case 'chat':
       S.chatId = ev.chat_id; break;
+
+    case 'user_msg': {
+      // сервер сообщил id только что сохранённой реплики — привязываем к пузырю,
+      // иначе «Редактировать» не сможет создать вторую версию
+      const mine = $$('.msg-user', stream());
+      const last = mine[mine.length - 1];
+      if (last && !last.dataset.msgId) last.dataset.msgId = ev.id;
+      break;
+    }
 
     case 'chat_title': {
       // название диалога придумал сам JARVIS
@@ -1392,7 +1500,11 @@ function renderAttachments() {
 function browserASR(btn) {
   const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Rec) return false;
-  if (S.asr) { try { S.asr.stop(); } catch (e) {} S.asr = null; return true; }
+  if (S.asr) {
+    if (S.asrStop) S.asrStop(); else { try { S.asr.stop(); } catch (e) {} }
+    S.asr = null; S.asrStop = null;
+    return true;
+  }
 
   const rec = new Rec();
   rec.lang = 'ru-RU';
@@ -1414,11 +1526,26 @@ function browserASR(btn) {
     input.value = (basis + settled + live).replace(/\s+/g, ' ').trimStart();
     autoGrow();
   };
+  // Браузер шлёт no-speech уже через пару секунд тишины, а Safari к тому же
+  // сам обрывает распознавание. Раньше это мгновенно превращалось в «не
+  // расслышал» и в остановку записи. Теперь молчание — не ошибка: слушаем
+  // дальше, пока пользователь сам не выключит микрофон.
+  let stopping = false;
   rec.onerror = (ev) => {
-    if (ev.error === 'not-allowed') toast('Разреши доступ к микрофону', 'error');
-    else if (ev.error !== 'aborted' && ev.error !== 'no-speech') toast('Не расслышал, повтори', 'warn');
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+      stopping = true;
+      toast('Разреши доступ к микрофону в настройках браузера', 'error');
+    } else if (ev.error === 'audio-capture') {
+      stopping = true;
+      toast('Микрофон не найден', 'error');
+    }
+    /* no-speech, aborted, network — молча продолжаем */
   };
   rec.onend = () => {
+    // сам оборвался, а пользователь не просил — поднимаем заново
+    if (!stopping) {
+      try { rec.start(); return; } catch (e) { /* поднять не вышло — выходим */ }
+    }
     S.asr = null;
     btn.classList.remove('rec');
     input.value = input.value.trim();
@@ -1427,6 +1554,7 @@ function browserASR(btn) {
     updateSendBtn();
   };
 
+  S.asrStop = () => { stopping = true; try { rec.stop(); } catch (e) {} };
   try { rec.start(); } catch (e) { S.asr = null; return false; }
   btn.classList.add('rec');
   beep(560, 0.1);
@@ -2368,9 +2496,10 @@ window.addEventListener('keydown', (e) => {
 
 (async function init() {
   syncVoiceBtn();
-  await refreshState();
-  await loadChats();
   $('#stream').appendChild(buildWelcome());
+  // состояние и список диалогов тянем параллельно, а не гуськом
+  await Promise.all([refreshState(), loadChats()]);
+  if (BOOT_DONE) BOOT_DONE();
   setInterval(refreshState, 4000);
   if (!(S.config.providers || {}).cloudru || !S.config.providers.cloudru.has_key) {
     setTimeout(() => {

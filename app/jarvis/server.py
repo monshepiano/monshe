@@ -357,27 +357,40 @@ class Handler(BaseHTTPRequestHandler):
         if edit_of and db.get_message(edit_of):
             # это правка: добавляем ВЕРСИЮ к старому сообщению и убираем
             # устаревший ответ, вместо того чтобы плодить новую пару реплик
+            edited = db.edit_message(edit_of, text, chat_id)
             db.delete_messages_after(chat_id, edit_of)
-            edited = db.edit_message(edit_of, text)
             self._sse({"type": "edited", "id": edit_of,
                        "versions": ((edited or {}).get("meta") or {}).get("versions", []),
                        "version": ((edited or {}).get("meta") or {}).get("version", 0)})
         else:
-            db.add_message(chat_id, "user", text, user_meta)
+            saved = db.add_message(chat_id, "user", text, user_meta)
+            # без id фронтенд не может превратить правку в новую версию
+            self._sse({"type": "user_msg", "id": saved["id"]})
 
-        # название диалога придумывает сам JARVIS
+        # Название диалога придумывает модель — но это отдельный запрос к сети.
+        # Раньше он выполнялся ДО первого токена ответа, и пользователь ждал
+        # молча несколько секунд. Теперь заголовок уезжает в фон.
         history_all = db.get_messages(chat_id)
         if len([m for m in history_all if m["role"] == "user"]) == 1:
-            title = orchestrator.make_chat_title(text)
-            db.rename_chat(chat_id, title)
-            self._sse({"type": "chat_title", "title": title, "chat_id": chat_id})
+            db.rename_chat(chat_id, text[:40].strip() or "Новый диалог")
 
-        # фон?
+            def _title(cid: str = chat_id, txt: str = text) -> None:
+                try:
+                    db.rename_chat(cid, orchestrator.make_chat_title(txt))
+                except Exception:
+                    pass
+
+            threading.Thread(target=_title, name="jarvis-title", daemon=True).start()
+
+        # Фон? Решение принимает ОДНА сторона — сервер. Раньше сюда же лезла
+        # модель через schedule_task, и на одну просьбу появлялись две задачи
+        # («Таймер» и «Reminder after 5 seconds» на скриншоте пользователя).
         decision = auto.should_background(text)
         # защита от дублей: такая же задача из этого чата, уже стоящая в очереди
         if decision["background"] and auto.has_similar_pending(text, chat_id):
             decision = {"background": False, "schedule": "", "reason": ""}
-        if decision["background"] and not computer_use and not attachments:
+        server_scheduled = bool(decision["background"] and not computer_use and not attachments)
+        if server_scheduled:
             task_title = orchestrator.make_task_title(text)
             task = auto.create_background_task(title=task_title, prompt=text,
                                                schedule=decision["schedule"], chat_id=chat_id)
@@ -433,6 +446,8 @@ class Handler(BaseHTTPRequestHandler):
         used_tools: List[str] = []
         alive = True
         partial: List[str] = []
+        thinking: List[str] = []
+        trace: List[Dict[str, Any]] = []
         try:
             for event in runner.run(messages, user_text=text, has_image=has_image):
                 etype = event.get("type")
@@ -440,6 +455,13 @@ class Handler(BaseHTTPRequestHandler):
                     partial.append(event.get("text", ""))
                 elif etype == "reset":
                     partial = []
+                elif etype == "thinking":
+                    thinking.append(event.get("text", ""))
+                elif etype == "tool_start":
+                    trace.append({"kind": "tool", "name": event.get("name", ""),
+                                  "label": event.get("label", ""), "args": event.get("args")})
+                elif etype == "plan":
+                    trace.append({"kind": "plan", "steps": event.get("steps", [])})
                 elif etype == "done":
                     final_text = event.get("content", "")
                     files = event.get("files", [])
@@ -456,8 +478,11 @@ class Handler(BaseHTTPRequestHandler):
             if not final_text:
                 final_text = "".join(partial).strip()
             if final_text:
+                # Ход мыслей и список действий сохраняем вместе с ответом: раньше
+                # они жили только в браузере и пропадали, стоило выйти из диалога.
                 db.add_message(chat_id, "assistant", final_text,
-                               {"files": files, "tools": used_tools, "model": runner.model_used})
+                               {"files": files, "tools": used_tools, "model": runner.model_used,
+                                "thinking": "".join(thinking)[:20000], "trace": trace[:60]})
             if alive:
                 self._sse({"type": "end"})
             self._sse_close()

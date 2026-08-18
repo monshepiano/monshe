@@ -75,9 +75,11 @@ def choose_tier(text: str, has_image: bool = False, agent_mode: bool = False,
     if not CONFIG.get("orchestrator.auto_route", True):
         return {"tier": "base", "reason": "авто-маршрутизация выключена", "score": 0.5}
     if computer_use:
-        # управлять мышью «на глазок» нельзя: нужна модель, которая видит экран
-        # и уверенно вызывает инструменты, иначе она просто обещает и не делает
-        return {"tier": "vision", "reason": "управление компьютером — смотрю на экран", "score": 1.0}
+        # НЕ переключаемся на vision-модель: она не умеет вызывать инструменты,
+        # и агент превращается в болтуна. Экран ей покажет отдельный вызов
+        # (см. agent._describe_screen), а рулит процессом tool-capable модель.
+        return {"tier": "smart", "reason": "управление компьютером — нужен точный вызов действий",
+                "score": 1.0}
     if has_image:
         return {"tier": "vision", "reason": "во вложении изображение — нужна vision-модель", "score": 1.0}
 

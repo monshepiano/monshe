@@ -165,6 +165,16 @@ _JXA_PRELUDE = (
 )
 
 
+def _png_size(data: bytes) -> tuple:
+    """Ширина и высота PNG из заголовка IHDR — без сторонних библиотек."""
+    try:
+        if data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR":
+            return (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big"))
+    except Exception:
+        pass
+    return (0, 0)
+
+
 def screenshot(scale: float = 0.5) -> Dict[str, Any]:
     """Снимок экрана. Возвращает data-url (для vision-модели) и файл в песочнице."""
     out = _ws() / ("screen_%d.png" % int(time.time()))
@@ -191,6 +201,7 @@ def screenshot(scale: float = 0.5) -> Dict[str, Any]:
         if not out.exists():
             return {"ok": False, "error": "не удалось сделать снимок экрана"}
         data = out.read_bytes()
+        full = _png_size(data)          # реальный размер экрана в пикселях снимка
         # уменьшаем размер данных для vision-модели, если доступен sips (macOS)
         if IS_MAC and scale and scale < 1:
             try:
@@ -199,10 +210,16 @@ def screenshot(scale: float = 0.5) -> Dict[str, Any]:
                 data = out.read_bytes()
             except Exception:
                 pass
+        small = _png_size(data)
         b64 = base64.b64encode(data).decode()
         rel = out.name
+        # во сколько раз уменьшили: нужно, чтобы пересчитать координаты клика
+        factor = (full[0] / small[0]) if (full[0] and small[0]) else 1.0
         return {"ok": True, "path": rel, "download_url": _dl(rel),
-                "data_url": "data:image/png;base64," + b64, "bytes": len(data)}
+                "data_url": "data:image/png;base64," + b64, "bytes": len(data),
+                "width": small[0], "height": small[1],
+                "screen_width": full[0], "screen_height": full[1],
+                "scale": round(1.0 / factor, 6) if factor else 1.0}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

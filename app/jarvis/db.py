@@ -186,19 +186,52 @@ def get_message(msg_id: str) -> Optional[Dict[str, Any]]:
     return row
 
 
-def edit_message(msg_id: str, new_content: str) -> Optional[Dict[str, Any]]:
+def messages_after(chat_id: str, msg_id: str) -> List[Dict[str, Any]]:
+    """Всё, что идёт в переписке после указанного сообщения."""
+    msg = get_message(msg_id)
+    if not msg:
+        return []
+    rows = query(
+        "SELECT * FROM messages WHERE chat_id=? AND (created_at>? OR (created_at=? AND id>?)) "
+        "ORDER BY created_at, id",
+        (chat_id, msg["created_at"], msg["created_at"], msg_id),
+    )
+    for row in rows:
+        try:
+            row["meta"] = json.loads(row.get("meta") or "{}")
+        except Exception:
+            row["meta"] = {}
+    return rows
+
+
+def edit_message(msg_id: str, new_content: str, chat_id: str = "") -> Optional[Dict[str, Any]]:
     """Правка сообщения = НОВАЯ ВЕРСИЯ старого, а не новое сообщение.
 
-    Все варианты текста живут в meta.versions, meta.version — номер активного.
-    Так пользователь может переключаться между «было» и «стало».
+    Варианты текста лежат в meta.versions, meta.version — номер активного.
+    Вместе с каждой версией храним и ответы, которые за ней последовали
+    (meta.branches), чтобы переключение возвращало всю ветку целиком —
+    именно так это работает в GPT и DeepSeek.
     """
     msg = get_message(msg_id)
     if not msg:
         return None
     meta = msg.get("meta") or {}
     versions = list(meta.get("versions") or [msg.get("content", "")])
+    branches = list(meta.get("branches") or [])
+    while len(branches) < len(versions):
+        branches.append([])
+
+    # запоминаем ответы текущей версии, прежде чем их убрать
+    cur = int(meta.get("version", len(versions) - 1))
+    cur = max(0, min(cur, len(versions) - 1))
+    tail = messages_after(chat_id or msg.get("chat_id", ""), msg_id)
+    branches[cur] = [{"role": m["role"], "content": m["content"], "meta": m.get("meta") or {}}
+                     for m in tail]
+
     versions.append(new_content)
+    branches.append([])
     meta["versions"] = versions
+    meta["branches"] = branches
     meta["version"] = len(versions) - 1
     execute(
         "UPDATE messages SET content=?, meta=? WHERE id=?",
@@ -208,7 +241,7 @@ def edit_message(msg_id: str, new_content: str) -> Optional[Dict[str, Any]]:
 
 
 def switch_message_version(msg_id: str, index: int) -> Optional[Dict[str, Any]]:
-    """Показать другую версию сообщения (переключатель ‹ 2/3 ›)."""
+    """Показать другую версию сообщения вместе с её ответами (‹ 2/3 ›)."""
     msg = get_message(msg_id)
     if not msg:
         return None
@@ -216,13 +249,33 @@ def switch_message_version(msg_id: str, index: int) -> Optional[Dict[str, Any]]:
     versions = list(meta.get("versions") or [msg.get("content", "")])
     if not versions:
         return msg
+    branches = list(meta.get("branches") or [])
+    while len(branches) < len(versions):
+        branches.append([])
+
+    chat_id = msg.get("chat_id", "")
+    cur = int(meta.get("version", 0))
+    cur = max(0, min(cur, len(versions) - 1))
     index = max(0, min(int(index), len(versions) - 1))
+    if index == cur:
+        return msg
+
+    # сохраняем ветку текущей версии и подставляем ветку выбранной
+    tail = messages_after(chat_id, msg_id)
+    branches[cur] = [{"role": m["role"], "content": m["content"], "meta": m.get("meta") or {}}
+                     for m in tail]
+    delete_messages_after(chat_id, msg_id)
+
     meta["versions"] = versions
+    meta["branches"] = branches
     meta["version"] = index
     execute(
         "UPDATE messages SET content=?, meta=? WHERE id=?",
         (versions[index], json.dumps(meta, ensure_ascii=False), msg_id),
     )
+    for item in branches[index]:
+        add_message(chat_id, item.get("role", "assistant"), item.get("content", ""),
+                    item.get("meta") or {})
     return get_message(msg_id)
 
 

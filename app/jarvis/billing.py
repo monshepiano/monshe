@@ -138,6 +138,26 @@ def remote_consumption() -> Dict[str, Any]:
     }
 
 
+_REFRESHING = threading.Event()
+
+
+def _refresh_async() -> None:
+    """Обновить данные биллинга в фоне, не задерживая интерфейс."""
+    if _REFRESHING.is_set():
+        return
+    _REFRESHING.set()
+
+    def work() -> None:
+        try:
+            snapshot(force=True)
+        except Exception:
+            pass
+        finally:
+            _REFRESHING.clear()
+
+    threading.Thread(target=work, name="jarvis-billing", daemon=True).start()
+
+
 def snapshot(force: bool = False) -> Dict[str, Any]:
     """Единая сводка для UI.
 
@@ -163,8 +183,16 @@ def snapshot(force: bool = False) -> Dict[str, Any]:
     with _LOCK:
         cached = _CACHE.get("data")
         fresh_for = max(5, int(_conf().get("refresh_minutes", 30))) * 60
-        if cached and not force and time.time() - float(_CACHE.get("at") or 0) < fresh_for:
+        stale = time.time() - float(_CACHE.get("at") or 0) >= fresh_for
+
+    # ВАЖНО: этот вызов сидит в /api/state, который дёргается каждые 4 секунды.
+    # Ходить отсюда в сеть нельзя — интерфейс висел бы на «соединение» до
+    # таймаута Cloud.ru. Отдаём что есть, а обновляем в фоне.
+    if not force:
+        if cached and not stale:
             return {**out, **cached}
+        _refresh_async()
+        return {**out, **(cached or {})}
 
     try:
         remote = remote_consumption()
