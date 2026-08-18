@@ -219,9 +219,41 @@ def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> flo
     return prompt_tokens / 1e6 * price_in + completion_tokens / 1e6 * price_out
 
 
+# Глубина размышления по уровню. Ключ — тот же tier, что выбрал оркестратор:
+# один источник истины, никаких вторых правил «когда думать дольше».
+_REASONING_EFFORT = {
+    "nano": "low",      # болтовня — думать не о чем
+    "base": "low",      # обычные вопросы: ответ важнее внутреннего монолога
+    "coder": "medium",  # код требует аккуратности
+    "vision": "low",    # описать картинку — не задача на рассуждение
+    "smart": "high",    # сюда попадают только те, кому рассуждение и нужно
+}
+
+
+def _drop_unsupported(payload: Dict[str, Any], detail: str) -> bool:
+    """Убрать из запроса параметр, который не понял этот сервер.
+
+    Возвращает True, если что-то выбросили и повтор имеет смысл. Порядок
+    важен: сначала расстаёмся с необязательной «глубиной размышления», и
+    только потом — с инструментами, без которых Джарвис теряет руки.
+    """
+    low = (detail or "").lower()
+    if "reasoning_effort" in payload and ("reasoning" in low or "unknown" in low or "unsupported" in low):
+        payload.pop("reasoning_effort", None)
+        return True
+    if "tools" in payload:
+        payload.pop("tools", None)
+        payload.pop("tool_choice", None)
+        return True
+    if "reasoning_effort" in payload:
+        payload.pop("reasoning_effort", None)
+        return True
+    return False
+
+
 def _build_payload(model: str, messages: List[Dict], tools: Optional[List[Dict]], stream: bool,
                    temperature: Optional[float], max_tokens: Optional[int],
-                   provider: str = "cloudru") -> Dict[str, Any]:
+                   provider: str = "cloudru", tier: str = "base") -> Dict[str, Any]:
     # ЕДИНСТВЕННОЕ место, где рождается запрос к модели, — здесь же и
     # единственная проверка «а этот собеседник вообще умеет смотреть».
     # Раньше картинку клали в сообщение выше по коду и надеялись, что
@@ -236,6 +268,19 @@ def _build_payload(model: str, messages: List[Dict], tools: Optional[List[Dict]]
         "temperature": CONFIG.get("orchestrator.temperature", 0.6) if temperature is None else temperature,
         "max_tokens": max_tokens or CONFIG.get("orchestrator.max_output_tokens", 2400),
     }
+    # ГЛУБИНА РАЗМЫШЛЕНИЯ. Вот настоящая причина «иногда думает бесконечно»:
+    # и gpt-oss-120b (base), и GLM-4.7 (smart) — рассуждающие модели, и по
+    # умолчанию они работают на medium. Размышление идёт ДО первого слова
+    # ответа, пользователь всё это время смотрит в пустоту, а токены капают.
+    # Замеры сообщества: low ≈ 880 токенов рассуждения, high ≈ 8000 — почти
+    # десятикратная разница во времени ожидания на ровном месте.
+    # Мы не угадываем сложность по тексту (эти списки слов уже выкинуты) —
+    # глубина следует за УРОВНЕМ, который выбрал оркестратор: болтовня и
+    # обычные вопросы отвечаются быстро, а smart зовётся только там, где
+    # рассуждение действительно нужно.
+    effort = _REASONING_EFFORT.get(tier or "base")
+    if effort:
+        payload["reasoning_effort"] = effort
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
@@ -259,7 +304,7 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
         if not conf.get("api_key"):
             continue
         model = pick_model(tier, prov)
-        payload = _build_payload(model, messages, tools, False, temperature, max_tokens, prov)
+        payload = _build_payload(model, messages, tools, False, temperature, max_tokens, prov, tier)
         for attempt in range(2):
             try:
                 with _request(conf["base_url"].rstrip("/") + "/chat/completions", conf["api_key"],
@@ -286,10 +331,10 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
                 except Exception:
                     pass
                 last_error = LLMError("HTTP %s %s: %s" % (exc.code, model, detail))
-                if exc.code in (400, 404, 422) and tools:
-                    # модель не умеет tools — пробуем без них
-                    payload.pop("tools", None)
-                    payload.pop("tool_choice", None)
+                if exc.code in (400, 404, 422) and _drop_unsupported(payload, detail):
+                    # модель не поняла какой-то параметр (tools или
+                    # reasoning_effort) — выбрасываем именно его и повторяем,
+                    # а не заваливаем весь запрос
                     continue
                 break
             except Exception as exc:  # сеть/таймаут
@@ -309,7 +354,7 @@ def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[D
         if not conf.get("api_key"):
             continue
         model = pick_model(tier, prov)
-        payload = _build_payload(model, messages, tools, True, temperature, max_tokens, prov)
+        payload = _build_payload(model, messages, tools, True, temperature, max_tokens, prov, tier)
         # попытка 1 — с инструментами; попытка 2 — без них (если модель их не умеет)
         for attempt in range(2):
             started_output = False
@@ -385,10 +430,10 @@ def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[D
                 except Exception:
                     pass
                 last_error = LLMError("HTTP %s: %s" % (exc.code, detail))
-                if exc.code in (400, 404, 422) and payload.get("tools") and not started_output:
-                    # модель не переваривает function calling — повторяем без инструментов
-                    payload.pop("tools", None)
-                    payload.pop("tool_choice", None)
+                if (exc.code in (400, 404, 422) and not started_output
+                        and _drop_unsupported(payload, detail)):
+                    # сервер не понял какой-то параметр (reasoning_effort или
+                    # tools) — выбрасываем именно его и пробуем ещё раз
                     continue
                 break
             except Exception as exc:

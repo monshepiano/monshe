@@ -161,34 +161,105 @@ function toast(text, kind, title) {
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 400); }, 5200);
 }
 
-function beep(freq, dur) {
-  if (!S.config.ui || S.config.ui.sound === false) return;
+/* ================== ЗВУК ==================
+   Раньше каждый звук был голой синусоидой на 5% громкости: тонко, сухо и
+   почти неслышно. Ухо любит не чистый тон, а НОТУ — основной тон плюс
+   обертоны, с мягкой атакой и заметным хвостом. Поэтому здесь один общий
+   синтезатор: он играет аккорд из нескольких голосов через фильтр, и любой
+   звук интерфейса — просто набор нот. */
+function audioCtx() {
   try {
-    const ctx = beep.ctx || (beep.ctx = new (window.AudioContext || window.webkitAudioContext)());
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = 'sine'; o.frequency.value = freq || 660;
-    g.gain.setValueAtTime(0.05, ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + (dur || 0.16));
-    o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + (dur || 0.16));
-  } catch (e) { /* тишина */ }
+    if (!beep.ctx) beep.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    // браузер засыпает контекст до первого клика — будим его
+    if (beep.ctx.state === 'suspended') beep.ctx.resume();
+    return beep.ctx;
+  } catch (e) { return null; }
 }
 
-/* E. Тихий интерфейсный щелчок: очень короткий и тихий, чтобы отмечать
-   действие, а не привлекать внимание. Тумблер — «Интерфейсные звуки». */
-function blip(up) {
-  if (!S.config.ui || S.config.ui.sound === false) return;
-  try {
-    const ctx = beep.ctx || (beep.ctx = new (window.AudioContext || window.webkitAudioContext)());
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = 'triangle';
-    const t = ctx.currentTime;
-    o.frequency.setValueAtTime(up ? 620 : 520, t);
-    o.frequency.exponentialRampToValueAtTime(up ? 940 : 380, t + 0.05);
-    g.gain.setValueAtTime(0.028, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
-    o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.08);
-  } catch (e) { /* тишина */ }
+function soundOn() { return !(!S.config.ui || S.config.ui.sound === false); }
+
+/* Одна нота: основной тон + октава + квинта, мягкая атака, длинный хвост.
+   gain здесь ощутимо выше прежнего (было 0.05) — звук должен быть сочным. */
+function tone(freq, when, dur, gain, type, glide) {
+  const ctx = audioCtx();
+  if (!ctx) return;
+  const t = ctx.currentTime + (when || 0);
+  const d = dur || 0.22;
+  const vol = (gain == null ? 0.16 : gain);
+
+  // общий фильтр: срезает резкость верхов, оставляя «тёплый» тембр
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(Math.max(1200, freq * 4), t);
+  lp.Q.value = 0.7;
+
+  const bus = ctx.createGain();
+  bus.gain.setValueAtTime(0.0001, t);
+  bus.gain.exponentialRampToValueAtTime(vol, t + 0.012);      // атака — мягкая, но быстрая
+  bus.gain.exponentialRampToValueAtTime(vol * 0.55, t + d * 0.35);
+  bus.gain.exponentialRampToValueAtTime(0.0001, t + d);       // длинный хвост: звук «дышит»
+  lp.connect(bus); bus.connect(ctx.destination);
+
+  // три голоса: тон, октава сверху потише, квинта — она и даёт «смачность»
+  const voices = [
+    { m: 1,   g: 1.0,  ty: type || 'sine' },
+    { m: 2,   g: 0.34, ty: 'sine' },
+    { m: 1.5, g: 0.20, ty: 'triangle' },
+  ];
+  voices.forEach((v) => {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = v.ty;
+    o.frequency.setValueAtTime(freq * v.m, t);
+    if (glide) o.frequency.exponentialRampToValueAtTime(freq * v.m * glide, t + d * 0.8);
+    g.gain.value = v.g;
+    o.connect(g); g.connect(lp);
+    o.start(t); o.stop(t + d + 0.05);
+  });
 }
+
+/* Аккорд/арпеджио: ноты с небольшим сдвигом друг за другом. Именно короткий
+   сдвиг (12-45 мс) превращает набор тонов в приятный «дзинь», а не в кашу. */
+function chord(freqs, opts) {
+  opts = opts || {};
+  const gap = opts.gap == null ? 0.028 : opts.gap;
+  const dur = opts.dur || 0.3;
+  const gain = opts.gain == null ? 0.15 : opts.gain;
+  freqs.forEach((f, i) => tone(f, i * gap, dur - i * gap * 0.3, gain * (1 - i * 0.12), opts.type, opts.glide));
+}
+
+/* Совместимость: старые вызовы beep(частота, длительность) продолжают работать,
+   но звучат уже полноценной нотой, а не писком. */
+function beep(freq, dur) {
+  if (!soundOn()) return;
+  const f = freq || 660;
+  // из одной частоты делаем маленький аккорд — так «дофаминовее»
+  chord([f, f * 1.26], { dur: Math.max(dur || 0.16, 0.22) + 0.12, gain: 0.15, gap: 0.022 });
+}
+
+/* Щелчок переключателя: вверх — светлая терция, вниз — мягкое падение. */
+function blip(up) {
+  if (!soundOn()) return;
+  if (up) chord([784, 1046.5], { dur: 0.26, gain: 0.13, gap: 0.02 });
+  else chord([523.25, 392], { dur: 0.24, gain: 0.11, gap: 0.02 });
+}
+
+/* Именованные звуки интерфейса: одно место, где решается «как это звучит».
+   Ноты подобраны по мажорному трезвучию — оно воспринимается как «хорошо». */
+const SFX = {
+  send:    () => chord([523.25, 659.25], { dur: 0.26, gain: 0.14, gap: 0.02 }),          // до-ми
+  done:    () => chord([659.25, 830.6, 987.77], { dur: 0.5, gain: 0.17, gap: 0.045 }),   // ми-соль#-си
+  ok:      () => chord([659.25, 987.77], { dur: 0.34, gain: 0.15, gap: 0.03 }),
+  error:   () => chord([311.13, 233.08], { dur: 0.5, gain: 0.16, gap: 0.05, type: 'triangle' }),
+  warn:    () => chord([466.16, 415.3], { dur: 0.34, gain: 0.13, gap: 0.04 }),
+  pop:     () => chord([880, 1174.66], { dur: 0.2, gain: 0.12, gap: 0.016 }),
+  select:  () => chord([698.46, 1046.5], { dur: 0.22, gain: 0.12, gap: 0.018 }),
+  fly:     () => chord([523.25, 784, 1046.5], { dur: 0.42, gain: 0.14, gap: 0.05, glide: 1.06 }),
+  note:    () => chord([987.77, 1318.51], { dur: 0.36, gain: 0.13, gap: 0.03 }),
+  start:   () => chord([392, 523.25, 659.25], { dur: 0.55, gain: 0.16, gap: 0.06 }),
+  stop:    () => chord([440, 349.23, 261.63], { dur: 0.5, gain: 0.14, gap: 0.055 }),
+};
+function sfx(name) { if (soundOn() && SFX[name]) SFX[name](); }
 
 function modal(html, onMount) {
   const m = $('#modal');
@@ -253,7 +324,7 @@ let BOOT_DONE = null;
     finished = true;
     $('#boot').classList.add('hide');
     $('#app').classList.add('ready');
-    beep(880, 0.22);
+    sfx('done');
   };
   BOOT_DONE = finish;
   // что бы ни случилось со связью — дольше 4 секунд заставку не держим
@@ -321,7 +392,7 @@ $('#tgComputer').addEventListener('click', function () {
   S.computerUse = !S.computerUse; this.classList.toggle('on', S.computerUse);
   if (S.computerUse) {
     toast('Управление мышью и клавиатурой разрешено. Каждое действие спрошу отдельно.', 'warn', 'COMPUTER-USE');
-    beep(300, 0.2);
+    sfx('error');
   }
 });
 
@@ -378,7 +449,7 @@ async function syncChatTail() {
     addMsgActions(node, m.content);
     added = true;
   });
-  if (added) { scrollDown(); beep(660, 0.08); }
+  if (added) { scrollDown(); sfx('note'); }
 }
 /* Баланс и расход аккаунта Cloud.ru в подвале сайдбара.
    Публичного метода «баланс лицевого счёта» у Cloud.ru нет, поэтому
@@ -642,10 +713,19 @@ function stream() { return $('#stream'); }
    «в какой разговор сейчас пишем». */
 function camLive() { return !!(S.camNode && S.camNode.isConnected); }
 
-function activeChatId() { return camLive() ? (S.camChatId || null) : S.chatId; }
+/* Камера привязана к текущему диалогу? По умолчанию НЕТ: у неё свой контекст.
+   Тумблер «Видеть текущий диалог» в карточке переключает это на лету. */
+function camLinked() { return camLive() && !!S.camLink; }
+
+/* Единственная точка ответа на вопрос «в какой разговор сейчас пишем».
+   Камера без привязки пишет в свой чат, с привязкой — в основной. */
+function activeChatId() {
+  if (camLive() && !camLinked()) return S.camChatId || null;
+  return S.chatId;
+}
 
 function setActiveChat(id) {
-  if (camLive()) S.camChatId = id; else S.chatId = id;
+  if (camLive() && !camLinked()) S.camChatId = id; else S.chatId = id;
 }
 
 function msgHost() {
@@ -757,6 +837,10 @@ function bubbleText(bubble) {
 /* ============ правка сообщения прямо в пузыре (как в GPT/DeepSeek) ============
    Пузырь превращается в textarea с кнопками «Отмена» и «Сохранить».
    Сохранение отправляет запрос заново и добавляет вторую версию сообщения. */
+/* Единственная длительность правки: и вход, и отмена живут ровно столько.
+   Значение обязано совпадать с editIn/editOut в CSS. */
+const EDIT_MS = 220;
+
 function startInlineEdit(node, text) {
   if (node.querySelector('.edit-box')) return;
   const bubble = node.querySelector('.bubble-user');
@@ -783,22 +867,30 @@ function startInlineEdit(node, text) {
   ta.focus();
   ta.setSelectionRange(ta.value.length, ta.value.length);
 
-  // Вход в правку был с анимацией, а выход — мгновенным исчезновением:
-  // пузырь «прыгал» обратно рывком. Закрываем тем же движением, только
-  // обратным, чтобы вход и выход выглядели как одно действие.
-  const restore = () => {
-    box.remove();
-    if (bubble) { bubble.style.display = ''; bubble.classList.add('edit-back'); }
+  // ОДИНАКОВАЯ СКОРОСТЬ входа и выхода. Раньше вход был один шаг (220 мс),
+  // а выход — два подряд: сначала уезжало поле (220 мс), потом ОТДЕЛЬНО
+  // возвращался пузырь (240 мс). Итого 460 мс против 220 — отмена ощущалась
+  // вдвое медленнее. Теперь оба движения идут ОДНОВРЕМЕННО: поле уходит и
+  // пузырь возвращается в одни и те же EDIT_MS.
+  // вернуть пузырь на место без анимации (когда правку отправляют)
+  const restoreNow = () => {
+    if (bubble) { bubble.style.display = ''; bubble.classList.remove('edit-back'); }
     if (acts) acts.style.display = '';
     if (vers) vers.style.display = '';
-    if (bubble) setTimeout(() => bubble.classList.remove('edit-back'), 240);
   };
   const close = (animated) => {
     if (box.dataset.closing === '1') return;
     box.dataset.closing = '1';
-    if (animated === false) { restore(); return; }
+    if (animated === false) { box.remove(); restoreNow(); return; }
     box.classList.add('edit-out');
-    setTimeout(restore, 220);       // = длительность editOut в CSS
+    // пузырь проявляется ПАРАЛЛЕЛЬНО уходу поля, а не после него
+    if (bubble) { bubble.style.display = ''; bubble.classList.add('edit-back'); }
+    if (acts) acts.style.display = '';
+    if (vers) vers.style.display = '';
+    setTimeout(() => {
+      box.remove();
+      if (bubble) bubble.classList.remove('edit-back');
+    }, EDIT_MS);
   };
   cancel.addEventListener('click', () => close(true));
   save.addEventListener('click', () => {
@@ -841,7 +933,11 @@ function addUserMsg(text, atts, info) {
   const acts = el('div', 'msg-actions');
   const copy = el('button', 'act act-copy', ICO.copy + '<span>Скопировать</span>');
   copy.addEventListener('click', () => {
-    navigator.clipboard.writeText(text).then(
+    // Источник истины — то, что СЕЙЧАС в пузыре, а не текст, захваченный при
+    // создании кнопки. Из-за замыкания на старое значение переключение версий
+    // копировало исходный вариант вместо выбранного.
+    const live = bubbleText(m.querySelector('.bubble-user')) || text;
+    navigator.clipboard.writeText(live).then(
       () => toast('Скопировано', 'success'),
       () => toast('Буфер обмена недоступен', 'error'));
   });
@@ -878,14 +974,21 @@ function addAiMsg(ts) {
 
 function addMsgActions(node, text) {
   const acts = el('div', 'msg-actions');
+  // Что скопировать/озвучить, решаем в момент нажатия по живому узлу ответа:
+  // если ответ перерисовали (другая версия вопроса), текст будет уже новый.
+  const liveText = () => {
+    const md = node.body && node.body.querySelector('.md');
+    const t = md ? (md.innerText || md.textContent || '').trim() : '';
+    return t || text;
+  };
   const copy = el('button', 'act act-copy', ICO.copy + '<span>Копировать</span>');
   copy.addEventListener('click', () => {
-    navigator.clipboard.writeText(text).then(() => toast('Скопировано', 'success'));
+    navigator.clipboard.writeText(liveText()).then(() => toast('Скопировано', 'success'));
   });
   const speak = el('button', 'act act-speak', ICO.speak + '<span>Озвучить</span>');
   speak.addEventListener('click', () => {
     try {
-      const u = new SpeechSynthesisUtterance(text.replace(/[#*`>|\-]/g, '').slice(0, 900));
+      const u = new SpeechSynthesisUtterance(liveText().replace(/[#*`>|\-]/g, '').slice(0, 900));
       u.lang = 'ru-RU'; u.rate = 1.03;
       speechSynthesis.cancel(); speechSynthesis.speak(u);
     } catch (e) { toast('Синтез речи недоступен', 'error'); }
@@ -1161,13 +1264,44 @@ function mountUiPanels(root) {
     box.dataset.live = '1';
     box.innerHTML = '';
 
-    // Каждому элементу — свой цвет по порядку. Раньше вся панель была одного
-    // бирюзового оттенка и читалась как одна большая деталь; разные тона
-    // сразу показывают, что это отдельные независимые органы управления.
+    // ЦВЕТ. Раньше тон брался по номеру СТРОКИ — а строка почти всегда одна,
+    // поэтому панель вечно выходила бирюзовой и выглядела одноцветной.
+    // Теперь цвет получает каждый отдельный орган управления: плитки
+    // раскрашиваются по своему номеру, а строки — со сдвигом, чтобы соседние
+    // элементы не совпадали.
     const HUES = ['c1', 'c2', 'c3', 'c4', 'c5'];
+    let touched = false;      // человек хоть раз что-то тронул
+    let sendTimer = null;
+
+    const summary = () => items.filter((x) => x.t !== 'button').map((x) => {
+      if (x.t === 'slider') return x.label + ': ' + x.val;
+      if (x.t === 'toggle') return x.label + ': ' + (x.val ? 'да' : 'нет');
+      return x.label + ': ' + (x.val || '—');
+    });
+
+    // Кнопки подтверждения больше нет: выбор уходит сам, как только он сделан.
+    // Пауза нужна, чтобы человек успел передумать и подвигать ползунок —
+    // отсчёт сбрасывается при каждом касании.
+    const ready = () => items.every((x) => x.t !== 'tiles' || x.val != null);
+    const armSend = () => {
+      if (!touched || box.dataset.sent === '1') return;
+      clearTimeout(sendTimer);
+      if (!ready()) { box.classList.remove('ui-arm'); return; }
+      box.classList.add('ui-arm');
+      sendTimer = setTimeout(() => {
+        if (box.dataset.sent === '1') return;
+        box.dataset.sent = '1';
+        box.classList.remove('ui-arm');
+        box.classList.add('ui-sent');
+        $$('input,button', box).forEach((c) => { c.disabled = true; });
+        $('#input').value = summary().join('\n'); autoGrow(); send({ silent: true });
+        sfx('send');
+      }, 900);
+    };
+
     items.forEach((it, idx) => {
       const row = el('div', 'ui-row ui-' + it.t + ' ' + HUES[idx % HUES.length]);
-      row.style.animationDelay = (idx * 70) + 'ms';
+      row.style.animationDelay = (idx * 55) + 'ms';
       if (it.t === 'slider') {
         row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) +
           '</span><b class="ui-val">' + it.val + '</b></div>';
@@ -1182,6 +1316,7 @@ function mountUiPanels(root) {
         inp.addEventListener('input', () => {
           it.val = parseFloat(inp.value); out.textContent = inp.value; paint();
           out.classList.remove('bump'); void out.offsetWidth; out.classList.add('bump');
+          touched = true; armSend();
         });
         paint();
         row.appendChild(inp);
@@ -1191,46 +1326,39 @@ function mountUiPanels(root) {
         sw.innerHTML = '<i></i>';
         sw.addEventListener('click', () => {
           it.val = !it.val; sw.classList.toggle('on', it.val); blip(it.val);
+          touched = true; armSend();
         });
         row.appendChild(sw);
       } else if (it.t === 'tiles') {
         row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) + '</span></div>';
         const grid = el('div', 'ui-tiles');
-        it.opts.forEach((o) => {
-          const t = el('button', 'ui-tile', o);
+        it.opts.forEach((o, oi) => {
+          // у КАЖДОЙ плитки свой цвет — именно это и делает панель цветной
+          const t = el('button', 'ui-tile ' + HUES[(oi + idx) % HUES.length], o);
           t.addEventListener('click', () => {
             it.val = o;
             $$('.ui-tile', grid).forEach((x) => x.classList.remove('on'));
-            t.classList.add('on'); blip(true);
+            t.classList.add('on'); sfx('select');
+            touched = true; armSend();
           });
           grid.appendChild(t);
         });
         row.appendChild(grid);
       } else {
-        const b = el('button', 'ui-btn', it.label);
+        // «button» из спецификации — самостоятельное действие, уходит сразу
+        const b = el('button', 'ui-btn ' + HUES[idx % HUES.length], it.label);
         b.addEventListener('click', () => {
+          if (box.dataset.sent === '1') return;
+          box.dataset.sent = '1';
+          box.classList.add('ui-sent');
+          $$('input,button', box).forEach((c) => { c.disabled = true; });
           $('#input').value = it.label; autoGrow(); send({ silent: true });
+          sfx('send');
         });
         row.appendChild(b);
       }
       box.appendChild(row);
     });
-
-    // одна кнопка на всю панель — итог уходит Джарвису человеческим текстом
-    if (items.some((x) => x.t !== 'button')) {
-      const go = el('button', 'ui-send', 'Отправить выбор');
-      go.addEventListener('click', () => {
-        const parts = items.filter((x) => x.t !== 'button').map((x) => {
-          if (x.t === 'slider') return x.label + ': ' + x.val;
-          if (x.t === 'toggle') return x.label + ': ' + (x.val ? 'да' : 'нет');
-          return x.label + ': ' + (x.val || '—');
-        });
-        $('#input').value = parts.join('\n'); autoGrow(); send({ silent: true });
-        go.disabled = true; go.textContent = 'Принято';
-        box.classList.add('ui-sent');
-      });
-      box.appendChild(go);
-    }
   });
 }
 
@@ -1365,7 +1493,7 @@ async function send(opts) {
 
   const node = addAiMsg();
   setStreaming(true);
-  beep(700, 0.07);
+  sfx('send');
 
   // блоки, которые появляются по ходу
   const ui = {
@@ -1395,7 +1523,7 @@ async function send(opts) {
       headers: { 'Content-Type': 'application/json' },
       signal: S.abort.signal,
       body: JSON.stringify({
-        chat_id: activeChatId() || '', kind: camLive() ? 'cam' : '', text,
+        chat_id: activeChatId() || '', kind: (camLive() && !camLinked()) ? 'cam' : '', text,
         edit_of: editing ? editing.id : '',
         agent_mode: S.agentMode,
         computer_use: S.computerUse,
@@ -1502,7 +1630,7 @@ function thinkMode(ui, first) {
     if (i === last) i = (i + 1) % THINK_QUIPS.length;
     last = i;
     swap(THINK_QUIPS[i]);
-  }, 2200);
+  }, 1600);
 }
 
 /* Снять строку статуса — ВСЕГДА через это место: иначе таймер подписей
@@ -1522,7 +1650,10 @@ function busyMode(ui, text) {
   if (!box) return;
   stopQuips(ui);
   box.className = 'thinking-line';
-  box.innerHTML = '<span class="spinner"></span><span>' + esc(text) + '</span>';
+  // По тексту статуса тоже бежит блик: пока Джарвис занят, ЛЮБАЯ строка
+  // состояния должна выглядеть живой, а не замершей надписью рядом с
+  // крутилкой. Класс st-text — тот же эффект, что и у подписи «думаю».
+  box.innerHTML = '<span class="spinner"></span><span class="st-text">' + esc(text) + '</span>';
 }
 
 function setStreaming(on) {
@@ -1568,8 +1699,8 @@ function showError(ui, msg) {
    технические простыни читать «на лету» никто не будет: их выдаём быстро,
    чтобы не заставлять ждать. Раньше единственным критерием было отставание,
    поэтому длинный ответ всегда «улетал» — вместе с ним пропадал и курсор. */
-const TYPE_MS = 14;              // такт печати
-const SPEED_TALK = 1;            // разговор: по букве за такт (~70 зн/с)
+const TYPE_MS = 11;              // такт печати
+const SPEED_TALK = 1;            // разговор: по букве за такт (~90 зн/с)
 const SPEED_FAST = 7;            // код и прочее длинное: быстро
 
 function typeInto(ui, chunk) {
@@ -1582,7 +1713,7 @@ function typeInto(ui, chunk) {
    будто собеседник переводит дыхание. Паузы стали отчётливее — это те самые
    микроостановки, которые делают печать живой (в отличие от подвисания
    анимации, которое просто раздражает). */
-const PAUSE_AFTER = { '.': 14, '!': 14, '?': 14, ',': 6, ';': 8, ':': 8, '\n': 9, '—': 6 };
+const PAUSE_AFTER = { '.': 9, '!': 9, '?': 9, ',': 4, ';': 5, ':': 5, '\n': 6, '—': 4 };
 
 /* Внутри блока кода? Считаем незакрытые ``` в уже показанном тексте.
    Источник истины — сам текст, а не догадка по длине. */
@@ -1745,8 +1876,18 @@ if ($('#bellBtn')) {
   const npc = $('#npClear');
   if (npc) {
     npc.addEventListener('click', async () => {
+      // Список не должен опустошаться мгновенно: строки улетают волной,
+      // сверху вниз, и только потом появляется «пусто».
+      const rows = $$('#npList .np-item');
+      rows.forEach((r, i) => {
+        r.style.maxHeight = r.offsetHeight + 'px';
+        r.style.animationDelay = (i * 45) + 'ms';
+        r.classList.add('np-sweep');
+      });
+      sfx('pop');
       S.notifications = [];
-      renderNotePanel();
+      const wait = rows.length ? 240 + rows.length * 45 : 0;
+      setTimeout(() => renderNotePanel(), wait);
       await api('/api/notifications/clear', {});
     });
   }
@@ -1846,7 +1987,7 @@ function handleEvent(ev, ui) {
       });
       ui.planCard.inner.appendChild(list);
       node.body.insertBefore(ui.planCard, ui.statusEl);
-      beep(620, 0.09);
+      sfx('pop');
       scrollDown();
       break;
     }
@@ -1918,7 +2059,7 @@ function handleEvent(ev, ui) {
       // карточка уже нарисована прямо в ответе — дубль из renderSanctions не нужен
       S.streamApproval = true;
       refreshState();
-      beep(340, 0.3);
+      sfx('error');
       toast((ev.label || ev.tool) + ' — нужно твоё разрешение', 'warn', 'Санкция');
       scrollDown(true);
       break;
@@ -1938,7 +2079,7 @@ function handleEvent(ev, ui) {
         api('/api/questions/answer', { id: ev.id, answer: choice });
       });
       node.body.insertBefore(card, ui.statusEl);
-      beep(520, 0.16);
+      sfx('warn');
       scrollDown(true);
       break;
     }
@@ -1993,7 +2134,7 @@ function handleEvent(ev, ui) {
       if (!wrap.parentNode) node.body.insertBefore(wrap, ui.statusEl);
       attachFileChip(wrap, ev);
       flyToFiles(wrap.lastElementChild, ev.name);
-      beep(820, 0.1);
+      sfx('ok');
       break;
     }
 
@@ -2079,7 +2220,7 @@ function handleEvent(ev, ui) {
       };
       typerFlush(ui);
       ui.planItems.forEach((li) => li.classList.add('done'));
-      beep(760, 0.13);
+      sfx('done');
       $('#routeHint').classList.remove('show');
       scrollDown();
       break;
@@ -2347,6 +2488,11 @@ function buildCamCard() {
           '</div>' +
           '<div class="cam-note muted">Смотрю трансляцию и комментирую справа. ' +
           'Спроси прямо в чате — «что это?», «где купить» — отвечу по тому, что сейчас в кадре.</div>' +
+          // По умолчанию камера — отдельный разговор: болтовня «вижу кружку»
+          // не должна засорять основной диалог. Но иногда кадр нужен именно
+          // как продолжение беседы — тогда этот тумблер подцепляет контекст.
+          '<label class="cam-link"><input type="checkbox" id="camLink"><i></i>' +
+          '<span>Видеть текущий диалог</span></label>' +
         '</div>' +
         '<div class="cam-col-right">' +
           '<div class="cam-feed" id="camFeed"></div>' +
@@ -2364,8 +2510,20 @@ async function startCam() {
   // Каждое включение камеры — чистый лист: разговор «что я вижу» не должен
   // ни продолжать прошлый сеанс, ни примешиваться к основному диалогу.
   S.camChatId = null;
+  S.camLink = false;                   // по умолчанию камера вне контекста
   S.camNode = buildCamCard();
   stream().appendChild(S.camNode);
+  const link = $('#camLink');
+  if (link) {
+    link.checked = false;
+    link.addEventListener('change', () => {
+      S.camLink = link.checked;
+      blip(link.checked);
+      camSay(link.checked
+        ? 'Теперь вижу текущий диалог — отвечаю с учётом того, о чём мы говорили.'
+        : 'Отвязался от диалога: снова смотрю только на кадр.', 'sys');
+    });
+  }
   // окно камеры сворачивается кликом по любому пустому месту (не по видео)
   addFoldButton(S.camNode, { cls: 'th-cam', icon: ICO.cam, title: 'Камера', tag: 'свёрнута' });
   scrollDown(true);
@@ -2376,7 +2534,7 @@ async function startCam() {
     $('#cam').srcObject = S.camStream;
     camState('трансляция · смотрю', true);
     camSay('Камера включена. Смотрю, что происходит.', 'sys');
-    beep(720, 0.09);
+    sfx('start');
     S.camPrevPix = null;
     S.camTimer = setInterval(camTick, CAM_TICK);
   } catch (e) {
@@ -2547,7 +2705,7 @@ function renderSanctions() {
     S.sanctionNodes[key] = card;
     stream().appendChild(card);
     scrollDown(true);
-    beep(340, 0.28);
+    sfx('stop');
   });
   // решённые где-то ещё — закрываем карточку
   const live = new Set(S.approvals.map((a) => String(a.id)));
@@ -2698,6 +2856,7 @@ function flyToFiles(chip, name) {
   const b = target.getBoundingClientRect();
   if (!a.width || !b.width) { toast((name || 'файл') + ' готов', 'success', 'Файл'); return; }
 
+  sfx('fly');
   const fly = el('div', 'file-fly');
   fly.textContent = '📄 ' + (name || 'файл');
   fly.style.left = a.left + 'px';
@@ -2720,13 +2879,13 @@ function flyToFiles(chip, name) {
   fly.animate([
     { transform: 'translate(0,0) scale(1)', filter: 'brightness(1)', offset: 0 },
     // отделился: приподнялся, чуть подрос и подсветился — видно, что оторвался
-    { transform: 'translate(0,-11px) scale(1.06)', filter: 'brightness(1.35)', offset: .55,
+    { transform: 'translate(0,-10px) scale(1.05)', filter: 'brightness(1.18)', offset: .55,
       easing: 'cubic-bezier(.2,.9,.3,1)' },
     // висит: тот же кадр — неподвижная пауза перед броском
-    { transform: 'translate(0,-11px) scale(1.06)', filter: 'brightness(1.35)', offset: 1 }
+    { transform: 'translate(0,-10px) scale(1.05)', filter: 'brightness(1.18)', offset: 1 }
   ], { duration: LIFT, fill: 'forwards' }).onfinish = () => {
     fly.animate([
-      { transform: 'translate(0,-11px) scale(1.06)', opacity: 1, offset: 0 },
+      { transform: 'translate(0,-10px) scale(1.05)', opacity: 1, offset: 0 },
       { transform: 'translate(' + (dx * 0.45) + 'px,' + (dy * 0.35 - 46) + 'px) scale(.78)',
         opacity: .95, offset: .5 },
       { transform: 'translate(' + (dx * 0.92) + 'px,' + (dy * 0.92) + 'px) scale(.42)',
@@ -2811,12 +2970,24 @@ function toggleNotePanel(force) {
   const panel = $('#notePanel');
   if (!panel) return;
   const open = force != null ? force : panel.hidden;
-  panel.hidden = !open;
   if (open) {
+    panel.classList.remove('np-closing');
+    panel.hidden = false;
     renderNotePanel();
     // открыл — значит увидел: гасим счётчик непрочитанного
     api('/api/notifications/read', {}).then(() => { S.unread = 0; renderNotePanel(); });
+    return;
   }
+  // Закрываем зеркально: панель уезжает тем же движением, каким приехала.
+  // Раньше она просто пропадала — открытие было плавным, закрытие рывком.
+  if (panel.hidden || panel.dataset.closing === '1') return;
+  panel.dataset.closing = '1';
+  panel.classList.add('np-closing');
+  setTimeout(() => {
+    panel.hidden = true;
+    panel.classList.remove('np-closing');
+    panel.dataset.closing = '';
+  }, 200);                              // = длительность npOut в CSS
 }
 
 function renderNotes() {

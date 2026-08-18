@@ -221,6 +221,10 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   animation:npIn .24s cubic-bezier(.2,.9,.3,1) both}
 .note-panel[hidden]{display:none}
 @keyframes npIn{from{opacity:0;transform:translateY(-10px) scale(.97)}}
+/* Закрытие — ровно то же движение назад, к колокольчику, а не мгновенное
+   исчезновение: панель уходит туда же, откуда выехала. */
+.note-panel.np-closing{animation:npOut .2s cubic-bezier(.4,0,1,1) both}
+@keyframes npOut{to{opacity:0;transform:translateY(-10px) scale(.97)}}
 .np-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:11px 14px;border-bottom:1px solid var(--line);font-size:12px;color:var(--tx2);
   background:#0c1826}
@@ -234,6 +238,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .np-item{position:relative;overflow:hidden;border-radius:11px;margin-bottom:6px;
   background:rgba(221,85,102,.16)}
 .np-item.np-gone{animation:npGone .26s cubic-bezier(.4,0,1,1) both}
+/* «Очистить все» — не мгновенное опустошение списка, а волна: строки
+   улетают одна за другой сверху вниз. Задержку каждой задаёт JS. */
+.np-item.np-sweep{animation:npGone .24s cubic-bezier(.4,0,1,1) both}
 @keyframes npGone{
   from{opacity:1;max-height:120px;margin-bottom:6px}
   to  {opacity:0;max-height:0;margin-bottom:0;padding:0}}
@@ -410,10 +417,24 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   box-shadow:0 0 8px var(--cy),0 0 18px rgba(0,200,240,.6);
   animation:twBlink 1.05s steps(1,end) infinite}
 @keyframes twBlink{0%,49%{opacity:1}50%,100%{opacity:.12}}
-.tw-quip{font-size:9.5px;letter-spacing:.06em;color:var(--tx3);opacity:.62;
-  font-family:var(--fm);white-space:nowrap}
-.tw-quip.in{animation:quipIn .45s cubic-bezier(.2,.8,.3,1) both}
-@keyframes quipIn{from{opacity:0;transform:translateX(-4px)}to{opacity:.62;transform:none}}
+/* ЖИВАЯ ПОДПИСЬ СТАТУСА.
+   Была 9.5px цветом --tx3 (#4d6d84) при opacity .62 — на тёмном фоне это
+   практически невидимо, поэтому «бегущего текста» никто и не замечал.
+   И бегущим он не был вовсе: просто менялся раз в 2.2 с.
+   Теперь по надписи ПОСТОЯННО бежит светлый блик — движение видно всегда,
+   даже пока фраза одна и та же. Это и есть признак «идёт работа». */
+.tw-quip,.st-text{font-size:11.5px;letter-spacing:.04em;font-family:var(--fm);
+  white-space:nowrap;color:var(--tx2);
+  background-image:linear-gradient(100deg,
+    var(--tx2) 0%,var(--tx2) 36%,#eaf9ff 47%,var(--cy2) 53%,var(--tx2) 64%,var(--tx2) 100%);
+  background-size:260% 100%;background-repeat:no-repeat;
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;
+  animation:stShimmer 2.1s linear infinite}
+@keyframes stShimmer{from{background-position:170% 0}to{background-position:-70% 0}}
+/* смена фразы: короткий подъезд слева, чтобы обновление было заметно */
+.tw-quip.in{animation:stShimmer 2.1s linear infinite,quipIn .4s cubic-bezier(.2,.8,.3,1) both}
+@keyframes quipIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
 
 .think-stream{font-family:var(--fm);font-size:11.5px;color:var(--tx3);line-height:1.75;white-space:pre-wrap;
   max-height:220px;overflow:auto;padding:2px 0;scroll-behavior:smooth}
@@ -551,12 +572,13 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .file-fly{position:fixed;z-index:130;pointer-events:none;
   padding:7px 12px;border-radius:10px;font:13px/1.2 var(--fm);color:var(--tx);
   background:linear-gradient(180deg,rgba(0,60,86,.95),rgba(0,32,48,.95));
-  border:1px solid rgba(0,200,240,.45);box-shadow:0 0 18px rgba(0,200,240,.35);
+  /* чуть приглушено: свечение было слишком заметным на светлом кадре */
+  border:1px solid rgba(0,200,240,.34);box-shadow:0 0 13px rgba(0,200,240,.24);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transform-origin:center}
 .nav-item.nav-lit{animation:navLit .9s ease-out}
 @keyframes navLit{
   0%  {box-shadow:inset 0 0 0 0 rgba(0,200,240,0)}
-  25% {box-shadow:inset 0 0 20px rgba(0,200,240,.35),0 0 10px rgba(0,200,240,.25);color:var(--cy2)}
+  25% {box-shadow:inset 0 0 16px rgba(0,200,240,.26),0 0 8px rgba(0,200,240,.18);color:var(--cy2)}
   100%{box-shadow:inset 0 0 0 0 rgba(0,200,240,0)}}
 
 /* ---------- варианты ответа над полем ввода ---------- */
@@ -871,6 +893,21 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .cam-chat::-webkit-scrollbar{width:6px}
 .cam-chat::-webkit-scrollbar-thumb{background:rgba(0,200,240,.22);border-radius:4px}
 .cam-note{font-size:11px;line-height:1.55;color:var(--tx3)}
+/* Тумблер «Видеть текущий диалог». По умолчанию выключен: камера — свой
+   контекст. Включённый — подсвечен, чтобы было видно, что она слушает беседу. */
+.cam-link{display:flex;align-items:center;gap:8px;margin-top:9px;cursor:pointer;
+  font-size:11px;color:var(--tx3);user-select:none;transition:color .18s}
+.cam-link:hover{color:var(--tx2)}
+.cam-link input{position:absolute;opacity:0;width:0;height:0}
+.cam-link i{position:relative;width:32px;height:17px;border-radius:999px;flex:0 0 auto;
+  border:1px solid var(--line2);background:rgba(255,255,255,.05);transition:.2s}
+.cam-link i::after{content:'';position:absolute;top:2px;left:2px;width:11px;height:11px;
+  border-radius:50%;background:var(--tx3);transition:transform .24s cubic-bezier(.5,1.6,.5,1),background .2s}
+.cam-link input:checked + i{background:rgba(0,200,240,.2);border-color:rgba(0,200,240,.6);
+  box-shadow:inset 0 0 12px rgba(0,200,240,.25)}
+.cam-link input:checked + i::after{transform:translateX(15px);
+  background:radial-gradient(circle,#fff,var(--cy2));box-shadow:0 0 9px var(--cy)}
+.cam-link input:checked ~ span{color:var(--cy2)}
 /* узкий экран: колонки складываются в одну, видео сверху */
 @media (max-width:760px){
   .cam-live{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr);height:clamp(380px,70vh,620px)}
@@ -989,14 +1026,17 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 @keyframes thumbIn{
   from{opacity:0;transform:scale(.95) translateY(-5px)}
   to{opacity:1;transform:none}}
-/* Яркость вспышки: .17 было слишком, .09 — почти незаметно. Середина .13 —
-   проблеск виден, но не спорит с текстом. */
+/* Вспышка при сворачивании: ЯРКАЯ и короткая.
+   Прежняя тускнела .8 секунды через промежуточный кадр на 55% — из-за него
+   свечение будто замирало на полпути и висело хвостом уже после того, как
+   миниатюра встала на место. Тут ровно два кадра и монотонное затухание:
+   вспышка бьёт сразу и честно гаснет, не «залипая». Длительность подогнана
+   под появление миниатюры (.26с), чтобы это читалось одним событием. */
 .thumb{animation:thumbIn .26s cubic-bezier(.34,1.3,.64,1) both,
-                 thumbGlow .8s ease-out .08s both}
+                 thumbGlow .34s ease-out both}
 @keyframes thumbGlow{
-  from{box-shadow:0 0 0 0 rgba(0,200,240,.13),inset 0 0 14px rgba(0,200,240,.1)}
-  55% {box-shadow:0 0 0 4px rgba(0,200,240,.045),inset 0 0 9px rgba(0,200,240,.05)}
-  to  {box-shadow:0 0 0 8px rgba(0,200,240,0),inset 0 0 0 rgba(0,200,240,0)}}
+  from{box-shadow:0 0 0 0 rgba(0,200,240,.55),inset 0 0 22px rgba(0,200,240,.4)}
+  to  {box-shadow:0 0 0 10px rgba(0,200,240,0),inset 0 0 0 rgba(0,200,240,0)}}
 .card-head.open{animation:headGlow .7s ease-out}
 @keyframes headGlow{
   from{box-shadow:inset 0 0 18px rgba(0,200,240,.14),inset 0 -1px 0 var(--line)}
@@ -1339,27 +1379,30 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   background:linear-gradient(180deg,var(--cy2),var(--cy));
   box-shadow:0 0 16px rgba(0,200,240,.5);transform:translateY(-1px)}
 
-/* кнопки */
-.ui-btn,.ui-send{padding:9px 17px;border-radius:11px;font-size:13px;cursor:pointer;
+/* кнопки (кнопки «отправить выбор» больше нет — выбор уходит сам) */
+.ui-btn{padding:9px 17px;border-radius:11px;font-size:13px;cursor:pointer;
   color:var(--cy2);border:1px solid rgba(0,200,240,.4);background:rgba(0,200,240,.08);
   transition:background .18s,box-shadow .18s,transform .12s}
-.ui-btn:hover,.ui-send:hover{background:rgba(0,200,240,.18);box-shadow:0 0 14px rgba(0,200,240,.3)}
-.ui-btn:active,.ui-send:active{transform:scale(.97)}
-.ui-send{margin-top:6px;width:100%;font-weight:600}
-.ui-send:disabled{opacity:.5;cursor:default;box-shadow:none;background:rgba(255,255,255,.04);
-  color:var(--tx3);border-color:var(--line2)}
+.ui-btn:hover{background:rgba(0,200,240,.18);box-shadow:0 0 14px rgba(0,200,240,.3)}
+.ui-btn:active{transform:scale(.97)}
+.ui-btn:disabled,.ui-range:disabled,.ui-sw:disabled{opacity:.55;cursor:default;box-shadow:none}
 
 
 /* ---- D2. Панель ```ui: разные цвета и более живые реакции ----
    Один цвет на всю панель делал её похожей на единый блок. Теперь у каждой
    строки свой тон (--h) — слайдер, тумблер и плитки видно как разные вещи. */
-.ui-row{--h:0,200,240;animation:uiRowIn .42s cubic-bezier(.34,1.4,.64,1) both}
-@keyframes uiRowIn{from{opacity:0;transform:translateY(10px) scale(.97)}}
-.ui-row.c1{--h:0,200,240}     /* бирюза */
-.ui-row.c2{--h:143,134,207}   /* фиолет */
-.ui-row.c3{--h:63,191,149}    /* зелень */
-.ui-row.c4{--h:217,164,65}    /* золото */
-.ui-row.c5{--h:224,110,160}   /* розовый */
+/* Появление строк — спокойное: без пружины и без «наезда» масштабом.
+   Прежняя кривая (.34,1.4,.64,1) давала отскок, панель будто подпрыгивала. */
+.ui-row{--h:0,200,240;animation:uiRowIn .32s cubic-bezier(.22,.85,.3,1) both}
+@keyframes uiRowIn{from{opacity:0;transform:translateY(6px)}}
+/* Тон задаётся классом на ЛЮБОМ элементе: и на строке, и на отдельной плитке.
+   Раньше правила висели только на .ui-row, поэтому плитки внутри одной строки
+   всегда были одного цвета — панель выглядела одноцветной. */
+.c1{--h:0,200,240}     /* бирюза */
+.c2{--h:143,134,207}   /* фиолет */
+.c3{--h:63,191,149}    /* зелень */
+.c4{--h:217,164,65}    /* золото */
+.c5{--h:224,110,160}   /* розовый */
 .ui-row .ui-val{color:rgb(var(--h));text-shadow:0 0 9px rgba(var(--h),.6)}
 
 /* слайдер играет своим цветом, а бегунок «дышит» при перетаскивании */
@@ -1369,9 +1412,9 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .ui-row .ui-range::-moz-range-thumb{background:radial-gradient(circle,#fff,rgb(var(--h)) 55%,rgba(var(--h),.45));
   box-shadow:0 0 12px rgba(var(--h),.9),0 0 26px rgba(var(--h),.5)}
 .ui-row .ui-range:active::-webkit-slider-thumb{animation:thumbPulse .5s ease-in-out infinite}
-@keyframes thumbPulse{50%{transform:scale(1.42)}}
+@keyframes thumbPulse{50%{transform:scale(1.22)}}
 .ui-val.bump{animation:valBump .3s cubic-bezier(.34,1.6,.64,1)}
-@keyframes valBump{35%{transform:translateY(-5px) scale(1.24) rotate(-4deg)}}
+@keyframes valBump{40%{transform:translateY(-3px) scale(1.12)}}
 
 /* тумблер: включается с отскоком и вспышкой в своём цвете */
 .ui-row .ui-sw.on{background:rgba(var(--h),.22);border-color:rgba(var(--h),.65);
@@ -1380,20 +1423,34 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   box-shadow:0 0 12px rgba(var(--h),.95),0 0 24px rgba(var(--h),.6)}
 .ui-row .ui-sw:active{transform:scale(.94)}
 .ui-sw{transition:background .22s,border-color .22s,box-shadow .22s,transform .12s}
-.ui-sw.on i{animation:swFlip .34s cubic-bezier(.34,1.7,.5,1)}
-@keyframes swFlip{40%{transform:translateX(26px) scale(1.18)}}
+.ui-sw.on i{animation:swFlip .28s cubic-bezier(.3,1.3,.5,1)}
+@keyframes swFlip{45%{transform:translateX(24px) scale(1.08)}}
 
 /* плитки: подпрыгивают при наведении и «щёлкают» при выборе */
-.ui-row .ui-tile:hover{border-color:rgba(var(--h),.6);color:var(--tx);
-  transform:translateY(-3px) rotate(-1deg);box-shadow:0 6px 16px rgba(var(--h),.18)}
-.ui-row .ui-tile.on{background:linear-gradient(180deg,rgba(var(--h),.95),rgb(var(--h)));
-  box-shadow:0 0 20px rgba(var(--h),.6);animation:tilePop .38s cubic-bezier(.34,1.6,.64,1)}
-@keyframes tilePop{0%{transform:scale(.9)}45%{transform:scale(1.12) rotate(1.5deg)}100%{transform:translateY(-1px)}}
+/* Невыбранная плитка уже окрашена: рамка и текст в своём тоне — видно, что
+   варианты РАЗНЫЕ, ещё до того как на них навели. */
+.ui-tile{color:rgba(var(--h),.9);border-color:rgba(var(--h),.32);
+  background:rgba(var(--h),.07)}
+.ui-tile:hover{border-color:rgba(var(--h),.65);color:rgb(var(--h));
+  background:rgba(var(--h),.14);transform:translateY(-2px);
+  box-shadow:0 5px 14px rgba(var(--h),.16)}
+.ui-tile.on{color:#03121a;border-color:transparent;font-weight:600;
+  background:linear-gradient(180deg,rgba(var(--h),.95),rgb(var(--h)));
+  box-shadow:0 0 18px rgba(var(--h),.5);animation:tilePop .26s cubic-bezier(.3,1.25,.5,1)}
+/* щелчок без кувырка: короткое сжатие и возврат */
+@keyframes tilePop{0%{transform:scale(.94)}100%{transform:translateY(-1px)}}
+.ui-btn{color:rgb(var(--h));border-color:rgba(var(--h),.42);background:rgba(var(--h),.1)}
+.ui-btn:hover{background:rgba(var(--h),.2);box-shadow:0 0 14px rgba(var(--h),.3)}
 
-/* кнопка отправки: пока не нажата — мягко переливается */
-.ui-send{background:linear-gradient(90deg,rgba(0,200,240,.14),rgba(143,134,207,.14),rgba(63,191,149,.14),rgba(0,200,240,.14));
-  background-size:300% 100%;animation:uiSendFlow 6s linear infinite}
-@keyframes uiSendFlow{to{background-position:300% 0}}
-.ui-send:disabled{animation:none}
-.ui-panel.ui-sent{border-color:rgba(63,191,149,.45);animation:uiSent .6s ease-out}
-@keyframes uiSent{0%{box-shadow:inset 0 0 34px rgba(63,191,149,.3)}100%{box-shadow:inset 0 0 24px rgba(0,200,240,.07)}}
+/* Кнопки подтверждения нет вовсе: выбор уходит сам. Вместо неё — тонкая
+   полоска внизу панели, которая заполняется за те ~0.9 с, что даются на
+   «передумать». Видно, что сейчас произойдёт, и можно успеть поправить. */
+.ui-panel{position:relative}
+.ui-panel.ui-arm::after{content:'';position:absolute;left:0;bottom:0;height:2px;
+  border-radius:0 0 14px 14px;
+  background:linear-gradient(90deg,var(--cy),var(--violet));
+  animation:uiArm .9s linear both}
+@keyframes uiArm{from{width:0}to{width:100%}}
+.ui-panel.ui-sent{border-color:rgba(63,191,149,.45);animation:uiSent .5s ease-out}
+@keyframes uiSent{0%{box-shadow:inset 0 0 30px rgba(63,191,149,.28)}100%{box-shadow:inset 0 0 24px rgba(0,200,240,.07)}}
+.ui-panel.ui-sent .ui-row{opacity:.75}
