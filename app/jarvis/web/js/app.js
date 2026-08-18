@@ -1288,7 +1288,7 @@ const ICO = {
 function growHeight(node, from, to) {
   if (!node || !(to > 0) || Math.abs(to - from) < 4) return;
   if (node._gt) { clearTimeout(node._gt); node._gt = null; }
-  const dur = Math.max(150, Math.min(280, 130 + Math.abs(to - from) * 0.32));
+  const dur = Math.max(110, Math.min(190, 90 + Math.abs(to - from) * 0.22));
   const prev = node.style.overflow;
   node.style.overflow = 'hidden';
   node.style.transition = 'none';

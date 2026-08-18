@@ -334,6 +334,126 @@ def _parse_replies(out: str) -> List[str]:
     return clean[:3]
 
 
+def _step_text(item: Any) -> str:
+    """Достать человеческую формулировку шага из чего угодно.
+
+    Модель может отдать строку, а может — объект вида
+    {"step": 1, "action": "..."} или {"описание": "..."}. Раньше такой объект
+    молча приводился к строке, и в карточке плана у пользователя оказывалось
+    «{\'step\': 1, \'action\': ...}» вместо текста шага.
+    """
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        # берём первое осмысленное текстовое поле, не гадая по именам ключей:
+        # служебные номера отсеиваем по типу, а не по списку названий
+        for v in item.values():
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return ""
+    if isinstance(item, list):
+        parts = [_step_text(x) for x in item]
+        return "; ".join(p for p in parts if p)
+    if item is None or isinstance(item, bool):
+        return ""
+    return str(item).strip()
+
+
+def parse_plan_steps(text: str) -> List[str]:
+    """Разобрать ответ планировщика.
+
+    ПОЧЕМУ ЗДЕСЬ НЕ ОДИН json.loads. Раньше план доставался единственным
+    способом: найти /\[.*\]/ и скормить json.loads. Это работало ровно до тех
+    пор, пока модель отвечала идеально. А она вероятностная: то допишет
+    пояснение и в текст попадут ДВА массива (жадный поиск склеит их и разбор
+    рухнет), то отдаст массив объектов, то одинарные кавычки, то упрётся в
+    лимит токенов и оборвёт хвост на середине. Любой сбой давал либо пустой
+    план, либо карточку с сырым JSON внутри — это и был «некорректно
+    отобразился план».
+    Формат ответа гарантировать нельзя, поэтому разбор идёт лесенкой: от
+    строгого к терпимому, и последним рубежом — обычный нумерованный список.
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+
+    # ограду ```json ... ``` снимаем сразу: внутри неё обычно чистый ответ
+    fence = re.search(r"```(?:json)?\s*(.+?)```", text, re.S)
+    if fence:
+        text = fence.group(1).strip()
+
+    def clean(items: Any) -> List[str]:
+        if not isinstance(items, list):
+            return []
+        out = []
+        for it in items:
+            t = _step_text(it)
+            if t:
+                out.append(t[:200])
+        return out[:8]
+
+    # 1. Текст целиком — корректный JSON.
+    try:
+        got = clean(json.loads(text))
+        if got:
+            return got
+    except Exception:
+        pass
+
+    # 2. Ищем сбалансированный массив, а не «от первой скобки до последней»:
+    #    жадный поиск склеивал два разных массива в один битый кусок.
+    for start in (m.start() for m in re.finditer(r"\[", text)):
+        depth, in_str, esc_ch = 0, False, False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if esc_ch:
+                esc_ch = False
+                continue
+            if ch == "\\":
+                esc_ch = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    chunk = text[start:i + 1]
+                    for candidate in (chunk, chunk.replace("'", '"')):
+                        try:
+                            got = clean(json.loads(candidate))
+                            if got:
+                                return got
+                        except Exception:
+                            continue
+                    break
+
+    # 3. Ответ оборвался на полуслове (кончились токены): вытаскиваем те
+    #    строки в кавычках, что успели прийти, — лучше неполный план, чем
+    #    никакого.
+    quoted = re.findall(r'"([^"\n]{3,200})"', text)
+    if len(quoted) >= 2:
+        return [q.strip() for q in quoted][:8]
+
+    # 4. Модель ответила обычным нумерованным или маркированным списком.
+    lines = []
+    for raw in text.splitlines():
+        ln = raw.strip()
+        if not ln:
+            continue
+        ln = re.sub(r"^[-*\u2022]\s+", "", ln)
+        ln = re.sub(r"^\d+[.)]\s*", "", ln)
+        if ln and ln != raw.strip() or re.match(r"^\d+[.)]", raw.strip()):
+            lines.append(ln[:200])
+    if len(lines) >= 2:
+        return lines[:8]
+    return []
+
+
 class Agent:
     """Один прогон агента (чат-ответ или фоновая задача)."""
 
@@ -417,14 +537,9 @@ class Agent:
                  "Ответь ТОЛЬКО JSON-массивом строк на русском, без пояснений."},
                 {"role": "user", "content": task},
             ], tier="base", max_tokens=600, temperature=0.3)
-            text = result.get("content", "")
-            match = re.search(r"\[.*\]", text, re.S)
-            if match:
-                steps = json.loads(match.group(0))
-                return [str(s)[:200] for s in steps][:8]
+            return parse_plan_steps(result.get("content", ""))
         except Exception:
-            pass
-        return []
+            return []
 
     # ------------------------------------------------------------------ run
     def run(self, messages: List[Dict[str, Any]], user_text: str = "",

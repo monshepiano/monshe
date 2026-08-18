@@ -554,6 +554,15 @@ class Handler(BaseHTTPRequestHandler):
             self._sse_close()
 
 
+def _warm_models() -> None:
+    """Заранее получить каталоги моделей, чтобы первый ответ не ждал сети."""
+    try:
+        for prov in (llm.active_providers() or ["cloudru"]):
+            llm.list_models(prov)
+    except Exception:
+        pass
+
+
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -575,6 +584,11 @@ def run() -> None:
     host = CONFIG.get("server.host", "127.0.0.1")
     port = find_port(int(CONFIG.get("server.port", 8765)), host)
     auto.start()
+    # Каталог моделей греем сразу при старте, в фоне. Пользователь всё равно
+    # тратит несколько секунд на то, чтобы открыть окно и набрать вопрос, —
+    # пусть это время работает на нас. Иначе первый вопрос за сеанс платил
+    # за поход в облако за списком моделей.
+    threading.Thread(target=_warm_models, name="jarvis-warm", daemon=True).start()
     httpd = Server((host, port), Handler)
     url = "http://%s:%d/" % ("localhost" if host in ("127.0.0.1", "0.0.0.0") else host, port)
     banner = """

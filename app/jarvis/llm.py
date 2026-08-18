@@ -79,13 +79,28 @@ def list_models_meta(provider: str, force: bool = False) -> List[Dict[str, Any]]
     """
     with _CACHE_LOCK:
         cached = _META_CACHE.get(provider)
-        if cached and not force and time.time() - cached[0] < 600:
+        if cached and not force:
+            age = time.time() - cached[0]
+            if age < 600:
+                return cached[1]
+            # СТАРЫЙ КАТАЛОГ ЛУЧШЕ, ЧЕМ ОЖИДАНИЕ. Каталог моделей меняется раз
+            # в недели, а протухал раз в 10 минут — и тогда первый же вопрос
+            # пользователя вставал в очередь за походом в облако за списком
+            # моделей (до 25 с таймаута). Именно поэтому Джарвис «иногда»
+            # отвечал медленно: скорость зависела от того, попал ли вопрос в
+            # окно обновления кэша. Отдаём что есть, обновляем в фоне.
+            if cached[1] and not _META_BUSY.get(provider):
+                _META_BUSY[provider] = True
+                threading.Thread(target=_refresh_meta, args=(provider,),
+                                 name="jarvis-models", daemon=True).start()
             return cached[1]
     conf = provider_conf(provider)
     if not conf.get("api_key"):
         return []
     try:
-        with _request(conf["base_url"].rstrip("/") + "/models", conf["api_key"], None, "GET", timeout=25) as resp:
+        # таймаут короткий: каталог — вспомогательные данные, а не ответ
+        # пользователю. Не дождались — уйдём на предпочтения из настроек.
+        with _request(conf["base_url"].rstrip("/") + "/models", conf["api_key"], None, "GET", timeout=6) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         items = [m for m in body.get("data", []) if m.get("id")]
     except Exception:
@@ -94,6 +109,19 @@ def list_models_meta(provider: str, force: bool = False) -> List[Dict[str, Any]]
         _META_CACHE[provider] = (time.time(), items)
         _MODELS_CACHE[provider] = (time.time(), [m["id"] for m in items])
     return items
+
+
+_META_BUSY: Dict[str, bool] = {}
+
+
+def _refresh_meta(provider: str) -> None:
+    """Обновить каталог моделей в фоне, никого не задерживая."""
+    try:
+        list_models_meta(provider, force=True)
+    except Exception:
+        pass
+    finally:
+        _META_BUSY.pop(provider, None)
 
 
 def model_type(item: Dict[str, Any]) -> str:
@@ -184,6 +212,24 @@ def flatten_images(messages: List[Dict]) -> List[Dict]:
 def pick_model(tier: str, provider: str = "cloudru") -> str:
     """Выбирает конкретное имя модели под «уровень» из доступных у провайдера."""
     prefs = CONFIG.get("model_tiers." + tier, []) or []
+
+    # БЫСТРЫЙ ПУТЬ. Каталог нужен только чтобы проверить, существует ли
+    # модель. Но пока каталог не пришёл, ждать его нельзя: это ожидание
+    # стоит перед первым словом ответа. Если каталог уже лежит в кэше —
+    # сверяемся с ним; если нет — берём предпочтение из настроек и идём
+    # спрашивать модель, а каталог подтянется в фоне к следующему разу.
+    # Ошибиться тут почти невозможно: имена в model_tiers мы задаём сами,
+    # а если модель вдруг исчезла, провайдер ответит ошибкой и сработает
+    # обычный запасной путь.
+    with _CACHE_LOCK:
+        have_cache = bool(_MODELS_CACHE.get(provider) or _META_CACHE.get(provider))
+    if not have_cache and prefs and tier != "vision":
+        if not _META_BUSY.get(provider):
+            _META_BUSY[provider] = True
+            threading.Thread(target=_refresh_meta, args=(provider,),
+                             name="jarvis-models", daemon=True).start()
+        return prefs[0]
+
     available = list_models(provider)
     if tier == "vision" and available:
         # Для зрения выбираем ТОЛЬКО среди зрячих моделей. Иначе предпочтение
