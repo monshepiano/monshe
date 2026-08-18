@@ -87,12 +87,24 @@ function fmtTime(ts) {
 function stampTime(node, ts) {
   if (!node) return null;
   const sec = Number(ts) || (Date.now() / 1000);
-  const prev = node.querySelector(':scope > .msg-time, :scope .ai-name > .msg-time');
+  const prev = node.querySelector('.msg-time');
   if (prev) prev.remove();
-  const t = el('span', 'msg-time', esc(fmtTime(sec)));
+  const d = new Date(sec * 1000);
+  const hhmm = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  // Бейдж узкий — шире иконки ему быть нельзя, иначе он лезет на текст.
+  // Поэтому дата (если сообщение не сегодняшнее) уходит отдельной строкой сверху.
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const day = sameDay ? '' : d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+  const t = el('span', 'msg-time' + (day ? ' two' : ''),
+    (day ? '<i>' + esc(day) + '</i>' : '') + esc(hhmm));
   t.title = new Date(sec * 1000).toLocaleString('ru-RU');
-  const name = node.querySelector(':scope > .ai-body > .ai-name');
-  if (name) name.appendChild(t); else node.appendChild(t);
+  // Время живёт на самой иконке сообщения: у ответа — бейджем на реакторе,
+  // у своей реплики — такой же меткой рядом с пузырём. Отдельной строки под
+  // сообщением больше нет, лента не растёт по высоте из-за времени.
+  const av = node.querySelector(':scope > .ai-avatar');
+  if (av) { av.appendChild(t); return t; }
+  const bubble = node.querySelector(':scope > .bubble-user');
+  if (bubble) node.insertBefore(t, bubble); else node.appendChild(t);
   return t;
 }
 
@@ -2216,6 +2228,103 @@ async function deleteSelection() {
     });
 }
 
+/* Рамка выделения («лассо»), как на рабочем столе Finder.
+   Тянуть можно только с пустого места сетки: на карточках висит родной
+   drag-and-drop переноса файлов, и перехватывать его нельзя — иначе сломается
+   перетаскивание в папки. Пока рамка растянута, считаем пересечение с
+   прямоугольниками карточек: попал — выделен. Cmd/Ctrl и Shift добавляют к
+   тому, что уже выделено, обычное протягивание начинает выбор заново. */
+function initLasso(grid) {
+  let box = null, sx = 0, sy = 0, base = null, active = false;
+
+  const rectOf = (x1, y1, x2, y2) => ({
+    left: Math.min(x1, x2), top: Math.min(y1, y2),
+    right: Math.max(x1, x2), bottom: Math.max(y1, y2),
+  });
+
+  const apply = (r) => {
+    const g = grid.getBoundingClientRect();
+    const next = new Set(base);
+    $$('#fileGrid .fcard').forEach((c) => {
+      const b = c.getBoundingClientRect();
+      // координаты карточки приводим к системе отсчёта сетки с учётом прокрутки
+      const cl = b.left - g.left + grid.scrollLeft, ct = b.top - g.top + grid.scrollTop;
+      const hit = cl < r.right && cl + b.width > r.left && ct < r.bottom && ct + b.height > r.top;
+      if (hit) next.add(c.dataset.path);
+    });
+    S.fsel = next;
+    syncSelection();
+  };
+
+  let last = null, timer = 0;
+
+  // тянем к нижнему/верхнему краю — сетка едет сама, как в Finder
+  const autoScroll = () => {
+    if (!active || !last) return;
+    const g = grid.getBoundingClientRect();
+    const edge = 40;
+    let d = 0;
+    if (last.clientY > g.bottom - edge) d = Math.min(18, (last.clientY - (g.bottom - edge)) / 2);
+    else if (last.clientY < g.top + edge) d = -Math.min(18, ((g.top + edge) - last.clientY) / 2);
+    if (d) { grid.scrollTop += d; draw(last); }
+  };
+
+  const draw = (e) => {
+    const g = grid.getBoundingClientRect();
+    const x = e.clientX - g.left + grid.scrollLeft;
+    const y = e.clientY - g.top + grid.scrollTop;
+    const r = rectOf(sx, sy, x, y);
+    box.style.left = r.left + 'px';
+    box.style.top = r.top + 'px';
+    box.style.width = (r.right - r.left) + 'px';
+    box.style.height = (r.bottom - r.top) + 'px';
+    apply(r);
+  };
+
+  const onMove = (e) => {
+    const g = grid.getBoundingClientRect();
+    const x = e.clientX - g.left + grid.scrollLeft;
+    const y = e.clientY - g.top + grid.scrollTop;
+    if (!active) {
+      if (Math.abs(x - sx) < 5 && Math.abs(y - sy) < 5) return;  // это просто клик
+      active = true;
+      box = el('div', 'lasso');
+      grid.appendChild(box);
+      grid.classList.add('lassoing');
+      timer = setInterval(autoScroll, 50);
+    }
+    last = { clientX: e.clientX, clientY: e.clientY };
+    draw(e);
+    e.preventDefault();
+  };
+
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    if (timer) { clearInterval(timer); timer = 0; }
+    last = null;
+    if (box) box.remove();
+    box = null;
+    grid.classList.remove('lassoing');
+    // после протягивания браузер ещё пришлёт click по пустому месту — он не
+    // должен сбросить только что набранное выделение
+    if (active) grid.dataset.lasso = '1';
+    active = false;
+  };
+
+  grid.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest('.fcard')) return;   // с карточки начинается перенос, не рамка
+    const g = grid.getBoundingClientRect();
+    sx = e.clientX - g.left + grid.scrollLeft;
+    sy = e.clientY - g.top + grid.scrollTop;
+    base = (e.metaKey || e.ctrlKey || e.shiftKey) ? new Set(S.fsel) : new Set();
+    if (!base.size && S.fsel.size) { S.fsel = new Set(); syncSelection(); }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  });
+}
+
 function downloadSelection() {
   const cards = $$('#fileGrid .fcard.selected');
   let n = 0;
@@ -2398,14 +2507,14 @@ async function uploadToSandbox(files, destDir) {
 }
 
 function renderSbxBar(info, entries) {
-  const nameEl = $('#sbxName'), metaEl = $('#sbxMeta');
+  const nameEl = $('#sbxName');
   if (!nameEl) return;
   S.sandbox = info || {};
   nameEl.textContent = info.name || 'Файлы';
-  const here = (entries || []).length;
-  metaEl.textContent = (info.shared ? 'общая папка · ' : 'папка диалога · ') +
-    'всего ' + (info.files || 0) + ' файл(ов) · ' + fmtSize(info.size || 0) +
-    (S.fdir ? ' · здесь ' + here : '');
+  // сколько всего файлов и сколько места — в подсказке при наведении,
+  // отдельной строкой под именем это только шумело
+  nameEl.title = (info.files || 0) + ' файл(ов) · ' + fmtSize(info.size || 0) +
+    (S.fdir ? ' · в этой папке ' + (entries || []).length : '');
 }
 
 async function viewFile(f, card) {
@@ -2471,7 +2580,6 @@ $('#filesUpload').addEventListener('change', (e) => {
 /* кнопки панели выделения */
 if ($('#selAll')) {
   $('#selAll').addEventListener('click', () => { S.fsel = new Set(S.frows); syncSelection(); });
-  $('#selNone').addEventListener('click', clearSelection);
   $('#selDelete').addEventListener('click', deleteSelection);
   $('#selDownload').addEventListener('click', downloadSelection);
 }
@@ -2497,7 +2605,11 @@ window.addEventListener('keydown', (e) => {
   const grid = $('#fileGrid');
   if (!grid) return;
   // клик по пустому месту снимает выделение — как по рабочему столу в Finder
-  grid.addEventListener('click', (e) => { if (e.target === grid) clearSelection(); });
+  grid.addEventListener('click', (e) => {
+    if (grid.dataset.lasso) { delete grid.dataset.lasso; return; }
+    if (e.target === grid) clearSelection();
+  });
+  initLasso(grid);
   grid.addEventListener('dragover', (e) => {
     e.preventDefault();
     grid.classList.add('drop-root');
