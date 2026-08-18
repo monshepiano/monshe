@@ -610,6 +610,16 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .cam-t{font-family:var(--fm);font-size:10px;color:var(--tx3);flex-shrink:0;padding-top:2px}
 .cam-x{min-width:0}
 .cam-x p{margin:0}
+/* Диалог во время работы камеры живёт внутри её карточки: своя прокрутка,
+   поэтому вкладка не уезжает вверх, сколько бы вопросов ни задали. */
+.cam-chat{display:flex;flex-direction:column;max-height:46vh;overflow-y:auto;
+  margin:2px 0 9px;padding-right:4px;scroll-behavior:smooth}
+.cam-chat:empty{display:none}
+.cam-chat .msg{max-width:100%;margin:0 0 8px}
+.cam-chat .msg-user{justify-content:flex-end}
+.cam-chat .msg-ai{gap:9px}
+.cam-chat::-webkit-scrollbar{width:6px}
+.cam-chat::-webkit-scrollbar-thumb{background:rgba(0,200,240,.22);border-radius:4px}
 .cam-note{font-size:11px;line-height:1.55;color:var(--tx3)}
 
 /* тосты */
@@ -673,19 +683,20 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 /* =================== МИНИАТЮРЫ ОТРАБОТАВШИХ БЛОКОВ ===================
    Камера после закрытия, уведомление после крестика, санкция после решения —
    всё сворачивается в одну компактную строку. Клик разворачивает обратно. */
-.thumb{display:flex;align-items:center;gap:7px;max-width:900px;margin:0 auto 5px;padding:2px 9px;
-  border:1px solid var(--line);border-radius:8px;background:rgba(10,20,34,.45);cursor:pointer;
-  font-size:10.5px;line-height:1.5;color:var(--tx3);transition:.2s;
-  animation:thumbIn .3s cubic-bezier(.2,.8,.3,1) both}
+.thumb{display:flex;align-items:center;gap:6px;max-width:900px;margin:0 auto 2px;padding:0 7px;
+  border:1px solid transparent;border-radius:6px;background:rgba(10,20,34,.32);cursor:pointer;
+  font-size:10px;line-height:18px;height:18px;color:var(--tx3);transition:.16s;
+  animation:thumbIn .25s cubic-bezier(.2,.8,.3,1) both}
 @keyframes thumbIn{from{opacity:0;transform:translateY(-6px) scaleY(.85)}}
-.thumb:hover{border-color:var(--line2);background:rgba(0,200,240,.07);color:var(--tx)}
-.thumb .th-ico{width:15px;height:15px;border-radius:5px;display:grid;place-items:center;flex-shrink:0;
-  font-size:9.5px;background:rgba(0,200,240,.12);color:var(--cy)}
-.thumb .th-ico svg{width:10px;height:10px}
+.thumb:hover{border-color:var(--line);background:rgba(0,200,240,.06);color:var(--tx2)}
+.thumb .th-t b{font-weight:400}
+.thumb .th-ico{width:12px;height:12px;border-radius:0;display:grid;place-items:center;flex-shrink:0;
+  font-size:9px;background:transparent;color:var(--cy);opacity:.75}
+.thumb .th-ico svg{width:9px;height:9px}
 .thumb .th-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .thumb .th-t b{font-weight:500;color:var(--tx)}
-.thumb .th-tag{font-family:var(--fm);font-size:8.5px;letter-spacing:1px;text-transform:uppercase;
-  padding:0 5px;border-radius:5px;border:1px solid var(--line);color:var(--tx3);flex-shrink:0;opacity:.8}
+.thumb .th-tag{font-family:var(--fm);font-size:8px;letter-spacing:.8px;text-transform:uppercase;
+  padding:0 4px;border-radius:4px;border:1px solid var(--line);color:var(--tx3);flex-shrink:0;opacity:.55}
 .thumb .th-open{color:var(--tx3);font-size:13px;flex-shrink:0;transition:.2s}
 .thumb:hover .th-open{color:var(--cy);transform:translateX(2px)}
 .thumb.th-cam .th-ico{background:rgba(87,179,159,.14);color:var(--mint)}
@@ -696,8 +707,8 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .thumb.th-ok .th-tag{border-color:rgba(63,191,149,.35);color:var(--green)}
 .thumb.th-no .th-ico{background:rgba(221,85,102,.14);color:var(--red)}
 .thumb.th-no .th-tag{border-color:rgba(221,85,102,.35);color:var(--red)}
-.thumb .th-time{font-family:var(--fm);font-size:8.5px;color:var(--tx3);flex-shrink:0;opacity:.7}
-.thumb .th-open{font-size:11px}
+.thumb .th-time{font-family:var(--fm);font-size:8px;color:var(--tx3);flex-shrink:0;opacity:.5}
+.thumb .th-open{font-size:10px;opacity:.5}
 .thumb.th-think .th-ico{background:rgba(143,134,207,.14);color:var(--violet)}
 .thumb.th-tool .th-ico,.thumb.th-plan .th-ico{background:rgba(0,200,240,.1)}
 .collapsing{animation:foldOut .3s cubic-bezier(.4,0,.2,1) both}

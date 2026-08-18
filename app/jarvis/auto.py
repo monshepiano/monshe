@@ -233,17 +233,23 @@ def _loop() -> None:
                     elif status == "scheduled":
                         nxt = task.get("next_run") or 0
                         if nxt <= now_ts:
+                            # запускаем СРАЗУ, а не «ставим в очередь и ждём
+                            # следующего круга» — иначе задача опаздывает
+                            # на целый тик сверх назначенного времени
                             db.update_task(task["id"], status="queued")
-                            nearest = 0.5
+                            threading.Thread(target=execute_task, args=(task["id"],),
+                                             daemon=True).start()
                         else:
                             left = nxt - now_ts
                             nearest = left if nearest is None else min(nearest, left)
-                proactive_tick()
+                # проактивные идеи ходят в сеть: в отдельном потоке, иначе
+                # медленный ответ модели задерживает все напоминания
+                threading.Thread(target=proactive_tick, daemon=True).start()
         except Exception:
             pass
         # тик подстраивается под ближайшую задачу: секундные напоминания не опаздывают
-        base_tick = max(3, int(CONFIG.get("auto.tick_seconds", 15)))
-        wait = base_tick if nearest is None else max(0.5, min(base_tick, nearest))
+        base_tick = max(2, int(CONFIG.get("auto.tick_seconds", 10)))
+        wait = base_tick if nearest is None else max(0.25, min(base_tick, nearest))
         _STOP.wait(wait)
 
 
@@ -266,7 +272,7 @@ def create_background_task(title: str, prompt: str, schedule: str = "",
     task = db.create_task(title=title or "Фоновая задача", prompt=prompt,
                           mode="auto", schedule=schedule or "", chat_id=chat_id)
     nxt = parse_schedule(schedule)
-    if nxt and nxt > time.time() + 1:
+    if nxt and nxt > time.time() + 0.5:
         db.update_task(task["id"], status="scheduled", next_run=nxt)
         task = db.get_task(task["id"]) or task
     return task

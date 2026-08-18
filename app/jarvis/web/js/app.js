@@ -45,6 +45,8 @@ const S = {
   editing: null,   // {id, node} — какое сообщение правим (новая версия, не новая реплика)
   asr: null,
   asrStop: null,
+  asrFallback: false,
+  asrTriedBrowser: false,
   detached: null,
   detachTimer: null,
   sandbox: {},
@@ -440,7 +442,6 @@ async function openChat(id) {
   if (S.streaming && id !== S.chatId) {
     S.detached = S.chatId;
     setStreaming(false);
-    toast('Ответ дописывается в фоне — вернись в диалог позже', 'info', 'Генерация');
   }
   S.sanctionNodes = {};
   S.chatId = id;
@@ -520,7 +521,21 @@ function buildWelcome() {
 
 /* ============================ сообщения ============================ */
 function stream() { return $('#stream'); }
+
+/* Пока камера включена, диалог идёт ВНУТРИ её вкладки: карточка не уезжает
+   вверх от новых вопросов, а переписка остаётся в ней и видна, когда
+   окошко разворачивают обратно. */
+function msgHost() {
+  const cc = $('#camChat');
+  if (cc && S.camNode && S.camNode.isConnected) return cc;
+  return stream();
+}
 function scrollDown(force) {
+  const cc = $('#camChat');
+  if (cc && S.camNode && S.camNode.isConnected) {
+    const nearC = cc.scrollHeight - cc.scrollTop - cc.clientHeight < 220;
+    if (nearC || force) cc.scrollTop = cc.scrollHeight;
+  }
   const s = stream();
   const near = s.scrollHeight - s.scrollTop - s.clientHeight < 220;
   if (near || force) s.scrollTop = s.scrollHeight;
@@ -654,7 +669,7 @@ function addUserMsg(text, atts, info) {
   acts.appendChild(copy); acts.appendChild(edit);
   m.appendChild(acts);
 
-  stream().appendChild(m);
+  msgHost().appendChild(m);
   scrollDown(true);
   return m;
 }
@@ -667,7 +682,7 @@ function addAiMsg() {
     '<div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div></div>' +
     '<div class="ai-body"><div class="ai-name">JARVIS<span class="ai-model"></span></div>' +
     '<div class="ai-content"></div></div>';
-  stream().appendChild(m);
+  msgHost().appendChild(m);
   scrollDown(true);
   return {
     root: m,
@@ -981,12 +996,14 @@ async function send() {
     thinkCard: null,
     planCard: null,
     planItems: [],
+    verbose: true,
     mdEl: null,
     buffer: '',
     shown: '',
     typer: null,
     onTyped: null,
     tools: {},
+    silent: {},
     files: [],
   };
   ui.statusEl = el('div', 'thinking-line');
@@ -1190,6 +1207,9 @@ function handleEvent(ev, ui) {
       const hint = $('#routeHint');
       hint.textContent = 'маршрут: ' + (TIER_LABEL[ev.tier] || ev.tier) + ' · ' + (ev.reason || '');
       hint.classList.add('show');
+      // Кухню показываем только на сложных задачах: на «привет» и короткий
+      // вопрос пользователь ждёт ответ, а не ход мыслей и терминал.
+      ui.verbose = ev.verbose !== false;
       break;
     }
 
@@ -1206,6 +1226,7 @@ function handleEvent(ev, ui) {
       break;
 
     case 'thinking': {
+      if (!ui.verbose) break;
       if (!ui.thinkCard) {
         // карточка раскрыта сразу: мысли должны бежать на глазах, как в терминале
         ui.thinkCard = makeCard('◇', 'Ход мыслей', 'think-card live', true);
@@ -1245,6 +1266,17 @@ function handleEvent(ev, ui) {
       break;
 
     case 'tool_start': {
+      // «Глаза» агента (снимок экрана, параметры экрана) — служебные шаги.
+      // Пользователю их видеть незачем: он просил результат, а не отчёт
+      // о каждом кадре. Тихо запоминаем и показываем только в терминале.
+      if (SILENT_TOOLS[ev.name]) {
+        ui.silent[ev.id || ev.name] = true;
+        if (ui.statusEl) {
+          ui.statusEl.innerHTML = '<div class="spinner"></div><span>смотрю на экран…</span>';
+        }
+        termLine('$ ' + ev.name, 'cmd');
+        break;
+      }
       const card = makeCard('⚙', ev.label || ev.name, 'tool-card live', true);
       card.querySelector('.card-head').insertBefore(el('span', 'tool-run'), card.querySelector('.chev'));
       const kv = el('div', 'kv');
@@ -1304,6 +1336,11 @@ function handleEvent(ev, ui) {
       refreshState(); break;
 
     case 'tool_result': {
+      if (ui.silent[ev.id || ev.name]) {
+        delete ui.silent[ev.id || ev.name];
+        termLine((ev.result && ev.result.ok !== false ? '✓ ' : '✕ ') + ev.name, 'sys');
+        break;
+      }
       const card = ui.tools[ev.id || ev.name];
       const ok = ev.result && ev.result.ok !== false;
       if (card) {
@@ -1531,6 +1568,9 @@ function browserASR(btn) {
   // расслышал» и в остановку записи. Теперь молчание — не ошибка: слушаем
   // дальше, пока пользователь сам не выключит микрофон.
   let stopping = false;
+  let heard = false;
+  let netFails = 0;
+  rec.addEventListener('result', () => { heard = true; netFails = 0; });
   rec.onerror = (ev) => {
     if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
       stopping = true;
@@ -1538,8 +1578,15 @@ function browserASR(btn) {
     } else if (ev.error === 'audio-capture') {
       stopping = true;
       toast('Микрофон не найден', 'error');
+    } else if (ev.error === 'network') {
+      // Распознавание Chrome ходит на серверы Google. Из России они часто
+      // недоступны, и тогда микрофон «слушает», но не слышит ничего.
+      // Не крутим пустой цикл — молча уходим на запись с распознаванием
+      // на нашей стороне.
+      netFails++;
+      if (netFails >= 2 && !heard) { stopping = true; S.asrFallback = true; }
     }
-    /* no-speech, aborted, network — молча продолжаем */
+    /* no-speech, aborted — молча продолжаем слушать */
   };
   rec.onend = () => {
     // сам оборвался, а пользователь не просил — поднимаем заново
@@ -1552,6 +1599,12 @@ function browserASR(btn) {
     autoGrow();
     if (input.value) input.focus();
     updateSendBtn();
+    if (S.asrFallback) {
+      S.asrFallback = false;
+      S.asrTriedBrowser = true;   // чтобы сервер не отправил нас обратно
+      toast('Записываю голос — распознаю после остановки', 'info', 'Микрофон');
+      serverASR(btn);   // запасной путь: пишем звук и распознаём у себя
+    }
   };
 
   S.asrStop = () => { stopping = true; try { rec.stop(); } catch (e) {} };
@@ -1582,8 +1635,8 @@ async function serverASR(btn) {
         if (r.ok && r.text) {
           $('#input').value = ($('#input').value + ' ' + r.text).trim();
           autoGrow(); $('#input').focus(); updateSendBtn();
-        } else if (r.browser_asr && browserASR(btn)) {
-          /* сервер не умеет — сразу слушаем браузером, без ругани в лицо */
+        } else if (r.browser_asr && !S.asrTriedBrowser && browserASR(btn)) {
+          S.asrTriedBrowser = true;
         } else {
           toast(r.error || 'Не удалось распознать', 'error');
         }
@@ -1611,6 +1664,9 @@ $('#micBtn').addEventListener('click', function () {
 const CAM_TICK = 2500;      // как часто заглядывать в кадр, мс
 const CAM_MOTION = 7;       // порог изменения сцены (0..255)
 
+// Служебные шаги computer-use: агенту нужны, пользователю — нет.
+const SILENT_TOOLS = { screenshot: 1, screen_info: 1 };
+
 function buildCamCard() {
   const card = el('div', 'msg msg-ai cam-msg');
   card.innerHTML =
@@ -1626,6 +1682,7 @@ function buildCamCard() {
           '<div class="cam-hud"><span class="cam-rec"></span><span id="camState">включаю камеру…</span></div>' +
         '</div>' +
         '<div class="cam-feed" id="camFeed"></div>' +
+        '<div class="cam-chat" id="camChat"></div>' +
         '<div class="cam-note muted">Трансляция идёт в реальном времени: я смотрю кадры и комментирую, ' +
         'что вижу. Спроси прямо в чате — например «что это?» или «где такое купить» — ' +
         'и я отвечу по тому, что сейчас в кадре.</div>' +

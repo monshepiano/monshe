@@ -94,7 +94,7 @@ DEFAULTS: Dict[str, Any] = {
     },
     "auto": {
         "enabled": True,
-        "tick_seconds": 30,
+        "tick_seconds": 5,
         "proactive": True,
         "quiet_hours": [1, 8],
     },
@@ -129,6 +129,23 @@ def _merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _migrate(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Подтянуть уже сохранённые конфиги под новые умолчания.
+
+    Пользователь ничего не настраивал руками, а старое значение из файла
+    перекрывает исправление: например, редкий тик AUTO заставлял напоминания
+    срабатывать сильно позже назначенного времени.
+    """
+    auto = raw.get("auto")
+    if isinstance(auto, dict):
+        try:
+            if int(auto.get("tick_seconds", 0)) > 10:
+                auto["tick_seconds"] = DEFAULTS["auto"]["tick_seconds"]
+        except Exception:
+            auto["tick_seconds"] = DEFAULTS["auto"]["tick_seconds"]
+    return raw
+
+
 class Config:
     def __init__(self) -> None:
         self._data: Dict[str, Any] = dict(DEFAULTS)
@@ -142,6 +159,7 @@ class Config:
             if CONFIG_PATH.exists():
                 try:
                     raw = json.loads(CONFIG_PATH.read_text("utf-8"))
+                    raw = _migrate(raw)
                     self._data = _merge(DEFAULTS, raw)
                 except Exception:
                     self._data = dict(DEFAULTS)

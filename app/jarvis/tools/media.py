@@ -66,7 +66,9 @@ def _pick_audio_model() -> str:
     from .. import llm
 
     prefs = [p.lower() for p in (llm.CONFIG.get("model_tiers.audio", []) or [])]
-    marks = prefs + ["whisper", "audio", "voxtral", "gigaam", "speech", "asr", "stt"]
+    marks = prefs + ["whisper", "audio", "voxtral", "gigaam", "speech", "asr",
+                     "stt", "transcri", "wav2vec", "seamless", "parakeet",
+                     "canary", "vosk", "salute", "sense"]
     for name in llm.list_models("cloudru"):
         low = name.lower()
         if any(m and m in low for m in marks):

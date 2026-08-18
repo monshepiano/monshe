@@ -175,7 +175,7 @@ def _png_size(data: bytes) -> tuple:
     return (0, 0)
 
 
-def screenshot(scale: float = 0.5) -> Dict[str, Any]:
+def screenshot(scale: float = 0.4) -> Dict[str, Any]:
     """Снимок экрана. Возвращает data-url (для vision-модели) и файл в песочнице."""
     out = _ws() / ("screen_%d.png" % int(time.time()))
     try:
@@ -205,7 +205,7 @@ def screenshot(scale: float = 0.5) -> Dict[str, Any]:
         # уменьшаем размер данных для vision-модели, если доступен sips (macOS)
         if IS_MAC and scale and scale < 1:
             try:
-                subprocess.run(["sips", "-Z", str(int(1600 * scale)), str(out)],
+                subprocess.run(["sips", "-Z", str(int(1400 * scale)), str(out)],
                                capture_output=True, timeout=20)
                 data = out.read_bytes()
             except Exception:

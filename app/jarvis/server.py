@@ -187,9 +187,14 @@ class Handler(BaseHTTPRequestHandler):
             sandbox.drop(chat_id)
             return self._json({"ok": True})
         if path == "/api/tasks/new":
-            task = db.create_task(body.get("title") or "Задача",
-                                  body.get("prompt") or "",
-                                  schedule=body.get("schedule") or "")
+            # через create_background_task, а не напрямую в БД: иначе задача
+            # с расписанием («через 10 секунд», «каждый день в 9») стартовала
+            # мгновенно, потому что попадала в статус queued
+            task = auto.create_background_task(
+                title=body.get("title") or "Задача",
+                prompt=body.get("prompt") or "",
+                schedule=body.get("schedule") or "",
+                chat_id=body.get("chat_id") or "")
             return self._json({"ok": True, "task": task})
         if path == "/api/tasks/run":
             threading.Thread(target=auto.execute_task, args=(body.get("task_id", ""),), daemon=True).start()
@@ -458,8 +463,11 @@ class Handler(BaseHTTPRequestHandler):
                 elif etype == "thinking":
                     thinking.append(event.get("text", ""))
                 elif etype == "tool_start":
-                    trace.append({"kind": "tool", "name": event.get("name", ""),
-                                  "label": event.get("label", ""), "args": event.get("args")})
+                    # служебные «глаза» computer-use в историю не пишем:
+                    # иначе при возврате в диалог они снова всплывут строчками
+                    if event.get("name") not in ("screenshot", "screen_info"):
+                        trace.append({"kind": "tool", "name": event.get("name", ""),
+                                      "label": event.get("label", ""), "args": event.get("args")})
                 elif etype == "plan":
                     trace.append({"kind": "plan", "steps": event.get("steps", [])})
                 elif etype == "done":
