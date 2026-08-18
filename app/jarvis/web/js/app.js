@@ -185,7 +185,7 @@ function tone(freq, when, dur, gain, type, glide) {
   if (!ctx) return;
   const t = ctx.currentTime + (when || 0);
   const d = dur || 0.22;
-  const vol = (gain == null ? 0.16 : gain);
+  const vol = (gain == null ? 0.09 : gain);
 
   // общий фильтр: срезает резкость верхов, оставляя «тёплый» тембр
   const lp = ctx.createBiquadFilter();
@@ -224,7 +224,7 @@ function chord(freqs, opts) {
   opts = opts || {};
   const gap = opts.gap == null ? 0.028 : opts.gap;
   const dur = opts.dur || 0.3;
-  const gain = opts.gain == null ? 0.15 : opts.gain;
+  const gain = opts.gain == null ? 0.085 : opts.gain;
   freqs.forEach((f, i) => tone(f, i * gap, dur - i * gap * 0.3, gain * (1 - i * 0.12), opts.type, opts.glide));
 }
 
@@ -232,32 +232,39 @@ function chord(freqs, opts) {
    но звучат уже полноценной нотой, а не писком. */
 function beep(freq, dur) {
   if (!soundOn()) return;
-  const f = freq || 660;
-  // из одной частоты делаем маленький аккорд — так «дофаминовее»
-  chord([f, f * 1.26], { dur: Math.max(dur || 0.16, 0.22) + 0.12, gain: 0.15, gap: 0.022 });
+  // ОДНА нота, а не аккорд. Аккорд здесь был ошибкой: beep зовут сериями
+  // (пять строк заставки подряд через 180 мс), и хвосты накладывались друг
+  // на друга в гудящий кластер — тот самый «звук из хоррора» на старте.
+  // Тембр остался тёплым за счёт обертонов внутри tone().
+  tone(freq || 660, 0, Math.max(dur || 0.16, 0.18), 0.075);
 }
 
 /* Щелчок переключателя: вверх — светлая терция, вниз — мягкое падение. */
 function blip(up) {
   if (!soundOn()) return;
-  if (up) chord([784, 1046.5], { dur: 0.26, gain: 0.13, gap: 0.02 });
-  else chord([523.25, 392], { dur: 0.24, gain: 0.11, gap: 0.02 });
+  if (up) tone(880, 0, 0.2, 0.075);
+  else tone(587.33, 0, 0.2, 0.065);
 }
 
 /* Именованные звуки интерфейса: одно место, где решается «как это звучит».
    Ноты подобраны по мажорному трезвучию — оно воспринимается как «хорошо». */
+/* Именованные звуки. Правило: по умолчанию ОДНА нота — короткая и негромкая.
+   Аккорд оставлен только там, где событие редкое и его приятно отметить:
+   ответ готов, файл улетел, камера включилась. Частые события (отправка,
+   щелчок по плитке, шаг инструмента) звучат одним тоном, иначе интерфейс
+   превращается в гудящий орган. */
 const SFX = {
-  send:    () => chord([523.25, 659.25], { dur: 0.26, gain: 0.14, gap: 0.02 }),          // до-ми
-  done:    () => chord([659.25, 830.6, 987.77], { dur: 0.5, gain: 0.17, gap: 0.045 }),   // ми-соль#-си
-  ok:      () => chord([659.25, 987.77], { dur: 0.34, gain: 0.15, gap: 0.03 }),
-  error:   () => chord([311.13, 233.08], { dur: 0.5, gain: 0.16, gap: 0.05, type: 'triangle' }),
-  warn:    () => chord([466.16, 415.3], { dur: 0.34, gain: 0.13, gap: 0.04 }),
-  pop:     () => chord([880, 1174.66], { dur: 0.2, gain: 0.12, gap: 0.016 }),
-  select:  () => chord([698.46, 1046.5], { dur: 0.22, gain: 0.12, gap: 0.018 }),
-  fly:     () => chord([523.25, 784, 1046.5], { dur: 0.42, gain: 0.14, gap: 0.05, glide: 1.06 }),
-  note:    () => chord([987.77, 1318.51], { dur: 0.36, gain: 0.13, gap: 0.03 }),
-  start:   () => chord([392, 523.25, 659.25], { dur: 0.55, gain: 0.16, gap: 0.06 }),
-  stop:    () => chord([440, 349.23, 261.63], { dur: 0.5, gain: 0.14, gap: 0.055 }),
+  send:    () => tone(659.25, 0, 0.19, 0.07),                                          // ми
+  done:    () => chord([659.25, 987.77], { dur: 0.42, gain: 0.085, gap: 0.05 }),       // редкое — можно аккордом
+  ok:      () => tone(880, 0, 0.24, 0.075),
+  error:   () => chord([311.13, 233.08], { dur: 0.44, gain: 0.09, gap: 0.06, type: 'triangle' }),
+  warn:    () => tone(466.16, 0, 0.28, 0.08),
+  pop:     () => tone(1046.5, 0, 0.16, 0.06),
+  select:  () => tone(783.99, 0, 0.18, 0.07),
+  fly:     () => chord([659.25, 987.77], { dur: 0.34, gain: 0.075, gap: 0.055, glide: 1.05 }),
+  note:    () => tone(1174.66, 0, 0.22, 0.065),
+  start:   () => chord([523.25, 783.99], { dur: 0.4, gain: 0.085, gap: 0.06 }),
+  stop:    () => chord([587.33, 392], { dur: 0.4, gain: 0.075, gap: 0.06 }),
 };
 function sfx(name) { if (soundOn() && SFX[name]) SFX[name](); }
 
@@ -332,7 +339,7 @@ let BOOT_DONE = null;
   const tick = () => {
     if (i < BOOT_LINES.length) {
       const line = el('div', '', BOOT_LINES[i]);
-      log.appendChild(line); i++; beep(520 + i * 60, 0.05);
+      log.appendChild(line); i++; tone(660, 0, 0.09, 0.03);   // тихий сухой тик, без гаммы
       setTimeout(tick, 180);
     } else {
       setTimeout(finish, 260);
@@ -1118,6 +1125,8 @@ function termLine(text, cls) {
 /* ============================ иконки и миниатюры ============================ */
 /* Единый набор тонких линейных иконок — без «детских» эмодзи. */
 const ICO = {
+  // та же стрелка, что на кнопке отправки под полем ввода
+  send: '<svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg>',
   copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.4"/><path d="M5.5 15H5a1.9 1.9 0 0 1-1.9-1.9V5A1.9 1.9 0 0 1 5 3.1h8.1A1.9 1.9 0 0 1 15 5v.5"/></svg>',
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h8"/><path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L7.5 18.5 3.5 20l1.5-4z"/></svg>',
   speak: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M16 8.6a4.6 4.6 0 0 1 0 6.8"/><path d="M18.6 6a8 8 0 0 1 0 12"/></svg>',
@@ -1180,15 +1189,51 @@ function collapseToThumb(node, opts) {
     // разворачивание миниатюры сразу раскрывает и содержимое.
     const head = node.querySelector(':scope > .card-head');
     const body = node.querySelector(':scope > .card-body');
-    if (head && body) { head.classList.add('open'); body.classList.add('open'); }
-    // рост из строки в полноразмерный блок — тот же объект, а не подмена
+    // Порядок важен: класс unfolding ставим ДО раскрытия тела. Пока он висит,
+    // CSS выключает и переход max-height, и свечение шапки — тело оказывается
+    // раскрытым мгновенно, а наружу идёт единственное движение growOpen.
+    // Иначе три анимации разной длины наезжали друг на друга и раскрытие
+    // выглядело так, будто блок дорос и завис.
     node.classList.remove('shrinking');
     node.classList.add('unfolding');
+    if (head && body) { head.classList.add('open'); body.classList.add('open'); }
     setTimeout(() => node.classList.remove('unfolding'), 300);   // = growOpen
     addFoldButton(node, opts);              // развернули — даём чем свернуть обратно
     node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
   return thumb;
+}
+
+/* ПОЧЕМУ КАРТОЧКИ «НЕ ОТКРЫВАЛИСЬ». Они открывались — просто на доли
+   секунды. Запись файла или короткий поиск отрабатывают за десятки
+   миллисекунд, и tool_result сворачивал карточку в том же кадре, в котором
+   её создал tool_start: браузер даже не успевал нарисовать раскрытое
+   состояние. Ход мыслей вдобавок сворачивался с instant:true — то есть
+   вообще без анимации.
+   Поэтому у карточки теперь есть минимальный срок жизни: она обязана
+   побыть раскрытой хотя бы CARD_MIN_MS, а потом свернуться уже на глазах.
+   Мгновенные шаги превращаются в короткую заметную вспышку «открылось —
+   закрылось», а долгие ведут себя как раньше. */
+const CARD_MIN_MS = 620;
+
+function markBorn(card) {
+  if (card) card.dataset.born = String(performance.now());
+}
+
+function collapseSoon(card, opts) {
+  if (!card || !card.isConnected) return;
+  if (card.dataset.folding === '1') return;
+  card.dataset.folding = '1';
+  // осторожно: born может быть ровно 0 (первые миллисекунды жизни страницы),
+  // а 0 в JS ложный — короткая запись `|| performance.now()` тут молча
+  // превращала «родилась в самом начале» в «родилась только что» и добавляла
+  // лишнюю задержку даже долгим шагам
+  const bornRaw = parseFloat(card.dataset.born);
+  const born = Number.isFinite(bornRaw) ? bornRaw : performance.now();
+  const left = Math.max(0, CARD_MIN_MS - (performance.now() - born));
+  setTimeout(() => {
+    if (card.isConnected) collapseToThumb(card, opts);
+  }, left);
 }
 
 /* Кнопка «свернуть» в углу развёрнутого блока: любую миниатюру
@@ -1237,17 +1282,29 @@ function parseUiSpec(src) {
     const ln = raw.trim();
     if (!ln) return;
     let m;
-    if ((m = ln.match(/^slider\s+(.+?)\s+(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)(?:\s+step\s+(\d+(?:\.\d+)?))?(?:\s*=\s*(-?\d+(?:\.\d+)?))?$/i))) {
+    // slider Метка 0..100 [step 5] [unit ₽] = 50
+    if ((m = ln.match(/^slider\s+(.+?)\s+(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)(?:\s+step\s+(\d+(?:\.\d+)?))?(?:\s+unit\s+(\S+))?(?:\s*=\s*(-?\d+(?:\.\d+)?))?$/i))) {
       const min = parseFloat(m[2]), max = parseFloat(m[3]);
       items.push({ t: 'slider', label: m[1], min, max,
                    step: m[4] ? parseFloat(m[4]) : ((max - min) % 1 ? 0.1 : 1),
-                   val: m[5] != null ? parseFloat(m[5]) : min });
+                   unit: m[5] || '',
+                   val: m[6] != null ? parseFloat(m[6]) : min });
+    // number Метка 1..20 [step 1] [unit шт] = 3  — счётчик с кнопками ± 
+    } else if ((m = ln.match(/^number\s+(.+?)\s+(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)(?:\s+step\s+(\d+(?:\.\d+)?))?(?:\s+unit\s+(\S+))?(?:\s*=\s*(-?\d+(?:\.\d+)?))?$/i))) {
+      const min = parseFloat(m[2]), max = parseFloat(m[3]);
+      items.push({ t: 'number', label: m[1], min, max,
+                   step: m[4] ? parseFloat(m[4]) : 1,
+                   unit: m[5] || '',
+                   val: m[6] != null ? parseFloat(m[6]) : min });
     } else if ((m = ln.match(/^toggle\s+(.+?)(?:\s*=\s*(on|off|да|нет|true|false))?$/i))) {
       items.push({ t: 'toggle', label: m[1],
                    val: /^(on|да|true)$/i.test(m[2] || '') });
     } else if ((m = ln.match(/^tiles\s+(.+?)\s*:\s*(.+)$/i))) {
       items.push({ t: 'tiles', label: m[1],
                    opts: m[2].split('|').map((x) => x.trim()).filter(Boolean), val: null });
+    // text Метка [= подсказка] — свободный ответ, когда варианты не перечислить
+    } else if ((m = ln.match(/^text\s+(.+?)(?:\s*=\s*(.*))?$/i))) {
+      items.push({ t: 'text', label: m[1], hint: (m[2] || '').trim(), val: '' });
     } else if ((m = ln.match(/^button\s+(.+)$/i))) {
       items.push({ t: 'button', label: m[1] });
     }
@@ -1264,47 +1321,49 @@ function mountUiPanels(root) {
     box.dataset.live = '1';
     box.innerHTML = '';
 
-    // ЦВЕТ. Раньше тон брался по номеру СТРОКИ — а строка почти всегда одна,
-    // поэтому панель вечно выходила бирюзовой и выглядела одноцветной.
-    // Теперь цвет получает каждый отдельный орган управления: плитки
-    // раскрашиваются по своему номеру, а строки — со сдвигом, чтобы соседние
-    // элементы не совпадали.
     const HUES = ['c1', 'c2', 'c3', 'c4', 'c5'];
-    let touched = false;      // человек хоть раз что-то тронул
+    // «Аналоговые» органы — те, где значение подкручивают, а не выбирают из
+    // готовых вариантов. Их нельзя отправлять по первому касанию: человек
+    // ещё крутит ползунок. Значит, панели с ними нужна кнопка «Отправить»,
+    // а панелям с одними плитками/тумблерами — не нужна.
+    const ANALOG = { slider: 1, number: 1, text: 1 };
+    const hasAnalog = items.some((x) => ANALOG[x.t]);
+    let touched = false;
     let sendTimer = null;
 
     const summary = () => items.filter((x) => x.t !== 'button').map((x) => {
-      if (x.t === 'slider') return x.label + ': ' + x.val;
       if (x.t === 'toggle') return x.label + ': ' + (x.val ? 'да' : 'нет');
-      return x.label + ': ' + (x.val || '—');
+      return x.label + ': ' + (x.val == null || x.val === '' ? '—' : x.val);
     });
 
-    // Кнопки подтверждения больше нет: выбор уходит сам, как только он сделан.
-    // Пауза нужна, чтобы человек успел передумать и подвигать ползунок —
-    // отсчёт сбрасывается при каждом касании.
+    const fire = () => {
+      if (box.dataset.sent === '1') return;
+      box.dataset.sent = '1';
+      clearTimeout(sendTimer);
+      box.classList.remove('ui-arm');
+      box.classList.add('ui-sent');
+      $$('input,button,textarea', box).forEach((c) => { c.disabled = true; });
+      $('#input').value = summary().join('\n'); autoGrow(); send({ silent: true });
+      sfx('send');
+    };
+
     const ready = () => items.every((x) => x.t !== 'tiles' || x.val != null);
+    // Без аналоговых органов выбор уходит сам — подтверждать нечего.
     const armSend = () => {
-      if (!touched || box.dataset.sent === '1') return;
+      if (hasAnalog || !touched || box.dataset.sent === '1') return;
       clearTimeout(sendTimer);
       if (!ready()) { box.classList.remove('ui-arm'); return; }
       box.classList.add('ui-arm');
-      sendTimer = setTimeout(() => {
-        if (box.dataset.sent === '1') return;
-        box.dataset.sent = '1';
-        box.classList.remove('ui-arm');
-        box.classList.add('ui-sent');
-        $$('input,button', box).forEach((c) => { c.disabled = true; });
-        $('#input').value = summary().join('\n'); autoGrow(); send({ silent: true });
-        sfx('send');
-      }, 900);
+      sendTimer = setTimeout(fire, 900);
     };
 
     items.forEach((it, idx) => {
       const row = el('div', 'ui-row ui-' + it.t + ' ' + HUES[idx % HUES.length]);
       row.style.animationDelay = (idx * 55) + 'ms';
+
       if (it.t === 'slider') {
         row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) +
-          '</span><b class="ui-val">' + it.val + '</b></div>';
+          '</span><b class="ui-val">' + it.val + (it.unit ? ' ' + esc(it.unit) : '') + '</b></div>';
         const inp = el('input', 'ui-range');
         inp.type = 'range'; inp.min = it.min; inp.max = it.max;
         inp.step = it.step; inp.value = it.val;
@@ -1314,12 +1373,45 @@ function mountUiPanels(root) {
           inp.style.setProperty('--fill', pct + '%');
         };
         inp.addEventListener('input', () => {
-          it.val = parseFloat(inp.value); out.textContent = inp.value; paint();
+          it.val = parseFloat(inp.value);
+          out.textContent = inp.value + (it.unit ? ' ' + it.unit : ''); paint();
           out.classList.remove('bump'); void out.offsetWidth; out.classList.add('bump');
-          touched = true; armSend();
+          touched = true;
         });
         paint();
         row.appendChild(inp);
+
+      } else if (it.t === 'number') {
+        // счётчик: то же число, но щёлкается кнопками — удобно для «сколько штук»
+        row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) + '</span></div>';
+        const st = el('div', 'ui-step');
+        const minus = el('button', 'ui-stepb', '−');
+        const val = el('b', 'ui-val ui-num', String(it.val));
+        const plus = el('button', 'ui-stepb', '+');
+        const setv = (v) => {
+          it.val = Math.max(it.min, Math.min(it.max, Math.round(v / it.step) * it.step));
+          it.val = parseFloat(it.val.toFixed(4));
+          val.textContent = it.val + (it.unit ? ' ' + it.unit : '');
+          val.classList.remove('bump'); void val.offsetWidth; val.classList.add('bump');
+          touched = true; sfx('select');
+        };
+        minus.addEventListener('click', () => setv(it.val - it.step));
+        plus.addEventListener('click', () => setv(it.val + it.step));
+        st.appendChild(minus); st.appendChild(val); st.appendChild(plus);
+        row.appendChild(st);
+
+      } else if (it.t === 'text') {
+        // строка ввода: когда вариантов не перечислить
+        row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) + '</span></div>';
+        const inp = el('input', 'ui-text');
+        inp.type = 'text'; inp.value = it.val || '';
+        inp.placeholder = it.hint || 'впиши ответ…';
+        inp.addEventListener('input', () => { it.val = inp.value; touched = true; });
+        inp.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); if (touched) fire(); }
+        });
+        row.appendChild(inp);
+
       } else if (it.t === 'toggle') {
         row.innerHTML = '<span class="ui-lab-t">' + esc(it.label) + '</span>';
         const sw = el('button', 'ui-sw' + (it.val ? ' on' : ''));
@@ -1329,11 +1421,11 @@ function mountUiPanels(root) {
           touched = true; armSend();
         });
         row.appendChild(sw);
+
       } else if (it.t === 'tiles') {
         row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) + '</span></div>';
         const grid = el('div', 'ui-tiles');
         it.opts.forEach((o, oi) => {
-          // у КАЖДОЙ плитки свой цвет — именно это и делает панель цветной
           const t = el('button', 'ui-tile ' + HUES[(oi + idx) % HUES.length], o);
           t.addEventListener('click', () => {
             it.val = o;
@@ -1344,14 +1436,14 @@ function mountUiPanels(root) {
           grid.appendChild(t);
         });
         row.appendChild(grid);
+
       } else {
-        // «button» из спецификации — самостоятельное действие, уходит сразу
         const b = el('button', 'ui-btn ' + HUES[idx % HUES.length], it.label);
         b.addEventListener('click', () => {
           if (box.dataset.sent === '1') return;
           box.dataset.sent = '1';
           box.classList.add('ui-sent');
-          $$('input,button', box).forEach((c) => { c.disabled = true; });
+          $$('input,button,textarea', box).forEach((c) => { c.disabled = true; });
           $('#input').value = it.label; autoGrow(); send({ silent: true });
           sfx('send');
         });
@@ -1359,6 +1451,14 @@ function mountUiPanels(root) {
       }
       box.appendChild(row);
     });
+
+    // Кнопка нужна ТОЛЬКО когда есть что докручивать. Выглядит и ведёт себя
+    // как кнопка отправки под полем ввода — та же стрелка, тот же смысл.
+    if (hasAnalog && items.some((x) => x.t !== 'button')) {
+      const go = el('button', 'ui-go', ICO.send + '<span>Отправить</span>');
+      go.addEventListener('click', fire);
+      box.appendChild(go);
+    }
   });
 }
 
@@ -1611,26 +1711,65 @@ const THINK_QUIPS = [
   'кручу шестерёнки', 'раскладываю по полочкам', 'прикидываю', 'уточняю детали',
 ];
 
-function thinkMode(ui, first) {
-  const box = ui.statusEl;
+/* ПОЧЕМУ БЕГУЩИЙ ТЕКСТ БЫЛ НЕ ВЕЗДЕ. Строк состояния было две разных:
+   thinkMode — живая, с подменой подписей, и busyMode — одна застывшая
+   надпись рядом с крутилкой. Всё, что не «думаю» (инструмент, ожидание,
+   шаг плана), попадало во вторую и замирало. Дело не в оформлении, а в
+   том, что механизм смены текста существовал только у одного состояния.
+   Теперь механизм ОДИН: runStatus крутит любой набор строк. Разница между
+   состояниями осталась только в том, что это за строки и что стоит слева —
+   мигающий курсор ожидания или крутилка работы. */
+function runStatus(ui, lines, opts) {
+  const box = ui && ui.statusEl;
   if (!box) return;
+  const o = opts || {};
+  const list = (Array.isArray(lines) ? lines : [lines]).filter(Boolean);
+  if (!list.length) return;
   stopQuips(ui);
-  box.className = 'thinking-line think-wait';
-  box.innerHTML = '<span class="tw-caret"></span><span class="tw-quip"></span>';
-  const q = box.querySelector('.tw-quip');
-  // подписи не повторяются подряд: одинаковый текст дважды выглядит как зависание
-  let last = -1;
+  box.className = 'thinking-line' + (o.caret ? ' think-wait' : '');
+  box.innerHTML = (o.caret ? '<span class="tw-caret"></span>' : '<span class="spinner"></span>')
+    + '<span class="' + (o.caret ? 'tw-quip' : 'st-text') + '"></span>';
+  const q = box.querySelector(o.caret ? '.tw-quip' : '.st-text');
   const swap = (txt) => {
     q.classList.remove('in'); void q.offsetWidth;
     q.textContent = txt; q.classList.add('in');
   };
-  swap(first || THINK_QUIPS[0]);
+  swap(list[0]);
+  if (list.length < 2) return;   // одна строка — крутить нечего, но блик бежит
+  let i = 0;
   ui.quipTimer = setInterval(() => {
-    let i = Math.floor(Math.random() * THINK_QUIPS.length);
-    if (i === last) i = (i + 1) % THINK_QUIPS.length;
-    last = i;
-    swap(THINK_QUIPS[i]);
-  }, 1600);
+    // случайный порядок только у «думаю»: там строки равноправны. У реального
+    // действия порядок осмысленный — идём по кругу, ничего не пропуская.
+    i = o.shuffle ? (i + 1 + Math.floor(Math.random() * (list.length - 1))) % list.length
+                  : (i + 1) % list.length;
+    swap(list[i]);
+  }, o.every || 1600);
+}
+
+/* Строки состояния для конкретного вызова инструмента. Никакого списка имён
+   инструментов здесь нет и быть не может — он открытый и устареет с первым
+   же новым инструментом. Источник правды — само событие: человеческий label
+   приходит с сервера, а второй строкой показываем то, с чем инструмент
+   реально работает (запрос, путь, адрес — самый содержательный аргумент). */
+function toolTicker(ev) {
+  const label = ev.label || ev.name || 'работаю';
+  const lines = [label];
+  const args = ev.args || {};
+  let best = '';
+  Object.keys(args).forEach((k) => {
+    const v = args[k];
+    if (typeof v !== 'string' && typeof v !== 'number') return;
+    const t = String(v).trim();
+    if (t && t.length <= 90 && t.length > best.length) best = t;
+  });
+  if (best) lines.push('· ' + best);
+  lines.push('жду результат');
+  return lines;
+}
+
+function thinkMode(ui, first) {
+  const lines = first ? [first].concat(THINK_QUIPS) : THINK_QUIPS.slice();
+  runStatus(ui, lines, { caret: true, shuffle: true });
 }
 
 /* Снять строку статуса — ВСЕГДА через это место: иначе таймер подписей
@@ -1644,16 +1783,10 @@ function stopQuips(ui) {
   if (ui && ui.quipTimer) { clearInterval(ui.quipTimer); ui.quipTimer = null; }
 }
 
-/* Обычный статус: крутилка + текст. Возвращена везде, кроме «думаю». */
-function busyMode(ui, text) {
-  const box = ui.statusEl;
-  if (!box) return;
-  stopQuips(ui);
-  box.className = 'thinking-line';
-  // По тексту статуса тоже бежит блик: пока Джарвис занят, ЛЮБАЯ строка
-  // состояния должна выглядеть живой, а не замершей надписью рядом с
-  // крутилкой. Класс st-text — тот же эффект, что и у подписи «думаю».
-  box.innerHTML = '<span class="spinner"></span><span class="st-text">' + esc(text) + '</span>';
+/* Обычный статус: крутилка + текст. Принимает и одну строку, и набор —
+   тогда строки сменяют друг друга, как у «думаю». */
+function busyMode(ui, text, every) {
+  runStatus(ui, text, { caret: false, every: every || 1500 });
 }
 
 function setStreaming(on) {
@@ -1964,6 +2097,7 @@ function handleEvent(ev, ui) {
       if (!ui.thinkCard) {
         // карточка раскрыта сразу: мысли должны бежать на глазах, как в терминале
         ui.thinkCard = makeCard('◇', 'Ход мыслей', 'think-card live', true);
+        markBorn(ui.thinkCard);
         ui.thinkCard.inner.appendChild(el('div', 'think-stream'));
         node.body.insertBefore(ui.thinkCard, ui.statusEl);
       }
@@ -1979,6 +2113,7 @@ function handleEvent(ev, ui) {
 
     case 'plan': {
       ui.planCard = makeCard('☰', 'План · ' + ev.steps.length + ' шаг(ов)', 'plan-card', true);
+      markBorn(ui.planCard);
       const list = el('ul', 'plan-list');
       ev.steps.forEach((s, i) => {
         const li = el('li', '', '<span class="plan-num">' + (i + 1) + '</span><span>' + esc(s) + '</span>');
@@ -1994,7 +2129,7 @@ function handleEvent(ev, ui) {
 
     case 'tool_hint':
       if (ui.statusEl) {
-        busyMode(ui, 'Готовлю инструмент: ' + ev.name);
+        busyMode(ui, ['Готовлю инструмент', '· ' + (ev.label || ev.name)], 1300);
       }
       break;
 
@@ -2005,12 +2140,15 @@ function handleEvent(ev, ui) {
       if (SILENT_TOOLS[ev.name]) {
         ui.silent[ev.id || ev.name] = true;
         if (ui.statusEl) {
-          busyMode(ui, 'смотрю на экран…');
+          busyMode(ui, ['смотрю на экран', 'разбираю, что вижу'], 1400);
         }
         termLine('$ ' + ev.name, 'cmd');
         break;
       }
+      // строка состояния рассказывает, чем агент занят прямо сейчас
+      busyMode(ui, toolTicker(ev), 1400);
       const card = makeCard('⚙', ev.label || ev.name, 'tool-card live', true);
+      markBorn(card);
       card.querySelector('.card-head').insertBefore(el('span', 'tool-run'), card.querySelector('.chev'));
       const kv = el('div', 'kv');
       Object.keys(ev.args || {}).forEach((k) => {
@@ -2031,7 +2169,7 @@ function handleEvent(ev, ui) {
 
     case 'approval_wait': {
       reactor('wait');
-      busyMode(ui, 'Жду твоего решения…');
+      busyMode(ui, ['Жду твоего решения', 'нужно подтверждение', '· ' + (ev.label || ev.tool || '')], 1500);
       const critical = /delete|shell|payment|pay|computer|click|type_text/.test(ev.tool || '');
       const card = el('div', 'panel-card approve-card' + (critical ? ' critical' : ''));
       card.innerHTML =
@@ -2074,7 +2212,7 @@ function handleEvent(ev, ui) {
     // пока нажмут кнопку: лучше один вопрос, чем неверная догадка.
     case 'question': {
       reactor('wait');
-      busyMode(ui, 'Жду твоего ответа…');
+      busyMode(ui, ['Жду твоего ответа', 'выбери вариант выше'], 1500);
       const card = questionCard(ev, (choice) => {
         api('/api/questions/answer', { id: ev.id, answer: choice });
       });
@@ -2115,8 +2253,9 @@ function handleEvent(ev, ui) {
         pre.textContent = txt || '(пусто)';
         card.inner.appendChild(pre);
         card.classList.remove('live');
-        // отработал — сворачиваем в миниатюру, чтобы диалог шёл дальше
-        collapseToThumb(card, {
+        // отработал — сворачиваем в миниатюру, но не раньше, чем карточку
+        // успели увидеть (см. CARD_MIN_MS)
+        collapseSoon(card, {
           cls: ok ? 'th-ok' : 'th-no', icon: ICO.code,
           title: ev.label || ev.name,
           sub: ev.elapsed != null ? ev.elapsed + 'с' : '',
@@ -2125,6 +2264,10 @@ function handleEvent(ev, ui) {
       }
       termLine((ok ? '✓ ' : '✕ ') + ev.name + (ev.result && ev.result.error ? ' — ' + ev.result.error : ' — ok'),
         ok ? '' : 'err');
+      // инструмент отработал — строка состояния не должна остаться висеть на
+      // прошлом действии: пока модель осмысляет результат, так и пишем
+      busyMode(ui, [(ok ? 'Готово: ' : 'Не вышло: ') + (ev.label || ev.name),
+                    'разбираю результат', 'думаю, что дальше'], 1400);
       break;
     }
 
@@ -2133,6 +2276,7 @@ function handleEvent(ev, ui) {
       const wrap = ui.filesBox || (ui.filesBox = el('div', ''));
       if (!wrap.parentNode) node.body.insertBefore(wrap, ui.statusEl);
       attachFileChip(wrap, ev);
+      busyMode(ui, ['Сохраняю файл', '· ' + (ev.name || '')], 1400);
       flyToFiles(wrap.lastElementChild, ev.name);
       sfx('ok');
       break;
@@ -2162,8 +2306,8 @@ function handleEvent(ev, ui) {
         // пошёл ответ — ход мыслей сразу убираем в миниатюру, чтобы не мешал читать
         if (ui.thinkCard && ui.thinkCard.isConnected) {
           const ts0 = ui.thinkCard.querySelector('.think-stream');
-          collapseToThumb(ui.thinkCard, {
-            instant: true, cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
+          collapseSoon(ui.thinkCard, {
+            cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
             sub: ts0 ? fmtSize((ts0.textContent || '').length) : '', tag: 'развернуть',
           });
         }
@@ -2183,7 +2327,7 @@ function handleEvent(ev, ui) {
       if (!ui.statusEl) {
         ui.statusEl = el('div', 'thinking-line');
         node.body.appendChild(ui.statusEl);
-        busyMode(ui, 'Переигрываю: беру инструмент…');
+        busyMode(ui, ['Переигрываю', 'беру инструмент', 'делаю по-настоящему'], 1300);
       }
       break;
     }
@@ -2203,14 +2347,14 @@ function handleEvent(ev, ui) {
         // ход мыслей отработал — прячем в миниатюру
         if (ui.thinkCard && ui.thinkCard.isConnected) {
           const ts = ui.thinkCard.querySelector('.think-stream');
-          collapseToThumb(ui.thinkCard, {
-            instant: true, cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
+          collapseSoon(ui.thinkCard, {
+            cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
             sub: ts ? fmtSize((ts.textContent || '').length) : '', tag: 'развернуть',
           });
         }
         if (ui.planCard && ui.planCard.isConnected) {
-          collapseToThumb(ui.planCard, {
-            instant: true, cls: 'th-plan', icon: ICO.think,
+          collapseSoon(ui.planCard, {
+            cls: 'th-plan', icon: ICO.think,
             title: 'План · ' + ui.planItems.length + ' шаг(ов)', tag: 'выполнен',
           });
         }
@@ -2492,7 +2636,7 @@ function buildCamCard() {
           // не должна засорять основной диалог. Но иногда кадр нужен именно
           // как продолжение беседы — тогда этот тумблер подцепляет контекст.
           '<label class="cam-link"><input type="checkbox" id="camLink"><i></i>' +
-          '<span>Видеть текущий диалог</span></label>' +
+          '<span>Контекст диалога</span></label>' +
         '</div>' +
         '<div class="cam-col-right">' +
           '<div class="cam-feed" id="camFeed"></div>' +
