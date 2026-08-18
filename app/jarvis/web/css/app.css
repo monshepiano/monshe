@@ -700,6 +700,12 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   animation:thumbIn .25s cubic-bezier(.2,.8,.3,1) both}
 /* миниатюра как самостоятельный элемент ленты — по той же сетке, что сообщения */
 .stream > .thumb{max-width:900px;margin:0 auto 2px}
+/* Свёрнутое сообщение JARVIS остаётся сообщением JARVIS: аватар на месте,
+   строка начинается там же, где текст ответов. Без этого свёрнутая камера
+   прижималась к левому краю и теряла иконку. */
+.thumb-msg{margin-bottom:10px}
+.thumb-msg .ai-body{display:flex;align-items:center;min-height:34px}
+.thumb-msg .thumb{margin:0}
 @keyframes thumbIn{from{opacity:0;transform:translateY(-6px) scaleY(.85)}}
 .thumb:hover{border-color:var(--line);background:rgba(0,200,240,.06);color:var(--tx2)}
 .thumb .th-t b{font-weight:400}

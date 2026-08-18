@@ -47,6 +47,8 @@ const S = {
   asrStop: null,
   asrFallback: false,
   asrTriedBrowser: false,
+  micToast: null,
+  micTimer: null,
   detached: null,
   detachTimer: null,
   sandbox: {},
@@ -469,7 +471,12 @@ async function openChat(id) {
       addMsgActions(node, m.content);
     }
   });
-  stream.scrollTop = stream.scrollHeight;
+  // Показываем ПОСЛЕДНИЙ момент разговора. Одной установки scrollTop мало:
+  // картинки, блоки кода и свёрнутые карточки досчитывают свою высоту уже
+  // после вставки, лента становится выше — и позиция, «низ» на момент
+  // присвоения, оказывается серединой. Поэтому доводим прокрутку до низа
+  // ещё и после отрисовки кадра и после загрузки картинок.
+  pinToBottom(stream);
   loadChats();
   // диалог, который дописывался в фоне: тихо перечитываем, пока не появится ответ
   if (S.detached === id) watchDetached(id);
@@ -543,6 +550,24 @@ function scrollDown(force) {
   if (near || force) s.scrollTop = s.scrollHeight;
 }
 function killWelcome() { const w = $('.welcome'); if (w) w.remove(); }
+
+/* Удержать ленту внизу, пока её высота ещё меняется.
+   Открывая диалог, мы вставляем разметку целиком, но её итоговая высота
+   известна не сразу: шрифты, картинки и свёрнутые карточки досчитываются
+   позже. Один scrollTop = scrollHeight в этот момент промахивается — лента
+   «улетает вверх». Держим низ несколько кадров и после загрузки картинок. */
+function pinToBottom(box) {
+  if (!box) return;
+  const put = () => { box.scrollTop = box.scrollHeight; };
+  put();
+  requestAnimationFrame(put);
+  [60, 180, 400].forEach((ms) => setTimeout(put, ms));
+  $$('img', box).forEach((img) => {
+    if (img.complete) return;
+    img.addEventListener('load', put, { once: true });
+    img.addEventListener('error', put, { once: true });
+  });
+}
 
 /* ================== версии сообщений ==================
    Правка не создаёт новую реплику: у сообщения появляется вторая версия,
@@ -761,9 +786,11 @@ function makeCard(icon, title, cls, openByDefault) {
   head.addEventListener('click', toggle);
   // Свернуть можно кликом по любому пустому месту внутри карточки, а не только
   // по маленькой стрелке. Клики по тексту, полям и кнопкам не трогаем.
+  // Та же закрытая логика, что и у миниатюр: сворачивает только клик по
+  // самому телу карточки, а не по чему-либо внутри него.
   body.addEventListener('click', (e) => {
     if (window.getSelection && String(window.getSelection()).length) return;
-    if (e.target.closest('pre,.kv,.think-stream,.plan-list,input,textarea,button,a,select,img,label,.thumb')) return;
+    if (e.target !== body && e.target !== card.inner) return;
     toggle();
   });
   card.inner = card.querySelector('.card-inner');
@@ -826,9 +853,24 @@ function collapseToThumb(node, opts) {
     (opts.tag ? '<span class="th-tag">' + esc(opts.tag) + '</span>' : '') +
     '<span class="th-time">' + time + '</span>' +
     '<span class="th-open">›</span>';
+  // Сворачивается ЦЕЛОЕ сообщение JARVIS (например, окно камеры)? Тогда
+  // миниатюра обязана остаться сообщением JARVIS: с его иконкой и на той же
+  // вертикали, что и остальные ответы. Раньше на месте карточки появлялась
+  // голая строка — она прижималась к левому краю и теряла аватар, из-за чего
+  // свёрнутая камера «уезжала влево».
+  const asMsg = node.classList.contains('msg-ai');
+  let holder = thumb;
+  if (asMsg) {
+    holder = el('div', 'msg msg-ai thumb-msg');
+    holder.innerHTML =
+      '<div class="ai-avatar"><div class="reactor sm" style="width:34px;height:34px">' +
+      '<div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div></div>' +
+      '<div class="ai-body"></div>';
+    holder.querySelector('.ai-body').appendChild(thumb);
+  }
   const put = () => {
     if (!node.parentNode) return;
-    node.parentNode.insertBefore(thumb, node);
+    node.parentNode.insertBefore(holder, node);
     node.style.display = 'none';
     node.classList.remove('collapsing');
   };
@@ -839,7 +881,7 @@ function collapseToThumb(node, opts) {
   thumb.addEventListener('click', () => {
     node.style.display = '';
     node.dataset.collapsed = '0';
-    thumb.remove();
+    holder.remove();
     addFoldButton(node, opts);              // развернули — даём чем свернуть обратно
     node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
@@ -861,13 +903,18 @@ function addFoldButton(node, opts) {
     collapseToThumb(node, opts);
   };
   b.addEventListener('click', fold);
-  // Клик в ЛЮБУЮ пустую зону окошка тоже сворачивает: попадать в мелкую
-  // стрелку не нужно. Видео, кнопки, поля и выделение текста не задеваем.
+  // Клик в пустую зону окошка тоже сворачивает — попадать в мелкую стрелку
+  // не нужно. Раньше «пустой зоной» считалось всё, кроме перечисленных тегов
+  // и классов. Такой список нельзя закончить: стоило добавить внутрь блока
+  // новый элемент (переписку камеры, текст ответа, миниатюру), и клик по нему
+  // сворачивал всю карточку — вид «ломался» сам собой. Правило перевёрнуто и
+  // теперь закрытое: пустое место — это САМ контейнер и его прямые обёртки,
+  // то есть места, где нет никакого содержимого. Всё остальное — содержимое.
+  const bgOk = (t) => t === node || (t.parentNode === node && !t.firstElementChild
+    && !String(t.textContent || '').trim());
   function bgFold(e) {
     if (window.getSelection && String(window.getSelection()).length) return;
-    if (e.target.closest(
-      'button,a,input,textarea,select,label,video,canvas,pre,img,' +
-      '.card-head,.card-body,.thumb,.msg-actions,.approve-actions,.cam-feed,.term-feed')) return;
+    if (!bgOk(e.target)) return;
     fold();
   }
   node.addEventListener('click', bgFold);
@@ -1584,7 +1631,8 @@ function browserASR(btn) {
       // Распознавание Chrome ходит на серверы Google. Из России они часто
       // недоступны, и тогда микрофон «слушает», но не слышит ничего.
       // Не крутим пустой цикл — молча уходим на запись с распознаванием
-      // на нашей стороне.
+      // на нашей стороне. Тихо, без уведомления: для человека это один
+      // непрерывный сеанс записи, а не два разных механизма.
       netFails++;
       if (netFails >= 2 && !heard) { stopping = true; S.asrFallback = true; }
     }
@@ -1604,8 +1652,7 @@ function browserASR(btn) {
     if (S.asrFallback) {
       S.asrFallback = false;
       S.asrTriedBrowser = true;   // чтобы сервер не отправил нас обратно
-      toast('Записываю голос — распознаю после остановки', 'info', 'Микрофон');
-      serverASR(btn);   // запасной путь: пишем звук и распознаём у себя
+      serverASR(btn, true);   // запасной путь: пишем звук и распознаём у себя
     }
   };
 
@@ -1613,11 +1660,41 @@ function browserASR(btn) {
   try { rec.start(); } catch (e) { S.asr = null; return false; }
   btn.classList.add('rec');
   beep(560, 0.1);
-  toast('Слушаю… нажми ещё раз, чтобы закончить', 'info', 'Микрофон');
+  micHint('Слушаю… нажми ещё раз, чтобы закончить');
   return true;
 }
 
-async function serverASR(btn) {
+/* Подсказка микрофона — ОДНА на весь сеанс записи.
+   Раньше каждый внутренний переход (браузер → сервер → распознавание) сыпал
+   свой тост, и на экране вырастала лавина уведомлений об одном и том же
+   действии. Теперь это одна строка, которая просто меняет текст. */
+function micHint(text, kind) {
+  let t = S.micToast;
+  if (!t || !t.isConnected) {
+    t = el('div', 'toast info');
+    t.innerHTML = '<div class="ti">◆</div><div><div style="font-weight:600;margin-bottom:2px">Микрофон</div>' +
+      '<div class="mic-msg"></div></div>';
+    t.title = 'Кликни, чтобы убрать';
+    t.addEventListener('click', () => micHintOff());
+    $('#toasts').appendChild(t);
+    S.micToast = t;
+  }
+  clearTimeout(S.micTimer);
+  t.className = 'toast ' + (kind || 'info');
+  t.querySelector('.ti').textContent = kind === 'error' ? '✕' : (kind === 'success' ? '✓' : '◆');
+  t.querySelector('.mic-msg').textContent = text;
+  if (kind) S.micTimer = setTimeout(micHintOff, 3200);
+}
+function micHintOff() {
+  const t = S.micToast;
+  clearTimeout(S.micTimer);
+  S.micToast = null;
+  if (!t || !t.isConnected) return;
+  t.classList.add('out');
+  setTimeout(() => t.remove(), 300);
+}
+
+async function serverASR(btn, silentStart) {
   if (S.recorder && S.recorder.state === 'recording') { S.recorder.stop(); return; }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1632,29 +1709,36 @@ async function serverASR(btn) {
       const blob = new Blob(S.recChunks, { type: 'audio/webm' });
       const fr = new FileReader();
       fr.onload = async () => {
-        toast('Распознаю речь…', 'info');
+        micHint('Распознаю речь…');
         const r = await api('/api/transcribe', { audio: fr.result, language: 'ru' });
+        // Ответ сервера окончательный: он больше не отправляет нас обратно в
+        // браузер. Один запрос — один результат, никакого пинг-понга.
         if (r.ok && r.text) {
           $('#input').value = ($('#input').value + ' ' + r.text).trim();
           autoGrow(); $('#input').focus(); updateSendBtn();
-        } else if (r.browser_asr && !S.asrTriedBrowser && browserASR(btn)) {
-          S.asrTriedBrowser = true;
+          micHintOff();
+          beep(760, 0.08);
         } else {
-          toast(r.error || 'Не удалось распознать', 'error');
+          micHint(r.error || 'Не удалось распознать', 'error');
         }
       };
       fr.readAsDataURL(blob);
     };
     rec.start();
     btn.classList.add('rec');
-    beep(560, 0.1);
-    toast('Говори… нажми ещё раз, чтобы остановить', 'info', 'Запись');
+    if (!silentStart) beep(560, 0.1);
+    micHint('Говори… нажми ещё раз, чтобы остановить');
   } catch (e) {
-    toast('Нет доступа к микрофону', 'error');
+    micHint('Нет доступа к микрофону', 'error');
   }
 }
 
 $('#micBtn').addEventListener('click', function () {
+  // Повторное нажатие всегда ЗАКАНЧИВАЕТ сеанс, каким бы путём он ни шёл.
+  if (S.asr || (S.recorder && S.recorder.state === 'recording')) {
+    if (S.asr) browserASR(this); else serverASR(this);
+    return;
+  }
   if (browserASR(this)) return;   // основной путь
   serverASR(this);                // запасной
 });

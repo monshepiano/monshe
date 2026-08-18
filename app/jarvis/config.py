@@ -74,8 +74,8 @@ DEFAULTS: Dict[str, Any] = {
             "Qwen2.5-VL",
             "VL",
         ],
-        # Точные имена, а не обрывки слов: подстроки ловили посторонние модели.
-        # Пусто = искать в каталоге ту, что реально принимает аудио.
+        # Пусто = взять из каталога провайдера модель, у которой сам провайдер
+        # объявил тип «audio-to-text». Название модели ничего не решает.
         "audio": [],
         "embed": ["Qwen3-Embedding-0.6B", "Embedding", "bge-m3"],
     },
@@ -125,8 +125,16 @@ DEFAULTS: Dict[str, Any] = {
         "refresh_minutes": 30,
     },
     "media": {
-        "image_provider": "pollinations",   # pollinations | fm | off
+        "image_provider": "pollinations",   # pollinations | off
         "image_base": "https://image.pollinations.ai/prompt/",
+        # "" = взять лучшую из реально доступных (список спрашиваем у сервиса)
+        "image_model": "",
+        # короткую просьбу превращаем в подробный английский промпт дешёвой
+        # моделью — именно от этого зависит, выглядит картинка «как из 2022-го»
+        # или как современная генерация
+        "enhance_prompt": True,
+        # распознавание речи, когда у основного провайдера нет audio-модели
+        "asr_base": "https://gen.pollinations.ai/v1/audio/transcriptions",
     },
     "computer_use": {"enabled": True, "screenshot_scale": 0.4},
     "agent": {"max_steps_chat": 6, "max_steps_agent": 18},
@@ -171,6 +179,11 @@ def _migrate(raw: Dict[str, Any]) -> Dict[str, Any]:
     tiers = raw.get("model_tiers")
     if isinstance(tiers, dict) and isinstance(tiers.get("audio"), list):
         tiers["audio"] = [m for m in tiers["audio"] if isinstance(m, str) and "/" in m]
+    # media.image_provider = "fm" был обманкой: такой ветки в коде никогда не
+    # существовало, и сохранённое значение просто отключало бы генерацию.
+    media = raw.get("media")
+    if isinstance(media, dict) and media.get("image_provider") not in ("pollinations", "off", None):
+        media["image_provider"] = DEFAULTS["media"]["image_provider"]
     return raw
 
 

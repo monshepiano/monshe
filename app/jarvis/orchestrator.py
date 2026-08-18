@@ -149,6 +149,19 @@ def choose_tier(text: str, has_image: bool = False, agent_mode: bool = False,
                              has_tools=has_tools, computer_use=computer_use)
     tier = route["tier"]
 
+    # ЗРЕНИЕ ВАЖНЕЕ ИНСТРУМЕНТОВ. Раньше проверка «умеет ли модель вызывать
+    # инструменты» стояла первой, и запрос с картинкой уходил на vision-уровень,
+    # а следом сбивался обратно на текстовый (vision-модель не умеет tools).
+    # Картинка при этом оставалась в сообщении, но смотреть её было некому —
+    # модель отвечала «пришлите изображение». Если во вложении картинка,
+    # уровень определяет именно зрение, а инструменты просто не предлагаем.
+    if has_image:
+        if not tier_can(tier, "vision"):
+            tier = cheapest_tier_with("vision", "vision")
+        return {"tier": tier, "score": route.get("score", 1.0),
+                "offer_tools": tier_can(tier, "tools"),
+                "reason": route.get("reason") or "во вложении изображение — нужна vision-модель"}
+
     # Инструменты подключены — значит модель обязана уметь их вызывать.
     # Мы не знаем заранее, понадобится ли поиск: это решает сама модель уже
     # в процессе. Поэтому «умеет вызывать» требуется всегда, когда есть tools.
@@ -162,9 +175,6 @@ def choose_tier(text: str, has_image: bool = False, agent_mode: bool = False,
         return {"tier": better, "score": route.get("score", 0.0), "offer_tools": True,
                 "reason": "нужна модель, умеющая искать и вызывать инструменты"}
     route.setdefault("offer_tools", True)
-    if has_image and not tier_can(tier, "vision"):
-        return {"tier": cheapest_tier_with("vision", "vision"), "score": route.get("score", 0.0),
-                "reason": "нужна модель со зрением"}
     return route
 
 

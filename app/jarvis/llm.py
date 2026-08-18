@@ -18,6 +18,7 @@ from . import db
 
 _SSL_CTX = ssl.create_default_context()
 _MODELS_CACHE: Dict[str, Tuple[float, List[str]]] = {}
+_META_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
 _CACHE_LOCK = threading.RLock()
 
 # Ориентировочные цены (₽ за 1 млн токенов) — для счётчика расходов в UI.
@@ -68,10 +69,16 @@ def active_providers() -> List[str]:
     return out
 
 
-def list_models(provider: str, force: bool = False) -> List[str]:
-    """Список моделей провайдера с кэшем на 10 минут."""
+def list_models_meta(provider: str, force: bool = False) -> List[Dict[str, Any]]:
+    """Каталог моделей ЦЕЛИКОМ, вместе с метаданными провайдера.
+
+    Раньше мы сохраняли только идентификаторы и потом угадывали умения модели
+    по её названию. Но провайдер сам сообщает тип модели в metadata.type
+    (text-to-text, audio-to-text, image-text-to-text...). Это факт, а не догадка,
+    поэтому храним каталог как есть.
+    """
     with _CACHE_LOCK:
-        cached = _MODELS_CACHE.get(provider)
+        cached = _META_CACHE.get(provider)
         if cached and not force and time.time() - cached[0] < 600:
             return cached[1]
     conf = provider_conf(provider)
@@ -80,9 +87,38 @@ def list_models(provider: str, force: bool = False) -> List[str]:
     try:
         with _request(conf["base_url"].rstrip("/") + "/models", conf["api_key"], None, "GET", timeout=25) as resp:
             body = json.loads(resp.read().decode("utf-8"))
-        models = [m.get("id", "") for m in body.get("data", []) if m.get("id")]
+        items = [m for m in body.get("data", []) if m.get("id")]
     except Exception:
-        models = []
+        items = []
+    with _CACHE_LOCK:
+        _META_CACHE[provider] = (time.time(), items)
+        _MODELS_CACHE[provider] = (time.time(), [m["id"] for m in items])
+    return items
+
+
+def model_type(item: Dict[str, Any]) -> str:
+    """Тип модели так, как его называет сам провайдер (пустая строка — не сказал)."""
+    meta = item.get("metadata") or {}
+    return str(meta.get("type") or item.get("type") or "").lower()
+
+
+def models_of_type(provider: str, *needles: str) -> List[str]:
+    """Модели, ТИП которых (по данным провайдера) содержит одну из подстрок."""
+    out = []
+    for item in list_models_meta(provider):
+        kind = model_type(item)
+        if kind and any(n in kind for n in needles):
+            out.append(item["id"])
+    return out
+
+
+def list_models(provider: str, force: bool = False) -> List[str]:
+    """Список моделей провайдера с кэшем на 10 минут."""
+    with _CACHE_LOCK:
+        cached = _MODELS_CACHE.get(provider)
+        if cached and not force and time.time() - cached[0] < 600:
+            return cached[1]
+    models = [m["id"] for m in list_models_meta(provider, force=force)]
     with _CACHE_LOCK:
         _MODELS_CACHE[provider] = (time.time(), models)
     return models
@@ -105,8 +141,12 @@ def pick_model(tier: str, provider: str = "cloudru") -> str:
         for low, orig in lowered.items():
             if p in low or low in p:
                 return orig
-    # ничего не совпало — эвристика по названию
+    # Ничего не совпало. Дальше решает НЕ название, а тип модели из каталога
+    # провайдера: «image-text-to-text» — это зрение, и это факт, а не догадка.
     if tier == "vision":
+        seeing = models_of_type(provider, "image-text-to-text", "image-to-text", "multimodal")
+        if seeing:
+            return seeing[0]
         for m in available:
             if "-vl" in m.lower() or "vision" in m.lower():
                 return m
