@@ -90,7 +90,6 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) ->
    tiles Формат: PDF | Word | Markdown
    slider Громкость 0..100 = 40
    toggle Уведомления = on
-   button Поехали
    ```
 
    Строки (выбирай тот тип, который ТОЧНО отвечает на вопрос):
@@ -104,7 +103,9 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) ->
    text Подпись = подсказка — короткий ввод в одну строку;
    area Подпись = подсказка — длинный ответ в несколько строк;
    date Подпись = 2026-08-18 — дата; color Подпись = #00c8f0 — цвет;
-   button Текст — кнопка действия.
+   Кнопку «Отправить»/«Сгенерировать»/«Поехали» добавлять НЕ НУЖНО и НЕЛЬЗЯ:
+   интерфейс сам поставит её там, где она требуется. Лишняя кнопка в списке
+   выглядит как второй, не работающий способ подтвердить выбор.
    Пользователь покрутит и пришлёт итог одним сообщением, ты продолжишь.
    ЖЕЛЕЗНОЕ правило: если ты в тексте предлагаешь выбрать (скорость, уровень,
    формат, вариант) — блок ui обязан быть в ЭТОМ ЖЕ сообщении. Написать
@@ -334,6 +335,10 @@ def _parse_replies(out: str) -> List[str]:
     return clean[:3]
 
 
+# служебная отметка начала шага плана: её видит фронт, но не пользователь
+_STEP_MARK = re.compile(r"\[\s*ШАГ\s*\d+\s*\]\s*")
+
+
 def _step_text(item: Any) -> str:
     """Достать человеческую формулировку шага из чего угодно.
 
@@ -468,6 +473,9 @@ class Agent:
         self.created_files: List[Dict[str, Any]] = []
         self.used_tools: List[str] = []
         self.model_used = ""
+        self.plan_len = 0          # сколько шагов в плане (0 — плана нет)
+        self.plan_at = 0           # какой шаг идёт сейчас
+        self.show_thinking = False # показывать ли ход мыслей (решается по ходу)
 
     # ------------------------------------------------------------ approvals
     def _wait_approval(self, tool_name: str, args: Dict[str, Any], reason: str,
@@ -587,9 +595,18 @@ class Agent:
                 yield {"type": "plan", "steps": plan}
                 messages = messages + [{
                     "role": "system",
-                    "content": "План выполнения (следуй ему):\n" + "\n".join(
-                        "%d. %s" % (i + 1, s) for i, s in enumerate(plan)),
+                    "content": (
+                        "План выполнения (следуй ему по порядку):\n"
+                        + "\n".join("%d. %s" % (i + 1, s) for i, s in enumerate(plan))
+                        + "\n\nПеред каждым шагом пиши строку вида [ШАГ 2] — только номер "
+                          "начатого шага, без пояснений. Не переходи к следующему шагу, "
+                          "пока не закончил текущий."),
                 }]
+                self.plan_len = len(plan)
+
+        # Сложность задачи не угадываем по теме: берём измеримые признаки.
+        # Остальным включателем служит сам ход работы — см. ниже, шаг >= 2.
+        self.show_thinking = bool(self.agent_mode or self.computer_use)
 
         convo = list(messages)
         final_text = ""
@@ -603,6 +620,9 @@ class Agent:
             if step == 0:
                 yield {"type": "status", "text": "Думаю", "phase": "think"}
             else:
+                # дошли до второго шага — значит одним ответом не обошлось:
+                # это ровно тот случай, когда показать мысли уместно
+                self.show_thinking = True
                 yield {"type": "status", "text": "Работаю над шагом %d" % (step + 1)}
             acc_text: List[str] = []
             tool_calls: List[Dict[str, Any]] = []
@@ -618,9 +638,25 @@ class Agent:
                     self.model_used = event.get("model", "")
                     yield {"type": "model", "model": event.get("model"), "tier": tier}
                 elif etype == "reasoning":
-                    yield {"type": "thinking", "text": event["text"]}
+                    # МЫСЛИ НУЖНЫ НЕ ВСЕГДА. «Покажи новости» — не та задача,
+                    # ради которой стоит разворачивать окно с рассуждениями:
+                    # оно занимает экран и отвлекает от самого ответа. Мысли
+                    # показываем там, где виден труд: агентский режим,
+                    # управление компьютером или работа в несколько шагов
+                    # (второй шаг — уже признак непростой задачи).
+                    if self.show_thinking:
+                        yield {"type": "thinking", "text": event["text"]}
                 elif etype == "delta":
                     acc_text.append(event["text"])
+                    # Модель отмечает начало шага строкой [ШАГ N]. Ловим её в
+                    # накопленном тексте: так прогресс плана — ФАКТ от самой
+                    # модели, а не догадка фронта по числу вызовов инструментов.
+                    if self.plan_len:
+                        for mark in re.finditer(r"\[\s*ШАГ\s*(\d+)\s*\]", "".join(acc_text)):
+                            n = int(mark.group(1))
+                            if 0 < n <= self.plan_len and n > self.plan_at:
+                                self.plan_at = n
+                                yield {"type": "plan_step", "step": n}
                     if gate_open:
                         yield {"type": "delta", "text": event["text"]}
                     else:
@@ -647,7 +683,7 @@ class Agent:
                 yield {"type": "error", "error": stream_failed}
                 return
 
-            text_piece = "".join(acc_text)
+            text_piece = _STEP_MARK.sub("", "".join(acc_text))
             from_text = False
 
             # модель напечатала вызов инструмента текстом — распознаём и выполняем

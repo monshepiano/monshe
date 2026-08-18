@@ -451,8 +451,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .tw-quip.in,.st-text.in{animation:stShimmer 2.1s linear infinite,quipIn .4s cubic-bezier(.2,.8,.3,1) both}
 @keyframes quipIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
 
+/* Ход мыслей: лента, ползущая снизу вверх. Края затемнены маской, поэтому
+   текст проявляется из темноты и в неё же уходит — читается середина.
+   Полосы прокрутки нет: это поток, а не документ. */
 .think-stream{font-family:var(--fm);font-size:11.5px;color:var(--tx3);line-height:1.75;white-space:pre-wrap;
-  max-height:220px;overflow:auto;padding:2px 0;scroll-behavior:smooth}
+  max-height:150px;overflow:hidden;padding:12px 0;scroll-behavior:smooth;
+  -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 26%,#000 74%,transparent 100%);
+  mask-image:linear-gradient(180deg,transparent 0,#000 26%,#000 74%,transparent 100%)}
 /* пока блок «живой» — тонкая бегущая полоска сверху и мягкое свечение рамки */
 .panel-card.live{border-color:rgba(0,200,240,.34);box-shadow:0 0 0 1px rgba(0,200,240,.07),0 6px 22px rgba(0,0,0,.3)}
 .panel-card.live .card-head{position:relative}
@@ -461,9 +466,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   animation:liveBar 1.5s linear infinite}
 @keyframes liveBar{from{background-position:180% 0}to{background-position:-80% 0}}
 .think-card.live .card-head .k{animation:blink 1.1s infinite}
-/* курсор в конце бегущих мыслей */
-.think-card.live .think-stream::after{content:'▍';color:var(--tx3);opacity:.6;
-  animation:blink 1s steps(1) infinite}
+/* Курсора в мыслях больше нет: это не печать, а прокрутка потока.
+   Вместо него — живая точка в шапке (.live .card-head .k уже мигает). */
 /* карточку можно закрыть кликом по любому пустому месту её тела */
 .card-body.open .card-inner{cursor:zoom-out}
 .card-inner pre,.card-inner .kv,.card-inner .think-stream,.card-inner .plan-list,
@@ -1068,10 +1072,11 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    тела, чтобы движение было ровно одно. */
 /* Обратный ход — такой же непрерывный, только в другую сторону и быстрее:
    свернуть должно ощущаться мгновенным. */
-.shrinking{animation:shrinkClose .17s cubic-bezier(.4,0,1,1) both;transform-origin:top left}
-@keyframes shrinkClose{
-  from{opacity:1;transform:none}
-  to  {opacity:0;transform:scaleY(.55) scale(.98) translateY(-4px)}}
+/* Сворачивание: высоту ведёт JS (collapseToThumb), здесь остаётся только
+   угасание. Никакого scaleY — он рисовал сжатие, не двигая вёрстку, и лента
+   прыгала отдельным кадром в самом конце. */
+.shrinking{opacity:0;transition:opacity .13s ease-out;transform-origin:top left}
+.shrinking > .card-head{animation:none}
 
 /* ПРИЧИНА «короткого лага после раскрытия».
    Класс .unfolding только ГЛУШИЛ свечение шапки на время роста. Когда через
@@ -1279,11 +1284,17 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 /* Курсор был почти невидим: 7×13 px с мягким свечением тонул в тексте, а
    печать пролетала так быстро, что он не успевал моргнуть. Теперь он выше
    строки, ярче и с ореолом вокруг — глаз цепляется за бегущую искру. */
-.md.typing>:last-child::after{content:"";display:inline-block;vertical-align:-2px;
+/* Курсор — НАСТОЯЩИЙ узел .caret внутри последнего абзаца, а не ::after у
+   блока. У блочного элемента (таблица, список, картинка) ::after встаёт
+   отдельной строкой снизу — курсор оказывался «просто внизу», отдельно от
+   текста, который в это время печатался выше. */
+.caret{display:inline-block;vertical-align:-2px;
   width:7px;height:15px;margin-left:3px;border-radius:1px;
   background:var(--cy);opacity:.5;
   animation:spark 1.05s steps(1) infinite}
 @keyframes spark{50%{opacity:.12}}
+/* курсор живёт только пока идёт печать */
+.md:not(.typing) .caret{display:none}
 /* пока идёт печать, весь абзац еле заметно «подсвечен изнутри» — видно, что
    текст живой и продолжает расти */
 .md.typing>:last-child{text-shadow:0 0 14px rgba(0,200,240,.18)}
@@ -1569,28 +1580,46 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    Открывается ТОЛЬКО одиночным кликом по файлу в переписке — больше ниоткуда.
    Панель не перекрывает поле ввода и не крадёт фокус: это «посмотреть, что
    прислали», а не модальное окно, ради которого надо бросить диалог. */
+/* ПРЕДПРОСМОТР ФАЙЛА — ТЕРМИНАЛЬНЫЙ.
+   Он показывает содержимое песочницы, поэтому и выглядеть должен как
+   песочница: чёрный фон, зелёный моноширинный текст, живая точка в шапке и
+   строка состояния снизу. Стиль взят у .term-block/.term, чтобы это читалось
+   как одно и то же место, а не два разных окна. */
 .fprev{position:fixed;top:0;right:0;width:min(460px,42vw);height:100vh;z-index:70;
-  display:flex;flex-direction:column;background:rgba(9,17,28,.97);
-  border-left:1px solid var(--line);box-shadow:-18px 0 44px rgba(0,0,0,.5);
+  display:flex;flex-direction:column;background:rgba(0,0,0,.93);
+  border-left:1px solid rgba(63,191,149,.34);
+  box-shadow:-18px 0 44px rgba(0,0,0,.6),inset 0 0 60px rgba(63,191,149,.05);
   transform:translateX(100%);opacity:0;pointer-events:none;
   transition:transform .22s cubic-bezier(.22,.9,.3,1),opacity .22s}
 .fprev.open{transform:none;opacity:1;pointer-events:auto}
-.fprev-head{display:flex;align-items:center;gap:9px;padding:12px 14px;
-  border-bottom:1px solid var(--line);flex-shrink:0}
-.fprev-ico{width:16px;height:16px;color:var(--cy);flex-shrink:0;display:grid;place-items:center}
+.fprev-head{display:flex;align-items:center;gap:9px;padding:10px 13px;
+  font-family:var(--fm);font-size:10px;letter-spacing:1px;
+  color:var(--green);background:rgba(63,191,149,.07);
+  border-bottom:1px solid rgba(63,191,149,.2);flex-shrink:0}
+.fprev-ico{width:16px;height:16px;color:var(--green);flex-shrink:0;display:grid;place-items:center}
 .fprev-ico svg{width:14px;height:14px}
 .fprev-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  font-size:12px;color:var(--tx)}
-.fprev-size{font-family:var(--fm);font-size:9px;color:var(--tx3);flex-shrink:0}
-.fprev-btn{border:1px solid var(--line);background:transparent;color:var(--tx2);
-  border-radius:7px;padding:4px 9px;font-size:10px;cursor:pointer;transition:.15s;flex-shrink:0}
-.fprev-btn:hover{border-color:var(--cy);color:var(--cy);background:rgba(0,200,240,.07)}
+  font-family:var(--fm);font-size:11px;color:#7ce8b5}
+.fprev-size{font-family:var(--fm);font-size:9px;color:rgba(124,232,181,.55);flex-shrink:0}
+.fprev-btn{border:1px solid rgba(63,191,149,.3);background:transparent;color:#7ce8b5;
+  border-radius:7px;padding:4px 9px;font-family:var(--fm);font-size:10px;
+  cursor:pointer;transition:.15s;flex-shrink:0}
+.fprev-btn:hover{border-color:var(--green);color:#c9ffe6;background:rgba(63,191,149,.14);
+  box-shadow:0 0 12px rgba(63,191,149,.25)}
 .fprev-x{padding:4px 8px;font-size:12px;line-height:1}
-.fprev-body{flex:1;overflow:auto;padding:14px}
-.fprev-body img{max-width:100%;border-radius:9px;display:block;margin:0 auto}
+.fprev-body{flex:1;overflow:auto;padding:14px;background:rgba(0,0,0,.42)}
+.fprev-body img{max-width:100%;border-radius:9px;display:block;margin:0 auto;
+  border:1px solid rgba(63,191,149,.22)}
 .fprev-body pre{margin:0;white-space:pre-wrap;word-break:break-word;
-  font-family:var(--fm);font-size:11px;line-height:1.6;color:var(--tx2)}
-.fprev-body .fprev-none{text-align:center;color:var(--tx3);font-size:11px;padding:40px 10px;line-height:1.8}
+  font-family:var(--fm);font-size:11px;line-height:1.75;color:#7ce8b5}
+.fprev-body .fprev-none{text-align:center;color:rgba(124,232,181,.5);font-family:var(--fm);
+  font-size:11px;padding:40px 10px;line-height:1.8}
+/* строка состояния — как нижняя строка терминала */
+.fprev-foot{display:flex;align-items:center;gap:8px;padding:7px 13px;flex-shrink:0;
+  font-family:var(--fm);font-size:9.5px;color:rgba(124,232,181,.6);
+  border-top:1px solid rgba(63,191,149,.18);background:rgba(63,191,149,.05)}
+.fp-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fp-stat{flex-shrink:0;color:var(--gold)}
 @media(max-width:700px){.fprev{width:100vw}}
 
 /* Кнопка скачивания в углу файла, присланного Джарвисом.
@@ -1617,3 +1646,51 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 /* Кнопка при плитках прячется, пока свой вариант пуст: там выбор уходит сам.
    Не display:none — иначе панель дёргается по высоте в момент набора. */
 .ui-go-off{opacity:0;pointer-events:none;height:0;padding:0;margin:0;border:0;overflow:hidden}
+
+/* ---------- план, прилипший к верху, пока он выполняется ---------- */
+/* Зона лежит поверх ленты и не занимает места, пока пуста: иначе она
+   отжимала бы переписку вниз в каждом диалоге. */
+.dock-zone{position:sticky;top:0;z-index:24;height:0;overflow:visible;
+  display:flex;flex-direction:column;align-items:center;pointer-events:none}
+.plan-dock{pointer-events:auto;margin-top:8px;width:min(560px,calc(100% - 52px));
+  display:grid;grid-template-columns:auto auto 1fr auto auto;align-items:center;gap:9px;
+  padding:7px 12px;border-radius:12px;
+  background:rgba(9,20,32,.94);border:1px solid rgba(0,200,240,.3);
+  box-shadow:0 10px 30px rgba(0,0,0,.45),0 0 22px rgba(0,200,240,.1);
+  backdrop-filter:blur(9px);
+  /* сжат по высоте И по шрифту — он тут вспомогательный, а не главный */
+  font-size:11px;color:var(--tx2);
+  transform:translateY(-14px);opacity:0;
+  transition:transform .22s cubic-bezier(.22,.9,.3,1),opacity .22s}
+.plan-dock.in{transform:none;opacity:1}
+/* Пока план выполняется — мягко пульсирует, чтобы было видно: работа идёт. */
+.plan-dock.in:not(.done){animation:planPulse 2.1s ease-in-out infinite}
+@keyframes planPulse{
+  0%,100%{box-shadow:0 10px 30px rgba(0,0,0,.45),0 0 16px rgba(0,200,240,.09);
+          border-color:rgba(0,200,240,.26)}
+  50%    {box-shadow:0 10px 30px rgba(0,0,0,.45),0 0 30px rgba(0,200,240,.26);
+          border-color:rgba(0,200,240,.5)}}
+.plan-dock.done{border-color:rgba(63,191,149,.5);animation:none}
+.pd-ico{color:var(--cy);font-size:12px}
+.pd-t{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cy)}
+.pd-step{font-family:var(--fm);font-size:10px;color:var(--tx3);white-space:nowrap}
+.pd-bar{grid-column:3;height:3px;border-radius:2px;background:rgba(0,200,240,.14);overflow:hidden}
+.pd-fill{display:block;height:100%;width:0;border-radius:2px;
+  background:linear-gradient(90deg,var(--cy),var(--cy2));
+  box-shadow:0 0 10px var(--cy);transition:width .35s cubic-bezier(.33,1,.68,1)}
+.pd-open{font-size:10px;color:var(--tx3);cursor:pointer;transition:.15s;white-space:nowrap}
+.pd-open:hover{color:var(--cy)}
+/* список шагов раскрывается по требованию — по умолчанию план занимает одну строку */
+.pd-list{grid-column:1/-1;max-height:0;overflow:hidden;transition:max-height .24s cubic-bezier(.33,1,.68,1)}
+.plan-dock.open .pd-list{max-height:44vh;overflow:auto}
+.plan-list.mini{margin:6px 0 2px;font-size:10.5px}
+.plan-list.mini li{padding:2.5px 0}
+/* текущий шаг видно сразу: он подсвечен и слегка светится */
+.plan-list li.now{color:var(--cy)}
+.plan-list li.now .plan-num{background:var(--cy);color:#03121b;
+  box-shadow:0 0 10px var(--cy);animation:nowBeat 1.6s ease-in-out infinite}
+@keyframes nowBeat{50%{box-shadow:0 0 18px var(--cy)}}
+/* распорка держит место плана в ленте, пока он наверху */
+.plan-home{width:100%}
+@media(max-width:700px){.plan-dock{width:calc(100% - 24px);grid-template-columns:auto 1fr auto}
+  .plan-dock .pd-t,.plan-dock .pd-bar{display:none}}

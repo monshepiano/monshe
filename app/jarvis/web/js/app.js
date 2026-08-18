@@ -1187,10 +1187,15 @@ function openPreview(f) {
   $('#fprevName').textContent = f.name || 'файл';
   $('#fprevSize').textContent = f.size != null ? fmtSize(f.size) : '';
   const body = $('#fprevBody');
+  const foot = $('#fprevPath'), stat = $('#fprevStat');
+  // строка состояния внизу — как у терминала: где лежит файл и что с ним
+  if (foot) foot.textContent = '~/JARVIS/workspace/' + (f.path || f.name || '');
+  if (stat) stat.textContent = '';
   box.classList.add('open');
 
   if (isImg(f.name)) {
     body.innerHTML = '<img src="' + esc(f.url) + '" alt="' + esc(f.name || '') + '">';
+    if (stat) stat.textContent = 'изображение';
     return;
   }
   body.innerHTML = '<div class="fprev-none">читаю файл…</div>';
@@ -1204,7 +1209,9 @@ function openPreview(f) {
     if (r.kind === 'image') { body.innerHTML = '<img src="' + esc(r.download_url) + '">'; return; }
     if (r.kind === 'text') {
       body.innerHTML = '<pre></pre>';
-      body.querySelector('pre').textContent = r.content || '';
+      const txt = r.content || '';
+      body.querySelector('pre').textContent = txt;
+      if (stat) stat.textContent = txt.split('\n').length + ' строк';
       return;
     }
     body.innerHTML = '<div class="fprev-none">Предпросмотр недоступен для этого типа.<br>Файл можно скачать кнопкой выше.</div>';
@@ -1346,8 +1353,30 @@ function collapseToThumb(node, opts) {
     if (b) { b.style.transition = 'none'; b.style.maxHeight = ''; }
   };
   if (opts.instant) { put(); } else {
+    // ПОЧЕМУ СВОРАЧИВАНИЕ ИНОГДА ДЁРГАЛОСЬ.
+    // Оно было устроено ровно так, как когда-то разворачивание: анимация
+    // shrinkClose двигала transform (scaleY), а transform вёрстку не меняет.
+    // Карточка визуально сжималась, оставаясь в потоке во всю высоту, и
+    // только через 170 мс исчезала разом — вся лента прыгала на её высоту за
+    // один кадр. Заметно это было не всегда: если карточка низкая или лента
+    // прокручена так, что прыжок за экраном, глаз ничего не ловит. Отсюда
+    // «иногда минилаг». Разворачивание я так уже починил — делаю симметрично:
+    // сжимаем НАСТОЯЩУЮ высоту, и лента едет вместе с карточкой.
+    const h0 = node.getBoundingClientRect().height;
+    node.style.overflow = 'hidden';
+    node.style.transition = 'none';
+    node.style.height = h0 + 'px';
+    void node.offsetHeight;
+    const dur = Math.max(110, Math.min(190, 90 + h0 * 0.22));   // как у роста
     node.classList.add('shrinking');
-    setTimeout(() => { node.classList.remove('shrinking'); put(); }, 170);  // = shrinkClose
+    node.style.transition = 'height ' + Math.round(dur) + 'ms cubic-bezier(.4,0,.7,1)';
+    node.style.height = '28px';        // примерно высота будущей миниатюры
+    setTimeout(() => {
+      node.classList.remove('shrinking');
+      // вернуть карточке обычные размеры: она ещё пригодится при раскрытии
+      node.style.transition = ''; node.style.height = ''; node.style.overflow = '';
+      put();
+    }, Math.round(dur));
   }
   thumb.addEventListener('click', () => {
     node.style.display = '';
@@ -1392,6 +1421,72 @@ function collapseToThumb(node, opts) {
    Мгновенные шаги превращаются в короткую заметную вспышку «открылось —
    закрылось», а долгие ведут себя как раньше. */
 const CARD_MIN_MS = 620;
+
+/* ПЛАН НАВЕРХУ, ПОКА ОН ВЫПОЛНЯЕТСЯ.
+   План — единственная карточка, которая нужна всё время работы: по ней видно,
+   где агент сейчас. В ленте она уезжает вверх за экран через десяток строк
+   вывода. Поэтому через секунду после появления план «прилипает» к верху
+   области переписки в сжатом виде, пульсирует, пока идёт работа, и по
+   окончании возвращается на своё место в ленте — уже миниатюрой. */
+function dockPlan(ui) {
+  const card = ui.planCard;
+  if (!card || !card.isConnected || ui.planDock) return;
+
+  // Место в ленте держим распоркой ровно в высоту карточки: без неё лента
+  // подпрыгнет на всю высоту плана в момент прилипания.
+  const h = card.getBoundingClientRect().height;
+  if (ui.planHome) ui.planHome.style.height = h + 'px';
+
+  const dock = el('div', 'plan-dock');
+  dock.innerHTML =
+    '<span class="pd-ico">☰</span>' +
+    '<span class="pd-t">План</span>' +
+    '<span class="pd-step">шаг 1 из ' + ui.planItems.length + '</span>' +
+    '<span class="pd-bar"><i class="pd-fill"></i></span>' +
+    '<span class="pd-open">развернуть</span>' +
+    '<div class="pd-list"></div>';
+  // тот же список, только мельче — человек видит те же формулировки
+  const mini = el('ul', 'plan-list mini');
+  ui.planItems.forEach((li) => mini.appendChild(li));
+  dock.querySelector('.pd-list').appendChild(mini);
+
+  const holder = $('#dockZone') || stream().parentNode;
+  holder.appendChild(dock);
+  requestAnimationFrame(() => dock.classList.add('in'));
+  ui.planDock = dock;
+  // карточку в ленте прячем: её содержимое переехало наверх
+  card.style.display = 'none';
+
+  dock.querySelector('.pd-open').addEventListener('click', () => {
+    const open = dock.classList.toggle('open');
+    dock.querySelector('.pd-open').textContent = open ? 'свернуть' : 'развернуть';
+  });
+}
+
+/* План выполнен: снять сверху и вернуть в ленту миниатюрой на своё место. */
+function undockPlan(ui) {
+  const dock = ui.planDock;
+  const card = ui.planCard;
+  if (!dock) return;
+  ui.planDock = null;
+  dock.classList.add('done');
+  setTimeout(() => {
+    dock.classList.remove('in');
+    setTimeout(() => dock.remove(), 240);
+  }, 500);
+
+  if (!card || !card.isConnected) return;
+  // вернуть пункты в карточку и свернуть её в миниатюру НА СВОЁМ МЕСТЕ
+  const list = card.querySelector('.plan-list');
+  const mini = dock.querySelector('.plan-list.mini');
+  if (list && mini) { while (mini.firstChild) list.appendChild(mini.firstChild); }
+  card.style.display = '';
+  if (ui.planHome) { ui.planHome.style.height = ''; ui.planHome.remove(); ui.planHome = null; }
+  collapseSoon(card, {
+    cls: 'th-plan', icon: '☰',
+    title: 'План · ' + ui.planItems.length + ' шаг(ов)', tag: 'выполнен',
+  });
+}
 
 function markBorn(card) {
   if (card) card.dataset.born = String(performance.now());
@@ -1561,7 +1656,17 @@ function parseUiSpec(src) {
       if (opts.length > 1) items.push({ t: 'tiles', label: label || 'Выбери', opts, val: null });
     }
   });
-  return items;
+
+  // ЛИШНЯЯ КНОПКА «СГЕНЕРИРОВАТЬ».
+  // Панель сама ставит кнопку отправки там, где она нужна. Когда модель сверх
+  // этого дописывает свою кнопку («Сгенерировать», «Поехали»), получается два
+  // способа подтвердить выбор — причём её кнопка отправляет одну свою подпись,
+  // теряя выставленные значения. Из промпта я эту привычку убрал, но полагаться
+  // на послушание модели нельзя: подтверждение — дело интерфейса, поэтому
+  // кнопку-действие оставляем ТОЛЬКО если ничего другого в панели нет
+  // (тогда это осмысленная кнопка «сделай вот это»).
+  const real = items.filter((x) => x.t !== 'button');
+  return real.length ? real : items;
 }
 
 function mountUiPanels(root) {
@@ -2196,7 +2301,22 @@ function thinkFlush(card) {
   return el;
 }
 
+/* Ход мыслей больше НЕ печатается курсором.
+   Печать с курсором — это способ подать текст, который читают. Мысли не
+   читают: по ним скользят взглядом, чтобы понять, чем занят агент. Поэтому
+   здесь текст просто проматывается снизу вверх, а края блока затемнены —
+   в фокусе середина. Никакого курсора, никакой посимвольной печати. */
 function thinkType(el, chunk) {
+  if (!el) return;
+  el._buf = (el._buf || el.textContent || '') + chunk;
+  // текст ставим сразу целиком: догонять уже нечего
+  el.textContent = el._buf;
+  const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
+  if (atEnd) el.scrollTop = el.scrollHeight;
+  return;
+}
+
+function thinkTypeOld(el, chunk) {
   if (!el) return;
   el._buf = (el._buf || el.textContent || '') + chunk;
   if (el._t) return;
@@ -2332,6 +2452,11 @@ function fastLine(text) {
    был «виснущий кружочек», а вовсе не ошибка в самой анимации.
    Теперь всё, что дальше последнего завершённого абзаца, уже не изменится:
    его HTML считаем один раз и запоминаем, а пересобираем только хвост. */
+/* Отметки [ШАГ N] — служебные: по ним подсвечивается план. Пользователю их
+   показывать незачем. */
+const STEP_MARK = /\[\s*ШАГ\s*\d+\s*\]\s*/g;
+function stripSteps(t) { return t.replace(STEP_MARK, ''); }
+
 function renderTyped(ui) {
   if (!ui.mdEl) return;
   const text = ui.shown;
@@ -2344,11 +2469,68 @@ function renderTyped(ui) {
     // границу нельзя ставить внутри блока кода — он рендерится целиком
     if (!inCodeBlock(cand)) {
       src = cand;
-      html = MD.render(cand);
+      html = MD.render(stripSteps(cand));
       ui.frozen = { src, html };
     }
   }
-  ui.mdEl.innerHTML = html + MD.render(text.slice(src.length));
+
+  // ПОЧЕМУ ЛЕНТА «ЕЗДИЛА» ВВЕРХ-ВНИЗ ВО ВРЕМЯ ПЕЧАТИ.
+  // Хвост ответа пересобирается из markdown на каждом такте, а markdown по
+  // полтексту разбирается ИНАЧЕ, чем по целому. Пока строка «| Источник |»
+  // не дописана, это обычный абзац; допечатали вторую строку — абзац
+  // превратился в таблицу. «- пункт» сначала абзац, потом список; три
+  // обратные кавычки — сначала текст, потом блок кода. На тестовом ответе я
+  // насчитал 10 таких превращений, и каждое меняет высоту скачком, иногда
+  // В МЕНЬШУЮ сторону: текст на миг становится короче, лента дёргается вниз,
+  // автопрокрутка возвращает её обратно. Отсюда качели.
+  // Лечение: во время печати ответ не имеет права становиться ниже, чем
+  // только что был. Растёт — пожалуйста, это естественно.
+  const before = ui.mdEl.offsetHeight;
+  ui.mdEl.innerHTML = html + MD.render(stripSteps(text.slice(src.length)));
+  placeCaret(ui.mdEl);
+  const after = ui.mdEl.offsetHeight;
+  if (after < before) {
+    ui.floor = Math.max(ui.floor || 0, before);
+    ui.mdEl.style.minHeight = ui.floor + 'px';
+  } else if (ui.floor && after > ui.floor) {
+    // ответ перерос прежний пол — подпорка больше не нужна
+    ui.floor = 0;
+    ui.mdEl.style.minHeight = '';
+  }
+}
+
+/* Курсор набора.
+   Раньше он рисовался через CSS ::after у последнего блока. Пока ответ —
+   обычный абзац, всё хорошо. Но стоит последнему блоку оказаться таблицей,
+   списком или картинкой, и ::after у блочного элемента встаёт ОТДЕЛЬНОЙ
+   строкой под ним: курсор «просто внизу», а текст пишется где-то выше без
+   него. Именно это и выглядело как «печатает медленно и без курсора».
+   Ставим курсор настоящим узлом внутрь последнего текстового элемента —
+   тогда он всегда там же, где последняя буква. */
+function placeCaret(mdEl) {
+  const old = mdEl.querySelector('.caret');
+  if (old) old.remove();
+  // ищем последний элемент, внутрь которого курсор можно поставить в строку
+  let host = mdEl;
+  for (;;) {
+    const kids = host.children;
+    if (!kids.length) break;
+    const last = kids[kids.length - 1];
+    const tag = last.tagName;
+    if (tag === 'PRE' || tag === 'CODE' || tag === 'TABLE' || tag === 'IMG' ||
+        last.classList.contains('code-block') || last.classList.contains('ui-panel')) {
+      // внутрь кода и таблиц не лезем: там курсор рисует сам блок
+      host = last;
+      break;
+    }
+    host = last;
+  }
+  const tag = host.tagName;
+  if (tag === 'PRE' || tag === 'TABLE' || tag === 'IMG' ||
+      host.classList.contains('code-block') || host.classList.contains('ui-panel')) return;
+  const c = document.createElement('span');
+  c.className = 'caret';
+  host.appendChild(c);
 }
 
 /* Прокрутка читает геометрию страницы, а чтение сразу после записи HTML
@@ -2607,8 +2789,17 @@ function handleEvent(ev, ui) {
       });
       ui.planCard.inner.appendChild(list);
       node.body.insertBefore(ui.planCard, ui.statusEl);
+      // Место, где план стоял в ленте: сюда он вернётся миниатюрой, когда
+      // будет выполнен. Без якоря он вернулся бы в конец переписки, к тому
+      // моменту уже уехавший от своего сообщения.
+      ui.planHome = el('div', 'plan-home');
+      node.body.insertBefore(ui.planHome, ui.planCard);
       sfx('pop');
       scrollDown();
+      // Через секунду план уезжает наверх и там остаётся, пока не выполнен:
+      // иначе он уходит за край экрана вместе с лентой, и следить за ходом
+      // работы не по чему.
+      setTimeout(() => dockPlan(ui), 1000);
       break;
     }
 
@@ -2651,6 +2842,24 @@ function handleEvent(ev, ui) {
       if (ui.planItems[doneCount - 2]) ui.planItems[doneCount - 2].classList.add('done');
       beep(520, 0.05);
       scrollDown();
+      break;
+    }
+
+    case 'plan_step': {
+      // Шаг НАЧАЛСЯ: предыдущие отмечаем выполненными, текущий подсвечиваем.
+      // Раньше фронт считал вызовы инструментов и в конце разом вычёркивал
+      // весь список — теперь это факт от самой модели.
+      const n = ev.step | 0;
+      ui.planItems.forEach((li, i) => {
+        li.classList.toggle('done', i < n - 1);
+        li.classList.toggle('now', i === n - 1);
+      });
+      if (ui.planDock) {
+        const t = ui.planDock.querySelector('.pd-step');
+        if (t) t.textContent = 'шаг ' + n + ' из ' + ui.planItems.length;
+        const bar = ui.planDock.querySelector('.pd-fill');
+        if (bar) bar.style.width = Math.round((n - 1) / Math.max(1, ui.planItems.length) * 100) + '%';
+      }
       break;
     }
 
@@ -2827,7 +3036,9 @@ function handleEvent(ev, ui) {
       ui.buffer = content;
       ui.onTyped = () => {
         ui.mdEl.classList.remove('typing');
-        ui.mdEl.innerHTML = MD.render(content);
+        // подпорка высоты нужна только на время печати
+        ui.floor = 0; ui.mdEl.style.minHeight = '';
+        ui.mdEl.innerHTML = MD.render(stripSteps(content));
         foldCodeBlocks(ui.mdEl);
         mountUiPanels(ui.mdEl);
         // картинки внутри ответа открываются тем же предпросмотром, что и файлы
@@ -2841,18 +3052,15 @@ function handleEvent(ev, ui) {
             sub: ts ? fmtSize((ts.textContent || '').length) : '', tag: 'развернуть',
           });
         }
-        if (ui.planCard && ui.planCard.isConnected) {
-          collapseSoon(ui.planCard, {
-            cls: 'th-plan', icon: ICO.think,
-            title: 'План · ' + ui.planItems.length + ' шаг(ов)', tag: 'выполнен',
-          });
-        }
+        // план сворачивает undockPlan(): он же снимает карточку с верха
         addMsgActions(node, content);
         speakReply(content);
         scrollDown();
       };
       typerFlush(ui);
+      ui.planItems.forEach((li) => li.classList.remove('now'));
       ui.planItems.forEach((li) => li.classList.add('done'));
+      undockPlan(ui);
       sfx('done');
       $('#routeHint').classList.remove('show');
       scrollDown();

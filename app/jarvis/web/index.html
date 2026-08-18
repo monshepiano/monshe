@@ -133,6 +133,9 @@
     <!-- ---------- VIEW: ЧАТ ---------- -->
     <section class="view view-chat active" id="view-chat">
       <!-- приветствие строится в app.js (buildWelcome), здесь его быть не должно -->
+      <!-- сюда «прилипает» план, пока он выполняется: поверх ленты, у верхней
+           кромки области переписки -->
+      <div class="dock-zone" id="dockZone"></div>
       <div class="stream" id="stream"></div>
 
       <!-- ПОЛЕ ВВОДА -->
@@ -265,6 +268,7 @@
 <!-- ПРЕДПРОСМОТР ФАЙЛА (выезжает справа, открывается одним кликом по файлу) -->
 <div class="fprev" id="fprev">
   <div class="fprev-head">
+    <span class="term-dot"></span>
     <span class="fprev-ico" id="fprevIco"></span>
     <span class="fprev-name" id="fprevName"></span>
     <span class="fprev-size" id="fprevSize"></span>
@@ -272,6 +276,10 @@
     <button class="fprev-btn fprev-x" id="fprevClose" title="Закрыть">✕</button>
   </div>
   <div class="fprev-body" id="fprevBody"></div>
+  <div class="fprev-foot">
+    <span class="fp-path" id="fprevPath">~/JARVIS/workspace</span>
+    <span class="fp-stat" id="fprevStat"></span>
+  </div>
 </div>
 
 <!-- ТОСТЫ -->
