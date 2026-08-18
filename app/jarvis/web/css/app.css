@@ -268,8 +268,12 @@ button,input,textarea,select{font-family:inherit;color:inherit}
   overflow:hidden;animation:cardIn .4s cubic-bezier(.2,.8,.3,1) both;backdrop-filter:blur(8px)}
 @keyframes cardIn{from{opacity:0;transform:translateY(10px) scale(.985)}}
 .card-head{display:flex;align-items:center;gap:9px;padding:9px 13px;font-size:11.5px;color:var(--tx2);
-  cursor:pointer;user-select:none;transition:.2s}
+  cursor:pointer;user-select:none;transition:background .25s,color .25s}
+/* у РАЗВЁРНУТОЙ области голова заметно гуще телом — видно, где заголовок */
+.card-head.open{background:rgba(0,200,240,.11);color:var(--tx);
+  box-shadow:inset 0 -1px 0 var(--line)}
 .card-head:hover{background:rgba(0,212,255,.06)}
+.card-head.open:hover{background:rgba(0,212,255,.16)}
 .card-head .k{color:var(--cy);font-family:var(--fm);font-size:11px}
 /* каждый тип блока в ответе — своим цветом */
 .think-card .card-head .k{color:var(--violet)}
@@ -277,11 +281,18 @@ button,input,textarea,select{font-family:inherit;color:inherit}
 .plan-card .card-head .k{color:var(--teal)}
 .plan-card:hover{border-color:rgba(47,156,146,.35)}
 .term-card .card-head .k{color:var(--green)}
-.card-head .chev{margin-left:auto;transition:.3s;color:var(--tx3);font-size:11px}
-.card-head.open .chev{transform:rotate(90deg)}
-.card-body{max-height:0;overflow:hidden;transition:max-height .45s cubic-bezier(.4,0,.2,1)}
+.card-head .chev{margin-left:auto;color:var(--tx3);font-size:11px;
+  transition:transform .42s cubic-bezier(.34,1.56,.64,1),color .25s}
+.card-head.open .chev{transform:rotate(90deg);color:var(--cy)}
+/* Разворот с лёгким «перелётом»: содержимое въезжает снизу и чуть отпружинивает,
+   вместо равнодушного растягивания по высоте. */
+.card-body{max-height:0;overflow:hidden;
+  transition:max-height .42s cubic-bezier(.33,1,.68,1)}
 .card-body.open{max-height:900px;overflow:auto}
-.card-inner{padding:0 13px 12px;font-size:12.5px;color:var(--tx2);line-height:1.65}
+.card-inner{padding:0 13px 12px;font-size:12.5px;color:var(--tx2);line-height:1.65;
+  opacity:0;transform:translateY(-8px);
+  transition:opacity .3s ease,transform .42s cubic-bezier(.34,1.4,.64,1)}
+.card-body.open .card-inner{opacity:1;transform:none;transition-delay:.06s}
 
 /* «думает» */
 .thinking-line{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--tx2);padding:5px 2px}
@@ -781,8 +792,16 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .thumb.th-tool .th-ico,.thumb.th-plan .th-ico{background:rgba(0,200,240,.1)}
 /* Складываем строго вниз, к своей верхней кромке: без указания origin
    блок сжимался от центра и визуально «уползал». */
-.collapsing{animation:foldOut .3s cubic-bezier(.4,0,.2,1) both;transform-origin:top center}
-@keyframes foldOut{to{opacity:0;transform:scaleY(.7);filter:blur(3px)}}
+.collapsing{animation:foldOut .26s cubic-bezier(.5,0,.75,0) both;transform-origin:top center}
+/* сначала лёгкий «вдох» вверх, затем блок складывается вниз и уходит */
+@keyframes foldOut{
+  30%{opacity:.85;transform:scaleY(1.015) translateY(-2px)}
+  to{opacity:0;transform:scaleY(.55) translateY(6px)}}
+/* миниатюра не просто появляется — выпрыгивает на место сложенного блока */
+.thumb{animation:thumbIn .38s cubic-bezier(.34,1.56,.64,1) both}
+@keyframes thumbIn{
+  from{opacity:0;transform:scale(.9) translateY(-8px)}
+  to{opacity:1;transform:none}}
 
 /* =================== ПАНЕЛЬ УПРАВЛЕНИЯ ПЕСОЧНИЦЕЙ =================== */
 /* Никакой таблички: характеристики и кнопка стоят прямо на фоне страницы. */
@@ -887,20 +906,25 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   background:rgba(143,179,90,.05)}
 .fcard{position:relative;user-select:none}
 .fcard[draggable="true"]{cursor:grab}
-/* оригиналы бледнеют и слегка проваливаются — «улетели» на курсор */
-.fcard.dragging{opacity:.28;transform:scale(.94);filter:saturate(.5)}
+/* оригиналы бледнеют — «улетели» на курсор. Без filter: он заставлял браузер
+   перерисовывать всю сетку на каждом кадре, отсюда подёргивания. */
+.fcard.dragging{opacity:.3;transform:scale(.94)}
 
 /* слой с миниатюрами, висящими на курсоре */
-.drag-layer{position:fixed;inset:0;z-index:9999;pointer-events:none}
-.drag-ghost{position:fixed;top:0;left:0;padding:14px 10px;border-radius:14px;
-  border:1px solid rgba(0,200,240,.55);background:rgba(9,20,32,.96);
-  box-shadow:0 18px 40px rgba(0,0,0,.55),0 0 0 1px rgba(0,200,240,.22);
-  overflow:hidden;will-change:transform;transform-origin:50% 50%;
-  animation:ghostPop .18s ease-out both}
-@keyframes ghostPop{from{opacity:0}to{opacity:1}}
-.drag-ghost .fx,.drag-ghost .fx-bar{display:none}
-.drag-ghost .fi{font-size:34px}
-.drag-ghost .fn{font-size:15px}
+.drag-layer{position:fixed;inset:0;z-index:9999;pointer-events:none;contain:strict}
+.drag-ghost{position:fixed;top:0;left:0;padding:14px 10px;border-radius:16px;
+  border:1px solid rgba(0,200,240,.5);background:rgba(9,20,32,.97);
+  box-shadow:0 10px 22px rgba(0,0,0,.5);
+  overflow:hidden;transform-origin:50% 50%;
+  will-change:transform;contain:layout paint;backface-visibility:hidden}
+.drag-ghost .fx,.drag-ghost .fx-bar,.drag-ghost .fs{display:none}
+/* содержимое крупное, потому что вся карточка ужата примерно до трети размера:
+   иначе после scale() имя файла превращается в нечитаемую крупу */
+.drag-ghost .fi{font-size:58px;margin-bottom:6px}
+.drag-ghost .fi svg{width:74px;height:74px}
+.drag-ghost .fn{font-size:26px;line-height:1.2;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:100%}
+.drag-ghost img{border-radius:8px}
 .drag-more{position:fixed;top:0;left:0;z-index:9999;padding:4px 9px;border-radius:9px;
   font-family:var(--fm);font-size:11px;color:#03121b;background:var(--cy);
   box-shadow:0 6px 18px rgba(0,0,0,.5);will-change:transform}

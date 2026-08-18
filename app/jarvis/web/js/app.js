@@ -621,6 +621,10 @@ function scrollDown(force) {
   const near = s.scrollHeight - s.scrollTop - s.clientHeight < 220;
   if (near || force) s.scrollTop = s.scrollHeight;
 }
+/* Приветствие с подсказками убирает ТОЛЬКО действие самого пользователя:
+   отправленное сообщение или включённая камера. Раньше его сносили ещё и
+   уведомления от Джарвиса с карточками подтверждения — они приходят сами,
+   и подсказки исчезали из пустого диалога, хотя человек ничего не сделал. */
 function killWelcome() { const w = $('.welcome'); if (w) w.remove(); }
 
 /* Удержать ленту внизу, пока её высота ещё меняется.
@@ -782,7 +786,6 @@ function addUserMsg(text, atts, info) {
 }
 
 function addAiMsg(ts) {
-  killWelcome();
   const m = el('div', 'msg msg-ai');
   m.innerHTML =
     '<div class="ai-avatar"><div class="reactor sm" style="width:34px;height:34px">' +
@@ -865,13 +868,13 @@ function makeCard(icon, title, cls, openByDefault) {
   const body = card.querySelector('.card-body');
   const toggle = () => { head.classList.toggle('open'); body.classList.toggle('open'); };
   head.addEventListener('click', toggle);
-  // Свернуть можно кликом по любому пустому месту внутри карточки, а не только
-  // по маленькой стрелке. Клики по тексту, полям и кнопкам не трогаем.
-  // Та же закрытая логика, что и у миниатюр: сворачивает только клик по
-  // самому телу карточки, а не по чему-либо внутри него.
+  // Свернуть можно кликом в ЛЮБОМ месте карточки — так просил пользователь.
+  // Исключение ровно одно и закрытое: интерактивное содержимое (ссылки, поля,
+  // кнопки) и выделение текста, иначе карточка схлопывалась бы при попытке
+  // скопировать её содержимое или нажать кнопку внутри.
   body.addEventListener('click', (e) => {
     if (window.getSelection && String(window.getSelection()).length) return;
-    if (e.target !== body && e.target !== card.inner) return;
+    if (e.target.closest('a,button,input,textarea,select,label,.file-chip,.img-out')) return;
     toggle();
   });
   card.inner = card.querySelector('.card-inner');
@@ -984,15 +987,12 @@ function addFoldButton(node, opts) {
     collapseToThumb(node, opts);
   };
   b.addEventListener('click', fold);
-  // Клик в пустую зону окошка тоже сворачивает — попадать в мелкую стрелку
-  // не нужно. Раньше «пустой зоной» считалось всё, кроме перечисленных тегов
-  // и классов. Такой список нельзя закончить: стоило добавить внутрь блока
-  // новый элемент (переписку камеры, текст ответа, миниатюру), и клик по нему
-  // сворачивал всю карточку — вид «ломался» сам собой. Правило перевёрнуто и
-  // теперь закрытое: пустое место — это САМ контейнер и его прямые обёртки,
-  // то есть места, где нет никакого содержимого. Всё остальное — содержимое.
-  const bgOk = (t) => t === node || (t.parentNode === node && !t.firstElementChild
-    && !String(t.textContent || '').trim());
+  // Клик в ЛЮБОМ месте области сворачивает её в миниатюру — целиться в мелкую
+  // стрелку не нужно. Список исключений закрытый и короткий: то, с чем реально
+  // взаимодействуют (ссылки, кнопки, поля, видео, картинки), плюс выделение
+  // текста. Всё остальное — фон, по которому и сворачиваем.
+  const bgOk = (t) => !t.closest('a,button,input,textarea,select,label,video,canvas,' +
+    '.file-chip,.img-out,.msg-actions,.ver-switch');
   function bgFold(e) {
     if (window.getSelection && String(window.getSelection()).length) return;
     if (!bgOk(e.target)) return;
@@ -2053,7 +2053,6 @@ function renderSanctions() {
     // подтверждение по ходу стрима рисуется внутри ответа — второй раз не показываем
     if (S.streamApproval) { S.shownApprovals.add(key); return; }
     S.shownApprovals.add(key);
-    killWelcome();
     const card = sanctionCard(a);
     S.sanctionNodes[key] = card;
     stream().appendChild(card);
@@ -2104,7 +2103,6 @@ function renderNotes() {
   const fresh = S.notifications.filter((n) => !S.shownNotes.has(String(n.id)));
   fresh.reverse().forEach((n) => {
     S.shownNotes.add(String(n.id));
-    killWelcome();
     stream().appendChild(noteCard(n));
     scrollDown();
   });
@@ -2468,6 +2466,7 @@ function fileCard(f, i) {
   });
   c.addEventListener('dragend', () => {
     $$('#fileGrid .fcard.dragging').forEach((n) => n.classList.remove('dragging'));
+    clearDropMarks();
     stopDragGhosts();
   });
 
@@ -2505,22 +2504,41 @@ function startDragGhosts(e, cards, source) {
   const layer = el('div', 'drag-layer');
   DRAG.x = e.clientX; DRAG.y = e.clientY;
 
-  DRAG.ghosts = list.slice(0, 6).map((card, i) => {
+  // Стопка, как пачка фотографий в руке: верхняя ровно на курсоре, остальные
+  // выглядывают из-под неё веером — сразу видно, что их несколько.
+  const FAN = [
+    { dx: 0, dy: 0, rot: 0 },
+    { dx: -9, dy: 7, rot: -9 },
+    { dx: 9, dy: 11, rot: 8 },
+    { dx: -15, dy: 16, rot: -15 },
+    { dx: 15, dy: 20, rot: 14 },
+  ];
+  DRAG.ghosts = list.slice(0, 5).map((card, i) => {
     const box = card.getBoundingClientRect();
     const g = el('div', 'drag-ghost');
     g.innerHTML = card.innerHTML;
     g.style.width = box.width + 'px';
     g.style.height = box.height + 'px';
+    // верхняя карточка рисуется поверх остальных
     g.style.zIndex = String(50 - i);
-    // стартуем из настоящего положения карточки — миниатюра «взлетает» с места
     layer.appendChild(g);
-    return { node: g, x: box.left + box.width / 2, y: box.top + box.height / 2,
-             ease: 0.34 - i * 0.045, rot: (i - 1) * 4, scale: 0.42 - i * 0.03 };
+    const fan = FAN[i] || FAN[FAN.length - 1];
+    // стартуем из настоящего положения карточки — миниатюра «взлетает» с места
+    return {
+      node: g, x: box.left + box.width / 2, y: box.top + box.height / 2, vx: 0, vy: 0,
+      // Пружина. Подобрано численно: на ходу стопка идёт вровень с курсором
+      // (отставание ~5 px), а на резкой остановке проносится дальше на ~19 px
+      // и качается около полусекунды. Чем глубже карточка в стопке, тем мягче
+      // её пружина и дольше затухание — отсюда живой шлейф за верхней.
+      k: 0.34 - i * 0.03, damp: 0.82 + i * 0.012,
+      dx: fan.dx, dy: fan.dy, rot: fan.rot, scale: 0.3 - i * 0.012,
+    };
   });
-  if (list.length > 6) {
-    const more = el('div', 'drag-more', '+' + (list.length - 6));
+  if (list.length > 5) {
+    const more = el('div', 'drag-more', '+' + (list.length - 5));
     layer.appendChild(more);
-    DRAG.ghosts.push({ node: more, x: DRAG.x, y: DRAG.y, ease: 0.06, rot: 0, scale: 1, plain: true });
+    DRAG.ghosts.push({ node: more, x: DRAG.x, y: DRAG.y, vx: 0, vy: 0,
+                       k: 0.4, damp: 0.7, dx: 0, dy: 34, rot: 0, scale: 1, plain: true });
   }
   document.body.appendChild(layer);
   DRAG.layer = layer;
@@ -2530,21 +2548,42 @@ function startDragGhosts(e, cards, source) {
   document.addEventListener('dragover', DRAG.move, true);
   document.addEventListener('drag', DRAG.move, true);
 
+  // Пружина со скоростью и затуханием вместо простого «догоняния». Резко
+  // остановил курсор — накопленная скорость проносит миниатюру дальше и
+  // раскачивает обратно: она заметно шатается, а не просто приезжает.
   const tick = () => {
-    DRAG.ghosts.forEach((g, i) => {
-      g.x += (DRAG.x - g.x) * g.ease;
-      g.y += (DRAG.y - g.y) * g.ease;
-      // наклон по скорости — будто миниатюра болтается на нитке
-      const tilt = Math.max(-16, Math.min(16, (DRAG.x - g.x) * 0.5)) + g.rot;
-      g.node.style.transform = g.plain
-        ? 'translate(-50%,-50%) translate(' + g.x + 'px,' + (g.y + 26) + 'px)'
-        : 'translate(-50%,-50%) translate(' + g.x + 'px,' + g.y + 'px) ' +
-          'rotate(' + tilt + 'deg) scale(' + g.scale + ')';
-    });
+    for (let i = 0; i < DRAG.ghosts.length; i++) {
+      const g = DRAG.ghosts[i];
+      g.vx = (g.vx + (DRAG.x + g.dx - g.x) * g.k) * g.damp;
+      g.vy = (g.vy + (DRAG.y + g.dy - g.y) * g.k) * g.damp;
+      g.x += g.vx;
+      g.y += g.vy;
+      if (g.plain) {
+        g.node.style.transform = 'translate3d(' + (g.x - 12) + 'px,' + g.y + 'px,0)';
+        continue;
+      }
+      // наклон по СКОРОСТИ — миниатюра болтается на нитке и качается на стопе
+      const tilt = Math.max(-34, Math.min(34, g.vx * 1.5)) + g.rot;
+      g.node.style.transform =
+        'translate3d(' + g.x + 'px,' + g.y + 'px,0) translate(-50%,-50%) ' +
+        'rotate(' + tilt.toFixed(2) + 'deg) scale(' + g.scale + ')';
+    }
     DRAG.raf = requestAnimationFrame(tick);
   };
   DRAG.raf = requestAnimationFrame(tick);
 }
+
+/* Единая уборка подсветки. Раньше зелёную рамку снимало только событие на
+   самой сетке, но бросок на папку гасит всплытие (stopPropagation) — до сетки
+   оно не доходило, и подсветка залипала. Теперь метки снимаются в одном месте
+   и всегда: на dragend, drop и Escape, где бы они ни случились. */
+function clearDropMarks() {
+  $$('.drop-root').forEach((n) => n.classList.remove('drop-root'));
+  $$('.drop-on').forEach((n) => n.classList.remove('drop-on'));
+}
+document.addEventListener('dragend', clearDropMarks, true);
+document.addEventListener('drop', clearDropMarks, true);
+window.addEventListener('blur', () => { clearDropMarks(); stopDragGhosts(); });
 
 function stopDragGhosts() {
   if (DRAG.raf) cancelAnimationFrame(DRAG.raf);
