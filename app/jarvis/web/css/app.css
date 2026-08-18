@@ -1648,49 +1648,86 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .ui-go-off{opacity:0;pointer-events:none;height:0;padding:0;margin:0;border:0;overflow:hidden}
 
 /* ---------- план, прилипший к верху, пока он выполняется ---------- */
-/* Зона лежит поверх ленты и не занимает места, пока пуста: иначе она
-   отжимала бы переписку вниз в каждом диалоге. */
+/* Зона лежит поверх ленты и не занимает места, пока пуста. */
 .dock-zone{position:sticky;top:0;z-index:24;height:0;overflow:visible;
   display:flex;flex-direction:column;align-items:center;pointer-events:none}
-.plan-dock{pointer-events:auto;margin-top:8px;width:min(560px,calc(100% - 52px));
-  display:grid;grid-template-columns:auto auto 1fr auto auto;align-items:center;gap:9px;
-  padding:7px 12px;border-radius:12px;
-  background:rgba(9,20,32,.94);border:1px solid rgba(0,200,240,.3);
-  box-shadow:0 10px 30px rgba(0,0,0,.45),0 0 22px rgba(0,200,240,.1);
-  backdrop-filter:blur(9px);
-  /* сжат по высоте И по шрифту — он тут вспомогательный, а не главный */
-  font-size:11px;color:var(--tx2);
-  transform:translateY(-14px);opacity:0;
-  transition:transform .22s cubic-bezier(.22,.9,.3,1),opacity .22s}
-.plan-dock.in{transform:none;opacity:1}
-/* Пока план выполняется — мягко пульсирует, чтобы было видно: работа идёт. */
-.plan-dock.in:not(.done){animation:planPulse 2.1s ease-in-out infinite}
+
+/* ПЛАН ДОЛЖЕН БЫТЬ ВИДЕН. Весь интерфейс голубой, поэтому голубая панель на
+   голубом фоне не читается как «главное сейчас». Даём плану собственный цвет —
+   золото: он тёплый, в палитре уже есть и ни с чем не спорит. */
+.plan-dock{pointer-events:auto;margin-top:10px;width:min(620px,calc(100% - 44px));
+  padding:9px 14px 11px;border-radius:14px;
+  background:linear-gradient(180deg,rgba(28,22,7,.96),rgba(14,12,8,.96));
+  border:1px solid rgba(217,164,65,.55);
+  box-shadow:0 14px 38px rgba(0,0,0,.55),0 0 26px rgba(217,164,65,.18);
+  backdrop-filter:blur(10px);font-size:11px;color:var(--tx2);
+  opacity:0}
+/* полёт «облачком»: длинный мягкий переход, панель приплывает из ленты */
+.plan-dock.fly{transition:transform .62s cubic-bezier(.22,.85,.3,1),
+  opacity .42s ease-out,box-shadow .3s,border-color .3s}
+/* Пульс ярче и чаще, чем был: 1.35 с вместо 2.1 и заметно сильнее свечение. */
+.plan-dock.live{animation:planPulse 1.35s ease-in-out infinite}
 @keyframes planPulse{
-  0%,100%{box-shadow:0 10px 30px rgba(0,0,0,.45),0 0 16px rgba(0,200,240,.09);
-          border-color:rgba(0,200,240,.26)}
-  50%    {box-shadow:0 10px 30px rgba(0,0,0,.45),0 0 30px rgba(0,200,240,.26);
-          border-color:rgba(0,200,240,.5)}}
-.plan-dock.done{border-color:rgba(63,191,149,.5);animation:none}
-.pd-ico{color:var(--cy);font-size:12px}
-.pd-t{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cy)}
-.pd-step{font-family:var(--fm);font-size:10px;color:var(--tx3);white-space:nowrap}
-.pd-bar{grid-column:3;height:3px;border-radius:2px;background:rgba(0,200,240,.14);overflow:hidden}
+  0%,100%{box-shadow:0 14px 38px rgba(0,0,0,.55),0 0 18px rgba(217,164,65,.16);
+          border-color:rgba(217,164,65,.45)}
+  50%    {box-shadow:0 14px 38px rgba(0,0,0,.55),0 0 46px rgba(217,164,65,.55);
+          border-color:rgba(217,164,65,1)}}
+.plan-dock.done{animation:none;border-color:rgba(63,191,149,.65);
+  box-shadow:0 14px 38px rgba(0,0,0,.55),0 0 30px rgba(63,191,149,.3);
+  transition:transform .3s ease-in,opacity .3s ease-in,border-color .3s,box-shadow .3s}
+
+.pd-top{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+.pd-ico{color:var(--gold);font-size:12px}
+.pd-t{font-size:10px;letter-spacing:2.5px;text-transform:uppercase;color:var(--gold);
+  text-shadow:0 0 12px rgba(217,164,65,.4)}
+.pd-step{margin-left:auto;font-family:var(--fm);font-size:10px;
+  color:rgba(217,164,65,.85);white-space:nowrap}
+.plan-dock.done .pd-t,.plan-dock.done .pd-ico,.plan-dock.done .pd-step{color:var(--green)}
+
+.pd-bar{height:3px;border-radius:2px;background:rgba(217,164,65,.16);overflow:hidden}
 .pd-fill{display:block;height:100%;width:0;border-radius:2px;
-  background:linear-gradient(90deg,var(--cy),var(--cy2));
-  box-shadow:0 0 10px var(--cy);transition:width .35s cubic-bezier(.33,1,.68,1)}
-.pd-open{font-size:10px;color:var(--tx3);cursor:pointer;transition:.15s;white-space:nowrap}
-.pd-open:hover{color:var(--cy)}
-/* список шагов раскрывается по требованию — по умолчанию план занимает одну строку */
-.pd-list{grid-column:1/-1;max-height:0;overflow:hidden;transition:max-height .24s cubic-bezier(.33,1,.68,1)}
-.plan-dock.open .pd-list{max-height:44vh;overflow:auto}
-.plan-list.mini{margin:6px 0 2px;font-size:10.5px}
-.plan-list.mini li{padding:2.5px 0}
-/* текущий шаг видно сразу: он подсвечен и слегка светится */
+  background:linear-gradient(90deg,var(--gold),#ffd98a);
+  box-shadow:0 0 12px var(--gold);transition:width .45s cubic-bezier(.33,1,.68,1)}
+.plan-dock.done .pd-fill{background:linear-gradient(90deg,var(--green),#7ce8b5);
+  box-shadow:0 0 12px var(--green)}
+
+/* ШАГИ ПОД ЛИНИЕЙ: кружки с номерами, равноудалённо, с подписями. */
+.pd-steps{display:flex;justify-content:space-between;align-items:flex-start;
+  gap:4px;margin-top:9px}
+.pd-s{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;
+  text-align:center;position:relative}
+/* соединительная нить между кружками */
+.pd-s::before{content:'';position:absolute;top:9px;left:calc(-50% + 10px);width:calc(100% - 20px);
+  height:1px;background:rgba(217,164,65,.2)}
+.pd-s:first-child::before{display:none}
+.pd-s.done::before,.pd-s.now::before{background:rgba(217,164,65,.6)}
+.pd-dot{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;
+  font-family:var(--fm);font-size:9.5px;font-style:normal;flex-shrink:0;
+  border:1px solid rgba(217,164,65,.4);color:rgba(217,164,65,.75);
+  background:rgba(20,16,6,.9);transition:.25s;position:relative;z-index:1}
+.pd-cap{font-size:9px;line-height:1.25;color:var(--tx3);overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
+/* выполненный шаг */
+.pd-s.done .pd-dot{background:rgba(217,164,65,.9);color:#1a1305;border-color:var(--gold)}
+.pd-s.done .pd-cap{color:rgba(217,164,65,.7);text-decoration:line-through;
+  text-decoration-color:rgba(217,164,65,.45)}
+/* текущий шаг — самый заметный элемент панели */
+.pd-s.now .pd-dot{background:var(--gold);color:#1a1305;border-color:#ffd98a;
+  box-shadow:0 0 16px var(--gold);animation:dotBeat 1.05s ease-in-out infinite}
+.pd-s.now .pd-cap{color:#ffd98a}
+@keyframes dotBeat{50%{box-shadow:0 0 26px var(--gold);transform:scale(1.12)}}
+.plan-dock.done .pd-s .pd-dot{border-color:rgba(63,191,149,.6);
+  background:rgba(63,191,149,.85);color:#04150f;box-shadow:none;animation:none}
+
+/* пункты в самой карточке плана */
 .plan-list li.now{color:var(--cy)}
 .plan-list li.now .plan-num{background:var(--cy);color:#03121b;
   box-shadow:0 0 10px var(--cy);animation:nowBeat 1.6s ease-in-out infinite}
 @keyframes nowBeat{50%{box-shadow:0 0 18px var(--cy)}}
 /* распорка держит место плана в ленте, пока он наверху */
 .plan-home{width:100%}
-@media(max-width:700px){.plan-dock{width:calc(100% - 24px);grid-template-columns:auto 1fr auto}
-  .plan-dock .pd-t,.plan-dock .pd-bar{display:none}}
+@media(max-width:700px){
+  .plan-dock{width:calc(100% - 20px);padding:8px 10px 10px}
+  .pd-cap{display:none}
+  .pd-s::before{top:9px}
+}

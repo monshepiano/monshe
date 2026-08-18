@@ -1367,7 +1367,9 @@ function collapseToThumb(node, opts) {
     node.style.transition = 'none';
     node.style.height = h0 + 'px';
     void node.offsetHeight;
-    const dur = Math.max(110, Math.min(190, 90 + h0 * 0.22));   // как у роста
+    // Свёртка идёт на 28% медленнее роста: раскрытие — ответ на клик, его
+    // ждут, а свёртка происходит сама и слишком резкая читается как рывок.
+    const dur = Math.max(141, Math.min(243, 115 + h0 * 0.28));
     node.classList.add('shrinking');
     node.style.transition = 'height ' + Math.round(dur) + 'ms cubic-bezier(.4,0,.7,1)';
     node.style.height = '28px';        // примерно высота будущей миниатюры
@@ -1423,64 +1425,109 @@ function collapseToThumb(node, opts) {
 const CARD_MIN_MS = 620;
 
 /* ПЛАН НАВЕРХУ, ПОКА ОН ВЫПОЛНЯЕТСЯ.
-   План — единственная карточка, которая нужна всё время работы: по ней видно,
-   где агент сейчас. В ленте она уезжает вверх за экран через десяток строк
-   вывода. Поэтому через секунду после появления план «прилипает» к верху
-   области переписки в сжатом виде, пульсирует, пока идёт работа, и по
-   окончании возвращается на своё место в ленте — уже миниатюрой. */
+   План — единственная карточка, нужная всё время работы: по ней видно, где
+   агент сейчас. В ленте она уезжает за экран через десяток строк вывода.
+   Поэтому план «улетает» наверх, там сжимается в горизонтальную дорожку шагов
+   и возвращается на своё место в ленте, когда всё выполнено. */
+
+/* Один план на экране. Если пришёл новый — старый обязан уйти.
+   БАГ: агент за прогон может составить план дважды (например, уточнил задачу).
+   Второй dockPlan вешал вторую панель поверх первой, а undockPlan в конце
+   знал только про последнюю — первая оставалась висеть наверху навсегда. */
+function dropStrayDocks(keep) {
+  $$('.plan-dock').forEach((d) => { if (d !== keep) d.remove(); });
+}
+
 function dockPlan(ui) {
   const card = ui.planCard;
   if (!card || !card.isConnected || ui.planDock) return;
 
-  // Место в ленте держим распоркой ровно в высоту карточки: без неё лента
-  // подпрыгнет на всю высоту плана в момент прилипания.
-  const h = card.getBoundingClientRect().height;
-  if (ui.planHome) ui.planHome.style.height = h + 'px';
+  // распорка держит место в ленте, чтобы она не подпрыгнула
+  const box = card.getBoundingClientRect();
+  if (ui.planHome) ui.planHome.style.height = box.height + 'px';
 
+  const n = ui.planItems.length;
   const dock = el('div', 'plan-dock');
   dock.innerHTML =
-    '<span class="pd-ico">☰</span>' +
-    '<span class="pd-t">План</span>' +
-    '<span class="pd-step">шаг 1 из ' + ui.planItems.length + '</span>' +
-    '<span class="pd-bar"><i class="pd-fill"></i></span>' +
-    '<span class="pd-open">развернуть</span>' +
-    '<div class="pd-list"></div>';
-  // тот же список, только мельче — человек видит те же формулировки
-  const mini = el('ul', 'plan-list mini');
-  ui.planItems.forEach((li) => mini.appendChild(li));
-  dock.querySelector('.pd-list').appendChild(mini);
+    '<div class="pd-top">' +
+      '<span class="pd-ico">☰</span>' +
+      '<span class="pd-t">План выполняется</span>' +
+      '<span class="pd-step">шаг 1 из ' + n + '</span>' +
+    '</div>' +
+    '<div class="pd-bar"><i class="pd-fill"></i></div>' +
+    '<div class="pd-steps"></div>';
+
+  // Шаги — кружки с номерами, равноудалённо по горизонтали, с короткой
+  // подписью под каждым. Так виден ВЕСЬ план целиком и место в нём.
+  const row = dock.querySelector('.pd-steps');
+  ui.planItems.forEach((li, i) => {
+    const full = (li.textContent || '').replace(/^\d+/, '').trim();
+    const st = el('div', 'pd-s');
+    st.innerHTML = '<i class="pd-dot">' + (i + 1) + '</i>' +
+                   '<span class="pd-cap">' + esc(shortStep(full)) + '</span>';
+    st.title = full;                       // полная формулировка — по наведению
+    row.appendChild(st);
+  });
 
   const holder = $('#dockZone') || stream().parentNode;
   holder.appendChild(dock);
-  requestAnimationFrame(() => dock.classList.add('in'));
+  dropStrayDocks(dock);
   ui.planDock = dock;
-  // карточку в ленте прячем: её содержимое переехало наверх
-  card.style.display = 'none';
 
-  dock.querySelector('.pd-open').addEventListener('click', () => {
-    const open = dock.classList.toggle('open');
-    dock.querySelector('.pd-open').textContent = open ? 'свернуть' : 'развернуть';
+  // ПОЛЁТ «ОБЛАЧКОМ»: панель стартует там, где карточка стоит в ленте, и
+  // плавно уплывает на своё место наверху, попутно сжимаясь. Раньше она
+  // просто возникала сверху — движение было незаметно.
+  const to = dock.getBoundingClientRect();
+  const dx = (box.left + box.width / 2) - (to.left + to.width / 2);
+  const dy = box.top - to.top;
+  const sx = Math.min(1.25, box.width / Math.max(1, to.width));
+  dock.style.transformOrigin = 'top center';
+  dock.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(' + sx + ')';
+  dock.style.opacity = '0';
+  card.style.transition = 'opacity .3s ease-out';
+  card.style.opacity = '0';               // карточка растворяется, панель улетает
+  requestAnimationFrame(() => {
+    dock.classList.add('fly');            // .fly задаёт длинный мягкий переход
+    dock.style.transform = 'none';
+    dock.style.opacity = '1';
   });
+  setTimeout(() => { card.style.display = 'none'; card.style.opacity = ''; }, 320);
+  // пульсацию включаем ПОСЛЕ прилёта: иначе два движения спорят друг с другом
+  setTimeout(() => dock.classList.add('live'), 760);
+}
+
+/* Короткая подпись под кружком: первые два-три слова шага. */
+function shortStep(t) {
+  const words = String(t).split(/\s+/).filter(Boolean);
+  let out = words.slice(0, 2).join(' ');
+  if (out.length > 18) out = out.slice(0, 17) + '…';
+  return out || '—';
 }
 
 /* План выполнен: снять сверху и вернуть в ленту миниатюрой на своё место. */
 function undockPlan(ui) {
   const dock = ui.planDock;
   const card = ui.planCard;
-  if (!dock) return;
   ui.planDock = null;
-  dock.classList.add('done');
-  setTimeout(() => {
-    dock.classList.remove('in');
-    setTimeout(() => dock.remove(), 240);
-  }, 500);
+  if (dock) {
+    dock.classList.remove('live');
+    dock.classList.add('done');
+    const t = dock.querySelector('.pd-t');
+    if (t) t.textContent = 'План выполнен';
+    const fill = dock.querySelector('.pd-fill');
+    if (fill) fill.style.width = '100%';
+    setTimeout(() => {
+      dock.style.transform = 'translateY(-16px) scale(.94)';
+      dock.style.opacity = '0';
+      setTimeout(() => dock.remove(), 300);
+    }, 700);
+  }
+  // на всякий случай убираем всё, что могло остаться от прошлых планов
+  setTimeout(() => dropStrayDocks(null), 1100);
 
   if (!card || !card.isConnected) return;
-  // вернуть пункты в карточку и свернуть её в миниатюру НА СВОЁМ МЕСТЕ
-  const list = card.querySelector('.plan-list');
-  const mini = dock.querySelector('.plan-list.mini');
-  if (list && mini) { while (mini.firstChild) list.appendChild(mini.firstChild); }
   card.style.display = '';
+  card.style.opacity = '';
   if (ui.planHome) { ui.planHome.style.height = ''; ui.planHome.remove(); ui.planHome = null; }
   collapseSoon(card, {
     cls: 'th-plan', icon: '☰',
@@ -1588,6 +1635,44 @@ function normUiLine(raw) {
   return ln;
 }
 
+/* Разбор строки выбора: «tiles Метка: A | B | C» и «tiles Метка | A | B».
+
+   ПОЧЕМУ ЗАГОЛОВОК УЕЗЖАЛ В ПЕРВЫЙ ВАРИАНТ. Шаблон требовал двоеточие между
+   меткой и вариантами. Модель написала «tiles Что делать? | Сделай постер |
+   ...» — вопросительный знак вместо двоеточия, — строка не совпала ни с одним
+   шаблоном и доехала до последнего рубежа. А тот делит по «|» ВСЮ строку, не
+   зная, что первое слово — это название типа. Получилась плитка с подписью
+   «tiles Что делать?» и панель без заголовка.
+   Двоеточие — не то, на чём стоит держаться. Если варианты разделены «|», то
+   первый кусок и есть метка, каким бы знаком он ни кончался. */
+function matchChoice(ln, type) {
+  const head = new RegExp('^' + type + '\\s+(.+)$', 'i');
+  const m = ln.match(head);
+  if (!m) return null;
+  let rest = m[1];
+  let label = '';
+  const colon = rest.indexOf(':');
+  const bar = rest.indexOf('|');
+  if (colon >= 0 && (bar < 0 || colon < bar)) {
+    label = rest.slice(0, colon).trim();
+    rest = rest.slice(colon + 1);
+  } else if (bar >= 0) {
+    // двоеточия нет: меткой служит всё до первой черты
+    label = rest.slice(0, bar).trim();
+    rest = rest.slice(bar + 1);
+  } else {
+    return null;                       // вариантов нет — это не выбор
+  }
+  const opts = rest.split('|').map((x) => x.trim()).filter(Boolean);
+  if (!opts.length) return null;
+  return [ln, label || 'Выбери', opts];
+}
+
+/* Название типа, случайно оставшееся в начале строки. Нужно последнему
+   рубежу: он делит строку по «|» вслепую и не должен принять слово «tiles»
+   за часть первого варианта. */
+const UI_TYPE_WORD = /^(tiles|multi|rank|slider|number|rate|toggle|text|area|date|color|button)\s+/i;
+
 function parseUiSpec(src) {
   const items = [];
   String(src || '').split('\n').forEach((raw) => {
@@ -1614,20 +1699,17 @@ function parseUiSpec(src) {
     } else if ((m = ln.match(/^toggle\s+(.+?)(?:\s*=\s*(on|off|да|нет|true|false))?$/i))) {
       items.push({ t: 'toggle', label: m[1],
                    val: /^(on|да|true)$/i.test(m[2] || '') });
-    } else if ((m = ln.match(/^tiles\s+(.+?)\s*:\s*(.+)$/i))) {
-      items.push({ t: 'tiles', label: m[1],
-                   opts: m[2].split('|').map((x) => x.trim()).filter(Boolean), val: null });
+    } else if ((m = matchChoice(ln, 'tiles'))) {
+      items.push({ t: 'tiles', label: m[1], opts: m[2], val: null });
     // text Метка [= подсказка] — свободный ответ, когда варианты не перечислить
     } else if ((m = ln.match(/^text\s+(.+?)(?:\s*=\s*(.*))?$/i))) {
       items.push({ t: 'text', label: m[1], hint: (m[2] || '').trim(), val: '' });
     // rank Метка: A | B | C — расставить по важности (порядок и есть ответ)
-    } else if ((m = ln.match(/^rank\s+(.+?)\s*:\s*(.+)$/i))) {
-      items.push({ t: 'rank', label: m[1],
-                   opts: m[2].split('|').map((x) => x.trim()).filter(Boolean), val: null });
+    } else if ((m = matchChoice(ln, 'rank'))) {
+      items.push({ t: 'rank', label: m[1], opts: m[2], val: null });
     // multi Метка: A | B | C — выбрать НЕСКОЛЬКО, а не одно
-    } else if ((m = ln.match(/^multi\s+(.+?)\s*:\s*(.+)$/i))) {
-      items.push({ t: 'multi', label: m[1],
-                   opts: m[2].split('|').map((x) => x.trim()).filter(Boolean), val: [] });
+    } else if ((m = matchChoice(ln, 'multi'))) {
+      items.push({ t: 'multi', label: m[1], opts: m[2], val: [] });
     // rate Метка [1..5] — оценка звёздами
     } else if ((m = ln.match(/^rate\s+(.+?)(?:\s+(\d+)\.\.(\d+))?(?:\s*=\s*(\d+))?$/i))) {
       items.push({ t: 'rate', label: m[1], max: m[3] ? parseInt(m[3], 10) : 5,
@@ -1650,9 +1732,18 @@ function parseUiSpec(src) {
     // чем не показать ничего: пустая панель удаляется, и пользователь остаётся
     // с текстом «выбери скорость» без единой кнопки.
     } else if (/\|/.test(ln)) {
-      const parts = ln.split(':');
-      const label = parts.length > 1 ? parts.shift().trim() : '';
-      const opts = parts.join(':').split('|').map((x) => x.trim()).filter(Boolean);
+      const bare = ln.replace(UI_TYPE_WORD, '');   // «tiles Что делать?» -> «Что делать?»
+      // Метку отделяем тем же правилом, что и в matchChoice: двоеточие, если
+      // оно раньше первой черты, иначе — всё до первой черты. Иначе вопрос
+      // «Что делать? | А | Б» превращался в лишнюю плитку «Что делать?».
+      const colon = bare.indexOf(':'), bar = bare.indexOf('|');
+      let label = '', rest = bare;
+      if (colon >= 0 && (bar < 0 || colon < bar)) {
+        label = bare.slice(0, colon).trim(); rest = bare.slice(colon + 1);
+      } else if (bar >= 0) {
+        label = bare.slice(0, bar).trim(); rest = bare.slice(bar + 1);
+      }
+      const opts = rest.split('|').map((x) => x.trim()).filter(Boolean);
       if (opts.length > 1) items.push({ t: 'tiles', label: label || 'Выбери', opts, val: null });
     }
   });
@@ -2454,7 +2545,9 @@ function fastLine(text) {
    его HTML считаем один раз и запоминаем, а пересобираем только хвост. */
 /* Отметки [ШАГ N] — служебные: по ним подсвечивается план. Пользователю их
    показывать незачем. */
-const STEP_MARK = /\[\s*ШАГ\s*\d+\s*\]\s*/g;
+// Служебные отметки шагов плана: [ШАГ 2] и [ШАГ ГОТОВ]. Их шлёт модель,
+// по ним двигается панель плана, но в тексте ответа их быть не должно.
+const STEP_MARK = /\[\s*ШАГ\s*(?:\d+|ГОТОВ)\s*\]\s*/g;
 function stripSteps(t) { return t.replace(STEP_MARK, ''); }
 
 function renderTyped(ui) {
@@ -2510,24 +2603,30 @@ function renderTyped(ui) {
 function placeCaret(mdEl) {
   const old = mdEl.querySelector('.caret');
   if (old) old.remove();
-  // ищем последний элемент, внутрь которого курсор можно поставить в строку
+
+  // ПОЧЕМУ КУРСОР «ЗАДЕРЖИВАЛСЯ» ПОЗАДИ ТЕКСТА.
+  // Спуск шёл по .children, а это ТОЛЬКО элементы — текстовые узлы в список
+  // не попадают. В строке «**жирный** и дальше текст» последним элементом
+  // абзаца остаётся <strong>, хотя после него идёт ещё полстроки обычного
+  // текста. Курсор уезжал внутрь жирного куска и замирал там, пока печаталось
+  // продолжение, — со стороны это и выглядит как «отстал». То же самое с
+  // ссылками, кодом в строке и курсивом.
+  // Правильный ориентир — ПОСЛЕДНИЙ УЗЕЛ (lastChild), а не последний элемент:
+  // если строка кончается текстом, курсор place прямо здесь, в конце.
+  const OPAQUE = (n) => n && n.nodeType === 1 && (
+    n.tagName === 'PRE' || n.tagName === 'TABLE' || n.tagName === 'IMG' ||
+    n.classList.contains('code-block') || n.classList.contains('ui-panel'));
+
   let host = mdEl;
   for (;;) {
-    const kids = host.children;
-    if (!kids.length) break;
-    const last = kids[kids.length - 1];
-    const tag = last.tagName;
-    if (tag === 'PRE' || tag === 'CODE' || tag === 'TABLE' || tag === 'IMG' ||
-        last.classList.contains('code-block') || last.classList.contains('ui-panel')) {
-      // внутрь кода и таблиц не лезем: там курсор рисует сам блок
-      host = last;
-      break;
-    }
-    host = last;
+    const last = host.lastChild;
+    if (!last) break;                       // пусто — ставим сюда
+    if (last.nodeType === 3) break;         // строка кончается текстом — курсор в конец
+    if (last.nodeType !== 1) { break; }
+    if (OPAQUE(last)) return;               // код/таблица/картинка рисуют курсор сами
+    host = last;                            // спускаемся в последний элемент
   }
-  const tag = host.tagName;
-  if (tag === 'PRE' || tag === 'TABLE' || tag === 'IMG' ||
-      host.classList.contains('code-block') || host.classList.contains('ui-panel')) return;
+  if (OPAQUE(host)) return;
   const c = document.createElement('span');
   c.className = 'caret';
   host.appendChild(c);
@@ -2779,6 +2878,17 @@ function handleEvent(ev, ui) {
     }
 
     case 'plan': {
+      // Агент может составить план дважды за прогон (уточнил задачу — сделал
+      // новый). Прежнюю панель и прежнюю карточку убираем, иначе первая так и
+      // останется висеть наверху: undockPlan знает только про последнюю.
+      if (ui.planDock || ui.planCard) {
+        dropStrayDocks(null);
+        ui.planDock = null;
+        if (ui.planCard && ui.planCard.isConnected) ui.planCard.remove();
+        if (ui.planHome && ui.planHome.isConnected) ui.planHome.remove();
+        ui.planHome = null;
+        ui.planItems = [];
+      }
       ui.planCard = makeCard('☰', 'План · ' + ev.steps.length + ' шаг(ов)', 'plan-card', true);
       markBorn(ui.planCard);
       const list = el('ul', 'plan-list');
@@ -2795,11 +2905,15 @@ function handleEvent(ev, ui) {
       ui.planHome = el('div', 'plan-home');
       node.body.insertBefore(ui.planHome, ui.planCard);
       sfx('pop');
-      scrollDown();
-      // Через секунду план уезжает наверх и там остаётся, пока не выполнен:
-      // иначе он уходит за край экрана вместе с лентой, и следить за ходом
-      // работы не по чему.
-      setTimeout(() => dockPlan(ui), 1000);
+      // ПОЧЕМУ ЭКРАН НЕ ЕХАЛ ВНИЗ ЗА ПЛАНОМ.
+      // Одного scrollDown() мало: в этот момент карточка только вставлена, её
+      // высота ещё не посчитана (пункты появляются с анимацией, шрифт может
+      // дорисовываться). Прокрутка происходила до того, как лента выросла, и
+      // промахивалась. Держим низ несколько кадров — тем же приёмом, что и при
+      // открытии диалога.
+      pinToBottom(stream());
+      // Через секунду план уезжает наверх и там остаётся, пока не выполнен.
+      setTimeout(() => dockPlan(ui), 1100);
       break;
     }
 
@@ -2850,15 +2964,22 @@ function handleEvent(ev, ui) {
       // Раньше фронт считал вызовы инструментов и в конце разом вычёркивал
       // весь список — теперь это факт от самой модели.
       const n = ev.step | 0;
+      const total = ui.planItems.length || 1;
       ui.planItems.forEach((li, i) => {
         li.classList.toggle('done', i < n - 1);
         li.classList.toggle('now', i === n - 1);
       });
       if (ui.planDock) {
         const t = ui.planDock.querySelector('.pd-step');
-        if (t) t.textContent = 'шаг ' + n + ' из ' + ui.planItems.length;
+        if (t) t.textContent = 'шаг ' + n + ' из ' + total;
         const bar = ui.planDock.querySelector('.pd-fill');
-        if (bar) bar.style.width = Math.round((n - 1) / Math.max(1, ui.planItems.length) * 100) + '%';
+        // полоса показывает СДЕЛАННОЕ: на первом шаге она пустая, на последнем
+        // почти полная, а 100% наступает только по завершении
+        if (bar) bar.style.width = Math.round((n - 1) / total * 100) + '%';
+        $$('.pd-s', ui.planDock).forEach((st, i) => {
+          st.classList.toggle('done', i < n - 1);
+          st.classList.toggle('now', i === n - 1);
+        });
       }
       break;
     }
@@ -3069,10 +3190,17 @@ function handleEvent(ev, ui) {
 
     case 'error':
       showError(ui, ev.error || 'неизвестная ошибка');
+      // прогон оборвался — план наверху больше не актуален, снимаем
+      undockPlan(ui);
       break;
 
     case 'end':
       dropStatus(ui);
+      // ПОСЛЕДНИЙ РУБЕЖ ПРОТИВ «ЗАВИСШЕГО» ПЛАНА. undockPlan вызывается по
+      // 'done', но прогон может кончиться иначе: ошибкой, остановкой,
+      // разрывом потока. Тогда панель оставалась наверху навсегда. 'end'
+      // приходит в любом случае — здесь и подчищаем.
+      if (ui.planDock || $('.plan-dock')) undockPlan(ui);
       // поток завершён сервером — сразу возвращаем кнопку в «отправить»,
       // не дожидаясь фактического закрытия сокета
       setStreaming(false);
