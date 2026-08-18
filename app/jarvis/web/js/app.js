@@ -1281,6 +1281,30 @@ const ICO = {
 
 /* Свернуть блок в компактную строку-миниатюру.
    Клик по миниатюре разворачивает исходный блок обратно. */
+/* Рост карточки из миниатюры: анимируем НАСТОЯЩУЮ высоту, а не transform.
+   Только так содержимое под карточкой едет вместе с ней, а не прыгает на
+   сотни пикселей в первом же кадре. Длительность — по реальному пути, как в
+   setCardOpen: короткий блок не должен тянуться столько же, сколько длинный. */
+function growHeight(node, from, to) {
+  if (!node || !(to > 0) || Math.abs(to - from) < 4) return;
+  if (node._gt) { clearTimeout(node._gt); node._gt = null; }
+  const dur = Math.max(150, Math.min(280, 130 + Math.abs(to - from) * 0.32));
+  const prev = node.style.overflow;
+  node.style.overflow = 'hidden';
+  node.style.transition = 'none';
+  node.style.height = from + 'px';
+  void node.offsetHeight;                       // зафиксировать точку отсчёта
+  node.style.transition = 'height ' + Math.round(dur) + 'ms cubic-bezier(.33,1,.68,1)';
+  node.style.height = to + 'px';
+  node._gt = setTimeout(() => {
+    node._gt = null;
+    // снимаем потолок: содержимое может расти дальше (стрим, картинки)
+    node.style.transition = '';
+    node.style.height = '';
+    node.style.overflow = prev || '';
+  }, Math.round(dur) + 20);
+}
+
 function collapseToThumb(node, opts) {
   if (!node || !node.isConnected || node.dataset.collapsed === '1') return null;
   opts = opts || {};
@@ -1328,7 +1352,6 @@ function collapseToThumb(node, opts) {
   thumb.addEventListener('click', () => {
     node.style.display = '';
     node.dataset.collapsed = '0';
-    holder.remove();
     // ПРИЧИНА «текст не появляется»: карточку сворачивали в миниатюру, когда её
     // тело было закрыто (max-height:0). Разворачивая миниатюру, мы возвращали
     // карточку как есть — с закрытым телом, — и пользователь видел один
@@ -1337,21 +1360,23 @@ function collapseToThumb(node, opts) {
     // Тело раскрываем МГНОВЕННО и без собственной анимации: наружу идёт ровно
     // одно движение — рост самой карточки. Раньше здесь соревновались рост
     // блока, переход max-height и свечение шапки; теперь двигается одно.
+    // ИСТИННАЯ ПРИЧИНА РЫВКА. Раньше карточка раскрывалась мгновенно
+    // (setCardOpen instant), то есть её полная высота вставала в поток за ОДИН
+    // кадр: строка 18px исчезала, на её место падал блок в сотни пикселей, и
+    // всё содержимое ниже прыгало разом. Анимация growOpen этого не скрывала,
+    // потому что transform (scale/opacity) вёрстку не двигает — он лишь
+    // перерисовывает уже занятую коробку. Получалось: layout прыгнул сразу,
+    // а карточка отдельно доигрывала сжатие. Это и читалось как «лаг».
+    // Лечится только одним: анимировать НАСТОЯЩУЮ высоту от строки к блоку,
+    // чтобы поток двигался вместе с карточкой.
+    const h0 = holder.getBoundingClientRect().height;   // высота миниатюры
+    holder.remove();
     setCardOpen(node, true, true);
-    node.classList.remove('shrinking');
-    // .grown остаётся навсегда: он держит свечение шапки выключенным. Снятие
-    // .unfolding меняло animation с none на headGlow и ПЕРЕЗАПУСКАЛО вспышку
-    // на 700 мс уже после того, как блок замер, — это и был «короткий лаг».
-    node.classList.add('unfolding', 'grown');
-    setTimeout(() => node.classList.remove('unfolding'), 240);   // = growOpen
+    node.classList.remove('shrinking', 'unfolding');
+    node.classList.add('grown');
     addFoldButton(node, opts);              // развернули — даём чем свернуть обратно
-    // Плавная прокрутка идёт ~300 мс и накладывается на рост карточки: два
-    // разных движения одновременно читаются как рывок. Довозим мгновенно и
-    // только если карточка реально не влезла в экран.
-    const r = node.getBoundingClientRect();
-    if (r.top < 0 || r.bottom > innerHeight) {
-      node.scrollIntoView({ block: 'nearest' });
-    }
+    const h1 = node.getBoundingClientRect().height;     // высота раскрытой карточки
+    growHeight(node, h0, h1);
   });
   return thumb;
 }
@@ -1562,6 +1587,7 @@ function mountUiPanels(root) {
     let touched = false;
     let sendTimer = null;
 
+    let ownVal = '';                       // «свой вариант» — вне списка items
     const summary = () => items.filter((x) => x.t !== 'button').map((x) => {
       if (x.t === 'toggle') return x.label + ': ' + (x.val ? 'да' : 'нет');
       if (x.t === 'multi') return x.label + ': ' + (x.val.length ? x.val.join(', ') : '—');
@@ -1569,7 +1595,7 @@ function mountUiPanels(root) {
       if (x.t === 'rank') return x.label + ': ' + x.opts.map((o, i) => (i + 1) + ') ' + o).join(', ');
       if (x.t === 'rate') return x.label + ': ' + (x.val ? x.val + ' из ' + x.max : '—');
       return x.label + ': ' + (x.val == null || x.val === '' ? '—' : x.val);
-    });
+    }).concat(ownVal.trim() ? ['Свой вариант: ' + ownVal.trim()] : []);
 
     const fire = () => {
       if (box.dataset.sent === '1') return;
@@ -1586,6 +1612,8 @@ function mountUiPanels(root) {
     // Без аналоговых органов выбор уходит сам — подтверждать нечего.
     const armSend = () => {
       if (hasAnalog || !touched || box.dataset.sent === '1') return;
+      // человек пишет своё — отправлять по таймеру нельзя, ждём кнопку
+      if (ownVal.trim()) { box.classList.remove('ui-arm'); return; }
       clearTimeout(sendTimer);
       if (!ready()) { box.classList.remove('ui-arm'); return; }
       box.classList.add('ui-arm');
@@ -1781,12 +1809,46 @@ function mountUiPanels(root) {
       box.appendChild(row);
     });
 
+    // Свой вариант. Любой заранее собранный список конечен, а ответ человека —
+    // нет: если ни одна плитка не подходит, панель не должна загонять в угол.
+    // Поэтому в конце всегда есть строка, куда можно вписать своё.
+    // Панелям из одних кнопок-действий она не нужна — там нечего отвечать.
+    const askable = items.some((x) => x.t !== 'button');
+    let own = null;
+    if (askable) {
+      const row = el('div', 'ui-row ui-own');
+      row.style.animationDelay = (items.length * 55) + 'ms';
+      row.innerHTML = '<div class="ui-lab"><span>Свой вариант</span></div>';
+      own = el('input', 'ui-text ui-own-i');
+      own.type = 'text';
+      own.placeholder = 'если ничего не подходит — впиши своё…';
+      row.appendChild(own);
+      box.appendChild(row);
+    }
+
     // Кнопка нужна ТОЛЬКО когда есть что докручивать. Выглядит и ведёт себя
     // как кнопка отправки под полем ввода — та же стрелка, тот же смысл.
-    if (hasAnalog && items.some((x) => x.t !== 'button')) {
-      const go = el('button', 'ui-go', ICO.send + '<span>Отправить</span>');
+    let go = null;
+    if (askable) {
+      go = el('button', 'ui-go', ICO.send + '<span>Отправить</span>');
       go.addEventListener('click', fire);
+      // Плиткам кнопка не нужна: выбор уходит сам. Но как только человек начал
+      // писать свой вариант, автоотправку надо отменить и дать ему кнопку —
+      // иначе панель улетит на полуслове.
+      if (!hasAnalog) go.classList.add('ui-go-off');
       box.appendChild(go);
+    }
+    if (own) {
+      own.addEventListener('input', () => {
+        ownVal = own.value;
+        touched = true;
+        clearTimeout(sendTimer);
+        box.classList.remove('ui-arm');
+        if (go) go.classList.toggle('ui-go-off', hasAnalog ? false : !ownVal.trim());
+      });
+      own.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); if (touched) fire(); }
+      });
     }
   });
 }
@@ -2142,12 +2204,16 @@ function thinkType(el, chunk) {
     const shown = el.textContent.length;
     const left = el._buf.length - shown;
     if (left <= 0) { clearInterval(el._t); el._t = null; return; }
-    // Помедленнее, чем было (6 и /6): ход мыслей читают, а не проматывают.
-    const step = Math.max(3, Math.ceil(left / 10));
+    // Ход мыслей — служебный поток, а не текст для чтения: его проматывают
+    // глазами, чтобы видеть, что агент занят делом. Попытка «дать вчитаться»
+    // (шаг max(3, left/10) при 16 мс) сделала его вязким — это была ошибка.
+    // Здесь верный ориентир один: успевать за моделью, чтобы блок никогда не
+    // выглядел отстающим. Отставание всегда добираем целиком.
+    const step = Math.max(8, Math.ceil(left / 3));
     el.textContent = el._buf.slice(0, shown + step);
     const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
     if (atEnd) el.scrollTop = el.scrollHeight;
-  }, 16);
+  }, 12);
 }
 
 function thinkMode(ui, first) {
@@ -2216,11 +2282,21 @@ function showError(ui, msg) {
    чтобы не заставлять ждать. Раньше единственным критерием было отставание,
    поэтому длинный ответ всегда «улетал» — вместе с ним пропадал и курсор. */
 const TYPE_MS = 11;              // такт печати
-const SPEED_TALK = 1;            // разговор: по букве за такт (~90 зн/с)
-const SPEED_FAST = 13;           // код и таблицы: быстро, но не обгоняя прокрутку
-/* 22 знака за такт — это ~2000 зн/с: длинный листинг долетал до низа раньше,
-   чем страница успевала доехать, и конец кода оказывался за краем экрана.
-   13 держит темп «быстро» (~1200 зн/с) и не обгоняет автопрокрутку. */
+/* ПОЧЕМУ ЗДЕСЬ СКОРОСТИ В ЗНАКАХ/СЕК, А НЕ «ЗНАКОВ ЗА ТАКТ».
+   Раньше шаг был целым числом за такт: 1 в разговоре, 2 после 900 знаков,
+   4 после 2000, 13 в коде. Целый шаг — это лестница: минимальная добавка
+   уже удваивает скорость, а переход между ветками происходит за один кадр.
+   Внутри одного ответа темп прыгал с 90 до 1180 зн/с (в тринадцать раз) на
+   каждом ``` и на каждой строке таблицы. Это и есть «то слишком медленно,
+   то невероятно быстро» — не два неверных числа, а сама лестница.
+   Теперь скорость задаётся в знаках в секунду, накапливается дробно и
+   сглаживается, поэтому переходы не видны, а темп ровный. */
+const CPS_TALK = 95;             // разговор: его читают на ходу
+const CPS_CODE = 400;            // код и таблицы: ровная средняя, без выстрелов
+/* 400 зн/с вместо прежних 1180. Прежнее «быстро» осушало буфер быстрее, чем
+   модель успевала присылать, — печать выстреливала пачкой и замирала в
+   ожидании следующего куска. Пачка-пауза-пачка и читается как рывки. */
+const CPS_SMOOTH = 0.10;         // доля сближения с целью за такт (~250 мс на переход)
 
 function typeInto(ui, chunk) {
   ui.buffer += chunk;
@@ -2289,6 +2365,7 @@ function scrollSoon(ui) {
 function typerStart(ui) {
   if (ui.typer) return;
   ui.hold = 0;
+  ui.acc = ui.acc || 0;
   ui.typer = setInterval(() => {
     const left = ui.buffer.length - ui.shown.length;
     if (left <= 0) {
@@ -2300,23 +2377,37 @@ function typerStart(ui) {
     if (ui.hold > 0) { ui.hold--; return; }
 
     const code = inCodeBlock(ui.shown) || fastLine(ui.shown);
-    let step = code ? SPEED_FAST : SPEED_TALK;
-    // Страховка от «стены текста»: если модель уже отдала целую простыню,
-    // а мы всё ещё в начале, разговор тоже придётся ускорить — иначе
-    // догонять будем минутами. Порог высокий, обычный ответ его не задевает.
-    if (!code && left > 2000) step = 4;
-    else if (!code && left > 900) step = 2;
+    // Цель по темпу. Отставание подмешивается плавной добавкой, а не
+    // ступенькой по порогу: чем больше не показано, тем быстрее идём, но без
+    // единого скачка. Потолок не даёт обогнать автопрокрутку.
+    let want = code ? CPS_CODE : CPS_TALK;
+    want *= 1 + Math.min(left / 1800, 1.2);
+    if (want > 620) want = 620;
+    // Сглаживание: к новой цели подходим за ~четверть секунды. Именно оно
+    // убирает мгновенное переключение режима на границе блока кода.
+    if (ui.cps == null) ui.cps = want;
+    ui.cps += (want - ui.cps) * CPS_SMOOTH;
+
+    // Дробное накопление: при 95 зн/с честный шаг — 1.05 знака за такт.
+    // Округлять его каждый раз до целого значит либо ползти, либо частить,
+    // поэтому остаток переносим на следующий такт.
+    ui.acc = (ui.acc || 0) + (ui.cps * TYPE_MS) / 1000;
+    let step = Math.floor(ui.acc);
+    ui.acc -= step;
+    if (step < 1) return;
 
     ui.shown = ui.buffer.slice(0, ui.shown.length + step);
     if (ui.mdEl) {
       ui.mdEl.classList.add('typing');
       renderTyped(ui);
     }
-    // Паузы — только в разговорной части и только когда идём по букве:
-    // в коде «дыхание» неуместно, оно там читается как подтормаживание.
-    if (step === SPEED_TALK && !code) {
+    // Паузы — только в разговорной части: в коде «дыхание» неуместно, там оно
+    // читается как подтормаживание. Длину паузы соразмеряем с текущим темпом,
+    // иначе на быстром ходу она превращается в провал.
+    if (!code) {
       const last = ui.shown[ui.shown.length - 1];
-      ui.hold = PAUSE_AFTER[last] || 0;
+      const p = PAUSE_AFTER[last] || 0;
+      ui.hold = p ? Math.max(1, Math.round(p * (CPS_TALK / ui.cps))) : 0;
     }
     scrollSoon(ui);
   }, TYPE_MS);

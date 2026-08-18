@@ -1058,17 +1058,14 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   from{box-shadow:inset 0 0 18px rgba(0,200,240,.14),inset 0 -1px 0 var(--line)}
   to{box-shadow:inset 0 0 0 rgba(0,200,240,0),inset 0 -1px 0 var(--line)}}
 
-/* Разворот миниатюры в блок: не «подмена одного другим», а рост из строки
-   в полноразмерное окно — видно, что это тот же самый объект. */
-/* Движение БЕЗ единой остановки. Кривая монотонная (ease-out), ключевых
-   кадров ровно два — начало и конец. Любой промежуточный кадр с повтором
-   значений читается глазом как «подвисло», поэтому их здесь нет и быть
-   не должно: блок раскрывается одним непрерывным жестом. */
-.unfolding{animation:growOpen .24s cubic-bezier(.22,.9,.3,1) both;
-  transform-origin:top left;will-change:transform,opacity}
-@keyframes growOpen{
-  from{opacity:.3;transform:scale(.97) scaleY(.6) translateY(-5px)}
-  to  {opacity:1;transform:none}}
+/* Разворот миниатюры в блок.
+   Здесь НЕТ transform-анимации, и это принципиально. Раньше был growOpen со
+   scale/scaleY: он рисовал сжатие уже занятой коробки, но вёрстку не двигал —
+   полная высота карточки вставала в поток за один кадр, и всё содержимое ниже
+   прыгало разом. Декоративное сжатие поверх мгновенного скачка и читалось как
+   «лаг». Теперь рост делает JS (growHeight) настоящей высотой, поэтому лента
+   под карточкой едет вместе с ней. Классу остаётся только снять переход у
+   тела, чтобы движение было ровно одно. */
 /* Обратный ход — такой же непрерывный, только в другую сторону и быстрее:
    свернуть должно ощущаться мгновенным. */
 .shrinking{animation:shrinkClose .17s cubic-bezier(.4,0,1,1) both;transform-origin:top left}
@@ -1609,3 +1606,14 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .chip-dl svg{width:11px;height:11px}
 /* картинка в ленте — та же кнопка в углу */
 .img-wrap{position:relative;display:inline-block;max-width:100%}
+
+/* Свой вариант: закрывающая строка любой панели. Любой список конечен —
+   человек не обязан в него укладываться. Отделена сверху, чтобы читалась
+   как «а если не из этого», а не как ещё один равноправный пункт. */
+.ui-own{border-top:1px solid rgba(0,200,240,.14);padding-top:9px;margin-top:2px}
+.ui-own .ui-lab span{color:var(--tx3)}
+.ui-own-i::placeholder{color:var(--tx3);opacity:.75}
+.ui-own-i:focus{border-color:var(--cy)}
+/* Кнопка при плитках прячется, пока свой вариант пуст: там выбор уходит сам.
+   Не display:none — иначе панель дёргается по высоте в момент набора. */
+.ui-go-off{opacity:0;pointer-events:none;height:0;padding:0;margin:0;border:0;overflow:hidden}

@@ -97,8 +97,16 @@ def _choose_tier_raw(text: str, has_image: bool = False, agent_mode: bool = Fals
     # Дорогая smart остаётся резервом: её берёт escalate(), когда base
     # реально не справилась. Платить за неё авансом «на всякий случай»
     # незачем — именно это делало ответы долгими и дорогими.
-    if score > 1.0:
-        return {"tier": "smart", "reason": "очень объёмная задача", "score": score}
+    # ЗАЧЕМ УБРАНА ВЕТКА «score > 1.0 -> smart».
+    # Длина запроса — это не сложность. Вставленный кусок текста, лог ошибки
+    # или письмо на 300 слов набирали score выше единицы и уезжали в GLM-4.7 с
+    # reasoning_effort=high: она думает заметно дольше базовой и стоит в 35 раз
+    # дороже. Со стороны это выглядело так, что Джарвис без всякой причины
+    # «залипает» именно на длинных сообщениях, хотя от него часто ждали
+    # одну строчку в ответ. Скорость ответа не должна зависеть от того,
+    # сколько текста человек вставил.
+    # Умную модель по-прежнему можно получить — принудительно в настройках
+    # или через escalate(), когда базовая реально не справилась.
     return {"tier": "base", "reason": "рабочая модель", "score": score}
 
 
@@ -151,14 +159,22 @@ def escalate(tier: str) -> Optional[str]:
     return ladder.get(tier)
 
 
-def summarize_history(messages: List[Dict[str, Any]], keep_last: int = 12) -> List[Dict[str, Any]]:
-    """Экономия токенов: старые сообщения сжимаются дешёвой моделью."""
-    if len(messages) <= keep_last + 4:
-        return messages
-    from . import llm  # локальный импорт, чтобы избежать циклов
+# Готовые выжимки истории: ключ — граница сжатия, значение — текст выжимки.
+# Живёт в памяти процесса; потерять её не страшно, в худшем случае следующая
+# длинная реплика посчитает выжимку заново — уже в фоне.
+_SUM_CACHE: Dict[str, str] = {}
+_SUM_BUSY: Dict[str, bool] = {}
 
-    head = messages[:-keep_last]
-    tail = messages[-keep_last:]
+
+def _sum_key(head: List[Dict[str, Any]]) -> str:
+    """Отпечаток сжимаемой части. Пока она не изменилась, выжимка годна."""
+    import hashlib
+    raw = "\n".join("%s:%s" % (m.get("role"), str(m.get("content"))[:200]) for m in head)
+    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()
+
+
+def _make_summary(head: List[Dict[str, Any]], key: str) -> str:
+    from . import llm  # локальный импорт, чтобы избежать циклов
     text = "\n".join("%s: %s" % (m.get("role"), str(m.get("content"))[:600]) for m in head)
     try:
         summary = llm.chat(
@@ -170,9 +186,46 @@ def summarize_history(messages: List[Dict[str, Any]], keep_last: int = 12) -> Li
         ).get("content", "")
     except Exception:
         summary = ""
-    if not summary:
-        return tail
-    return [{"role": "system", "content": "Краткая память о предыдущей части диалога:\n" + summary}] + tail
+    if summary:
+        _SUM_CACHE[key] = summary
+    _SUM_BUSY.pop(key, None)
+    return summary
+
+
+def summarize_history(messages: List[Dict[str, Any]], keep_last: int = 12) -> List[Dict[str, Any]]:
+    """Экономия токенов без платы временем ответа.
+
+    ПОЧЕМУ ЗДЕСЬ НЕТ ОЖИДАНИЯ МОДЕЛИ. Раньше сжатие было обычным вызовом
+    llm.chat прямо в этой функции, а зовут её ПЕРЕД первым словом ответа.
+    Пока диалог короткий (до 16 сообщений), вызова нет и Джарвис отвечает
+    сразу. Как только диалог перевалил порог, к каждому ответу молча
+    добавлялся целый лишний поход в облако — и ответ, ничем не отличавшийся
+    от предыдущего, вдруг начинал ждать. Это и есть «то очень быстро, то
+    очень медленно»: скорость зависела не от вопроса, а от длины переписки,
+    причём в момент, когда пользователь уже смотрит на пустой экран.
+
+    Ждать ради экономии токенов нельзя: ответ важнее. Поэтому выжимку мы
+    БЕРЁМ готовую, если она есть, а если её нет — отдаём хвост немедленно и
+    считаем выжимку в фоне, чтобы она была готова к следующей реплике.
+    """
+    if len(messages) <= keep_last + 4:
+        return messages
+
+    head = messages[:-keep_last]
+    tail = messages[-keep_last:]
+    key = _sum_key(head)
+
+    summary = _SUM_CACHE.get(key)
+    if summary:
+        return [{"role": "system", "content": "Краткая память о предыдущей части диалога:\n" + summary}] + tail
+
+    # Выжимки ещё нет. Не задерживаем ответ ни на секунду: считаем её в фоне.
+    if not _SUM_BUSY.get(key):
+        _SUM_BUSY[key] = True
+        import threading
+        threading.Thread(target=_make_summary, args=(head, key),
+                         name="jarvis-summary", daemon=True).start()
+    return tail
 
 
 # ------------------------------------------------------------- имя диалога
