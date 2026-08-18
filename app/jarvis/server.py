@@ -240,6 +240,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/notifications/read":
             db.mark_notifications_read()
             return self._json({"ok": True})
+        if path == "/api/notifications/delete":
+            db.delete_notification(body.get("id", ""))
+            return self._json({"ok": True})
+        if path == "/api/notifications/clear":
+            db.clear_notifications()
+            return self._json({"ok": True})
         if path == "/api/config/update":
             CONFIG.update(body.get("patch") or {})
             return self._json({"ok": True, "config": CONFIG.public()})
@@ -399,6 +405,9 @@ class Handler(BaseHTTPRequestHandler):
         user_meta = {"attachments": [{"name": a.get("name"), "kind": a.get("kind"),
                                       "url": a.get("download_url")} for a in attachments],
                      "agent_mode": agent_mode, "computer_use": computer_use}
+        # выбор из интерактивной панели ```ui: модели он нужен, ленте — нет
+        if body.get("silent"):
+            user_meta["silent"] = True
         edit_of = body.get("edit_of") or ""
         if edit_of and db.get_message(edit_of):
             # это правка: добавляем ВЕРСИЮ к старому сообщению и убираем

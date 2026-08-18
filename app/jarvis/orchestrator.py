@@ -12,27 +12,6 @@ from .config import CONFIG
 
 TIER_ORDER = ["nano", "base", "smart", "coder", "vision"]
 
-_SIMPLE_PATTERNS = [
-    r"^\s*(привет|здравствуй|хай|йо|как дела|спасибо|пока|ок|окей|да|нет|ага)\b",
-    r"^\s*(сколько времени|который час|какое сегодня число|какой сегодня день)",
-    r"^\s*(переведи|переведи на|как будет)\s",
-]
-_HARD_KEYWORDS = [
-    "проанализируй", "сравни", "стратегия", "план", "исследуй", "разбери подробно",
-    "почему", "докажи", "оптимизируй", "архитектур", "спроектируй", "реши задачу",
-    "рассчитай", "финанс", "юридич", "диссерт", "научн", "алгоритм", "многошаг",
-]
-_CODE_KEYWORDS = [
-    "код", "напиши скрипт", "python", "javascript", "html", "css", "sql", "баг",
-    "ошибка в коде", "функци", "программ", "регулярк", "bash", "терминал", "git",
-]
-_AGENT_KEYWORDS = [
-    "найди", "собери", "сделай", "оформи", "скачай", "открой сайт", "зайди на",
-    "проверь цены", "закажи", "купи", "отправь", "напиши другу", "мониторь",
-    "каждый день", "напомни", "следи за",
-]
-
-
 # ЗАКРЫТЫЙ список реплик, которым инструменты не нужны в принципе: это
 # чистая вежливость. Он безопасен именно потому, что закрытый и полный —
 # в отличие от попытки перечислить все темы, требующие интернета (новости,
@@ -66,36 +45,27 @@ def cheapest_tier_with(cap: str, fallback: str = "base") -> str:
 
 
 def _score_complexity(text: str) -> float:
-    t = (text or "").lower().strip()
+    """Насколько запрос объёмный. Только измеримое — без угадывания темы.
+
+    ПОЧЕМУ так. Раньше здесь лежали четыре списка слов («проанализируй»,
+    «почему», «функци», «найди»...), и каждое совпадение толкало запрос
+    вверх по уровням. Слово «почему» есть в любом бытовом вопросе, «план» —
+    в «какие планы на вечер». Так простая реплика уезжала в smart-модель,
+    которая дороже базовой в 35 раз (549₽ против 15.86₽ за млн токенов) и
+    заметно медленнее — отсюда «думал долго и дорого».
+
+    Списки слов невозможно закончить: язык больше любого перечисления.
+    Поэтому тему мы больше не угадываем. Считаем то, что действительно
+    измеримо, — размер задачи. Что именно нужно сделать, решит сама модель,
+    у неё для этого есть инструменты.
+    """
+    t = (text or "").strip()
     words = len(t.split())
-    score = 0.0
-    # длина: 40 слов ≈ 0.2, 120 слов ≈ 0.45, дальше насыщение
-    score += min(words / 250.0, 1.0) * 0.5
-    if any(re.search(p, t) for p in _SIMPLE_PATTERNS) and len(t) < 90:
-        score -= 0.6
-    hard = sum(1 for kw in _HARD_KEYWORDS if kw in t)
-    score += min(hard, 4) * 0.16
-    code = sum(1 for kw in _CODE_KEYWORDS if kw in t)
-    score += min(code, 3) * 0.1
-    agentic = sum(1 for kw in _AGENT_KEYWORDS if kw in t)
-    score += min(agentic, 3) * 0.07
-    if t.count("?") > 1 or t.count("\n") > 3:
-        score += 0.12
-    # перечисления и уточнения = многосоставная задача
-    score += min(t.count(",") / 12.0, 0.15)
-    if words > 120:
-        score += 0.15
+    # 40 слов ≈ 0.16, 120 слов ≈ 0.48, 250+ ≈ насыщение
+    score = min(words / 250.0, 1.0)
+    if t.count("\n") > 3:
+        score += 0.1
     return max(0.0, min(score, 1.5))
-
-
-def is_code_task(text: str) -> bool:
-    t = (text or "").lower()
-    return any(kw in t for kw in _CODE_KEYWORDS)
-
-
-def looks_agentic(text: str) -> bool:
-    t = (text or "").lower()
-    return any(kw in t for kw in _AGENT_KEYWORDS)
 
 
 def _choose_tier_raw(text: str, has_image: bool = False, agent_mode: bool = False,
@@ -116,23 +86,20 @@ def _choose_tier_raw(text: str, has_image: bool = False, agent_mode: bool = Fals
         return {"tier": "vision", "reason": "во вложении изображение — нужна vision-модель", "score": 1.0}
 
     score = _score_complexity(text)
-    if is_code_task(text) and score > 0.35:
-        return {"tier": "coder", "reason": "задача про код", "score": score}
-    if agent_mode:
-        # агентский цикл требует надёжного tool-calling
-        tier = "smart" if score > 0.75 else "base"
-        return {"tier": tier, "reason": "агентский режим с инструментами", "score": score}
-    if has_tools:
-        # болтовню не тащим в дорогую модель, даже если инструменты подключены
-        if score < 0.12 and not looks_agentic(text):
-            return {"tier": "nano", "reason": "простая реплика — экономим", "score": score}
-        tier = "smart" if score > 0.75 else "base"
-        return {"tier": tier, "reason": "нужны инструменты", "score": score}
-    if score < 0.22:
-        return {"tier": "nano", "reason": "простой короткий запрос — экономим", "score": score}
-    if score < 0.75:
-        return {"tier": "base", "reason": "обычная задача", "score": score}
-    return {"tier": "smart", "reason": "сложная задача — берём сильную модель", "score": score}
+
+    # Вежливость («привет», «спасибо») — единственный случай, который можно
+    # перечислить полностью, и он уходит в самую дешёвую модель.
+    if is_social_only(text) and not agent_mode:
+        return {"tier": "nano", "reason": "короткая реплика — экономим", "score": score}
+
+    # Всё остальное — рабочая модель base. Она умеет вызывать инструменты,
+    # то есть сама сходит в интернет, в песочницу и к файлам, если надо.
+    # Дорогая smart остаётся резервом: её берёт escalate(), когда base
+    # реально не справилась. Платить за неё авансом «на всякий случай»
+    # незачем — именно это делало ответы долгими и дорогими.
+    if score > 1.0:
+        return {"tier": "smart", "reason": "очень объёмная задача", "score": score}
+    return {"tier": "base", "reason": "рабочая модель", "score": score}
 
 
 def choose_tier(text: str, has_image: bool = False, agent_mode: bool = False,

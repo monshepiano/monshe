@@ -124,10 +124,74 @@ def list_models(provider: str, force: bool = False) -> List[str]:
     return models
 
 
+def vision_models(provider: str) -> List[str]:
+    """Модели, которые ПО СЛОВАМ ПРОВАЙДЕРА принимают изображение.
+
+    Если каталог не пришёл (нет сети), падаем на грубую догадку по имени —
+    иначе оффлайн-сбой каталога выглядел бы как «зрения не существует».
+    """
+    seeing = models_of_type(provider, "image-text-to-text", "image-to-text", "multimodal")
+    if seeing:
+        return seeing
+    return [m for m in list_models(provider) if "-vl" in m.lower() or "vision" in m.lower()]
+
+
+def model_can_see(provider: str, model: str) -> bool:
+    return bool(model) and model in vision_models(provider)
+
+
+def has_image(messages: List[Dict]) -> bool:
+    """Есть ли в диалоге хоть одна картинка (мультимодальный content)."""
+    for m in messages or []:
+        content = m.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    return True
+    return False
+
+
+def flatten_images(messages: List[Dict]) -> List[Dict]:
+    """Сплющить мультимодальный content в обычный текст.
+
+    ПРИЧИНА существования этой функции: модель, не умеющая смотреть, на
+    список частей отвечает HTTP 400 «unknown variant 'image_url'» и весь
+    ответ превращается в «Модели недоступны». Такое случалось на второй
+    попытке (эскалация vision → smart) и при фолбэке на резервного
+    провайдера. Теперь картинка уходит ТОЛЬКО тому, кто умеет её принять,
+    а остальным достаётся честная пометка вместо неперевариваемых данных.
+    """
+    out: List[Dict] = []
+    for m in messages or []:
+        content = m.get("content")
+        if not isinstance(content, list):
+            out.append(m)
+            continue
+        parts: List[str] = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text":
+                parts.append(str(part.get("text") or ""))
+            elif part.get("type") == "image_url":
+                parts.append("[изображение приложено, но эта модель не умеет смотреть]")
+        flat = dict(m)
+        flat["content"] = "\n".join(p for p in parts if p)
+        out.append(flat)
+    return out
+
+
 def pick_model(tier: str, provider: str = "cloudru") -> str:
     """Выбирает конкретное имя модели под «уровень» из доступных у провайдера."""
     prefs = CONFIG.get("model_tiers." + tier, []) or []
     available = list_models(provider)
+    if tier == "vision" and available:
+        # Для зрения выбираем ТОЛЬКО среди зрячих моделей. Иначе предпочтение
+        # вроде «VL» могло подстрокой поймать текстовую модель, и картинка
+        # уходила тому, кто её не переваривает.
+        seeing = vision_models(provider)
+        if seeing:
+            available = seeing
     if not available:
         # провайдер не ответил — берём первое предпочтение как есть
         return prefs[0] if prefs else ("deepseek-chat" if provider == "deepseek" else "openai/gpt-oss-120b")
@@ -144,12 +208,9 @@ def pick_model(tier: str, provider: str = "cloudru") -> str:
     # Ничего не совпало. Дальше решает НЕ название, а тип модели из каталога
     # провайдера: «image-text-to-text» — это зрение, и это факт, а не догадка.
     if tier == "vision":
-        seeing = models_of_type(provider, "image-text-to-text", "image-to-text", "multimodal")
+        seeing = vision_models(provider)
         if seeing:
             return seeing[0]
-        for m in available:
-            if "-vl" in m.lower() or "vision" in m.lower():
-                return m
     return available[0]
 
 
@@ -159,7 +220,15 @@ def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> flo
 
 
 def _build_payload(model: str, messages: List[Dict], tools: Optional[List[Dict]], stream: bool,
-                   temperature: Optional[float], max_tokens: Optional[int]) -> Dict[str, Any]:
+                   temperature: Optional[float], max_tokens: Optional[int],
+                   provider: str = "cloudru") -> Dict[str, Any]:
+    # ЕДИНСТВЕННОЕ место, где рождается запрос к модели, — здесь же и
+    # единственная проверка «а этот собеседник вообще умеет смотреть».
+    # Раньше картинку клали в сообщение выше по коду и надеялись, что
+    # маршрутизация не подведёт; любая эскалация или смена провайдера
+    # ломала эту надежду и приносила HTTP 400.
+    if has_image(messages) and not model_can_see(provider, model):
+        messages = flatten_images(messages)
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -177,8 +246,12 @@ def _build_payload(model: str, messages: List[Dict], tools: Optional[List[Dict]]
 
 def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] = None,
          temperature: Optional[float] = None, max_tokens: Optional[int] = None,
-         provider: Optional[str] = None) -> Dict[str, Any]:
-    """Не-стриминговый вызов с автоматическим фолбэком на резервного провайдера."""
+         provider: Optional[str] = None, timeout: int = 180) -> Dict[str, Any]:
+    """Не-стриминговый вызов с автоматическим фолбэком на резервного провайдера.
+
+    timeout — для служебных мелочей вроде подсказок ответа: ждать их 3 минуты
+    бессмысленно, пользователь к тому времени уже пишет следующий вопрос.
+    """
     providers = [provider] if provider else (active_providers() or ["cloudru"])
     last_error: Optional[Exception] = None
     for prov in providers:
@@ -186,10 +259,11 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
         if not conf.get("api_key"):
             continue
         model = pick_model(tier, prov)
-        payload = _build_payload(model, messages, tools, False, temperature, max_tokens)
+        payload = _build_payload(model, messages, tools, False, temperature, max_tokens, prov)
         for attempt in range(2):
             try:
-                with _request(conf["base_url"].rstrip("/") + "/chat/completions", conf["api_key"], payload) as resp:
+                with _request(conf["base_url"].rstrip("/") + "/chat/completions", conf["api_key"],
+                              payload, timeout=timeout) as resp:
                     body = json.loads(resp.read().decode("utf-8"))
                 usage = body.get("usage") or {}
                 pt = int(usage.get("prompt_tokens") or 0)
@@ -235,7 +309,7 @@ def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[D
         if not conf.get("api_key"):
             continue
         model = pick_model(tier, prov)
-        payload = _build_payload(model, messages, tools, True, temperature, max_tokens)
+        payload = _build_payload(model, messages, tools, True, temperature, max_tokens, prov)
         # попытка 1 — с инструментами; попытка 2 — без них (если модель их не умеет)
         for attempt in range(2):
             started_output = False
@@ -324,7 +398,13 @@ def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[D
 
 
 def vision(prompt: str, image_data_url: str, tier: str = "vision") -> str:
-    """Анализ изображения (кадр камеры, скриншот, фото)."""
+    """Анализ изображения (кадр камеры, скриншот, фото).
+
+    Смотреть зовём ТОЛЬКО того провайдера, у которого есть зрячая модель.
+    Раньше сюда приходил общий список провайдеров, и при любой заминке
+    Cloud.ru картинка уезжала в DeepSeek — тот отвечал HTTP 400, а
+    пользователь читал «Модели недоступны», хотя недоступно было зрение.
+    """
     messages = [{
         "role": "user",
         "content": [
@@ -332,8 +412,17 @@ def vision(prompt: str, image_data_url: str, tier: str = "vision") -> str:
             {"type": "image_url", "image_url": {"url": image_data_url}},
         ],
     }]
-    result = chat(messages, tier=tier, max_tokens=1200)
-    return result.get("content", "")
+    seeing = [p for p in (active_providers() or ["cloudru"]) if vision_models(p)]
+    if not seeing:
+        raise LLMError("ни у одного подключённого провайдера нет модели со зрением")
+    last: Optional[Exception] = None
+    for prov in seeing:
+        try:
+            return chat(messages, tier=tier, max_tokens=1200,
+                        provider=prov).get("content", "")
+        except Exception as exc:
+            last = exc
+    raise LLMError("зрение не ответило: %s" % last)
 
 
 def embed(texts: List[str]) -> List[List[float]]:

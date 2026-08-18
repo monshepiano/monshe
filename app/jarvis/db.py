@@ -517,6 +517,14 @@ def mark_notifications_read() -> None:
     execute("UPDATE notifications SET read=1 WHERE read=0")
 
 
+def delete_notification(note_id: str) -> None:
+    execute("DELETE FROM notifications WHERE id=?", (note_id,))
+
+
+def clear_notifications() -> None:
+    execute("DELETE FROM notifications")
+
+
 # ----------------------------------------------------------------- usage
 def log_usage(provider: str, model: str, tier: str, prompt_tokens: int, completion_tokens: int, cost_rub: float) -> None:
     execute(

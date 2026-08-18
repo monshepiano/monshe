@@ -55,6 +55,7 @@ const S = {
   // выделение в файлах: набор путей + якорь для Shift-диапазона (как в Finder)
   fsel: new Set(),
   fanchor: '',
+  fselAuto: false,     // выделение поставлено самим перетаскиванием, не человеком
   frows: [],
 };
 
@@ -349,7 +350,7 @@ async function refreshState() {
   $('#footCost').textContent = cost.toFixed(2) + ' ₽';
   renderBalance(st.billing || {});
 
-  renderSanctions(); renderNotes();
+  renderSanctions(); renderNotes(); renderNotePanel();
   syncChatTail();
   if ($('#view-auto').classList.contains('active')) renderTasks();
 }
@@ -526,6 +527,9 @@ function renderMessages(host, messages) {
   (messages || []).forEach((m) => {
     if (m.role === 'user') {
       const mt = m.meta || {};
+      // выбор, отправленный панелью ```ui, в ленте не показываем — ни сейчас,
+      // ни при возврате в диалог: он и был задуман бесшумным
+      if (mt.silent) return;
       addUserMsg(m.content, mt.attachments || [],
         { id: m.id, versions: mt.versions || [], version: mt.version || 0, ts: m.created_at });
     }
@@ -764,21 +768,32 @@ function startInlineEdit(node, text) {
   ta.focus();
   ta.setSelectionRange(ta.value.length, ta.value.length);
 
-  const close = () => {
+  // Вход в правку был с анимацией, а выход — мгновенным исчезновением:
+  // пузырь «прыгал» обратно рывком. Закрываем тем же движением, только
+  // обратным, чтобы вход и выход выглядели как одно действие.
+  const restore = () => {
     box.remove();
-    if (bubble) bubble.style.display = '';
+    if (bubble) { bubble.style.display = ''; bubble.classList.add('edit-back'); }
     if (acts) acts.style.display = '';
     if (vers) vers.style.display = '';
+    if (bubble) setTimeout(() => bubble.classList.remove('edit-back'), 300);
   };
-  cancel.addEventListener('click', close);
+  const close = (animated) => {
+    if (box.dataset.closing === '1') return;
+    box.dataset.closing = '1';
+    if (animated === false) { restore(); return; }
+    box.classList.add('edit-out');
+    setTimeout(restore, 200);       // = длительность editOut в CSS
+  };
+  cancel.addEventListener('click', () => close(true));
   save.addEventListener('click', () => {
     const val = ta.value.trim();
-    if (!val) { toast('Пустое сообщение', 'warn'); return; }
-    close();
+    if (!val) { toast('Пустое сообщение', 'warn'); box.dataset.closing = ''; return; }
+    close(false);                   // отправка — без прощальной анимации
     submitEdit(node, val);
   });
   ta.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    if (e.key === 'Escape') { e.preventDefault(); close(true); }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); save.click(); }
   });
 }
@@ -867,13 +882,28 @@ function addMsgActions(node, text) {
   again.addEventListener('click', () => {
     let ask = node.root.previousElementSibling;
     while (ask && !ask.classList.contains('msg-user')) ask = ask.previousElementSibling;
-    if (ask) {
-      const cur = ask.querySelector('.bubble-user');
-      startInlineEdit(ask, bubbleText(cur) || S.lastPrompt || '');
-      ask.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (!ask) { $('#input').value = S.lastPrompt || ''; autoGrow(); send(); return; }
+    const text = bubbleText(ask.querySelector('.bubble-user')) || S.lastPrompt || '';
+    // Первое нажатие даёт шанс поправить вопрос. Но если правка уже открыта,
+    // человек нажал «ещё раз» второй раз подряд — значит менять он ничего не
+    // собирался и ждёт повтора. Спрашивать подтверждение второй раз — держать
+    // его на пустом месте: отправляем немедленно, с тем же текстом.
+    const open = ask.querySelector('.edit-box');
+    if (open) {
+      const ta = open.querySelector('.edit-ta');
+      const val = (ta && ta.value.trim()) || text;
+      open.remove();
+      const bubble = ask.querySelector('.bubble-user');
+      const acts2 = ask.querySelector('.msg-actions');
+      const vers = ask.querySelector('.ver-switch');
+      if (bubble) bubble.style.display = '';
+      if (acts2) acts2.style.display = '';
+      if (vers) vers.style.display = '';
+      submitEdit(ask, val);
       return;
     }
-    $('#input').value = S.lastPrompt || ''; autoGrow(); send();
+    startInlineEdit(ask, text);
+    ask.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
   acts.appendChild(copy); acts.appendChild(speak); acts.appendChild(again);
   node.body.appendChild(acts);
@@ -1022,8 +1052,10 @@ function collapseToThumb(node, opts) {
     node.classList.remove('collapsing', 'shrinking');
   };
   if (opts.instant) { put(); } else {
+    // 400 мс = длительность shrinkClose с паузой посередине (см. CSS).
+    // Снимем класс раньше — и «подвисание» оборвётся на полукадре.
     node.classList.add('shrinking');
-    setTimeout(() => { node.classList.remove('shrinking'); put(); }, 180);
+    setTimeout(() => { node.classList.remove('shrinking'); put(); }, 400);
   }
   thumb.addEventListener('click', () => {
     node.style.display = '';
@@ -1040,7 +1072,7 @@ function collapseToThumb(node, opts) {
     // рост из строки в полноразмерный блок — тот же объект, а не подмена
     node.classList.remove('shrinking');
     node.classList.add('unfolding');
-    setTimeout(() => node.classList.remove('unfolding'), 360);
+    setTimeout(() => node.classList.remove('unfolding'), 520);   // = growOpen
     addFoldButton(node, opts);              // развернули — даём чем свернуть обратно
     node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
@@ -1120,8 +1152,13 @@ function mountUiPanels(root) {
     box.dataset.live = '1';
     box.innerHTML = '';
 
-    items.forEach((it) => {
-      const row = el('div', 'ui-row ui-' + it.t);
+    // Каждому элементу — свой цвет по порядку. Раньше вся панель была одного
+    // бирюзового оттенка и читалась как одна большая деталь; разные тона
+    // сразу показывают, что это отдельные независимые органы управления.
+    const HUES = ['c1', 'c2', 'c3', 'c4', 'c5'];
+    items.forEach((it, idx) => {
+      const row = el('div', 'ui-row ui-' + it.t + ' ' + HUES[idx % HUES.length]);
+      row.style.animationDelay = (idx * 70) + 'ms';
       if (it.t === 'slider') {
         row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) +
           '</span><b class="ui-val">' + it.val + '</b></div>';
@@ -1163,7 +1200,7 @@ function mountUiPanels(root) {
       } else {
         const b = el('button', 'ui-btn', it.label);
         b.addEventListener('click', () => {
-          $('#input').value = it.label; autoGrow(); send();
+          $('#input').value = it.label; autoGrow(); send({ silent: true });
         });
         row.appendChild(b);
       }
@@ -1179,8 +1216,9 @@ function mountUiPanels(root) {
           if (x.t === 'toggle') return x.label + ': ' + (x.val ? 'да' : 'нет');
           return x.label + ': ' + (x.val || '—');
         });
-        $('#input').value = parts.join('\n'); autoGrow(); send();
-        go.disabled = true; go.textContent = 'Отправлено';
+        $('#input').value = parts.join('\n'); autoGrow(); send({ silent: true });
+        go.disabled = true; go.textContent = 'Принято';
+        box.classList.add('ui-sent');
       });
       box.appendChild(go);
     }
@@ -1269,7 +1307,12 @@ function updateSendBtn() {
     : '<svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg>';
 }
 
-async function send() {
+/* opts.silent — отправить, не показывая пузырь пользователя.
+   Так уходит выбор из интерактивной панели ```ui: человек уже видит, что
+   накрутил в самих слайдерах и плитках, а служебная простыня
+   «Громкость: 40 / Тема: тёмная» в ленте — шум, разрывающий ответ. */
+async function send(opts) {
+  opts = opts || {};
   const input = $('#input');
   const text = input.value.trim();
   if (!text && !S.attachments.length) return;
@@ -1304,7 +1347,7 @@ async function send() {
     }
     let sib = editing.node.nextElementSibling;
     while (sib) { const nx = sib.nextElementSibling; sib.remove(); sib = nx; }
-  } else {
+  } else if (!opts.silent) {
     addUserMsg(text, S.attachments);
   }
   input.value = ''; autoGrow();
@@ -1333,8 +1376,8 @@ async function send() {
     files: [],
   };
   ui.statusEl = el('div', 'thinking-line');
-  ui.statusEl.innerHTML = '<span class="dots"><span></span><span></span><span></span></span><span>Соединяюсь…</span>';
   node.body.appendChild(ui.statusEl);
+  thinkMode(ui, 'Соединяюсь');
 
   S.abort = new AbortController();
   try {
@@ -1347,6 +1390,7 @@ async function send() {
         edit_of: editing ? editing.id : '',
         agent_mode: S.agentMode,
         computer_use: S.computerUse,
+        silent: !!opts.silent,
         attachments: atts,
       }),
     });
@@ -1372,13 +1416,13 @@ async function send() {
     } else {
       typerStop(ui);
       if (ui.mdEl) { ui.mdEl.classList.remove('typing'); ui.mdEl.innerHTML = MD.render(ui.shown || ui.buffer); }
-      if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
+      dropStatus(ui);
       node.body.appendChild(el('div', 'muted', 'Остановлено.'));
     }
   } finally {
     // страховка: что бы ни случилось со стримом (обрыв, ошибка разбора,
     // закрытие сокета) — кнопка обязана вернуться в исходное состояние
-    if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
+    dropStatus(ui);
     setStreaming(false);
     S.abort = null;
   }
@@ -1399,13 +1443,77 @@ async function fetchReplies() {
   box.hidden = false;
   box.innerHTML = '<span class="reply-skel"></span><span class="reply-skel"></span>' +
                   '<span class="reply-skel"></span>';
+  // Заглушки не должны светиться дольше, чем это выглядит осмысленно.
+  // Сервер ждёт модель максимум 20 с; если она молчит — убираем полосу сами,
+  // не оставляя мигать «вечную загрузку».
+  const bail = setTimeout(() => {
+    if (S.replyTicket === ticket) showReplies([]);
+  }, 22000);
   try {
     const r = await api('/api/replies', { chat_id: chat });
     if (S.replyTicket !== ticket || S.chatId !== chat) return;
     showReplies(r.items || []);
   } catch (e) {
     if (S.replyTicket === ticket) showReplies([]);
+  } finally {
+    clearTimeout(bail);
   }
+}
+
+/* ============ состояние «думаю» и остальные статусы ============
+   Пока JARVIS молчит перед первым словом, крутилка не нужна: вместо неё
+   мигает курсор — тот самый, что через мгновение поедет вместе с текстом.
+   Справа от него очень мелкая подпись, которая сама себя подменяет, создавая
+   ощущение, что внутри действительно что-то происходит.
+   Во ВСЕХ остальных состояниях (инструмент, ожидание, шаг плана) крутилка
+   возвращается: там она честно показывает работу, а не пустое ожидание. */
+const THINK_QUIPS = [
+  'думаю', 'взвешиваю', 'соображаю', 'подбираю слова', 'листаю память',
+  'связываю мысли', 'проверяю себя', 'ищу формулировку', 'считаю варианты',
+  'собираю ответ', 'сверяюсь с фактами', 'почти нашёл', 'ещё секунду',
+  'кручу шестерёнки', 'раскладываю по полочкам', 'прикидываю', 'уточняю детали',
+];
+
+function thinkMode(ui, first) {
+  const box = ui.statusEl;
+  if (!box) return;
+  stopQuips(ui);
+  box.className = 'thinking-line think-wait';
+  box.innerHTML = '<span class="tw-caret"></span><span class="tw-quip"></span>';
+  const q = box.querySelector('.tw-quip');
+  // подписи не повторяются подряд: одинаковый текст дважды выглядит как зависание
+  let last = -1;
+  const swap = (txt) => {
+    q.classList.remove('in'); void q.offsetWidth;
+    q.textContent = txt; q.classList.add('in');
+  };
+  swap(first || THINK_QUIPS[0]);
+  ui.quipTimer = setInterval(() => {
+    let i = Math.floor(Math.random() * THINK_QUIPS.length);
+    if (i === last) i = (i + 1) % THINK_QUIPS.length;
+    last = i;
+    swap(THINK_QUIPS[i]);
+  }, 2200);
+}
+
+/* Снять строку статуса — ВСЕГДА через это место: иначе таймер подписей
+   продолжит тикать в фоне на удалённом узле. */
+function dropStatus(ui) {
+  stopQuips(ui);
+  if (ui && ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
+}
+
+function stopQuips(ui) {
+  if (ui && ui.quipTimer) { clearInterval(ui.quipTimer); ui.quipTimer = null; }
+}
+
+/* Обычный статус: крутилка + текст. Возвращена везде, кроме «думаю». */
+function busyMode(ui, text) {
+  const box = ui.statusEl;
+  if (!box) return;
+  stopQuips(ui);
+  box.className = 'thinking-line';
+  box.innerHTML = '<span class="spinner"></span><span>' + esc(text) + '</span>';
 }
 
 function setStreaming(on) {
@@ -1436,7 +1544,7 @@ function reactor(state) {
 
 function showError(ui, msg) {
   reactor('err');
-  if (ui.statusEl) ui.statusEl.remove();
+  dropStatus(ui);
   const c = el('div', 'panel-card', '<div class="card-inner" style="padding:12px 13px;color:#ffb3c1">⚠ ' + esc(msg) + '</div>');
   ui.node.body.appendChild(c);
   toast(msg, 'error', 'Ошибка');
@@ -1445,7 +1553,11 @@ function showError(ui, msg) {
 /* ================== плавная печать ответа ==================
    Сервер шлёт текст кусками, а показываем мы его по буквам:
    отдельный таймер догоняет буфер со скоростью, зависящей от отставания. */
-const TYPE_MS = 16;          // такт печати
+/* Такт печати. Был 16 мс со ступенчатым ускорением до «step = left/40» —
+   на обычном ответе это 200+ символов в секунду, то есть текст появлялся
+   блоками, а курсор не успевал прорисоваться ни разу. Теперь такт чаще, но
+   шаг мельче и с потолком: печать видно как печать, а не как вспышку. */
+const TYPE_MS = 12;          // такт печати
 
 function typeInto(ui, chunk) {
   ui.buffer += chunk;
@@ -1470,12 +1582,13 @@ function typerStart(ui) {
       return;
     }
     if (ui.hold > 0) { ui.hold--; return; }
-    // чем больше отставание, тем крупнее шаг — иначе на длинных ответах не догоним
+    // Шаг растёт с отставанием, но ограничен сверху: даже на очень длинном
+    // ответе печать остаётся печатью. 4 символа за 12 мс ≈ 330 зн/с — быстро,
+    // однако буквы всё ещё появляются по одной, и курсор виден.
     let step = 1;
-    if (left > 1200) step = Math.ceil(left / 40);
-    else if (left > 400) step = 6;
-    else if (left > 120) step = 3;
-    else if (left > 40) step = 2;
+    if (left > 1200) step = 4;
+    else if (left > 400) step = 3;
+    else if (left > 120) step = 2;
     ui.shown = ui.buffer.slice(0, ui.shown.length + step);
     if (ui.mdEl) {
       ui.mdEl.classList.add('typing');
@@ -1556,6 +1669,29 @@ if ($('#voiceBtn')) {
   $('#voiceBtn').addEventListener('click', () => setVoice(!voiceOn()));
 }
 
+/* колокольчик в углу: открыть/закрыть центр уведомлений */
+if ($('#bellBtn')) {
+  $('#bellBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleNotePanel(); });
+  const npc = $('#npClear');
+  if (npc) {
+    npc.addEventListener('click', async () => {
+      S.notifications = [];
+      renderNotePanel();
+      await api('/api/notifications/clear', {});
+    });
+  }
+  // клик мимо панели закрывает её — как любое всплывающее меню
+  document.addEventListener('click', (e) => {
+    const panel = $('#notePanel');
+    if (!panel || panel.hidden) return;
+    if (e.target.closest('#notePanel') || e.target.closest('#bellBtn')) return;
+    toggleNotePanel(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') toggleNotePanel(false);
+  });
+}
+
 const TIER_LABEL = { nano: 'экономный', base: 'базовый', smart: 'усиленный', coder: 'кодовый', vision: 'зрение' };
 
 function handleEvent(ev, ui) {
@@ -1606,13 +1742,10 @@ function handleEvent(ev, ui) {
       break;
 
     case 'status':
-      if (ui.statusEl) {
-        // Один индикатор, а не два: раньше рядом крутилась спираль И бежали
-        // точки — глаз не понимал, куда смотреть. Осталось три точки слева.
-        ui.statusEl.innerHTML =
-          '<span class="dots"><span></span><span></span><span></span></span>' +
-          '<span>' + esc(ev.text) + '</span>';
-      }
+      // Состояние приходит с сервера полем phase, а не угадывается по тексту:
+      // "думаю" — мигающий курсор с меняющейся подписью, всё прочее — крутилка.
+      if (ev.phase === 'think') thinkMode(ui);
+      else busyMode(ui, ev.text);
       break;
 
     case 'thinking': {
@@ -1650,8 +1783,7 @@ function handleEvent(ev, ui) {
 
     case 'tool_hint':
       if (ui.statusEl) {
-        ui.statusEl.innerHTML = '<span class="dots"><span></span><span></span><span></span></span><span>Готовлю инструмент: ' +
-          esc(ev.name) + '</span>';
+        busyMode(ui, 'Готовлю инструмент: ' + ev.name);
       }
       break;
 
@@ -1662,7 +1794,7 @@ function handleEvent(ev, ui) {
       if (SILENT_TOOLS[ev.name]) {
         ui.silent[ev.id || ev.name] = true;
         if (ui.statusEl) {
-          ui.statusEl.innerHTML = '<span class="dots"><span></span><span></span><span></span></span><span>смотрю на экран…</span>';
+          busyMode(ui, 'смотрю на экран…');
         }
         termLine('$ ' + ev.name, 'cmd');
         break;
@@ -1688,7 +1820,7 @@ function handleEvent(ev, ui) {
 
     case 'approval_wait': {
       reactor('wait');
-      if (ui.statusEl) ui.statusEl.innerHTML = '<span class="dots"><span></span><span></span><span></span></span><span>Жду твоего решения…</span>';
+      busyMode(ui, 'Жду твоего решения…');
       const critical = /delete|shell|payment|pay|computer|click|type_text/.test(ev.tool || '');
       const card = el('div', 'panel-card approve-card' + (critical ? ' critical' : ''));
       card.innerHTML =
@@ -1731,8 +1863,7 @@ function handleEvent(ev, ui) {
     // пока нажмут кнопку: лучше один вопрос, чем неверная догадка.
     case 'question': {
       reactor('wait');
-      if (ui.statusEl) ui.statusEl.innerHTML =
-        '<span class="dots"><span></span><span></span><span></span></span><span>Жду твоего ответа…</span>';
+      busyMode(ui, 'Жду твоего ответа…');
       const card = questionCard(ev, (choice) => {
         api('/api/questions/answer', { id: ev.id, answer: choice });
       });
@@ -1799,7 +1930,7 @@ function handleEvent(ev, ui) {
     case 'background': {
       const when = ev.when || ev.schedule || '';
       toast('Задача «' + ev.title + '» ушла в фон' + (when ? ' · ' + when : ''), 'info', 'AUTO');
-      if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
+      dropStatus(ui);
       const bg = el('div', 'panel-card bg-card');
       bg.innerHTML = '<div class="card-inner" style="padding:12px 14px">' +
         '<b style="color:var(--teal)">В фоне: ' + esc(ev.title || 'задача') + '</b>' +
@@ -1815,7 +1946,7 @@ function handleEvent(ev, ui) {
 
     case 'delta': {
       if (!ui.mdEl) {
-        if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
+        dropStatus(ui);
         if (ui.thinkCard) ui.thinkCard.classList.remove('live');
         // пошёл ответ — ход мыслей сразу убираем в миниатюру, чтобы не мешал читать
         if (ui.thinkCard && ui.thinkCard.isConnected) {
@@ -1840,14 +1971,14 @@ function handleEvent(ev, ui) {
       if (ui.mdEl) { ui.mdEl.remove(); ui.mdEl = null; }
       if (!ui.statusEl) {
         ui.statusEl = el('div', 'thinking-line');
-        ui.statusEl.innerHTML = '<span class="dots"><span></span><span></span><span></span></span><span>Переигрываю: беру инструмент…</span>';
         node.body.appendChild(ui.statusEl);
+        busyMode(ui, 'Переигрываю: беру инструмент…');
       }
       break;
     }
 
     case 'done': {
-      if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
+      dropStatus(ui);
       const content = ev.content || ui.buffer;
       if (!ui.mdEl) { ui.mdEl = el('div', 'md'); node.body.appendChild(ui.mdEl); }
       // догоняем печать: остаток дописываем плавно, финальную отделку делаем в конце
@@ -1889,7 +2020,7 @@ function handleEvent(ev, ui) {
       break;
 
     case 'end':
-      if (ui.statusEl) { ui.statusEl.remove(); ui.statusEl = null; }
+      dropStatus(ui);
       // поток завершён сервером — сразу возвращаем кнопку в «отправить»,
       // не дожидаясь фактического закрытия сокета
       setStreaming(false);
@@ -2504,12 +2635,21 @@ function flyToFiles(chip, name) {
   // дуга: сначала вверх и вбок, потом к цели — прямой перелёт выглядит мёртвым
   const dx = (b.left + b.width / 2) - (a.left + Math.min(a.width, 260) / 2);
   const dy = (b.top + b.height / 2) - (a.top + a.height / 2);
+  // Файл не срывается с места мгновенно: сначала он еле заметно приподнимается
+  // над диалогом (отрыв), на миг зависает — и только потом уходит по дуге.
+  // Без этой паузы движение выглядело так, будто плашку выдернули.
   fly.animate([
-    { transform: 'translate(0,0) scale(1)', opacity: 1 },
-    { transform: 'translate(' + (dx * 0.45) + 'px,' + (dy * 0.35 - 46) + 'px) scale(.78)', opacity: .95, offset: .5 },
-    { transform: 'translate(' + (dx * 0.92) + 'px,' + (dy * 0.92) + 'px) scale(.42)', opacity: .5, offset: .84 },
-    { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(.2)', opacity: 0 }
-  ], { duration: 880, easing: 'cubic-bezier(.3,.7,.3,1)' }).onfinish = () => {
+    { transform: 'translate(0,0) scale(1)', opacity: 1, offset: 0 },
+    // отрыв: приподнялся и чуть подрос
+    { transform: 'translate(0,-7px) scale(1.05)', opacity: 1, offset: .13,
+      easing: 'cubic-bezier(.2,.9,.3,1)' },
+    // задержка: тот же кадр повторён — висит неподвижно
+    { transform: 'translate(0,-7px) scale(1.05)', opacity: 1, offset: .28,
+      easing: 'cubic-bezier(.4,0,.2,1)' },
+    { transform: 'translate(' + (dx * 0.45) + 'px,' + (dy * 0.35 - 46) + 'px) scale(.78)', opacity: .95, offset: .62 },
+    { transform: 'translate(' + (dx * 0.92) + 'px,' + (dy * 0.92) + 'px) scale(.42)', opacity: .5, offset: .88 },
+    { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(.2)', opacity: 0, offset: 1 }
+  ], { duration: 1180, easing: 'cubic-bezier(.3,.7,.3,1)' }).onfinish = () => {
     fly.remove();
     target.classList.add('nav-lit');
     setTimeout(() => target.classList.remove('nav-lit'), 900);
@@ -2523,6 +2663,98 @@ function foldAllNotes() {
     const n = c._note || {};
     foldNote(c, n);
   });
+}
+
+/* ============ центр уведомлений в правом верхнем углу ============
+   Док над полем ввода показывает только СВЕЖЕЕ и сразу уплывает в ленту.
+   История же нужна отдельно и под рукой — в углу, как на телефоне: список,
+   смахивание вбок для удаления и «Очистить все». */
+function renderNotePanel() {
+  const list = $('#npList');
+  const dot = $('#bellDot');
+  if (!list) return;
+  const items = S.notifications || [];
+  if (dot) dot.hidden = !(S.unread > 0);
+  const bell = $('#bellBtn');
+  if (bell) bell.classList.toggle('has-new', S.unread > 0);
+  // не перерисовываем открытый список без нужды — иначе смахивание дёргается
+  const sig = items.map((n) => n.id).join(',');
+  if (list.dataset.sig === sig) return;
+  list.dataset.sig = sig;
+  list.innerHTML = '';
+  if (!items.length) {
+    list.appendChild(el('div', 'np-empty', 'Пока пусто'));
+    return;
+  }
+  items.forEach((n) => list.appendChild(noteRow(n)));
+}
+
+/* Одна строка уведомления. Тянем влево — из-под неё выезжает «Удалить»,
+   отпустили за половину ширины — улетает совсем, как в iOS. */
+function noteRow(n) {
+  const kind = n.level === 'error' ? 'error' : (n.level === 'success' ? 'success' : 'info');
+  const row = el('div', 'np-item ' + kind + (n.read ? '' : ' fresh'));
+  row.innerHTML =
+    '<div class="np-del">Удалить</div>' +
+    '<div class="np-face">' +
+      '<div class="np-t">' + esc(n.title || 'Уведомление') + '</div>' +
+      '<div class="np-b">' + esc((n.body || '').slice(0, 260)) + '</div>' +
+      '<div class="np-time">' + fmtTime(n.created_at) + '</div>' +
+    '</div>';
+  const face = row.querySelector('.np-face');
+  const kill = async () => {
+    row.classList.add('np-gone');
+    setTimeout(() => {
+      row.remove();
+      const list = $('#npList');
+      if (list && !list.querySelector('.np-item')) {
+        list.appendChild(el('div', 'np-empty', 'Пока пусто'));
+      }
+    }, 240);
+    S.notifications = (S.notifications || []).filter((x) => String(x.id) !== String(n.id));
+    await api('/api/notifications/delete', { id: n.id });
+  };
+
+  let x0 = null, dx = 0;
+  const start = (e) => {
+    x0 = (e.touches ? e.touches[0].clientX : e.clientX);
+    dx = 0;
+    face.style.transition = 'none';
+  };
+  const move = (e) => {
+    if (x0 == null) return;
+    const x = (e.touches ? e.touches[0].clientX : e.clientX);
+    dx = Math.min(0, x - x0);                 // тянем только влево
+    face.style.transform = 'translateX(' + dx + 'px)';
+    row.classList.toggle('np-armed', dx < -row.offsetWidth * 0.45);
+  };
+  const end = () => {
+    if (x0 == null) return;
+    x0 = null;
+    face.style.transition = '';
+    if (dx < -row.offsetWidth * 0.45) { face.style.transform = 'translateX(-110%)'; kill(); }
+    else { face.style.transform = ''; row.classList.remove('np-armed'); }
+  };
+  face.addEventListener('mousedown', start);
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  face.addEventListener('touchstart', start, { passive: true });
+  face.addEventListener('touchmove', move, { passive: true });
+  face.addEventListener('touchend', end);
+  row.querySelector('.np-del').addEventListener('click', kill);
+  return row;
+}
+
+function toggleNotePanel(force) {
+  const panel = $('#notePanel');
+  if (!panel) return;
+  const open = force != null ? force : panel.hidden;
+  panel.hidden = !open;
+  if (open) {
+    renderNotePanel();
+    // открыл — значит увидел: гасим счётчик непрочитанного
+    api('/api/notifications/read', {}).then(() => { S.unread = 0; renderNotePanel(); });
+  }
 }
 
 function renderNotes() {
@@ -2894,7 +3126,11 @@ function fileCard(f, i) {
 
   // перетаскивание внутри песочницы: тянем всё выделенное, а не одну карточку
   c.addEventListener('dragstart', (e) => {
-    if (!S.fsel.has(f.path)) selectOnly(f.path);
+    // Выделение, сделанное САМИМ перетаскиванием, — служебное: пользователь
+    // не ставил галочку, он просто взял файл. Запоминаем это, чтобы вернуть
+    // всё как было, если перенос ничем не кончился (бросок в ту же папку).
+    S.fselAuto = !S.fsel.has(f.path);
+    if (S.fselAuto) selectOnly(f.path);
     const paths = [...S.fsel];
     const cards = $$('#fileGrid .fcard.selected');
     cards.forEach((n) => n.classList.add('dragging'));
@@ -2910,6 +3146,9 @@ function fileCard(f, i) {
     $$('#fileGrid .fcard.dragging').forEach((n) => n.classList.remove('dragging'));
     clearDropMarks();
     stopDragGhosts();
+    // перенос закончился ничем — снимаем служебную галочку, которую поставили
+    // ради самого перетаскивания
+    if (S.fselAuto) { S.fselAuto = false; clearSelection(); }
   });
 
   if (f.is_dir) {
@@ -2968,10 +3207,10 @@ function startDragGhosts(e, cards, source) {
     // стартуем из настоящего положения карточки — миниатюра «взлетает» с места
     return {
       node: g, x: box.left + box.width / 2, y: box.top + box.height / 2, vx: 0, vy: 0,
-      // Пружина подобрана численно: мягче и медленнее прежней, с более
-      //долгим выбегом. Рывок на 140 px даёт перелёт ~62 px и покой за 0.68 с
-      // против 45 px / 0.43 с — движение заметно инертнее, но не мельтешит.
-      k: 0.26 - i * 0.02, damp: 0.78 + i * 0.01,
+      // Пружина подобрана численно. Прежняя (k .26 / damp .78) давала на
+      // рывке 140 px перелёт 62 px и успокоение за 0.72 с — размашисто.
+      // Теперь 51 px и 0.55 с: шатание читается, но не мотает миниатюры.
+      k: 0.32 - i * 0.02, damp: 0.72 + i * 0.01,
       dx: fan.dx, dy: fan.dy, rot: fan.rot, scale: 0.3 - i * 0.012,
     };
   });
@@ -2979,7 +3218,7 @@ function startDragGhosts(e, cards, source) {
     const more = el('div', 'drag-more', '+' + (list.length - 5));
     layer.appendChild(more);
     DRAG.ghosts.push({ node: more, x: DRAG.x, y: DRAG.y, vx: 0, vy: 0,
-                       k: 0.28, damp: 0.78, dx: 0, dy: 34, rot: 0, scale: 1, plain: true });
+                       k: 0.34, damp: 0.72, dx: 0, dy: 34, rot: 0, scale: 1, plain: true });
   }
   document.body.appendChild(layer);
   DRAG.layer = layer;
@@ -3003,9 +3242,10 @@ function startDragGhosts(e, cards, source) {
         g.node.style.transform = 'translate3d(' + (g.x - 12) + 'px,' + g.y + 'px,0)';
         continue;
       }
-      // Наклон по скорости — миниатюра кренится в сторону движения. 34° было
-      // «набок», 12° почти не читалось; 20° — крен виден, но не пугает.
-      const tilt = Math.max(-20, Math.min(20, g.vx * 0.8)) + g.rot;
+      // Наклон по скорости. Вместе с амплитудой уменьшен и крен: 20° при
+      // множителе 0.8 выглядели как заваливание набок, 13° при 0.55 — как
+      // естественная реакция на движение руки.
+      const tilt = Math.max(-13, Math.min(13, g.vx * 0.55)) + g.rot;
       g.node.style.transform =
         'translate3d(' + g.x + 'px,' + g.y + 'px,0) translate(-50%,-50%) ' +
         'rotate(' + tilt.toFixed(2) + 'deg) scale(' + g.scale + ')';
@@ -3057,7 +3297,8 @@ async function dropOnto(e, destDir) {
     };
     const dest = String(destDir || '').replace(/\/+$/, '');
     paths = paths.filter((p) => p && p !== dest && parentOf(p) !== dest);
-    if (!paths.length) return;
+    if (!paths.length) { if (S.fselAuto) { S.fselAuto = false; clearSelection(); } return; }
+    S.fselAuto = false;
     const r = await api('/api/sandbox/move_many', { paths, dest: destDir, chat_id: S.chatId || '' });
     if (r.moved) toast('Перемещено: ' + r.moved, 'success');
     if ((r.errors || []).length) toast(r.errors[0].error || 'не удалось переместить', 'error');

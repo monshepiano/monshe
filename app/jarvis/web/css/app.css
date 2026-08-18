@@ -57,12 +57,24 @@ button,input,textarea,select{font-family:inherit;color:inherit}
    Реактор — единственный индикатор состояния: спокойное дыхание в простое,
    разгон колец при работе, тёплый оттенок при ожидании ответа человека,
    красная вспышка при ошибке. Текстовые статусы больше ничего не дублируют. */
-body.jv-busy #brandReactor .r1{animation-duration:1.5s}
-body.jv-busy #brandReactor .r2{animation-duration:1s}
-body.jv-busy #brandReactor .core{animation-duration:.85s;
-  box-shadow:0 0 22px var(--cy),0 0 55px rgba(0,212,255,.7)}
-body.jv-busy #brandReactor{animation:coreHalo 1.6s ease-in-out infinite}
-@keyframes coreHalo{50%{filter:drop-shadow(0 0 9px rgba(0,200,240,.55))}}
+/* Разгон был вялым: кольца чуть быстрее, ореол на 9 px — на светлом экране
+   разница с покоем не читалась вовсе. Теперь работа видна однозначно:
+   кольца раскручиваются втрое, ядро пульсирует, вокруг гуляет ореол. */
+body.jv-busy #brandReactor .r1{animation-duration:.9s}
+body.jv-busy #brandReactor .r2{animation-duration:.6s}
+body.jv-busy #brandReactor .r3{animation-duration:2.2s}
+body.jv-busy #brandReactor .ring{border-color:rgba(0,220,255,.75)}
+body.jv-busy #brandReactor .core{animation-duration:.62s;
+  box-shadow:0 0 30px var(--cy),0 0 78px rgba(0,212,255,.95),0 0 120px rgba(0,212,255,.5)}
+body.jv-busy #brandReactor{animation:coreHalo 1.25s ease-in-out infinite}
+@keyframes coreHalo{
+  0%,100%{filter:drop-shadow(0 0 6px rgba(0,200,240,.45)) brightness(1)}
+  50%    {filter:drop-shadow(0 0 22px rgba(0,200,240,.95)) brightness(1.22)}}
+/* маленькое ядро в аватаре отвечающего сообщения — тоже живое */
+body.jv-busy .msg-ai:last-of-type .reactor.sm .core{animation-duration:.62s;
+  box-shadow:0 0 16px var(--cy),0 0 34px rgba(0,212,255,.8)}
+body.jv-busy .msg-ai:last-of-type .reactor.sm .r1{animation-duration:1s}
+body.jv-busy .msg-ai:last-of-type .reactor.sm .r2{animation-duration:.7s}
 /* ждём человека — ядро греется золотом и почти замирает */
 body.jv-wait #brandReactor .r1{animation-duration:11s}
 body.jv-wait #brandReactor .r2{animation-duration:8s}
@@ -188,8 +200,48 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 
 /* ---------- main ---------- */
 .main{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;position:relative}
-.topbar{display:flex;align-items:center;gap:12px;padding:11px 18px;border-bottom:1px solid var(--line);
+.topbar{position:relative;display:flex;align-items:center;gap:12px;padding:11px 18px;border-bottom:1px solid var(--line);
   background:rgba(5,11,20,.6);backdrop-filter:blur(16px);min-height:56px}
+
+/* ---------- центр уведомлений в правом верхнем углу ----------
+   Колокольчик с точкой непрочитанного и выпадающий список под ним.
+   Строки смахиваются влево, как на iPhone. */
+.bell-btn{position:relative}
+.bell-btn.has-new{color:var(--cy)}
+.bell-dot{position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;
+  background:var(--cy);box-shadow:0 0 8px var(--cy);animation:bellPing 1.9s ease-in-out infinite}
+@keyframes bellPing{50%{transform:scale(1.35);opacity:.65}}
+.note-panel{position:absolute;top:calc(100% + 9px);right:16px;z-index:140;width:min(360px,calc(100vw - 32px));
+  max-height:min(62vh,520px);display:flex;flex-direction:column;overflow:hidden;
+  border:1px solid var(--line2);border-radius:15px;background:rgba(8,16,28,.985);
+  backdrop-filter:blur(18px);box-shadow:0 22px 60px rgba(0,0,0,.6);
+  animation:npIn .24s cubic-bezier(.2,.9,.3,1) both}
+.note-panel[hidden]{display:none}
+@keyframes npIn{from{opacity:0;transform:translateY(-10px) scale(.97)}}
+.np-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:11px 14px;border-bottom:1px solid var(--line);font-size:12px;color:var(--tx2)}
+.np-clear{border:1px solid var(--line);background:transparent;color:var(--tx3);cursor:pointer;
+  border-radius:8px;padding:3px 9px;font-size:10.5px;font-family:inherit;transition:.18s}
+.np-clear:hover{color:var(--red);border-color:rgba(221,85,102,.5);background:rgba(221,85,102,.1)}
+.np-list{overflow:auto;padding:7px}
+.np-empty{padding:22px 12px;text-align:center;font-size:11.5px;color:var(--tx3)}
+.np-item{position:relative;overflow:hidden;border-radius:11px;margin-bottom:6px;
+  background:rgba(221,85,102,.16);transition:opacity .22s,height .22s,margin .22s}
+.np-item.np-gone{opacity:0;height:0!important;margin:0;padding:0}
+/* красная подложка «Удалить» проступает по мере смахивания */
+.np-del{position:absolute;inset:0;display:flex;align-items:center;justify-content:flex-end;
+  padding-right:16px;font-size:11.5px;letter-spacing:.04em;color:var(--red);pointer-events:auto;cursor:pointer}
+.np-item.np-armed .np-del{color:#fff;background:rgba(221,85,102,.35)}
+.np-face{position:relative;z-index:1;padding:10px 13px;border-radius:11px;cursor:grab;
+  border:1px solid var(--line);background:rgba(12,22,38,.99);user-select:none;
+  transition:transform .22s cubic-bezier(.2,.9,.3,1)}
+.np-face:active{cursor:grabbing}
+.np-item.fresh .np-face{border-color:rgba(0,200,240,.35);box-shadow:inset 2px 0 0 var(--cy)}
+.np-item.error .np-face{box-shadow:inset 2px 0 0 var(--red)}
+.np-item.success .np-face{box-shadow:inset 2px 0 0 var(--green)}
+.np-t{font-size:12.5px;color:var(--tx);margin-bottom:3px}
+.np-b{font-size:11.5px;color:var(--tx2);line-height:1.5;max-height:54px;overflow:hidden}
+.np-time{margin-top:5px;font-family:var(--fm);font-size:9.5px;color:var(--tx3);opacity:.6}
 .status-cluster{display:flex;gap:7px}
 .status-chip{display:flex;align-items:center;gap:6px;padding:5px 11px;border-radius:20px;font-size:10.5px;
   border:1px solid var(--line);background:rgba(0,212,255,.05);color:var(--tx2);letter-spacing:.3px;
@@ -334,6 +386,21 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .dots span:nth-child(2){animation-delay:.18s;background:var(--teal)}
 .dots span:nth-child(3){animation-delay:.36s;background:var(--violet)}
 @keyframes bounce{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-5px);opacity:1}}
+/* --- состояние «думаю»: мигающий курсор вместо крутилки ---
+   Курсор тот же самый, что через миг поедет вместе с текстом ответа, поэтому
+   ожидание и печать читаются как одно непрерывное движение. Подпись справа
+   намеренно крошечная: она развлекает, но не спорит с ответом за внимание. */
+.think-wait{gap:7px;padding:6px 2px}
+.tw-caret{display:inline-block;width:7px;height:15px;border-radius:2px;flex-shrink:0;
+  background:linear-gradient(180deg,#fff,var(--cy2) 55%,var(--cy));
+  box-shadow:0 0 8px var(--cy),0 0 18px rgba(0,200,240,.6);
+  animation:twBlink 1.05s steps(1,end) infinite}
+@keyframes twBlink{0%,49%{opacity:1}50%,100%{opacity:.12}}
+.tw-quip{font-size:9.5px;letter-spacing:.06em;color:var(--tx3);opacity:.62;
+  font-family:var(--fm);white-space:nowrap}
+.tw-quip.in{animation:quipIn .45s cubic-bezier(.2,.8,.3,1) both}
+@keyframes quipIn{from{opacity:0;transform:translateX(-4px)}to{opacity:.62;transform:none}}
+
 .think-stream{font-family:var(--fm);font-size:11.5px;color:var(--tx3);line-height:1.75;white-space:pre-wrap;
   max-height:220px;overflow:auto;padding:2px 0;scroll-behavior:smooth}
 /* пока блок «живой» — тонкая бегущая полоска сверху и мягкое свечение рамки */
@@ -862,7 +929,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 /* Ширину и выравнивание задаёт родитель (тело сообщения). Свои max-width и
    margin:auto тянули миниатюру левее текста ответа — блок «уезжал влево». */
 .thumb{display:flex;align-items:center;gap:6px;width:100%;margin:0 0 2px;padding:0 7px;
-  border:1px solid transparent;border-radius:6px;background:rgba(10,20,34,.32);cursor:pointer;
+  border:1px solid transparent;border-radius:6px;background:rgba(16,30,48,.44);cursor:pointer;
   font-size:10px;line-height:18px;height:18px;color:var(--tx3);transition:.16s;
   animation:thumbIn .25s cubic-bezier(.2,.8,.3,1) both}
 /* миниатюра как самостоятельный элемент ленты — по той же сетке, что сообщения */
@@ -908,15 +975,14 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 @keyframes thumbIn{
   from{opacity:0;transform:scale(.95) translateY(-5px)}
   to{opacity:1;transform:none}}
-/* Свечение вдвое слабее прежнего, но заметное, и не только по контуру:
-   первая тень — ореол по краю (сильнее), вторая, внутренняя — мягкая заливка
-   всей площади миниатюры (слабее). Один короткий проблеск, без пульсации. */
+/* Вспышка при сворачивании — ещё тише: миниатюра появляется, а не сверкает.
+   Прежние .17/.13 спорили с новым, более плотным фоном строки. */
 .thumb{animation:thumbIn .26s cubic-bezier(.34,1.3,.64,1) both,
                  thumbGlow .8s ease-out .08s both}
 @keyframes thumbGlow{
-  from{box-shadow:0 0 0 0 rgba(0,200,240,.17),inset 0 0 16px rgba(0,200,240,.13)}
-  55% {box-shadow:0 0 0 5px rgba(0,200,240,.06),inset 0 0 10px rgba(0,200,240,.07)}
-  to  {box-shadow:0 0 0 9px rgba(0,200,240,0),inset 0 0 0 rgba(0,200,240,0)}}
+  from{box-shadow:0 0 0 0 rgba(0,200,240,.09),inset 0 0 12px rgba(0,200,240,.07)}
+  55% {box-shadow:0 0 0 4px rgba(0,200,240,.03),inset 0 0 8px rgba(0,200,240,.035)}
+  to  {box-shadow:0 0 0 8px rgba(0,200,240,0),inset 0 0 0 rgba(0,200,240,0)}}
 .card-head.open{animation:headGlow .7s ease-out}
 @keyframes headGlow{
   from{box-shadow:inset 0 0 18px rgba(0,200,240,.14),inset 0 -1px 0 var(--line)}
@@ -924,16 +990,25 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 
 /* Разворот миниатюры в блок: не «подмена одного другим», а рост из строки
    в полноразмерное окно — видно, что это тот же самый объект. */
-.unfolding{animation:growOpen .34s cubic-bezier(.2,.9,.26,1.02) both;
+/* Движение с «задержкой дыхания»: в РАЗВОРОТЕ кадр замирает в конце —
+   блок долетает до полного размера и на миг застывает, прежде чем отдать
+   управление. Пауза сделана повтором одного и того же кадра (72%→100%),
+   поэтому она читается как остановка, а не как замедление. */
+.unfolding{animation:growOpen .52s cubic-bezier(.2,.9,.26,1.02) both;
   transform-origin:top left;will-change:transform,opacity}
 @keyframes growOpen{
-  from{opacity:.25;transform:scale(.96) scaleY(.55) translateY(-6px)}
-  60% {opacity:1;transform:scale(1) scaleY(1.03) translateY(0)}
-  to  {opacity:1;transform:none}}
-/* обратный ход: окно ужимается в строку, а не просто гаснет */
-.shrinking{animation:shrinkClose .18s cubic-bezier(.4,0,1,1) both;transform-origin:top left}
+  0%  {opacity:.25;transform:scale(.96) scaleY(.55) translateY(-6px)}
+  46% {opacity:1;transform:scale(1) scaleY(1.04) translateY(0)}
+  72% {opacity:1;transform:none}
+  100%{opacity:1;transform:none}}
+/* Обратный ход: окно ужимается в строку и подвисает ПОСЕРЕДИНЕ — на
+   полпути движение замирает (38%→58% один кадр), и только потом схлопывается. */
+.shrinking{animation:shrinkClose .4s cubic-bezier(.4,0,1,1) both;transform-origin:top left}
 @keyframes shrinkClose{
-  to{opacity:0;transform:scaleY(.5) scale(.97) translateY(-4px)}}
+  0%  {opacity:1;transform:none}
+  38% {opacity:.72;transform:scaleY(.82) scale(.99) translateY(-2px)}
+  58% {opacity:.72;transform:scaleY(.82) scale(.99) translateY(-2px)}
+  100%{opacity:0;transform:scaleY(.5) scale(.97) translateY(-4px)}}
 
 /* =================== ПАНЕЛЬ УПРАВЛЕНИЯ ПЕСОЧНИЦЕЙ =================== */
 /* Это именно панель управления, поэтому общая рамка вокруг характеристик и
@@ -1127,14 +1202,22 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .thumb.inline-thumb{max-width:100%;margin:10px 0}
 
 /* --- курсор набора текста: искра, бегущая за словами (B) --- */
-.md.typing>:last-child::after{content:"";display:inline-block;vertical-align:-1px;
-  width:7px;height:13px;margin-left:3px;border-radius:2px;
-  background:linear-gradient(180deg,#fff,var(--cy2) 55%,var(--cy));
-  box-shadow:0 0 7px var(--cy),0 0 16px rgba(0,200,240,.55);
-  animation:spark .9s ease-in-out infinite}
+/* Курсор был почти невидим: 7×13 px с мягким свечением тонул в тексте, а
+   печать пролетала так быстро, что он не успевал моргнуть. Теперь он выше
+   строки, ярче и с ореолом вокруг — глаз цепляется за бегущую искру. */
+.md.typing>:last-child::after{content:"";display:inline-block;vertical-align:-2px;
+  width:9px;height:17px;margin-left:4px;border-radius:2px;
+  background:linear-gradient(180deg,#fff,var(--cy2) 45%,var(--cy));
+  box-shadow:0 0 12px var(--cy),0 0 28px rgba(0,200,240,.85),0 0 46px rgba(0,200,240,.4);
+  animation:spark .78s ease-in-out infinite}
 @keyframes spark{
-  0%,100%{opacity:1;transform:scaleY(1);box-shadow:0 0 7px var(--cy),0 0 16px rgba(0,200,240,.55)}
-  50%    {opacity:.55;transform:scaleY(.72);box-shadow:0 0 4px var(--cy),0 0 9px rgba(0,200,240,.3)}}
+  0%,100%{opacity:1;transform:scaleY(1.06);
+    box-shadow:0 0 12px var(--cy),0 0 28px rgba(0,200,240,.85),0 0 46px rgba(0,200,240,.4)}
+  50%    {opacity:.42;transform:scaleY(.66);
+    box-shadow:0 0 5px var(--cy),0 0 12px rgba(0,200,240,.35)}}
+/* пока идёт печать, весь абзац еле заметно «подсвечен изнутри» — видно, что
+   текст живой и продолжает расти */
+.md.typing>:last-child{text-shadow:0 0 14px rgba(0,200,240,.18)}
 
 /* --- обёртка блока кода: шапка с языком и кнопкой «Копировать» --- */
 .code-block{position:relative;margin:12px 0;border:1px solid var(--line);border-radius:12px;
@@ -1171,6 +1254,12 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .edit-box{max-width:min(720px,84%);margin-left:auto;display:flex;flex-direction:column;gap:8px;
   padding:11px 13px;border-radius:16px;border:1px solid rgba(0,200,240,.42);
   background:rgba(0,200,240,.07);animation:slideIn .2s both}
+/* отмена правки: то же движение, что и вход, только назад */
+.edit-box.edit-out{animation:editOut .2s cubic-bezier(.4,0,1,1) both}
+@keyframes editOut{to{opacity:0;transform:translateX(10px) scale(.98)}}
+/* и пузырь возвращается не рывком, а мягко проявляясь на своём месте */
+.bubble-user.edit-back{animation:editBack .28s cubic-bezier(.2,.9,.3,1) both}
+@keyframes editBack{from{opacity:0;transform:translateX(8px) scale(.98)}}
 .edit-ta{width:100%;resize:none;border:none;outline:none;background:transparent;color:var(--tx);
   font:inherit;font-size:13.5px;line-height:1.55;max-height:320px;overflow:auto}
 .edit-row{display:flex;gap:8px;justify-content:flex-end}
@@ -1243,3 +1332,52 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .ui-send{margin-top:6px;width:100%;font-weight:600}
 .ui-send:disabled{opacity:.5;cursor:default;box-shadow:none;background:rgba(255,255,255,.04);
   color:var(--tx3);border-color:var(--line2)}
+
+
+/* ---- D2. Панель ```ui: разные цвета и более живые реакции ----
+   Один цвет на всю панель делал её похожей на единый блок. Теперь у каждой
+   строки свой тон (--h) — слайдер, тумблер и плитки видно как разные вещи. */
+.ui-row{--h:0,200,240;animation:uiRowIn .42s cubic-bezier(.34,1.4,.64,1) both}
+@keyframes uiRowIn{from{opacity:0;transform:translateY(10px) scale(.97)}}
+.ui-row.c1{--h:0,200,240}     /* бирюза */
+.ui-row.c2{--h:143,134,207}   /* фиолет */
+.ui-row.c3{--h:63,191,149}    /* зелень */
+.ui-row.c4{--h:217,164,65}    /* золото */
+.ui-row.c5{--h:224,110,160}   /* розовый */
+.ui-row .ui-val{color:rgb(var(--h));text-shadow:0 0 9px rgba(var(--h),.6)}
+
+/* слайдер играет своим цветом, а бегунок «дышит» при перетаскивании */
+.ui-row .ui-range{background:linear-gradient(90deg,rgb(var(--h)) var(--fill),rgba(255,255,255,.1) var(--fill))}
+.ui-row .ui-range::-webkit-slider-thumb{background:radial-gradient(circle,#fff,rgb(var(--h)) 55%,rgba(var(--h),.45));
+  box-shadow:0 0 12px rgba(var(--h),.9),0 0 26px rgba(var(--h),.5)}
+.ui-row .ui-range::-moz-range-thumb{background:radial-gradient(circle,#fff,rgb(var(--h)) 55%,rgba(var(--h),.45));
+  box-shadow:0 0 12px rgba(var(--h),.9),0 0 26px rgba(var(--h),.5)}
+.ui-row .ui-range:active::-webkit-slider-thumb{animation:thumbPulse .5s ease-in-out infinite}
+@keyframes thumbPulse{50%{transform:scale(1.42)}}
+.ui-val.bump{animation:valBump .3s cubic-bezier(.34,1.6,.64,1)}
+@keyframes valBump{35%{transform:translateY(-5px) scale(1.24) rotate(-4deg)}}
+
+/* тумблер: включается с отскоком и вспышкой в своём цвете */
+.ui-row .ui-sw.on{background:rgba(var(--h),.22);border-color:rgba(var(--h),.65);
+  box-shadow:inset 0 0 16px rgba(var(--h),.3),0 0 12px rgba(var(--h),.25)}
+.ui-row .ui-sw.on i{background:radial-gradient(circle,#fff,rgb(var(--h)));
+  box-shadow:0 0 12px rgba(var(--h),.95),0 0 24px rgba(var(--h),.6)}
+.ui-row .ui-sw:active{transform:scale(.94)}
+.ui-sw{transition:background .22s,border-color .22s,box-shadow .22s,transform .12s}
+.ui-sw.on i{animation:swFlip .34s cubic-bezier(.34,1.7,.5,1)}
+@keyframes swFlip{40%{transform:translateX(26px) scale(1.18)}}
+
+/* плитки: подпрыгивают при наведении и «щёлкают» при выборе */
+.ui-row .ui-tile:hover{border-color:rgba(var(--h),.6);color:var(--tx);
+  transform:translateY(-3px) rotate(-1deg);box-shadow:0 6px 16px rgba(var(--h),.18)}
+.ui-row .ui-tile.on{background:linear-gradient(180deg,rgba(var(--h),.95),rgb(var(--h)));
+  box-shadow:0 0 20px rgba(var(--h),.6);animation:tilePop .38s cubic-bezier(.34,1.6,.64,1)}
+@keyframes tilePop{0%{transform:scale(.9)}45%{transform:scale(1.12) rotate(1.5deg)}100%{transform:translateY(-1px)}}
+
+/* кнопка отправки: пока не нажата — мягко переливается */
+.ui-send{background:linear-gradient(90deg,rgba(0,200,240,.14),rgba(143,134,207,.14),rgba(63,191,149,.14),rgba(0,200,240,.14));
+  background-size:300% 100%;animation:uiSendFlow 6s linear infinite}
+@keyframes uiSendFlow{to{background-position:300% 0}}
+.ui-send:disabled{animation:none}
+.ui-panel.ui-sent{border-color:rgba(63,191,149,.45);animation:uiSent .6s ease-out}
+@keyframes uiSent{0%{box-shadow:inset 0 0 34px rgba(63,191,149,.3)}100%{box-shadow:inset 0 0 24px rgba(0,200,240,.07)}}

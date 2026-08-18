@@ -95,6 +95,15 @@
       </div>
       <div class="top-title" id="topTitle">Диалог</div>
       <div class="top-acts">
+        <!-- центр уведомлений: копятся здесь, смахиваются как на iPhone -->
+        <button class="icon-btn bell-btn" id="bellBtn" title="Уведомления" aria-label="Уведомления">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 9a6 6 0 0 0-12 0c0 5-2 6.5-2 6.5h16S18 14 18 9z"/>
+            <path d="M10.3 19.5a2 2 0 0 0 3.4 0"/>
+          </svg>
+          <i class="bell-dot" id="bellDot" hidden></i>
+        </button>
         <button class="icon-btn voice-btn" id="voiceBtn" title="Голос Джарвиса: озвучивать ответы"
                 aria-label="Голос Джарвиса">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
@@ -105,6 +114,15 @@
             <path class="mute" d="M16 9.5l5 5M21 9.5l-5 5"/>
           </svg>
         </button>
+      </div>
+
+      <!-- выпадающая панель уведомлений (правый верхний угол) -->
+      <div class="note-panel" id="notePanel" hidden>
+        <div class="np-head">
+          <span>Уведомления</span>
+          <button class="np-clear" id="npClear">Очистить все</button>
+        </div>
+        <div class="np-list" id="npList"></div>
       </div>
     </header>
 

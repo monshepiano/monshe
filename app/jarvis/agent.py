@@ -258,14 +258,47 @@ def suggest_replies(user_text: str, answer: str) -> List[str]:
              "попросить действие. Ответь ТОЛЬКО JSON-массивом из 3 строк."},
             {"role": "user", "content": ("Мой запрос: %s\n\nОтвет ассистента: %s"
                                          % (user_text[:600], answer[:1200]))},
-        ], tier="nano", max_tokens=160, temperature=0.8).get("content", "")
-        match = re.search(r"\[.*\]", out, re.S)
-        if not match:
-            return []
-        items = [str(x).strip().strip('"«»') for x in json.loads(match.group(0))]
-        return [i for i in items if 2 <= len(i) <= 70][:3]
+        ], tier="nano", max_tokens=160, temperature=0.8, timeout=20).get("content", "")
     except Exception:
         return []
+    return _parse_replies(out)
+
+
+def _parse_replies(out: str) -> List[str]:
+    """Достать три реплики из ответа модели — как бы она их ни оформила.
+
+    ПОЧЕМУ не просто json.loads. Просили «ТОЛЬКО JSON-массив», и разбор был
+    на это завязан. Но nano — самая слабая модель: она регулярно отвечает
+    списком с дефисами, нумерацией или добавляет «Вот варианты:». Тогда
+    regex не находил массив, функция возвращала пустоту, и полоса подсказок,
+    помигав заглушками, просто исчезала. Формат ответа модели — не то, на
+    что можно опираться; опираемся на строки, а JSON разбираем как удачу.
+    """
+    out = (out or "").strip()
+    if not out:
+        return []
+    items: List[str] = []
+    match = re.search(r"\[.*\]", out, re.S)
+    if match:
+        try:
+            items = [str(x) for x in json.loads(match.group(0))]
+        except Exception:
+            items = []
+    if not items:
+        # Запасной разбор: обычные строки с любой маркировкой в начале.
+        # Строку, кончающуюся двоеточием, отбрасываем — это заголовок вроде
+        # «Вот варианты:», а не реплика. Признак структурный, не список фраз.
+        for line in out.splitlines():
+            line = re.sub(r'^\s*(?:[-*•—]|\d+[.)])\s*', '', line).strip()
+            line = line.strip('",[]«»').strip()
+            if line and not line.endswith(":"):
+                items.append(line)
+    clean = []
+    for it in items:
+        it = str(it).strip().strip('"«»').strip()
+        if 2 <= len(it) <= 70 and it not in clean:
+            clean.append(it)
+    return clean[:3]
 
 
 class Agent:
@@ -416,7 +449,13 @@ class Agent:
         seen_calls: Dict[str, int] = {}   # защита от зацикливания на одном вызове
 
         for step in range(max_steps):
-            yield {"type": "status", "text": "Думаю" if step == 0 else "Работаю над шагом %d" % (step + 1)}
+            # phase="think" — это то самое ожидание перед первым словом ответа.
+            # Фронт по нему показывает мигающий курсор вместо крутилки; угадывать
+            # состояние по тексту статуса он не должен.
+            if step == 0:
+                yield {"type": "status", "text": "Думаю", "phase": "think"}
+            else:
+                yield {"type": "status", "text": "Работаю над шагом %d" % (step + 1)}
             acc_text: List[str] = []
             tool_calls: List[Dict[str, Any]] = []
             stream_failed = None
