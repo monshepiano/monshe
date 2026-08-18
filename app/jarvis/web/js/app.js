@@ -101,10 +101,13 @@ function stampTime(node, ts) {
   // Время живёт на самой иконке сообщения: у ответа — бейджем на реакторе,
   // у своей реплики — такой же меткой рядом с пузырём. Отдельной строки под
   // сообщением больше нет, лента не растёт по высоте из-за времени.
+  // у ответа — бейдж на иконке-реакторе, у своей реплики — внутри пузыря,
+  // прижат к нижнему правому углу (текст обтекает его отступом)
   const av = node.querySelector(':scope > .ai-avatar');
   if (av) { av.appendChild(t); return t; }
   const bubble = node.querySelector(':scope > .bubble-user');
-  if (bubble) node.insertBefore(t, bubble); else node.appendChild(t);
+  if (bubble) { t.classList.add('in-bubble'); bubble.appendChild(t); }
+  else node.appendChild(t);
   return t;
 }
 
@@ -2507,14 +2510,18 @@ async function uploadToSandbox(files, destDir) {
 }
 
 function renderSbxBar(info, entries) {
-  const nameEl = $('#sbxName');
-  if (!nameEl) return;
+  const box = $('#sbxStats');
+  if (!box) return;
   S.sandbox = info || {};
-  nameEl.textContent = info.name || 'Файлы';
-  // сколько всего файлов и сколько места — в подсказке при наведении,
-  // отдельной строкой под именем это только шумело
-  nameEl.title = (info.files || 0) + ' файл(ов) · ' + fmtSize(info.size || 0) +
-    (S.fdir ? ' · в этой папке ' + (entries || []).length : '');
+  // в шапке остаются только характеристики: сколько файлов, сколько места,
+  // сколько объектов в текущей папке. Ярлык с названием убран.
+  const stats = [
+    ['файлов', String(info.files || 0)],
+    ['занято', fmtSize(info.size || 0)],
+  ];
+  if (S.fdir) stats.push(['в этой папке', String((entries || []).length)]);
+  box.innerHTML = stats.map(([k, v]) =>
+    '<span class="sbx-stat"><i>' + esc(k) + '</i><b>' + esc(v) + '</b></span>').join('');
 }
 
 async function viewFile(f, card) {

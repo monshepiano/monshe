@@ -226,10 +226,11 @@ button,input,textarea,select{font-family:inherit;color:inherit}
 
 .msg{max-width:900px;margin:0 auto 22px;animation:msgIn .45s cubic-bezier(.2,.8,.3,1) both}
 @keyframes msgIn{from{opacity:0;transform:translateY(16px)}}
-/* строка своей реплики: метка времени и пузырь в ряд, кнопки — строкой ниже */
-.msg-user{display:flex;justify-content:flex-end;align-items:flex-end;flex-wrap:wrap}
-.msg-user > .msg-actions,.msg-user > .ver-switch,.msg-user > .edit-box{flex:0 0 100%}
-.bubble-user{max-width:76%;padding:12px 16px;border-radius:18px 18px 4px 18px;font-size:14px;line-height:1.6;
+/* Своя реплика — колонка: пузырь, под ним кнопки. Никакого flex-wrap:
+   в колонке с ограниченной высотой (карточка камеры) перенос раскладывает
+   элементы в СОСЕДНИЕ СТОЛБЦЫ — оттуда и брались кнопки сбоку от пузыря. */
+.msg-user{display:flex;flex-direction:column;align-items:flex-end;flex-wrap:nowrap}
+.bubble-user{position:relative;max-width:76%;padding:12px 16px;border-radius:18px 18px 4px 18px;font-size:14px;line-height:1.6;
   background:linear-gradient(135deg,rgba(79,150,201,.18),rgba(143,134,207,.17));
   border:1px solid rgba(117,128,189,.4);box-shadow:0 6px 22px rgba(90,110,220,.18);
   white-space:pre-wrap;word-break:break-word}
@@ -252,9 +253,10 @@ button,input,textarea,select{font-family:inherit;color:inherit}
 .msg-ai > .ai-avatar > .msg-time{position:absolute;left:50%;bottom:-9px;transform:translateX(-50%);
   z-index:3;pointer-events:none}
 .msg-user{align-items:flex-end}
-.msg-user > .msg-time{margin:0 9px 3px 0;color:var(--tx2);border-color:rgba(117,128,189,.42);
-  background:rgba(10,12,26,.85);opacity:0;transition:opacity .2s}
-.msg-user:hover > .msg-time{opacity:1}
+/* время внутри пузыря: отдельной строкой в правом нижнем углу */
+.msg-time.in-bubble{display:block;width:max-content;margin:6px 0 -2px auto;
+  color:#cfe0ff;border-color:rgba(147,158,219,.45);background:rgba(10,14,32,.7);
+  box-shadow:none;opacity:.85}
 /* в узкой колонке камеры бейдж времени у ответа не нужен — он налезает на текст */
 .cam-chat .msg-ai > .ai-avatar > .msg-time{bottom:-8px;font-size:9px;padding:2px 4px}
 
@@ -612,7 +614,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   box-shadow:0 0 0 1px rgba(0,212,255,.05),0 14px 40px rgba(0,0,0,.4);animation:slideIn .35s both;
   display:grid;grid-template-columns:minmax(0,290px) minmax(0,1fr);
   grid-template-rows:minmax(0,1fr);gap:12px;align-items:stretch;
-  height:clamp(360px,74vh,680px);overflow:hidden}
+  height:clamp(320px,58vh,540px);overflow:hidden}
 .cam-col-left{display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0;overflow:hidden}
 .cam-col-right{display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0;
   height:100%;overflow:hidden}
@@ -660,14 +662,14 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .cam-chat .bubble-user{max-width:92%}
 .cam-chat pre,.cam-chat table{max-width:100%;overflow-x:auto}
 .cam-chat .msg{max-width:100%;margin:0 0 8px}
-.cam-chat .msg-user{justify-content:flex-end}
+.cam-chat .msg-user{align-items:flex-end}
 .cam-chat .msg-ai{gap:9px}
 .cam-chat::-webkit-scrollbar{width:6px}
 .cam-chat::-webkit-scrollbar-thumb{background:rgba(0,200,240,.22);border-radius:4px}
 .cam-note{font-size:11px;line-height:1.55;color:var(--tx3)}
 /* узкий экран: колонки складываются в одну, видео сверху */
 @media (max-width:760px){
-  .cam-live{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr);height:clamp(420px,80vh,720px)}
+  .cam-live{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr);height:clamp(380px,70vh,620px)}
   .cam-col-left{overflow:visible}
   .cam-wrap{max-height:38vh}
   .cam-feed{max-height:40%}
@@ -782,10 +784,11 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   padding:11px 14px;border:1px solid var(--line);border-radius:13px;
   background:linear-gradient(180deg,rgba(12,24,40,.75),rgba(8,16,28,.6))}
 .sbx-id{display:flex;align-items:center;gap:11px;min-width:0}
-.sbx-ico{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;flex-shrink:0;
-  background:rgba(143,179,90,.13);color:var(--lime);border:1px solid rgba(143,179,90,.28)}
-.sbx-ico svg{width:19px;height:19px}
-.sbx-name{font-size:13px;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* характеристики папки: подпись сверху, значение крупнее снизу */
+.sbx-stats{display:flex;align-items:center;gap:18px;flex-wrap:wrap;min-width:0}
+.sbx-stat{display:flex;flex-direction:column;gap:2px;min-width:0}
+.sbx-stat i{font-style:normal;font-size:9.5px;letter-spacing:1.1px;text-transform:uppercase;color:var(--tx3)}
+.sbx-stat b{font-family:var(--fm);font-size:13px;font-weight:500;color:var(--tx)}
 .sbx-acts{display:flex;gap:7px;flex-shrink:0}
 .btn.sm{padding:6px 11px;font-size:11.5px;border-radius:9px}
 .btn.danger{border-color:rgba(221,85,102,.4);color:var(--red)}
@@ -897,19 +900,28 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   border:1px dashed var(--line);border-radius:14px}
 
 /* --- выделение файлов: подсветка карточки и панель групповых действий --- */
+/* Приподнимается КАЖДАЯ выделенная карточка, а не только та, что под курсором:
+   раньше сдвиг давал только :hover, поэтому «оживала» одна из группы. */
 .fcard.selected{border-color:rgba(0,200,240,.62);background:rgba(0,200,240,.13);
-  box-shadow:0 0 0 1px rgba(0,200,240,.35),0 12px 28px rgba(0,140,200,.18)}
+  transform:translateY(-4px);
+  box-shadow:0 0 0 1px rgba(0,200,240,.35),0 14px 32px rgba(0,140,200,.22)}
+.fcard.selected:hover{transform:translateY(-6px);border-color:rgba(0,200,240,.8);
+  background:rgba(0,200,240,.18);box-shadow:0 0 0 1px rgba(0,200,240,.5),0 18px 38px rgba(0,140,200,.28)}
 .fcard.selected .fn{color:var(--cy2)}
 .fcard.selected::before{content:'✓';position:absolute;top:6px;left:6px;width:18px;height:18px;
   border-radius:6px;background:var(--cy);color:#03121b;font-size:11px;line-height:18px;
-  text-align:center;font-weight:700;z-index:2}
+  text-align:center;font-weight:700;z-index:2;animation:tickIn .22s cubic-bezier(.2,1.5,.4,1) both}
+@keyframes tickIn{from{opacity:0;transform:scale(.4)}}
 /* рамка выделения: рисуется поверх сетки, мышь сквозь неё проходит */
 .file-grid{position:relative}
 .lasso{position:absolute;z-index:5;pointer-events:none;border:1px solid rgba(0,200,240,.75);
   background:rgba(0,200,240,.13);border-radius:3px;box-shadow:0 0 14px rgba(0,200,240,.25)}
 .file-grid.lassoing{cursor:crosshair;user-select:none}
-.file-grid.lassoing .fcard{transition:none}
-.file-grid.lassoing .fcard:hover{transform:none}
+/* пока тянем рамку, наведение не приподнимает карточки — но выделенные
+   поднимаются все разом, иначе «оживает» только одна под курсором */
+.file-grid.lassoing .fcard{transition:transform .16s,box-shadow .16s,border-color .16s,background .16s}
+.file-grid.lassoing .fcard:not(.selected):hover{transform:none;border-color:var(--line);
+  background:var(--panel);box-shadow:none}
 .sel-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
   margin:0 26px 10px;padding:8px 13px;border-radius:12px;border:1px solid rgba(0,200,240,.32);
   background:rgba(0,200,240,.08);animation:popIn .22s both}
