@@ -208,6 +208,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tasks/cancel":
             db.update_task(body.get("task_id", ""), status="cancelled")
             return self._json({"ok": True})
+        if path == "/api/questions/answer":
+            db.answer_question(body.get("id", ""), str(body.get("answer", ""))[:300])
+            return self._json({"ok": True})
         if path == "/api/approvals/decide":
             db.decide_approval(body.get("id", ""), body.get("decision", "rejected"))
             return self._json({"ok": True})
@@ -461,6 +464,7 @@ class Handler(BaseHTTPRequestHandler):
         final_text = ""
         files: List[Dict[str, Any]] = []
         used_tools: List[str] = []
+        replies: List[str] = []
         alive = True
         partial: List[str] = []
         thinking: List[str] = []
@@ -482,10 +486,17 @@ class Handler(BaseHTTPRequestHandler):
                                       "label": event.get("label", ""), "args": event.get("args")})
                 elif etype == "plan":
                     trace.append({"kind": "plan", "steps": event.get("steps", [])})
+                elif etype == "question":
+                    # вопрос с вариантами остаётся в переписке: вернувшись в
+                    # диалог, пользователь видит, что спросили и что он выбрал
+                    trace.append({"kind": "question", "question": event.get("question", ""),
+                                  "options": event.get("options", []),
+                                  "answer": event.get("answer", "")})
                 elif etype == "done":
                     final_text = event.get("content", "")
                     files = event.get("files", [])
                     used_tools = event.get("tools", [])
+                    replies = event.get("replies", [])
                 if alive:
                     alive = self._sse(event)
                 # Если пользователь ушёл из диалога, соединение рвётся. Раньше мы
@@ -502,7 +513,8 @@ class Handler(BaseHTTPRequestHandler):
                 # они жили только в браузере и пропадали, стоило выйти из диалога.
                 db.add_message(chat_id, "assistant", final_text,
                                {"files": files, "tools": used_tools, "model": runner.model_used,
-                                "thinking": "".join(thinking)[:20000], "trace": trace[:60]})
+                                "thinking": "".join(thinking)[:20000], "trace": trace[:60],
+                                "replies": replies})
             if alive:
                 self._sse({"type": "end"})
             self._sse_close()

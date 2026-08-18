@@ -525,6 +525,15 @@ function renderMessages(host, messages) {
     }
   });
   S.forceHost = prevHost;
+  // Варианты продолжения принадлежат последнему ответу Джарвиса. Возвращаясь
+  // в диалог, пользователь должен видеть их снова — иначе они выглядели бы
+  // как одноразовая мелочь, исчезающая при любом переключении.
+  if (!prevHost) {
+    const msgs = messages || [];
+    const last = msgs[msgs.length - 1];
+    const items = last && last.role === 'assistant' ? ((last.meta || {}).replies || []) : [];
+    showReplies(items);
+  }
 }
 
 /* Ответ дописывается на сервере, а мы уже в другом диалоге. Периодически
@@ -853,6 +862,12 @@ function restoreTrace(node, meta) {
       node.body.appendChild(card);
       collapseToThumb(card, { cls: 'th-tool', icon: '⚙', title: label,
         tag: 'готово', instant: true });
+    } else if (t.kind === 'question') {
+      // заданный ранее вопрос и выбранный ответ — сразу свёрнуты в строку
+      const card = questionCard(t, null);
+      node.body.appendChild(card);
+      collapseToThumb(card, { cls: 'th-ask', icon: '?', title: 'Вопрос',
+        sub: t.question || '', tag: t.answer || 'без ответа', instant: true });
     }
   });
 }
@@ -960,7 +975,7 @@ function collapseToThumb(node, opts) {
   };
   if (opts.instant) { put(); } else {
     node.classList.add('collapsing');
-    setTimeout(put, 260);
+    setTimeout(put, 160);   // ровно столько же длится анимация foldOut
   }
   thumb.addEventListener('click', () => {
     node.style.display = '';
@@ -1093,6 +1108,9 @@ async function send() {
   if (S.streaming) { await stopStream(); }
   if (S.streaming) return;
   S.lastPrompt = text;
+  // старые варианты ответа относились к прошлой реплике — убираем сразу
+  const rb = $('#replyBar');
+  if (rb) { rb.hidden = true; rb.innerHTML = ''; }
 
   // камера включена — молча прикладываем текущий кадр, чтобы вопрос был «про то, что вижу»
   if (S.camStream && !S.attachments.some((a) => a.fromCam)) {
@@ -1464,6 +1482,24 @@ function handleEvent(ev, ui) {
     case 'approval_done':
       S.streamApproval = false;
       refreshState(); break;
+
+    // Уточняющий вопрос с готовыми вариантами. Джарвис останавливается и ждёт,
+    // пока нажмут кнопку: лучше один вопрос, чем неверная догадка.
+    case 'question': {
+      if (ui.statusEl) ui.statusEl.innerHTML =
+        '<div class="spinner"></div><span>Жду твоего ответа…</span>';
+      const card = questionCard(ev, (choice) => {
+        api('/api/questions/answer', { id: ev.id, answer: choice });
+      });
+      node.body.insertBefore(card, ui.statusEl);
+      beep(520, 0.16);
+      scrollDown(true);
+      break;
+    }
+
+    case 'replies':
+      showReplies(ev.items || []);
+      break;
 
     case 'tool_result': {
       if (ui.silent[ev.id || ev.name]) {
@@ -2073,6 +2109,59 @@ async function decideApproval(id, decision, card, tool) {
   refreshState();
 }
 
+/* Карточка уточняющего вопроса: текст + кнопки вариантов.
+   Первый вариант зелёный, последний красный, если это пара вида «да / нет» —
+   такие ответы читаются мгновенно, без чтения подписей. */
+function questionCard(ev, onPick) {
+  const opts = ev.options || [];
+  const card = el('div', 'panel-card ask-card');
+  const yesNo = opts.length === 2;
+  card.innerHTML =
+    '<div class="ask-h"><span class="ask-i">?</span>' + esc(ev.question || '') + '</div>' +
+    '<div class="ask-opts"></div>';
+  const box = card.querySelector('.ask-opts');
+  opts.forEach((o, i) => {
+    const tone = yesNo ? (i === 0 ? ' good' : ' bad') : '';
+    const b = el('button', 'ask-opt' + tone, esc(o));
+    b.addEventListener('click', () => {
+      if (card.dataset.done === '1') return;
+      card.dataset.done = '1';
+      box.innerHTML = '<span class="ask-picked">✓ ' + esc(o) + '</span>';
+      if (onPick) onPick(o);
+      collapseToThumb(card, { cls: 'th-ask', icon: '?', title: 'Вопрос',
+                              sub: ev.question || '', tag: o });
+    });
+    box.appendChild(b);
+  });
+  // если ответ уже был дан раньше (перечитываем историю) — показываем выбор
+  if (ev.answer) {
+    card.dataset.done = '1';
+    box.innerHTML = '<span class="ask-picked">✓ ' + esc(ev.answer) + '</span>';
+  }
+  return card;
+}
+
+/* Варианты продолжения над полем ввода. Нажатие сразу отправляет реплику —
+   это подсказка «что спросить дальше», а не форма для правки. */
+function showReplies(items) {
+  const box = $('#replyBar');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!items.length) { box.hidden = true; return; }
+  items.forEach((t, i) => {
+    const b = el('button', 'reply-chip', esc(t));
+    b.style.animationDelay = (i * 60) + 'ms';
+    b.addEventListener('click', () => {
+      box.hidden = true;
+      $('#input').value = t;
+      autoGrow();
+      send();
+    });
+    box.appendChild(b);
+  });
+  box.hidden = false;
+}
+
 function noteCard(n) {
   const kind = n.level === 'error' ? 'error' : (n.level === 'success' ? 'success' : '');
   const card = el('div', 'chat-card note-item ' + kind);
@@ -2387,6 +2476,9 @@ function renderCrumbs(dir) {
   if (!box) return;
   box.innerHTML = '';
   const parts = (dir || '').split('/').filter(Boolean);
+  // В корне «хлебные крошки» не нужны вовсе: заголовок раздела и так называется
+  // «Файлы», а одинокая подсвеченная плашка выглядела лишней табличкой.
+  if (!parts.length) return;
   const mk = (label, path, here) => {
     const b = el('span', 'cr' + (here ? ' here' : ''), esc(label));
     if (!here) b.addEventListener('click', () => loadFiles(path));
@@ -2400,7 +2492,11 @@ function renderCrumbs(dir) {
     });
     box.appendChild(b);
   };
-  mk((S.sandbox || {}).name || 'Файлы', '', !parts.length);
+  // Корень называется просто «Файлы». Имя песочницы («Песочница диалога»)
+  // сюда больше не подставляется: это была та самая жёлтая табличка — она
+  // жила не в панели управления, а в первой «хлебной крошке», поэтому
+  // прошлые правки панели её и не задевали.
+  mk('Файлы', '', !parts.length);
   let acc = '';
   parts.forEach((p, i) => {
     acc = acc ? acc + '/' + p : p;
@@ -2508,10 +2604,10 @@ function startDragGhosts(e, cards, source) {
   // выглядывают из-под неё веером — сразу видно, что их несколько.
   const FAN = [
     { dx: 0, dy: 0, rot: 0 },
-    { dx: -9, dy: 7, rot: -9 },
-    { dx: 9, dy: 11, rot: 8 },
-    { dx: -15, dy: 16, rot: -15 },
-    { dx: 15, dy: 20, rot: 14 },
+    { dx: -7, dy: 6, rot: -5 },
+    { dx: 7, dy: 9, rot: 5 },
+    { dx: -12, dy: 13, rot: -8 },
+    { dx: 12, dy: 16, rot: 8 },
   ];
   DRAG.ghosts = list.slice(0, 5).map((card, i) => {
     const box = card.getBoundingClientRect();
@@ -2526,11 +2622,11 @@ function startDragGhosts(e, cards, source) {
     // стартуем из настоящего положения карточки — миниатюра «взлетает» с места
     return {
       node: g, x: box.left + box.width / 2, y: box.top + box.height / 2, vx: 0, vy: 0,
-      // Пружина. Подобрано численно: на ходу стопка идёт вровень с курсором
-      // (отставание ~5 px), а на резкой остановке проносится дальше на ~19 px
-      // и качается около полусекунды. Чем глубже карточка в стопке, тем мягче
-      // её пружина и дольше затухание — отсюда живой шлейф за верхней.
-      k: 0.34 - i * 0.03, damp: 0.82 + i * 0.012,
+      // Пружина, подобранная численно и намеренно спокойная: на ходу стопка
+      // идёт вровень с курсором (отставание ~3 px), при резкой остановке
+      // проносится дальше всего на ~13 px и замирает за 0.3 с. Прошлый вариант
+      // (перелёт 19 px, полсекунды тряски) выглядел бешено.
+      k: 0.38 - i * 0.025, damp: 0.68 + i * 0.012,
       dx: fan.dx, dy: fan.dy, rot: fan.rot, scale: 0.3 - i * 0.012,
     };
   });
@@ -2562,8 +2658,10 @@ function startDragGhosts(e, cards, source) {
         g.node.style.transform = 'translate3d(' + (g.x - 12) + 'px,' + g.y + 'px,0)';
         continue;
       }
-      // наклон по СКОРОСТИ — миниатюра болтается на нитке и качается на стопе
-      const tilt = Math.max(-34, Math.min(34, g.vx * 1.5)) + g.rot;
+      // Наклон по скорости — миниатюра чуть кренится в сторону движения.
+      // Предел снижен с 34° до 12°: на быстром ведении карточки заваливались
+      // почти набок и мельтешили.
+      const tilt = Math.max(-12, Math.min(12, g.vx * 0.55)) + g.rot;
       g.node.style.transform =
         'translate3d(' + g.x + 'px,' + g.y + 'px,0) translate(-50%,-50%) ' +
         'rotate(' + tilt.toFixed(2) + 'deg) scale(' + g.scale + ')';

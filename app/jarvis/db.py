@@ -65,6 +65,16 @@ CREATE TABLE IF NOT EXISTS approvals (
     created_at REAL,
     decided_at REAL
 );
+CREATE TABLE IF NOT EXISTS questions (
+    id TEXT PRIMARY KEY,
+    chat_id TEXT,
+    question TEXT,
+    options TEXT,
+    answer TEXT,
+    status TEXT,
+    created_at REAL,
+    answered_at REAL
+);
 CREATE TABLE IF NOT EXISTS notifications (
     id TEXT PRIMARY KEY,
     level TEXT,
@@ -451,6 +461,36 @@ def list_approvals(status: str = "pending") -> List[Dict[str, Any]]:
 
 def decide_approval(app_id: str, status: str) -> None:
     execute("UPDATE approvals SET status=?, decided_at=? WHERE id=?", (status, now(), app_id))
+
+
+# -------------------------------------------------------------- questions
+# Уточняющий вопрос агента с готовыми вариантами ответа. Живёт по той же
+# схеме, что и подтверждения: агент создаёт запись и ждёт, пока в интерфейсе
+# нажмут кнопку. Отдельная таблица нужна потому, что вопрос — не «разрешить
+# или запретить действие», у него произвольный набор ответов.
+def create_question(chat_id: str, question: str, options: List[str]) -> Dict[str, Any]:
+    qid = uid("q_")
+    execute(
+        """INSERT INTO questions(id,chat_id,question,options,answer,status,created_at)
+           VALUES(?,?,?,?,?,?,?)""",
+        (qid, chat_id, question, json.dumps(options, ensure_ascii=False), "", "pending", now()),
+    )
+    return get_question(qid)  # type: ignore[return-value]
+
+
+def get_question(qid: str) -> Optional[Dict[str, Any]]:
+    row = query_one("SELECT * FROM questions WHERE id=?", (qid,))
+    if row:
+        try:
+            row["options"] = json.loads(row.get("options") or "[]")
+        except Exception:
+            row["options"] = []
+    return row
+
+
+def answer_question(qid: str, answer: str) -> None:
+    execute("UPDATE questions SET answer=?, status=?, answered_at=? WHERE id=?",
+            (answer, "answered", now(), qid))
 
 
 # ---------------------------------------------------------- notifications

@@ -41,7 +41,10 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) ->
         who.append("О пользователе: %s" % user["about"])
 
     base = f"""Ты — JARVIS, личный ИИ-агент пользователя (как у Тони Старка).
-Сегодня {_now_str()}. Отвечай по-русски, кратко, по делу, с лёгкой ноткой уверенного дворецкого-инженера.
+Сегодня {_now_str()}. Кратко, по делу, с лёгкой ноткой уверенного дворецкого-инженера.
+ЯЗЫК — РУССКИЙ ВЕЗДЕ И ВСЕГДА: ответ, ход мыслей (reasoning), планы, названия шагов,
+пояснения к действиям, заголовки и тексты уведомлений. Даже размышляя «про себя»,
+думай по-русски. Английский допустим только внутри кода, команд, путей и имён файлов.
 Обращайся к пользователю на «вы» только если он сам так пишет; по умолчанию — дружелюбно на «ты».
 
 {' '.join(who)}
@@ -52,6 +55,7 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) ->
 • управление песочницей: sandbox_info (что внутри), delete_file (убрать лишнее), sandbox_clear (стереть всё), sandbox_rename (дать имя);
 • медиа: generate_image, analyze_image, analyze_video, transcribe_audio;
 • память: remember (сохраняй важные факты о пользователе САМ, без напоминаний), recall, forget;
+• диалог: ask_user — задать короткий уточняющий вопрос с кнопками-вариантами;
 • фон: schedule_task — если задача долгая, регулярная или пользователь не должен ждать, отправь её в AUTO;
 • компьютер пользователя: screenshot, screen_info, mouse_click, mouse_move, mouse_scroll, mouse_drag, type_text, press_key, open_app.
 
@@ -69,7 +73,12 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) ->
    факт устарел (переехал, сменил работу) — вызови remember с тем же key и новым value, старое заменится;
    просят забыть — вызови forget с этим key. Не плоди дубли вроде «Город» и «Город 2».
 7. Не выдумывай результаты инструментов: если инструмент вернул ошибку — честно скажи и предложи обход.
-8. Песочница у каждого диалога своя. Просят «удали файл», «почисти песочницу», «сотри всё» — делай это инструментами delete_file / sandbox_clear, а не отговорками. Просят «назови песочницу» — sandbox_rename.
+8. Развилка, где твоя догадка может стоить пользователю времени (какой из двух вариантов,
+   куда сохранить, продолжать ли дальше) — вызови ask_user с 2-4 вариантами через |.
+   Например: question «Сделать таблицей или списком?», options «Таблица|Список».
+   Это НЕ разрешение на действие (его система спросит сама) и не замена работе:
+   когда ответ очевиден из просьбы — не спрашивай, а делай. Максимум один вопрос подряд.
+9. Песочница у каждого диалога своя. Просят «удали файл», «почисти песочницу», «сотри всё» — делай это инструментами delete_file / sandbox_clear, а не отговорками. Просят «назови песочницу» — sandbox_rename.
 
 КАК ВЫЗЫВАТЬ ИНСТРУМЕНТЫ (это критично):
 Инструмент вызывается ТОЛЬКО штатным механизмом function calling твоего API.
@@ -217,6 +226,35 @@ def _claims_action(text: str) -> bool:
     return bool(_ACTION_CLAIM.search(text or ""))
 
 
+def suggest_replies(user_text: str, answer: str) -> List[str]:
+    """Три коротких варианта продолжения разговора — кнопками под ответом.
+
+    Делает самая дешёвая модель (nano) и с жёстким лимитом токенов: подсказки
+    не должны ни задерживать ответ, ни стоить заметных денег. Любая ошибка
+    означает «подсказок нет» — ответ пользователя от этого не страдает.
+    """
+    if not (answer or "").strip():
+        return []
+    try:
+        out = llm.chat([
+            {"role": "system", "content":
+             "Ты помогаешь пользователю продолжить разговор с ассистентом. "
+             "По последнему ответу ассистента предложи РОВНО 3 коротких варианта "
+             "следующей реплики ОТ ЛИЦА ПОЛЬЗОВАТЕЛЯ. Каждый — до 6 слов, по-русски, "
+             "без нумерации и кавычек, разные по смыслу: уточнить, углубить, "
+             "попросить действие. Ответь ТОЛЬКО JSON-массивом из 3 строк."},
+            {"role": "user", "content": ("Мой запрос: %s\n\nОтвет ассистента: %s"
+                                         % (user_text[:600], answer[:1200]))},
+        ], tier="nano", max_tokens=160, temperature=0.8).get("content", "")
+        match = re.search(r"\[.*\]", out, re.S)
+        if not match:
+            return []
+        items = [str(x).strip().strip('"«»') for x in json.loads(match.group(0))]
+        return [i for i in items if 2 <= len(i) <= 70][:3]
+    except Exception:
+        return []
+
+
 class Agent:
     """Один прогон агента (чат-ответ или фоновая задача)."""
 
@@ -245,6 +283,23 @@ class Agent:
             time.sleep(0.6)
         db.decide_approval(approval["id"], "expired")
         return {**approval, "status": "expired"}
+
+    # ------------------------------------------------------- вопрос к юзеру
+    def _wait_answer(self, question: str, options: List[str],
+                     timeout: int = 300) -> Dict[str, Any]:
+        """Задать вопрос и дождаться нажатия кнопки в интерфейсе.
+
+        Механика та же, что у подтверждений: запись в БД + опрос её статуса.
+        Так ответ переживает обрыв SSE и работает из любой вкладки.
+        """
+        record = db.create_question(self.chat_id, question, options)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            fresh = db.get_question(record["id"])
+            if fresh and fresh.get("status") == "answered":
+                return fresh
+            time.sleep(0.5)
+        return {**record, "status": "expired", "answer": ""}
 
     # ---------------------------------------------------- результат вызова
     @staticmethod
@@ -493,6 +548,36 @@ class Agent:
                     }, from_text)
                     continue
 
+                # Уточняющий вопрос исполняет сам агент: инструменту нужно
+                # остановиться и дождаться нажатия кнопки, а не вернуть значение.
+                if name == "ask_user":
+                    options = [o.strip() for o in
+                               str(args.get("options") or "").split("|") if o.strip()]
+                    question = str(args.get("question") or "").strip()
+                    if not question or len(options) < 2:
+                        self._append_tool_result(convo, call, name, {
+                            "ok": False,
+                            "error": "нужен непустой question и минимум два варианта "
+                                     "в options через |",
+                        }, from_text)
+                        continue
+                    self.used_tools.append(name)
+                    record = self._wait_answer(question, options[:5])
+                    yield {"type": "question", "id": record["id"],
+                           "question": question, "options": options[:5],
+                           "answer": record.get("answer", ""),
+                           "status": record.get("status")}
+                    answered = record.get("status") == "answered"
+                    self._append_tool_result(convo, call, name, {
+                        "ok": answered,
+                        "answer": record.get("answer", ""),
+                    } if answered else {
+                        "ok": False,
+                        "error": "Пользователь не ответил. Действуй по самому "
+                                 "разумному варианту и скажи, какой выбрал.",
+                    }, from_text)
+                    continue
+
                 self.used_tools.append(name)
                 yield {"type": "tool_start", "id": call.get("id"), "name": name,
                        "label": tools.label_of(name), "args": args,
@@ -583,8 +668,16 @@ class Agent:
                 )
                 yield {"type": "delta", "text": final_text[final_text.index("\n\n---\n"):]}
 
+        # Варианты продолжения разговора: три коротких реплики, которые
+        # пользователю остаётся просто нажать. Считаются самой дешёвой моделью
+        # и никогда не роняют ответ — если не вышло, их просто нет.
+        replies = suggest_replies(user_text, final_text)
+        if replies:
+            yield {"type": "replies", "items": replies}
+
         yield {"type": "done", "content": final_text, "files": self.created_files,
-               "tools": self.used_tools, "model": self.model_used, "tier": tier}
+               "tools": self.used_tools, "model": self.model_used, "tier": tier,
+               "replies": replies}
 
     def _fallback_summary(self) -> str:
         """Что показать, если модель не выдала ни слова."""
