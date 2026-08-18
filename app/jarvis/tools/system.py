@@ -175,7 +175,13 @@ def _png_size(data: bytes) -> tuple:
     return (0, 0)
 
 
-def screenshot(scale: float = 0.4) -> Dict[str, Any]:
+def screenshot(scale: float = 0.0) -> Dict[str, Any]:
+    """scale=0 → берём значение из конфига (computer_use.screenshot_scale)."""
+    if not scale:
+        try:
+            scale = float(CONFIG.get("computer_use.screenshot_scale", 0.4)) or 0.4
+        except Exception:
+            scale = 0.4
     """Снимок экрана. Возвращает data-url (для vision-модели) и файл в песочнице."""
     out = _ws() / ("screen_%d.png" % int(time.time()))
     try:

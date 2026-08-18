@@ -16,11 +16,18 @@ TOOLS: Dict[str, Dict[str, Any]] = {}
 
 
 def register(name: str, fn: Callable, description: str, params: Dict[str, Any],
-             risk: str = "safe", group: str = "base", label: str = "") -> None:
+             risk: str = "safe", group: str = "base", label: str = "",
+             silent: bool = False) -> None:
+    """silent=True — служебный шаг (агент «смотрит на экран»). Такие шаги не
+    показываются в ленте, не пишутся в историю и не требуют подтверждения.
+    Единственное место, где это знание объявлено: раньше оно было продублировано
+    в agent.py, server.py и app.js, и каждый новый инструмент приходилось
+    прописывать в трёх местах."""
     TOOLS[name] = {
         "fn": fn,
         "risk": risk,
         "group": group,
+        "silent": bool(silent),
         "label": label or name,
         "schema": {
             "type": "function",
@@ -123,7 +130,7 @@ register("make_archive", system.make_archive,
 # ------------------------------------------------------------- COMPUTER-USE
 register("screenshot", system.screenshot,
          "Сделать снимок экрана компьютера пользователя, чтобы увидеть, что происходит.",
-         {}, "caution", "computer", "Снимок экрана")
+         {}, "caution", "computer", "Снимок экрана", silent=True)
 
 register("mouse_click", system.mouse_click,
          "Кликнуть мышью по координатам экрана (computer-use).",
@@ -158,7 +165,7 @@ register("open_app", system.open_app,
          {"name": S("имя приложения или URL", True)}, "danger", "computer", "Открыть приложение")
 
 register("screen_info", system.screen_info, "Узнать размер экрана (нужно перед кликами).",
-         {}, "safe", "computer", "Параметры экрана")
+         {}, "safe", "computer", "Параметры экрана", silent=True)
 
 register("system_info", system.system_info, "Информация о системе и времени.",
          {}, "safe", "base", "Система")
@@ -256,6 +263,20 @@ def schemas(groups: List[str] | None = None) -> List[Dict[str, Any]]:
             continue
         out.append(tool["schema"])
     return out
+
+
+def group_names(group: str) -> List[str]:
+    """Имена инструментов одной группы."""
+    return [n for n, t in TOOLS.items() if t.get("group") == group]
+
+
+def is_silent(name: str) -> bool:
+    """Служебный ли это шаг (не показывать пользователю)."""
+    return bool((TOOLS.get(name) or {}).get("silent"))
+
+
+def silent_names() -> List[str]:
+    return [n for n, t in TOOLS.items() if t.get("silent")]
 
 
 def risk_of(name: str) -> str:

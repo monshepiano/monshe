@@ -329,6 +329,7 @@ class Handler(BaseHTTPRequestHandler):
             "usage": db.usage_summary(),
             "billing": billing.snapshot(),
             "config": CONFIG.public(),
+            "silent_tools": tools.silent_names(),   # фронт не хранит свою копию
             "providers_ready": bool(llm.active_providers()),
             "home": str(HOME),
         }
@@ -465,7 +466,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif etype == "tool_start":
                     # служебные «глаза» computer-use в историю не пишем:
                     # иначе при возврате в диалог они снова всплывут строчками
-                    if event.get("name") not in ("screenshot", "screen_info"):
+                    if not tools.is_silent(event.get("name", "")):
                         trace.append({"kind": "tool", "name": event.get("name", ""),
                                       "label": event.get("label", ""), "args": event.get("args")})
                 elif etype == "plan":

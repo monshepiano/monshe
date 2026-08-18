@@ -77,6 +77,18 @@ DEFAULTS: Dict[str, Any] = {
         "audio": ["whisper", "audio", "Voxtral"],
         "embed": ["Qwen3-Embedding-0.6B", "Embedding", "bge-m3"],
     },
+    # Что УМЕЕТ модель каждого уровня. Раньше этого знания в системе не было
+    # вообще: оркестратор считал «сложность» текста и мог отдать запрос с
+    # инструментами модели, которая вызывать их не умеет. Она честно отвечала
+    # «у меня нет доступа к интернету» — и это выглядело как поломка интернета,
+    # хотя поломкой была маршрутизация.
+    "model_caps": {
+        "nano": {"tools": False, "vision": False},
+        "base": {"tools": True, "vision": False},
+        "smart": {"tools": True, "vision": False},
+        "coder": {"tools": True, "vision": False},
+        "vision": {"tools": False, "vision": True},
+    },
     "orchestrator": {
         "auto_route": True,
         "force_tier": "",          # "" = авто; иначе nano/base/smart/coder
@@ -114,7 +126,8 @@ DEFAULTS: Dict[str, Any] = {
         "image_provider": "pollinations",   # pollinations | fm | off
         "image_base": "https://image.pollinations.ai/prompt/",
     },
-    "computer_use": {"enabled": True, "max_steps": 12, "screenshot_scale": 0.5},
+    "computer_use": {"enabled": True, "screenshot_scale": 0.4},
+    "agent": {"max_steps_chat": 6, "max_steps_agent": 18},
     "ui": {"theme": "arc", "sound": True, "wake_word": "джарвис", "voice_reply": True},
 }
 
@@ -143,6 +156,12 @@ def _migrate(raw: Dict[str, Any]) -> Dict[str, Any]:
                 auto["tick_seconds"] = DEFAULTS["auto"]["tick_seconds"]
         except Exception:
             auto["tick_seconds"] = DEFAULTS["auto"]["tick_seconds"]
+    # computer_use.max_steps никогда не читался кодом: реальный лимит жил
+    # константой в agent.py. Ключ переехал в agent.max_steps_* — убираем
+    # обманку из сохранённых конфигов, чтобы настройка не врала.
+    cu = raw.get("computer_use")
+    if isinstance(cu, dict):
+        cu.pop("max_steps", None)
     return raw
 
 

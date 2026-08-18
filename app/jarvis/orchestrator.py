@@ -32,22 +32,37 @@ _AGENT_KEYWORDS = [
     "каждый день", "напомни", "следи за",
 ]
 
-# Запросы, которые НЕВОЗМОЖНО выполнить без похода в интернет. Даже если
-# фраза короткая («новости за сегодня»), слабая модель тут бесполезна:
-# инструменты она не вызовет и просто скажет «у меня нет доступа».
-_NEEDS_TOOLS = [
-    "новост", "погод", "курс ", "курс валют", "доллар", "евро", "биткоин",
-    "цена", "цены", "сколько стоит", "расписание", "афиш", "premiere",
-    "что нового", "за сегодня", "сегодня в мире", "последние событ",
-    "актуальн", "свеж", "сейчас происходит", "результат матч", "счёт матча",
-    "пробки", "рейс", "билет", "акци", "котировк", "прогноз",
-]
+
+# ЗАКРЫТЫЙ список реплик, которым инструменты не нужны в принципе: это
+# чистая вежливость. Он безопасен именно потому, что закрытый и полный —
+# в отличие от попытки перечислить все темы, требующие интернета (новости,
+# погода, курсы, спорт, цены...). Тот список нельзя закончить, этот — можно.
+_SOCIAL_ONLY = re.compile(
+    r"^\s*(привет|здравствуй(те)?|хай|йо|добрый (день|вечер|утро)|доброе утро|"
+    r"как дела|как ты|спасибо|благодарю|спс|пока|до свидания|ок(ей)?|хорошо|"
+    r"да|нет|ага|угу|понял|понятно|ясно|круто|отлично|супер|давай)"
+    r"[\s!.,)?]*$", re.I)
 
 
-def needs_live_data(text: str) -> bool:
-    """Нужен ли живой интернет: такие запросы нельзя отдавать слабой модели."""
-    t = (text or "").lower()
-    return any(kw in t for kw in _NEEDS_TOOLS)
+def is_social_only(text: str) -> bool:
+    """Реплика, для которой инструменты заведомо бесполезны."""
+    return bool(_SOCIAL_ONLY.match((text or "").strip()))
+
+
+def tier_can(tier: str, cap: str) -> bool:
+    """Умеет ли уровень то, что от него требуется (инструменты, зрение)."""
+    caps = CONFIG.get("model_caps." + tier, None)
+    if not isinstance(caps, dict):
+        return True          # про модель ничего не знаем — не мешаем
+    return bool(caps.get(cap, True))
+
+
+def cheapest_tier_with(cap: str, fallback: str = "base") -> str:
+    """Самый дешёвый уровень, который умеет нужное. Порядок = цена."""
+    for tier in TIER_ORDER:
+        if tier_can(tier, cap):
+            return tier
+    return fallback
 
 
 def _score_complexity(text: str) -> float:
@@ -83,9 +98,9 @@ def looks_agentic(text: str) -> bool:
     return any(kw in t for kw in _AGENT_KEYWORDS)
 
 
-def choose_tier(text: str, has_image: bool = False, agent_mode: bool = False,
-                has_tools: bool = False, computer_use: bool = False) -> Dict[str, Any]:
-    """Возвращает {tier, reason, score}."""
+def _choose_tier_raw(text: str, has_image: bool = False, agent_mode: bool = False,
+                     has_tools: bool = False, computer_use: bool = False) -> Dict[str, Any]:
+    """Предпочтительный уровень по «сложности» текста (без учёта способностей)."""
     forced = CONFIG.get("orchestrator.force_tier") or ""
     if forced:
         return {"tier": forced, "reason": "принудительно в настройках", "score": 1.0}
@@ -107,10 +122,6 @@ def choose_tier(text: str, has_image: bool = False, agent_mode: bool = False,
         # агентский цикл требует надёжного tool-calling
         tier = "smart" if score > 0.75 else "base"
         return {"tier": tier, "reason": "агентский режим с инструментами", "score": score}
-    if needs_live_data(text):
-        # нужен реальный поиск в сети → только модель, которая уверенно
-        # вызывает инструменты. Иначе получаем «у меня нет доступа к интернету».
-        return {"tier": "base", "reason": "нужны свежие данные из интернета", "score": max(score, 0.4)}
     if has_tools:
         # болтовню не тащим в дорогую модель, даже если инструменты подключены
         if score < 0.12 and not looks_agentic(text):
@@ -122,6 +133,39 @@ def choose_tier(text: str, has_image: bool = False, agent_mode: bool = False,
     if score < 0.75:
         return {"tier": "base", "reason": "обычная задача", "score": score}
     return {"tier": "smart", "reason": "сложная задача — берём сильную модель", "score": score}
+
+
+def choose_tier(text: str, has_image: bool = False, agent_mode: bool = False,
+                has_tools: bool = False, computer_use: bool = False) -> Dict[str, Any]:
+    """Возвращает {tier, reason, score} с ГАРАНТИЕЙ, что модель потянет задачу.
+
+    Раньше «сложность» текста была единственным критерием, и короткий вопрос
+    вроде «кто выиграл вчера матч» уезжал в самую дешёвую модель, которая не
+    умеет вызывать инструменты. Она отвечала «у меня нет доступа к интернету».
+    Теперь способности модели — жёсткое ограничение, а не пожелание: экономия
+    возможна только среди тех уровней, которые реально умеют требуемое.
+    """
+    route = _choose_tier_raw(text, has_image=has_image, agent_mode=agent_mode,
+                             has_tools=has_tools, computer_use=computer_use)
+    tier = route["tier"]
+
+    # Инструменты подключены — значит модель обязана уметь их вызывать.
+    # Мы не знаем заранее, понадобится ли поиск: это решает сама модель уже
+    # в процессе. Поэтому «умеет вызывать» требуется всегда, когда есть tools.
+    if has_tools and not tier_can(tier, "tools"):
+        if is_social_only(text):
+            # вежливость: дешёвая модель справится, инструменты ей не даём —
+            # тогда и «не умею вызывать» никак не проявится
+            route["offer_tools"] = False
+            return route
+        better = cheapest_tier_with("tools")
+        return {"tier": better, "score": route.get("score", 0.0), "offer_tools": True,
+                "reason": "нужна модель, умеющая искать и вызывать инструменты"}
+    route.setdefault("offer_tools", True)
+    if has_image and not tier_can(tier, "vision"):
+        return {"tier": cheapest_tier_with("vision", "vision"), "score": route.get("score", 0.0),
+                "reason": "нужна модель со зрением"}
+    return route
 
 
 def escalate(tier: str) -> Optional[str]:

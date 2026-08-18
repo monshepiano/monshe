@@ -276,6 +276,7 @@ async function refreshState() {
   if (!st.ok) { setChip('#chipConn', 'err', 'нет связи'); return; }
   setChip('#chipConn', 'ok', 'связь');
   S.config = st.config || {};
+  applySilentTools(st.silent_tools);
   S.tasks = st.tasks || [];
   S.approvals = st.approvals || [];
   S.notifications = st.notifications || [];
@@ -1665,7 +1666,16 @@ const CAM_TICK = 2500;      // как часто заглядывать в ка�
 const CAM_MOTION = 7;       // порог изменения сцены (0..255)
 
 // Служебные шаги computer-use: агенту нужны, пользователю — нет.
-const SILENT_TOOLS = { screenshot: 1, screen_info: 1 };
+// Служебные шаги приходят с сервера (/api/state.silent_tools) — единый
+// источник истины в реестре инструментов. Значения ниже нужны только до
+// первого ответа сервера.
+let SILENT_TOOLS = { screenshot: 1, screen_info: 1 };
+function applySilentTools(list) {
+  if (!Array.isArray(list) || !list.length) return;
+  const next = {};
+  list.forEach(n => { next[n] = 1; });
+  SILENT_TOOLS = next;
+}
 
 function buildCamCard() {
   const card = el('div', 'msg msg-ai cam-msg');

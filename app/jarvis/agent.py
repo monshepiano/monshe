@@ -13,8 +13,15 @@ from typing import Any, Dict, Generator, Iterable, List, Optional
 from . import db, llm, orchestrator, sandbox, tools
 from .config import CONFIG
 
-MAX_STEPS_CHAT = 6
-MAX_STEPS_AGENT = 18
+# Лимиты шагов лежат в конфиге (agent.max_steps_chat / max_steps_agent).
+# Раньше они были константами здесь, а в конфиге болтался неиспользуемый
+# computer_use.max_steps — правка настройки не меняла ничего.
+def _max_steps(agent_mode: bool) -> int:
+    key = "agent.max_steps_agent" if agent_mode else "agent.max_steps_chat"
+    try:
+        return max(1, int(CONFIG.get(key, 18 if agent_mode else 6)))
+    except Exception:
+        return 18 if agent_mode else 6
 
 
 def _now_str() -> str:
@@ -194,10 +201,9 @@ def _describe_screen(data_url: str, shot: Dict[str, Any]) -> str:
     return seen.strip() + tail
 
 
-COMPUTER_TOOLS = {
-    "mouse_click", "mouse_move", "mouse_scroll", "mouse_drag",
-    "type_text", "press_key", "open_app", "screenshot",
-}
+# Действия, реально трогающие компьютер. Служебные «глаза» (silent) сюда не
+# входят по определению — источник истины один: реестр инструментов.
+COMPUTER_TOOLS = {n for n in tools.group_names("computer") if not tools.is_silent(n)}
 
 # «сейчас нажму», «кликнул», «открыл окно» — заявка на действие
 _ACTION_CLAIM = re.compile(
@@ -301,12 +307,16 @@ class Agent:
                "score": score, "verbose": verbose}
 
         available = tools.schemas(_tool_groups(self.computer_use))
+        if not route.get("offer_tools", True):
+            # оркестратор отдал реплику дешёвой модели именно потому, что
+            # инструменты тут не нужны — не суём их ей в руки
+            available = []
         if self.task_id:
             # мы УЖЕ внутри фоновой задачи: планировать ещё одну запрещено,
             # иначе AUTO наполняется клонами одной и той же просьбы
             available = [t for t in available
                          if (t.get("function") or {}).get("name") != "schedule_task"]
-        max_steps = MAX_STEPS_AGENT if self.agent_mode else MAX_STEPS_CHAT
+        max_steps = _max_steps(self.agent_mode)
 
         if self.agent_mode and user_text:
             yield {"type": "status", "text": "Составляю план"}
@@ -321,6 +331,8 @@ class Agent:
 
         convo = list(messages)
         final_text = ""
+        retried_claim = False          # ловушку вранья взводим один раз за прогон
+        seen_calls: Dict[str, int] = {}   # защита от зацикливания на одном вызове
 
         for step in range(max_steps):
             yield {"type": "status", "text": "Думаю" if step == 0 else "Работаю над шагом %d" % (step + 1)}
@@ -390,6 +402,37 @@ class Agent:
                                          "arguments": json.dumps(tc["args"], ensure_ascii=False)},
                         })
 
+            # ЛОВУШКА ВРАНЬЯ. В режиме управления компьютером модель любит
+            # написать «сейчас нажму» / «переключил диалог», не вызвав ни одного
+            # инструмента. Раньше мы это замечали ТОЛЬКО в самом конце и просто
+            # дописывали извинение — то есть фиксировали провал вместо того,
+            # чтобы его исправить. Теперь возвращаем модель к работе прямо в
+            # цикле: заявка на действие без вызова — это не ответ.
+            # Условие намеренно НЕ опирается на список глаголов: любая попытка
+            # перечислить формы («нажал», «нажму», «щёлкну»...) неизбежно
+            # дырявая. Правило закрытое: в режиме управления компьютером ответ
+            # без единого действия — подозрителен, и мы даём модели ровно один
+            # шанс исправиться. Если действие и правда не требовалось, она
+            # просто повторит ответ.
+            if (self.computer_use and not tool_calls and text_piece.strip()
+                    and not any(t in COMPUTER_TOOLS for t in self.used_tools)
+                    and not retried_claim):
+                retried_claim = True
+                if gate_open:
+                    yield {"type": "reset"}
+                    gate_open = False
+                yield {"type": "status", "text": "Проверяю, что действие выполнено"}
+                convo.append({"role": "assistant", "content": text_piece})
+                convo.append({"role": "user", "content":
+                              "Ты ответил текстом, но не вызвал ни одного инструмента, "
+                              "поэтому на компьютере НИЧЕГО не произошло. "
+                              "Не описывай действия словами. Сейчас же вызови нужный "
+                              "инструмент (screenshot, чтобы увидеть экран, затем "
+                              "mouse_click / type_text / press_key). Если действие "
+                              "на компьютере не требовалось — просто повтори свой "
+                              "ответ без изменений."})
+                continue
+
             # шлюз так и не открылся, а вызовов нет — показываем придержанный текст
             if not gate_open and text_piece and not tool_calls:
                 yield {"type": "delta", "text": text_piece}
@@ -423,6 +466,19 @@ class Agent:
                     args = {}
                 if not isinstance(args, dict):
                     args = {}
+
+                # Модель может залипнуть, повторяя один и тот же вызов с теми же
+                # аргументами. Раньше это молча съедало все шаги, и пользователь
+                # видел «думаю» до самого конца. Считаем повторы и вмешиваемся.
+                sig = name + "|" + json.dumps(args, sort_keys=True, ensure_ascii=False)[:300]
+                seen_calls[sig] = seen_calls.get(sig, 0) + 1
+                if seen_calls[sig] > 2:
+                    self._append_tool_result(convo, call, name, {
+                        "ok": False,
+                        "error": "Этот вызов с теми же аргументами уже повторялся. "
+                                 "Результат не изменится. Смени подход или дай ответ.",
+                    }, from_text)
+                    continue
 
                 self.used_tools.append(name)
                 yield {"type": "tool_start", "id": call.get("id"), "name": name,
@@ -497,8 +553,12 @@ class Agent:
 
         # Режим управления компьютером: модель могла «отчитаться» о кликах, не
         # тронув мышь. Не выдаём выдумку за правду — честно предупреждаем.
+        # Предупреждаем, если в режиме управления компьютером не выполнено ни
+        # одного действия И модель уже проигнорировала прямое требование их
+        # выполнить (retried_claim). Опираться на список глаголов нельзя —
+        # «нажму» / «нажал» / «щёлкну» не перечислить полностью.
         if self.computer_use and not any(t in COMPUTER_TOOLS for t in self.used_tools):
-            if _claims_action(final_text):
+            if retried_claim or _claims_action(final_text):
                 final_text += (
                     "\n\n---\n⚠️ **Я на самом деле ничего не нажал.** Управление "
                     "компьютером не сработало: инструменты мыши и клавиатуры не "
