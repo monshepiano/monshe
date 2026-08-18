@@ -997,8 +997,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    margin:auto тянули миниатюру левее текста ответа — блок «уезжал влево». */
 .thumb{display:flex;align-items:center;gap:6px;width:100%;margin:0 0 2px;padding:0 7px;
   border:1px solid transparent;border-radius:6px;background:rgba(16,30,48,.44);cursor:pointer;
-  font-size:10px;line-height:18px;height:18px;color:var(--tx3);transition:.16s;
-  animation:thumbIn .25s cubic-bezier(.2,.8,.3,1) both}
+  font-size:10px;line-height:18px;height:18px;color:var(--tx3);transition:.16s}
 /* миниатюра как самостоятельный элемент ленты — по той же сетке, что сообщения */
 .stream > .thumb{max-width:900px;margin:0 auto 2px}
 /* Свёрнутое сообщение JARVIS остаётся сообщением JARVIS: аватар на месте,
@@ -1007,7 +1006,6 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .thumb-msg{margin-bottom:10px}
 .thumb-msg .ai-body{display:flex;align-items:center;min-height:34px}
 .thumb-msg .thumb{margin:0}
-@keyframes thumbIn{from{opacity:0;transform:translateY(-6px) scaleY(.85)}}
 .thumb:hover{border-color:var(--line);background:rgba(0,200,240,.06);color:var(--tx2)}
 .thumb .th-t b{font-weight:400}
 .thumb .th-ico{width:12px;height:12px;border-radius:0;display:grid;place-items:center;flex-shrink:0;
@@ -1037,8 +1035,10 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    и без инертного долгого схлопывания — блок просто уходит вверх за 0.16 с. */
 .collapsing{animation:foldOut .16s cubic-bezier(.4,0,1,1) both;transform-origin:top center}
 @keyframes foldOut{to{opacity:0;transform:scaleY(.72) translateY(-4px)}}
-/* миниатюра появляется на месте блока с коротким мягким подскоком */
-.thumb{animation:thumbIn .26s cubic-bezier(.34,1.3,.64,1) both}
+/* миниатюра появляется на месте блока с коротким мягким подскоком.
+   ОДНО объявление и ОДИН @keyframes: раньше правило .thumb{animation}
+   встречалось трижды, а thumbIn — дважды. Побеждало последнее, а правки
+   вносились в первое — поэтому «исправления» анимации не давали эффекта. */
 @keyframes thumbIn{
   from{opacity:0;transform:scale(.95) translateY(-5px)}
   to{opacity:1;transform:none}}
@@ -1076,11 +1076,16 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   from{opacity:1;transform:none}
   to  {opacity:0;transform:scaleY(.55) scale(.98) translateY(-4px)}}
 
-/* Во время роста из миниатюры тело уже раскрыто (JS сделал это мгновенно),
-   а свечение шапки не запускается — иначе оно висело бы ещё полсекунды
-   поверх уже неподвижного блока. Движение ровно одно. */
+/* ПРИЧИНА «короткого лага после раскрытия».
+   Класс .unfolding только ГЛУШИЛ свечение шапки на время роста. Когда через
+   240 мс его снимали, свойство animation менялось none -> headGlow, и браузер
+   запускал вспышку С НУЛЯ — ещё 700 мс мерцания поверх уже неподвижного блока.
+   Глушение по таймеру не лечится подбором длительности: снятие класса само по
+   себе перезапускает анимацию. Поэтому метка .grown остаётся на карточке всё
+   время, пока она раскрыта, и свечение не стартует вообще. */
 .unfolding > .card-body{transition:none}
-.unfolding > .card-head{animation:none}
+.unfolding > .card-head,
+.grown > .card-head{animation:none}
 
 /* =================== ПАНЕЛЬ УПРАВЛЕНИЯ ПЕСОЧНИЦЕЙ =================== */
 /* Это именно панель управления, поэтому общая рамка вокруг характеристик и
@@ -1562,3 +1567,45 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .ui-panel.ui-sent{border-color:rgba(63,191,149,.45);animation:uiSent .5s ease-out}
 @keyframes uiSent{0%{box-shadow:inset 0 0 30px rgba(63,191,149,.28)}100%{box-shadow:inset 0 0 24px rgba(0,200,240,.07)}}
 .ui-panel.ui-sent .ui-row{opacity:.75}
+
+/* =================== ПРЕДПРОСМОТР ФАЙЛА СПРАВА ===================
+   Открывается ТОЛЬКО одиночным кликом по файлу в переписке — больше ниоткуда.
+   Панель не перекрывает поле ввода и не крадёт фокус: это «посмотреть, что
+   прислали», а не модальное окно, ради которого надо бросить диалог. */
+.fprev{position:fixed;top:0;right:0;width:min(460px,42vw);height:100vh;z-index:70;
+  display:flex;flex-direction:column;background:rgba(9,17,28,.97);
+  border-left:1px solid var(--line);box-shadow:-18px 0 44px rgba(0,0,0,.5);
+  transform:translateX(100%);opacity:0;pointer-events:none;
+  transition:transform .22s cubic-bezier(.22,.9,.3,1),opacity .22s}
+.fprev.open{transform:none;opacity:1;pointer-events:auto}
+.fprev-head{display:flex;align-items:center;gap:9px;padding:12px 14px;
+  border-bottom:1px solid var(--line);flex-shrink:0}
+.fprev-ico{width:16px;height:16px;color:var(--cy);flex-shrink:0;display:grid;place-items:center}
+.fprev-ico svg{width:14px;height:14px}
+.fprev-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:12px;color:var(--tx)}
+.fprev-size{font-family:var(--fm);font-size:9px;color:var(--tx3);flex-shrink:0}
+.fprev-btn{border:1px solid var(--line);background:transparent;color:var(--tx2);
+  border-radius:7px;padding:4px 9px;font-size:10px;cursor:pointer;transition:.15s;flex-shrink:0}
+.fprev-btn:hover{border-color:var(--cy);color:var(--cy);background:rgba(0,200,240,.07)}
+.fprev-x{padding:4px 8px;font-size:12px;line-height:1}
+.fprev-body{flex:1;overflow:auto;padding:14px}
+.fprev-body img{max-width:100%;border-radius:9px;display:block;margin:0 auto}
+.fprev-body pre{margin:0;white-space:pre-wrap;word-break:break-word;
+  font-family:var(--fm);font-size:11px;line-height:1.6;color:var(--tx2)}
+.fprev-body .fprev-none{text-align:center;color:var(--tx3);font-size:11px;padding:40px 10px;line-height:1.8}
+@media(max-width:700px){.fprev{width:100vw}}
+
+/* Кнопка скачивания в углу файла, присланного Джарвисом.
+   Появляется на наведении, чтобы не шуметь в ленте, но всегда на месте. */
+.file-chip{position:relative}
+.chip-dl{position:absolute;top:-6px;right:-6px;
+  width:20px;height:20px;border-radius:50%;border:1px solid var(--line);
+  background:#0b1626;color:var(--tx2);cursor:pointer;
+  display:grid;place-items:center;font-size:11px;line-height:1;
+  opacity:0;transform:scale(.8);transition:.15s;padding:0;z-index:2}
+.file-chip:hover .chip-dl,.chip-dl:focus-visible{opacity:1;transform:none}
+.chip-dl:hover{border-color:var(--cy);color:var(--cy);background:rgba(0,200,240,.14)}
+.chip-dl svg{width:11px;height:11px}
+/* картинка в ленте — та же кнопка в углу */
+.img-wrap{position:relative;display:inline-block;max-width:100%}

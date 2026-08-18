@@ -322,30 +322,42 @@ const BOOT_LINES = [
    гаснет, как только сервер реально ответил. Раньше при медленном /api/state
    пользователь смотрел на бесконечное «соединение». */
 let BOOT_DONE = null;
+/* Заставку видно ровно столько, сколько идут строки, и не меньше.
+   Локально сервер отвечает за десятки миллисекунд, BOOT_DONE прилетал почти
+   сразу и срезал заставку на середине — поэтому она «мелькала». Теперь ранний
+   ответ сервера не гасит экран раньше BOOT_MIN_MS, а поздний по-прежнему
+   ничего не задерживает. */
+const BOOT_MIN_MS = 2300;
 (function boot() {
   const log = $('#bootLog');
+  const t0 = Date.now();
   let i = 0;
   let finished = false;
-  const finish = () => {
+  const hide = () => {
     if (finished) return;
     finished = true;
     $('#boot').classList.add('hide');
     $('#app').classList.add('ready');
     sfx('done');
   };
+  // ждём и строки, и сервер: гасим по позднему из двух, но не раньше минимума
+  const finish = () => {
+    const left = BOOT_MIN_MS - (Date.now() - t0);
+    if (left > 0) setTimeout(hide, left); else hide();
+  };
   BOOT_DONE = finish;
-  // что бы ни случилось со связью — дольше 4 секунд заставку не держим
-  setTimeout(finish, 4000);
+  // что бы ни случилось со связью — дольше 5 секунд заставку не держим
+  setTimeout(hide, 5000);
   const tick = () => {
     if (i < BOOT_LINES.length) {
       const line = el('div', '', BOOT_LINES[i]);
       log.appendChild(line); i++; tone(660, 0, 0.09, 0.03);   // тихий сухой тик, без гаммы
-      setTimeout(tick, 180);
+      setTimeout(tick, 300);
     } else {
-      setTimeout(finish, 260);
+      setTimeout(finish, 420);
     }
   };
-  setTimeout(tick, 300);
+  setTimeout(tick, 340);
 })();
 
 /* ============================ навигация ============================ */
@@ -1155,17 +1167,87 @@ function makeCard(icon, title, cls, openByDefault) {
   return card;
 }
 
+/* =================== ПРЕДПРОСМОТР ФАЙЛА ===================
+   Единственный вход — одиночный клик по файлу в переписке (см. attachFileChip).
+   Ни двойной клик, ни лайтбокс, ни «открыть в новой вкладке» больше не
+   участвуют: у одного действия должен быть один результат. */
+let PREV_FILE = null;
+
+function closePreview() {
+  const p = $('#fprev');
+  if (p) p.classList.remove('open');
+  PREV_FILE = null;
+}
+
+function openPreview(f) {
+  const box = $('#fprev');
+  if (!box || !f) return;
+  PREV_FILE = f;
+  $('#fprevIco').innerHTML = fileIcon(f.name);
+  $('#fprevName').textContent = f.name || 'файл';
+  $('#fprevSize').textContent = f.size != null ? fmtSize(f.size) : '';
+  const body = $('#fprevBody');
+  box.classList.add('open');
+
+  if (isImg(f.name)) {
+    body.innerHTML = '<img src="' + esc(f.url) + '" alt="' + esc(f.name || '') + '">';
+    return;
+  }
+  body.innerHTML = '<div class="fprev-none">читаю файл…</div>';
+  // Текст тянем через тот же /api/files/view, что и файловый менеджер:
+  // второй способ читать файл означал бы второй набор ошибок.
+  const q = '/api/files/view?name=' + encodeURIComponent(f.path || f.name || '') +
+            '&chat_id=' + encodeURIComponent(f.chat_id || activeChatId() || '');
+  api(q).then((r) => {
+    if (PREV_FILE !== f) return;                 // пока читали, открыли другой
+    if (!r || !r.ok) { body.innerHTML = '<div class="fprev-none">не удалось прочитать файл</div>'; return; }
+    if (r.kind === 'image') { body.innerHTML = '<img src="' + esc(r.download_url) + '">'; return; }
+    if (r.kind === 'text') {
+      body.innerHTML = '<pre></pre>';
+      body.querySelector('pre').textContent = r.content || '';
+      return;
+    }
+    body.innerHTML = '<div class="fprev-none">Предпросмотр недоступен для этого типа.<br>Файл можно скачать кнопкой выше.</div>';
+  }).catch(() => {
+    if (PREV_FILE === f) body.innerHTML = '<div class="fprev-none">не удалось прочитать файл</div>';
+  });
+}
+
+/* Кнопка скачивания в углу карточки файла. Отдельной функцией, потому что
+   нужна и картинке, и «фишке» файла: один источник поведения на оба случая. */
+function dlCorner(host, f) {
+  const b = el('button', 'chip-dl', ICO.dl);
+  b.title = 'Скачать ' + (f.name || 'файл');
+  b.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const a = el('a'); a.href = f.url; a.download = f.name || '';
+    document.body.appendChild(a); a.click(); a.remove();
+    sfx('ok');
+  });
+  host.appendChild(b);
+  return b;
+}
+
 function attachFileChip(container, f) {
   if (isImg(f.name)) {
+    // обёртка нужна, чтобы кнопку можно было поставить в угол картинки
+    const wrap = el('div', 'img-wrap');
     const img = el('img', 'img-out');
     img.src = f.url; img.alt = f.name; img.loading = 'lazy';
-    img.addEventListener('click', () => lightbox(f.url));
-    container.appendChild(img);
+    // Одиночный клик по файлу = предпросмотр. Лайтбокс убран: у пользователя
+    // должен быть ровно один способ открыть файл, иначе картинка и документ
+    // ведут себя по-разному без всякой причины.
+    img.addEventListener('click', () => openPreview(f));
+    wrap.appendChild(img);
+    dlCorner(wrap, f);
+    container.appendChild(wrap);
   }
   const a = el('a', 'file-chip');
-  a.href = f.url; a.target = '_blank'; a.download = '';
+  a.href = f.url;
   a.innerHTML = '<span class="fi">' + fileIcon(f.name) + '</span><span>' + esc(f.name) +
     '</span><small>' + fmtSize(f.size) + '</small>';
+  a.addEventListener('click', (e) => { e.preventDefault(); openPreview(f); });
+  dlCorner(a, f);
   container.appendChild(a);
 }
 
@@ -1183,6 +1265,7 @@ function termLine(text, cls) {
 /* ============================ иконки и миниатюры ============================ */
 /* Единый набор тонких линейных иконок — без «детских» эмодзи. */
 const ICO = {
+  dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10"/><path d="M8 11l4 4 4-4"/><path d="M5 19h14"/></svg>',
   // та же стрелка, что на кнопке отправки под полем ввода
   send: '<svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg>',
   copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.4"/><path d="M5.5 15H5a1.9 1.9 0 0 1-1.9-1.9V5A1.9 1.9 0 0 1 5 3.1h8.1A1.9 1.9 0 0 1 15 5v.5"/></svg>',
@@ -1256,10 +1339,19 @@ function collapseToThumb(node, opts) {
     // блока, переход max-height и свечение шапки; теперь двигается одно.
     setCardOpen(node, true, true);
     node.classList.remove('shrinking');
-    node.classList.add('unfolding');
+    // .grown остаётся навсегда: он держит свечение шапки выключенным. Снятие
+    // .unfolding меняло animation с none на headGlow и ПЕРЕЗАПУСКАЛО вспышку
+    // на 700 мс уже после того, как блок замер, — это и был «короткий лаг».
+    node.classList.add('unfolding', 'grown');
     setTimeout(() => node.classList.remove('unfolding'), 240);   // = growOpen
     addFoldButton(node, opts);              // развернули — даём чем свернуть обратно
-    node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    // Плавная прокрутка идёт ~300 мс и накладывается на рост карточки: два
+    // разных движения одновременно читаются как рывок. Довозим мгновенно и
+    // только если карточка реально не влезла в экран.
+    const r = node.getBoundingClientRect();
+    if (r.top < 0 || r.bottom > innerHeight) {
+      node.scrollIntoView({ block: 'nearest' });
+    }
   });
   return thumb;
 }
@@ -1336,10 +1428,50 @@ function addFoldButton(node, opts) {
    Блок превращается в настоящие слайдеры/тумблеры/плитки. Значения
    пользователь крутит вживую, а «Отправить» одним сообщением возвращает
    Джарвису итог — так ответ становится инструментом, а не картинкой. */
+/* Синонимы типов. Модель — не парсер: она пишет «radio», «select», «choice»,
+   «плитки», «checkbox». Раньше любая такая строка не распознавалась, панель
+   получалась пустой и УДАЛЯЛАСЬ — пользователь видел «выбери скорость», а
+   выбора не было (та самая змейка). Приводим синонимы к своим типам. */
+const UI_ALIAS = {
+  плитки: 'tiles', выбор: 'tiles', radio: 'tiles', select: 'tiles',
+  choice: 'tiles', options: 'tiles', option: 'tiles', buttons: 'tiles',
+  ползунок: 'slider', range: 'slider',
+  число: 'number', счётчик: 'number', counter: 'number', spinner: 'number',
+  переключатель: 'toggle', checkbox: 'toggle', switch: 'toggle', флаг: 'toggle',
+  строка: 'text', input: 'text', поле: 'text',
+  текст: 'area', textarea: 'area',
+  кнопка: 'button',
+  оценка: 'rate', stars: 'rate', звёзды: 'rate',
+  несколько: 'multi', multiselect: 'multi', checklist: 'multi',
+  порядок: 'rank', sort: 'rank', приоритет: 'rank',
+  дата: 'date', цвет: 'color',
+};
+
+/* Привести вольную строку к канону: снять маркеры списка и нумерацию,
+   развернуть синоним типа, починить диапазон «1-10» и «от 1 до 10»,
+   заменить перечисление запятыми на «|». */
+function normUiLine(raw) {
+  let ln = String(raw).trim();
+  if (!ln) return '';
+  const W = 'A-Za-z\u0400-\u04FF0-9_';                 // «словесные» символы, включая кириллицу
+  ln = ln.replace(/^[-*\u2022\u00b7]\s+/, '').replace(/^\d+[.)]\s+/, '');
+  ln = ln.replace(new RegExp('^([' + W + '][' + W + '-]*)\\s*:\\s+(?=\\S)', 'i'), '$1 ');
+  const head = ln.match(new RegExp('^([' + W + '-]+)'));
+  if (head) {
+    const canon = UI_ALIAS[head[1].toLowerCase()];
+    if (canon) ln = canon + ln.slice(head[1].length);
+  }
+  // диапазоны: «от 1 до 10», «1-10» -> «1..10»  (\b здесь бесполезен: он не видит кириллицу)
+  ln = ln.replace(/(^|\s)от\s+(-?\d+(?:[.,]\d+)?)\s+до\s+(-?\d+(?:[.,]\d+)?)/i, '$1$2..$3');
+  ln = ln.replace(/(^|\s)(-?\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)(?=\s|$|=)/, '$1$2..$3');
+  ln = ln.replace(/step(?=\d)/i, 'step ');
+  return ln;
+}
+
 function parseUiSpec(src) {
   const items = [];
   String(src || '').split('\n').forEach((raw) => {
-    const ln = raw.trim();
+    const ln = normUiLine(raw);
     if (!ln) return;
     let m;
     // slider Метка 0..100 [step 5] [unit ₽] = 50
@@ -1350,8 +1482,11 @@ function parseUiSpec(src) {
                    unit: m[5] || '',
                    val: m[6] != null ? parseFloat(m[6]) : min });
     // number Метка 1..20 [step 1] [unit шт] = 3  — счётчик с кнопками ± 
-    } else if ((m = ln.match(/^number\s+(.+?)\s+(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)(?:\s+step\s+(\d+(?:\.\d+)?))?(?:\s+unit\s+(\S+))?(?:\s*=\s*(-?\d+(?:\.\d+)?))?$/i))) {
-      const min = parseFloat(m[2]), max = parseFloat(m[3]);
+    // Диапазон необязателен: «number Количество = 3» — обычный счётчик.
+    // Раньше min..max требовался жёстко, строка не совпадала и панель пропадала.
+    } else if ((m = ln.match(/^number\s+(.+?)(?:\s+(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?))?(?:\s+step\s+(\d+(?:\.\d+)?))?(?:\s+unit\s+(\S+))?(?:\s*=\s*(-?\d+(?:\.\d+)?))?$/i))) {
+      const min = m[2] != null ? parseFloat(m[2]) : 0;
+      const max = m[3] != null ? parseFloat(m[3]) : 999999;
       items.push({ t: 'number', label: m[1], min, max,
                    step: m[4] ? parseFloat(m[4]) : 1,
                    unit: m[5] || '',
@@ -1388,6 +1523,17 @@ function parseUiSpec(src) {
       items.push({ t: 'area', label: m[1], hint: (m[2] || '').trim(), val: '' });
     } else if ((m = ln.match(/^button\s+(.+)$/i))) {
       items.push({ t: 'button', label: m[1] });
+
+    // ПОСЛЕДНИЙ РУБЕЖ. Строка не легла ни в один шаблон, но в ней есть
+    // «Метка: A | B | C» или «A | B» — значит, выбор человеку предлагают,
+    // и молча выбрасывать его нельзя. Лучше показать плитки не того оттенка,
+    // чем не показать ничего: пустая панель удаляется, и пользователь остаётся
+    // с текстом «выбери скорость» без единой кнопки.
+    } else if (/\|/.test(ln)) {
+      const parts = ln.split(':');
+      const label = parts.length > 1 ? parts.shift().trim() : '';
+      const opts = parts.join(':').split('|').map((x) => x.trim()).filter(Boolean);
+      if (opts.length > 1) items.push({ t: 'tiles', label: label || 'Выбери', opts, val: null });
     }
   });
   return items;
@@ -1996,7 +2142,8 @@ function thinkType(el, chunk) {
     const shown = el.textContent.length;
     const left = el._buf.length - shown;
     if (left <= 0) { clearInterval(el._t); el._t = null; return; }
-    const step = Math.max(6, Math.ceil(left / 6));
+    // Помедленнее, чем было (6 и /6): ход мыслей читают, а не проматывают.
+    const step = Math.max(3, Math.ceil(left / 10));
     el.textContent = el._buf.slice(0, shown + step);
     const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
     if (atEnd) el.scrollTop = el.scrollHeight;
@@ -2070,7 +2217,10 @@ function showError(ui, msg) {
    поэтому длинный ответ всегда «улетал» — вместе с ним пропадал и курсор. */
 const TYPE_MS = 11;              // такт печати
 const SPEED_TALK = 1;            // разговор: по букве за такт (~90 зн/с)
-const SPEED_FAST = 22;           // код и таблицы: очень быстро, почти сразу
+const SPEED_FAST = 13;           // код и таблицы: быстро, но не обгоняя прокрутку
+/* 22 знака за такт — это ~2000 зн/с: длинный листинг долетал до низа раньше,
+   чем страница успевала доехать, и конец кода оказывался за краем экрана.
+   13 держит темп «быстро» (~1200 зн/с) и не обгоняет автопрокрутку. */
 
 function typeInto(ui, chunk) {
   ui.buffer += chunk;
@@ -2589,7 +2739,9 @@ function handleEvent(ev, ui) {
         ui.mdEl.innerHTML = MD.render(content);
         foldCodeBlocks(ui.mdEl);
         mountUiPanels(ui.mdEl);
-        $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click', () => lightbox(im.src)));
+        // картинки внутри ответа открываются тем же предпросмотром, что и файлы
+        $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click',
+          () => openPreview({ name: im.alt || 'изображение', url: im.src })));
         // ход мыслей отработал — прячем в миниатюру
         if (ui.thinkCard && ui.thinkCard.isConnected) {
           const ts = thinkFlush(ui.thinkCard);
@@ -4065,6 +4217,15 @@ if ($('#selAll')) {
   $('#selAll').addEventListener('click', () => { S.fsel = new Set(S.frows); syncSelection(); });
   $('#selDelete').addEventListener('click', deleteSelection);
   $('#selDownload').addEventListener('click', downloadSelection);
+
+  // предпросмотр: закрыть и скачать
+  $('#fprevClose').addEventListener('click', closePreview);
+  $('#fprevDl').addEventListener('click', () => {
+    if (!PREV_FILE) return;
+    const a = el('a'); a.href = PREV_FILE.url; a.download = PREV_FILE.name || '';
+    document.body.appendChild(a); a.click(); a.remove();
+    sfx('ok');
+  });
 }
 
 /* Клавиши работают, когда открыта вкладка «Файлы» и курсор не в поле ввода:
@@ -4438,7 +4599,7 @@ function renderSettings() {
 /* ============================ старт ============================ */
 window.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); newChat(); }
-  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Escape') { closeModal(); closePreview(); }
 });
 
 (async function init() {
