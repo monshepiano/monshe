@@ -210,6 +210,14 @@ def _remember(key: str, value: str, kind: str = "fact") -> Dict[str, Any]:
     return {"ok": True, "saved": {"key": key, "value": value}}
 
 
+def _forget(key: str, kind: str = "") -> Dict[str, Any]:
+    from .. import db
+    n = db.forget_by_key(key, kind)
+    if not n:
+        return {"ok": False, "error": "факта с названием «%s» в памяти нет" % key}
+    return {"ok": True, "forgotten": key}
+
+
 def _recall(kind: str = "") -> Dict[str, Any]:
     from .. import db
     items = db.recall(kind)
@@ -237,10 +245,18 @@ def _schedule_task(title: str, prompt: str, schedule: str = "") -> Dict[str, Any
 
 
 register("remember", _remember,
-         "Запомнить факт о пользователе (предпочтения, имя, привычки) для персонализации.",
+         "Запомнить факт о пользователе (предпочтения, имя, привычки) для персонализации. "
+         "Этим же инструментом факт ИСПРАВЛЯЕТСЯ: вызови с тем же key и новым value — "
+         "старое значение заменится.",
          {"key": S("короткий ключ", True), "value": S("что запомнить", True),
           "kind": S("тип: fact/preference/person/project")},
          "safe", "memory", "Запомнить")
+
+register("forget", _forget,
+         "Удалить факт из памяти по его названию (key). Используй, когда пользователь "
+         "просит забыть что-то или факт устарел и заменять его нечем.",
+         {"key": S("название факта", True), "kind": S("тип памяти (необязательно)")},
+         "safe", "memory", "Забыть")
 
 register("recall", _recall, "Вспомнить сохранённые факты о пользователе.",
          {"kind": S("тип памяти (необязательно)")}, "safe", "memory", "Вспомнить")

@@ -374,8 +374,48 @@ def recall(kind: str = "", limit: int = 80) -> List[Dict[str, Any]]:
     return query("SELECT * FROM memory ORDER BY weight DESC, updated_at DESC LIMIT ?", (limit,))
 
 
+def update_memory(mem_id: str, key: str = "", value: str = "") -> Optional[Dict[str, Any]]:
+    """Правка существующего факта по id: можно поменять и название, и текст."""
+    item = query_one("SELECT * FROM memory WHERE id=?", (mem_id,))
+    if not item:
+        return None
+    key = (key or item["key"]).strip() or item["key"]
+    value = value if value != "" else item["value"]
+    execute("UPDATE memory SET key=?, value=?, updated_at=? WHERE id=?",
+            (key, value, now(), mem_id))
+    return {**item, "key": key, "value": value}
+
+
+def recent_user_messages(days: int = 30, limit: int = 60) -> List[str]:
+    """О чём пользователь просил за последний месяц — сырьё для подсказок."""
+    since = now() - days * 86400
+    rows = query(
+        "SELECT content FROM messages WHERE role='user' AND created_at>=? "
+        "ORDER BY created_at DESC LIMIT ?", (since, limit))
+    out = []
+    for r in rows:
+        txt = " ".join((r["content"] or "").split())[:160]
+        if txt:
+            out.append(txt)
+    return out
+
+
 def forget(mem_id: str) -> None:
     execute("DELETE FROM memory WHERE id=?", (mem_id,))
+
+
+def forget_by_key(key: str, kind: str = "") -> int:
+    """Забыть факт по названию — так его удаляет сам Джарвис, id он не видит."""
+    key = (key or "").strip()
+    if not key:
+        return 0
+    if kind:
+        rows = query("SELECT id FROM memory WHERE kind=? AND key=?", (kind, key))
+    else:
+        rows = query("SELECT id FROM memory WHERE key=?", (key,))
+    for row in rows:
+        execute("DELETE FROM memory WHERE id=?", (row["id"],))
+    return len(rows)
 
 
 # ------------------------------------------------------------- approvals

@@ -487,7 +487,25 @@ async function openChat(id) {
   showView('chat');
   const r = await api('/api/messages?chat_id=' + encodeURIComponent(id));
   const stream = $('#stream'); stream.innerHTML = '';
-  (r.messages || []).forEach((m) => {
+  renderMessages(stream, r.messages || []);
+  // Показываем ПОСЛЕДНИЙ момент разговора. Одной установки scrollTop мало:
+  // картинки, блоки кода и свёрнутые карточки досчитывают свою высоту уже
+  // после вставки, лента становится выше — и позиция, «низ» на момент
+  // присвоения, оказывается серединой. Поэтому доводим прокрутку до низа
+  // ещё и после отрисовки кадра и после загрузки картинок.
+  pinToBottom(stream);
+  loadChats();
+  // диалог, который дописывался в фоне: тихо перечитываем, пока не появится ответ
+  if (S.detached === id) watchDetached(id);
+}
+
+/* Отрисовка переписки в заданный контейнер. Вынесена из openChat, потому что
+   тот же список нужно уметь перерисовать ВНУТРИ карточки камеры — иначе
+   переключение версии выбрасывало разговор в основную ленту. */
+function renderMessages(host, messages) {
+  const prevHost = S.forceHost;
+  S.forceHost = host;
+  (messages || []).forEach((m) => {
     if (m.role === 'user') {
       const mt = m.meta || {};
       addUserMsg(m.content, mt.attachments || [],
@@ -506,15 +524,7 @@ async function openChat(id) {
       addMsgActions(node, m.content);
     }
   });
-  // Показываем ПОСЛЕДНИЙ момент разговора. Одной установки scrollTop мало:
-  // картинки, блоки кода и свёрнутые карточки досчитывают свою высоту уже
-  // после вставки, лента становится выше — и позиция, «низ» на момент
-  // присвоения, оказывается серединой. Поэтому доводим прокрутку до низа
-  // ещё и после отрисовки кадра и после загрузки картинок.
-  pinToBottom(stream);
-  loadChats();
-  // диалог, который дописывался в фоне: тихо перечитываем, пока не появится ответ
-  if (S.detached === id) watchDetached(id);
+  S.forceHost = prevHost;
 }
 
 /* Ответ дописывается на сервере, а мы уже в другом диалоге. Периодически
@@ -539,12 +549,41 @@ function watchDetached(id) {
   S.detachTimer = setTimeout(tick, 1200);
 }
 
+/* Подсказки на пустом экране. Сервер отдаёт их ГОТОВЫМИ (считает заранее в
+   фоне), поэтому новый диалог открывается мгновенно. Держим последний ответ
+   в памяти вкладки — тогда даже первого запроса ждать не нужно. */
 const SUGGESTIONS = [
   ['Что нового?', 'Найди в интернете 5 главных новостей за сегодня и сделай сводку'],
   ['Собери отчёт', 'Собери таблицу с ценами на iPhone 17 в российских магазинах и сохрани в Excel'],
   ['Каждое утро', 'Каждый день в 9:00 присылай мне погоду и курс доллара в Telegram'],
   ['Сделай картинку', 'Нарисуй логотип для кофейни в стиле неон-минимализм'],
+  ['Разбери файл', 'Я пришлю документ — вытащи главное и сделай выжимку по пунктам'],
+  ['Наведи порядок', 'Загляни в мою песочницу, разложи файлы по папкам и скажи, что можно удалить'],
 ];
+S.ideas = SUGGESTIONS.map((s) => ({ title: s[0], prompt: s[1] }));
+
+async function loadIdeas() {
+  try {
+    const r = await api('/api/ideas');
+    if (r.ok && (r.ideas || []).length) {
+      S.ideas = r.ideas;
+      // если пустой экран уже открыт — обновим карточки на месте
+      const box = $('.welcome .suggestions');
+      if (box) fillSuggestions(box);
+    }
+  } catch (e) { /* останутся встроенные */ }
+}
+
+function fillSuggestions(box) {
+  box.innerHTML = '';
+  S.ideas.slice(0, 6).forEach((s, i) => {
+    const b = el('button', 'sugg', '<b>' + esc(s.title) + '</b>' + esc(s.prompt));
+    b.style.animationDelay = (0.04 * i) + 's';
+    b.addEventListener('click', () => { $('#input').value = s.prompt; autoGrow(); send(); });
+    box.appendChild(b);
+  });
+}
+
 function buildWelcome() {
   const w = el('div', 'welcome');
   w.innerHTML = '<div class="reactor xl"><div class="ring r1"></div><div class="ring r2"></div>' +
@@ -552,13 +591,7 @@ function buildWelcome() {
     '<h1 class="hello">Добрый день. Я <span>JARVIS</span>.</h1>' +
     '<p class="hello-sub">Спрашивай что угодно — или включи <b>Агент</b>, и я сделаю всё сам.</p>' +
     '<div class="suggestions"></div>';
-  const box = w.querySelector('.suggestions');
-  SUGGESTIONS.forEach((s, i) => {
-    const b = el('button', 'sugg', '<b>' + esc(s[0]) + '</b>' + esc(s[1]));
-    b.style.animationDelay = (0.05 * i) + 's';
-    b.addEventListener('click', () => { $('#input').value = s[1]; autoGrow(); send(); });
-    box.appendChild(b);
-  });
+  fillSuggestions(w.querySelector('.suggestions'));
   return w;
 }
 
@@ -569,6 +602,9 @@ function stream() { return $('#stream'); }
    вверх от новых вопросов, а переписка остаётся в ней и видна, когда
    окошко разворачивают обратно. */
 function msgHost() {
+  // перерисовка может идти в явно заданный контейнер (например, в переписку
+  // внутри карточки камеры) — тогда он важнее общих правил
+  if (S.forceHost && S.forceHost.isConnected) return S.forceHost;
   const cc = $('#camChat');
   if (cc && S.camNode && S.camNode.isConnected) return cc;
   return stream();
@@ -628,9 +664,16 @@ function renderVersions(node, versions, index) {
     if (!id) return;
     const r = await api('/api/messages/version', { id, index: to });
     if (!r.ok) { toast('Не получилось переключить версию', 'error'); return; }
-    // как в GPT: вместе с версией вопроса возвращается и ответ на неё
-    if (S.chatId) { await openChat(S.chatId); }
-    else {
+    // как в GPT: вместе с версией вопроса возвращается и ответ на неё.
+    // Перерисовываем в ТОТ контейнер, где сообщение живёт сейчас: в карточке
+    // камеры — внутрь неё, иначе разговор выпрыгивал в основную ленту.
+    const host = node.closest('.cam-chat') || (S.chatId ? stream() : null);
+    if (S.chatId && host) {
+      const msgs = await api('/api/messages?chat_id=' + encodeURIComponent(S.chatId));
+      host.innerHTML = '';
+      renderMessages(host, msgs.messages || []);
+      pinToBottom(host);
+    } else {
       const bubble = node.querySelector('.bubble-user');
       if (bubble) bubble.textContent = versions[to];
       renderVersions(node, versions, to);
@@ -2413,14 +2456,19 @@ function fileCard(f, i) {
   c.addEventListener('dragstart', (e) => {
     if (!S.fsel.has(f.path)) selectOnly(f.path);
     const paths = [...S.fsel];
-    $$('#fileGrid .fcard.selected').forEach((n) => n.classList.add('dragging'));
+    const cards = $$('#fileGrid .fcard.selected');
+    cards.forEach((n) => n.classList.add('dragging'));
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/jarvis-path', f.path);
     e.dataTransfer.setData('text/jarvis-paths', JSON.stringify(paths));
     e.dataTransfer.setData('text/plain', paths.length > 1 ? paths.length + ' объекта(ов)' : f.name);
+    // Браузер рисует снимок ОДНОЙ карточки — той, за которую взялись. Поэтому
+    // «оживала» одна из группы. Гасим штатный снимок и ведём свой шлейф.
+    startDragGhosts(e, cards, c);
   });
   c.addEventListener('dragend', () => {
     $$('#fileGrid .fcard.dragging').forEach((n) => n.classList.remove('dragging'));
+    stopDragGhosts();
   });
 
   if (f.is_dir) {
@@ -2433,6 +2481,81 @@ function fileCard(f, i) {
     });
   }
   return c;
+}
+
+/* ============ шлейф перетаскивания: миниатюры «висят» на курсоре ============
+   Штатный drag-снимок браузера показывает только карточку-источник, поэтому
+   группа из нескольких файлов выглядела так, будто едет один. Прячем его
+   прозрачной картинкой 1×1 и рисуем свой слой: каждая выделенная карточка
+   уменьшается в миниатюру и догоняет курсор с небольшой задержкой — чем
+   дальше миниатюра в стопке, тем ленивее, отсюда ощущение инерции. */
+const DRAG = { ghosts: [], x: 0, y: 0, raf: 0, move: null };
+const BLANK_IMG = (() => {
+  const i = new Image();
+  i.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  return i;
+})();
+
+function startDragGhosts(e, cards, source) {
+  stopDragGhosts();
+  try { e.dataTransfer.setDragImage(BLANK_IMG, 0, 0); } catch (err) { /* старый браузер */ }
+  const list = (cards && cards.length ? [...cards] : [source]);
+  // карточка, за которую взялись, летит первой — она ближе всего к курсору
+  list.sort((a, b) => (a === source ? -1 : b === source ? 1 : 0));
+  const layer = el('div', 'drag-layer');
+  DRAG.x = e.clientX; DRAG.y = e.clientY;
+
+  DRAG.ghosts = list.slice(0, 6).map((card, i) => {
+    const box = card.getBoundingClientRect();
+    const g = el('div', 'drag-ghost');
+    g.innerHTML = card.innerHTML;
+    g.style.width = box.width + 'px';
+    g.style.height = box.height + 'px';
+    g.style.zIndex = String(50 - i);
+    // стартуем из настоящего положения карточки — миниатюра «взлетает» с места
+    layer.appendChild(g);
+    return { node: g, x: box.left + box.width / 2, y: box.top + box.height / 2,
+             ease: 0.34 - i * 0.045, rot: (i - 1) * 4, scale: 0.42 - i * 0.03 };
+  });
+  if (list.length > 6) {
+    const more = el('div', 'drag-more', '+' + (list.length - 6));
+    layer.appendChild(more);
+    DRAG.ghosts.push({ node: more, x: DRAG.x, y: DRAG.y, ease: 0.06, rot: 0, scale: 1, plain: true });
+  }
+  document.body.appendChild(layer);
+  DRAG.layer = layer;
+
+  // dragover — единственное событие, где во время перетаскивания есть курсор
+  DRAG.move = (ev) => { if (ev.clientX || ev.clientY) { DRAG.x = ev.clientX; DRAG.y = ev.clientY; } };
+  document.addEventListener('dragover', DRAG.move, true);
+  document.addEventListener('drag', DRAG.move, true);
+
+  const tick = () => {
+    DRAG.ghosts.forEach((g, i) => {
+      g.x += (DRAG.x - g.x) * g.ease;
+      g.y += (DRAG.y - g.y) * g.ease;
+      // наклон по скорости — будто миниатюра болтается на нитке
+      const tilt = Math.max(-16, Math.min(16, (DRAG.x - g.x) * 0.5)) + g.rot;
+      g.node.style.transform = g.plain
+        ? 'translate(-50%,-50%) translate(' + g.x + 'px,' + (g.y + 26) + 'px)'
+        : 'translate(-50%,-50%) translate(' + g.x + 'px,' + g.y + 'px) ' +
+          'rotate(' + tilt + 'deg) scale(' + g.scale + ')';
+    });
+    DRAG.raf = requestAnimationFrame(tick);
+  };
+  DRAG.raf = requestAnimationFrame(tick);
+}
+
+function stopDragGhosts() {
+  if (DRAG.raf) cancelAnimationFrame(DRAG.raf);
+  DRAG.raf = 0;
+  if (DRAG.move) {
+    document.removeEventListener('dragover', DRAG.move, true);
+    document.removeEventListener('drag', DRAG.move, true);
+    DRAG.move = null;
+  }
+  if (DRAG.layer) { DRAG.layer.remove(); DRAG.layer = null; }
+  DRAG.ghosts = [];
 }
 
 /* Обработка броска: либо перенос внутри песочницы, либо загрузка с компьютера. */
@@ -2631,15 +2754,6 @@ window.addEventListener('keydown', (e) => {
   });
 })();
 
-$('#sbxRename').addEventListener('click', () => {
-  if (!S.chatId) { toast('Общую папку переименовать нельзя — открой диалог', 'warn'); return; }
-  promptBox('Название рабочей папки', (S.sandbox || {}).name || '', async (val) => {
-    const r = await api('/api/sandbox/rename', { name: val, chat_id: S.chatId });
-    if (r.ok) { toast('Переименовано', 'success'); loadFiles(); }
-    else toast(r.error || 'не удалось', 'error');
-  });
-});
-
 $('#sbxWipe').addEventListener('click', () => {
   confirmBox('Очистить рабочую папку?',
     'Все файлы этого диалога будут удалены безвозвратно. Действие нельзя отменить.', async () => {
@@ -2688,13 +2802,38 @@ async function loadMemory() {
     c.style.animationDelay = (i * 0.02) + 's';
     c.innerHTML = '<div class="mem-kind">' + esc(m.kind) + '</div>' +
       '<div class="mem-key">' + esc(m.key) + '</div>' +
-      '<div class="mem-val">' + esc(m.value) + '</div><i class="mem-del">✕</i>';
+      '<div class="mem-val">' + esc(m.value) + '</div>' +
+      '<div class="mem-acts"><i class="mem-edit" title="Изменить">✎</i>' +
+      '<i class="mem-del" title="Удалить">✕</i></div>';
     c.querySelector('.mem-del').addEventListener('click', async () => {
       await api('/api/memory/delete', { id: m.id }); loadMemory();
     });
+    c.querySelector('.mem-edit').addEventListener('click', () => editMemory(m));
     grid.appendChild(c);
   });
 }
+/* правка факта: то же окно, что и при добавлении, но с заполненными полями */
+function editMemory(m) {
+  modal('<h3>Изменить факт</h3><div class="md-sub">Название и значение можно поправить.</div>' +
+    '<div class="field"><label>Что</label><input id="mk"></div>' +
+    '<div class="field"><label>Значение</label><textarea id="mv" rows="3"></textarea></div>' +
+    '<div class="modal-acts"><button class="btn ghost" id="mc">Отмена</button>' +
+    '<button class="btn primary" id="mo">Сохранить</button></div>',
+    (box) => {
+      const k = $('#mk', box), v = $('#mv', box);
+      k.value = m.key; v.value = m.value;
+      v.focus();
+      $('#mc', box).addEventListener('click', closeModal);
+      $('#mo', box).addEventListener('click', async () => {
+        const key = k.value.trim(), val = v.value.trim();
+        if (!key || !val) { toast('Заполни оба поля', 'warn'); return; }
+        const r = await api('/api/memory/update', { id: m.id, key, value: val });
+        if (!r.ok) { toast('Не получилось сохранить', 'error'); return; }
+        closeModal(); loadMemory(); toast('Изменено', 'success');
+      });
+    });
+}
+
 $('#addMemBtn').addEventListener('click', () => {
   modal('<h3>Добавить факт в память</h3><div class="md-sub">Например: «Город» → «Москва».</div>' +
     '<div class="field"><label>Что</label><input id="mk" placeholder="Город"></div>' +
@@ -2926,7 +3065,10 @@ window.addEventListener('keydown', (e) => {
 (async function init() {
   syncVoiceBtn();
   $('#stream').appendChild(buildWelcome());
-  // состояние и список диалогов тянем параллельно, а не гуськом
+  // состояние и список диалогов тянем параллельно, а не гуськом.
+  // Подсказки не ждём вовсе: экран уже показан со встроенными, а личные
+  // подменятся, как только придут.
+  loadIdeas();
   await Promise.all([refreshState(), loadChats()]);
   if (BOOT_DONE) BOOT_DONE();
   setInterval(refreshState, 4000);

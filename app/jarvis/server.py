@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import agent, auto, billing, db, llm, orchestrator, sandbox, tools
+from . import agent, auto, billing, db, ideas, llm, orchestrator, sandbox, tools
 from .config import CONFIG, WORKSPACE, HOME
 from .tools import media
 
@@ -142,6 +142,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "notifications": db.list_notifications()})
         if path == "/api/memory":
             return self._json({"ok": True, "memory": db.recall()})
+        if path == "/api/ideas":
+            # только готовое: считать здесь нельзя — экран ждать не должен
+            return self._json({"ok": True, "ideas": ideas.current()})
         if path == "/api/files":
             chat_id = (params.get("chat_id") or params.get("chat") or [""])[0]
             return self._json({"ok": True, "files": sandbox.listing(chat_id),
@@ -220,6 +223,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/memory/add":
             return self._json({"ok": True, "item": db.remember(body.get("kind", "fact"),
                                                                body.get("key", ""), body.get("value", ""))})
+        if path == "/api/memory/update":
+            item = db.update_memory(body.get("id", ""), body.get("key", ""), body.get("value", ""))
+            return self._json({"ok": bool(item), "item": item})
         if path == "/api/memory/delete":
             db.forget(body.get("id", ""))
             return self._json({"ok": True})

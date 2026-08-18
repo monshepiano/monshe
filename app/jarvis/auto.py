@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from . import agent, db, llm
+from . import agent, db, ideas, llm
 from .config import CONFIG
 from .tools import media
 
@@ -248,6 +248,9 @@ def _loop() -> None:
                 # проактивные идеи ходят в сеть: в отдельном потоке, иначе
                 # медленный ответ модели задерживает все напоминания
                 threading.Thread(target=proactive_tick, daemon=True).start()
+                # подсказки для пустого экрана готовим заранее — сам refresh
+                # решает, пора ли (раз в несколько часов), и молчит, если рано
+                ideas.refresh_async()
         except Exception:
             pass
         # тик подстраивается под ближайшую задачу: секундные напоминания не опаздывают
