@@ -150,13 +150,16 @@ def execute_task(task_id: str) -> None:
         files = result.get("files") or []
         db.update_task(task_id, status="done", progress=1.0, result=content)
         db.append_task_event(task_id, {"type": "done", "text": "Готово"})
-        db.notify("AUTO: " + task["title"], content[:300], "success")
-        # пишем ответ прямо в диалог, откуда задачу поставили, — пользователь
-        # просил «напиши мне», значит сообщение должно появиться в переписке
+        # Результат показываем ОДИН раз. Раньше на одну задачу приходилось
+        # четыре записи: карточка «в фоне», текст «Принято…», уведомление и
+        # сам ответ. Уведомление нужно только тогда, когда ответ некуда
+        # положить — если задача пришла из диалога, ответ и есть уведомление.
         if task.get("chat_id"):
             db.add_message(task["chat_id"], "assistant", content,
                            {"task_id": task_id, "from_auto": True,
                             "files": files, "title": task.get("title", "")})
+        else:
+            db.notify("AUTO: " + task["title"], content[:300], "success")
         _telegram_report(task["title"], content, files)
 
         schedule = task.get("schedule") or ""

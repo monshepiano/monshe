@@ -532,10 +532,11 @@ function msgHost() {
   return stream();
 }
 function scrollDown(force) {
-  const cc = $('#camChat');
-  if (cc && S.camNode && S.camNode.isConnected) {
-    const nearC = cc.scrollHeight - cc.scrollTop - cc.clientHeight < 220;
-    if (nearC || force) cc.scrollTop = cc.scrollHeight;
+  // прокручивается сама карточка камеры (видео в ней закреплено сверху)
+  const cl = S.camNode && S.camNode.isConnected ? S.camNode.querySelector('.cam-live') : null;
+  if (cl) {
+    const nearC = cl.scrollHeight - cl.scrollTop - cl.clientHeight < 220;
+    if (nearC || force) cl.scrollTop = cl.scrollHeight;
   }
   const s = stream();
   const near = s.scrollHeight - s.scrollTop - s.clientHeight < 220;
@@ -1763,9 +1764,13 @@ function camSay(text, kind) {
   line.innerHTML = '<span class="cam-t">' +
     new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) +
     '</span><span class="cam-x">' + (kind === 'sys' || kind === 'err' ? esc(text) : MD.render(text)) + '</span>';
-  feed.appendChild(line);
-  while (feed.children.length > 40) feed.removeChild(feed.firstChild);
-  feed.scrollTop = feed.scrollHeight;
+  // «Что вижу» — это состояние кадра, а не переписка: каждое новое описание
+  // ЗАМЕНЯЕТ предыдущее, иначе лента растёт и выдавливает картинку из вида.
+  // Сообщения системы и ошибки — отдельная короткая строка, тоже одна.
+  const slot = kind === 'sys' || kind === 'err' ? 'camNote' : 'camView';
+  line.dataset.slot = slot;
+  const old = feed.querySelector('[data-slot="' + slot + '"]');
+  if (old) feed.replaceChild(line, old); else feed.appendChild(line);
   scrollDown();
 }
 

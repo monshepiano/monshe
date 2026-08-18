@@ -229,7 +229,8 @@ def _schedule_task(title: str, prompt: str, schedule: str = "") -> Dict[str, Any
         chat_id = ""
     task = auto.create_background_task(title=title, prompt=prompt, schedule=schedule, chat_id=chat_id)
     human = auto.describe_schedule(schedule)
-    db.notify("Задача в фоне: " + title, prompt[:200], "info")
+    # Без уведомления: о постановке задачи пользователь уже узнаёт из карточки
+    # «В фоне» в диалоге и из вкладки AUTO. Третий раз повторять незачем.
     return {"ok": True, "task_id": task["id"], "title": title, "schedule": schedule,
             "when": human,
             "note": "Задача создана во вкладке AUTO (%s). Результат придёт уведомлением." % human}

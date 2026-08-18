@@ -401,19 +401,16 @@ class Handler(BaseHTTPRequestHandler):
             task = auto.create_background_task(title=task_title, prompt=text,
                                                schedule=decision["schedule"], chat_id=chat_id)
             human = auto.describe_schedule(decision["schedule"])
-            if decision["schedule"]:
-                note = ("Принято. Задача **%s** поставлена в **AUTO** — %s.\n\n"
-                        "Пришлю результат уведомлением, как только выполню."
-                        % (task_title, human))
-            else:
-                note = ("Принято. Задача **%s** ушла в фон — вкладка **AUTO**.\n\n"
-                        "Пришлю результат, как только будет готово." % task_title)
+            # Карточка «В фоне» уже сообщает и название, и срок. Дублировать
+            # то же самое текстом «Принято…» — лишний шум в диалоге.
+            note = ("Задача «%s» — в фоне%s." % (task_title, ", " + human if human else ""))
             self._sse({"type": "background", "task_id": task["id"], "title": task["title"],
                        "schedule": decision["schedule"], "when": human,
                        "reason": decision.get("reason", "")})
-            self._sse({"type": "delta", "text": note})
-            db.add_message(chat_id, "assistant", note, {"task_id": task["id"]})
-            self._sse({"type": "done", "content": note, "files": [], "tools": ["schedule_task"]})
+            db.add_message(chat_id, "assistant", note,
+                           {"task_id": task["id"], "bg_card": True})
+            # content пустой: текст уже нарисован карточкой «В фоне»
+            self._sse({"type": "done", "content": "", "files": [], "tools": ["schedule_task"]})
             self._sse({"type": "end"})
             self._sse_close()
             return

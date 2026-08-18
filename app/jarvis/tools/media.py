@@ -62,18 +62,77 @@ def _ffmpeg() -> str | None:
 
 
 def _pick_audio_model() -> str:
-    """Найти в каталоге провайдера реальную модель распознавания речи."""
+    """Найти в каталоге провайдера реальную модель распознавания речи.
+
+    Раньше модель угадывалась по подстрокам в имени («whisper», «audio»,
+    «transcri»…). Это ловило посторонние модели: любая модель, у которой в
+    названии оказалось слово «transcription», выглядела как ASR, уходила в
+    /audio/transcriptions и микрофон молчал. Имя — не признак умения.
+
+    Признак умения — сама возможность принять аудио. Проверяем её один раз
+    честным запросом к /audio/transcriptions и запоминаем результат: модель,
+    которая приняла аудиофайл, и есть ASR. Никаких списков слов.
+    """
     from .. import llm
 
-    prefs = [p.lower() for p in (llm.CONFIG.get("model_tiers.audio", []) or [])]
-    marks = prefs + ["whisper", "audio", "voxtral", "gigaam", "speech", "asr",
-                     "stt", "transcri", "wav2vec", "seamless", "parakeet",
-                     "canary", "vosk", "salute", "sense"]
-    for name in llm.list_models("cloudru"):
+    global _AUDIO_MODEL
+    if _AUDIO_MODEL is not None:
+        return _AUDIO_MODEL
+
+    prefs = [p for p in (llm.CONFIG.get("model_tiers.audio", []) or []) if p]
+    available = llm.list_models("cloudru")
+
+    # Имя задаёт только ОЧЕРЁДНОСТЬ проверки, а не сам выбор: подсказка
+    # экономит запросы, но решает всегда ответ сервера. Поэтому модель с
+    # «transcription» в названии больше не может быть выбрана по имени —
+    # она просто проверяется раньше и отсеивается.
+    def rank(name: str) -> int:
         low = name.lower()
-        if any(m and m in low for m in marks):
+        if name in prefs:
+            return 0
+        if any(w in low for w in ("whisper", "voxtral", "gigaam", "asr", "speech")):
+            return 1
+        return 2
+
+    ordered = sorted(available, key=rank)[:12]      # дальше искать бессмысленно
+    for name in ordered:
+        if _accepts_audio(name):
+            _AUDIO_MODEL = name
             return name
+    _AUDIO_MODEL = ""
     return ""
+
+
+_AUDIO_MODEL = None          # кэш: что реально приняло аудио
+_PROBE_WAV = None
+
+
+def _probe_wav() -> bytes:
+    """Крошечный корректный wav (0.1 с тишины) — им проверяем, ASR ли модель."""
+    global _PROBE_WAV
+    if _PROBE_WAV is None:
+        frames = b"\x00\x00" * 1600            # 0.1 c при 16 кГц, 16 бит моно
+        hdr = (b"RIFF" + (36 + len(frames)).to_bytes(4, "little") + b"WAVEfmt "
+               + (16).to_bytes(4, "little") + (1).to_bytes(2, "little")
+               + (1).to_bytes(2, "little") + (16000).to_bytes(4, "little")
+               + (32000).to_bytes(4, "little") + (2).to_bytes(2, "little")
+               + (16).to_bytes(2, "little") + b"data"
+               + len(frames).to_bytes(4, "little"))
+        _PROBE_WAV = hdr + frames
+    return _PROBE_WAV
+
+
+def _accepts_audio(model: str) -> bool:
+    """Умеет ли модель принимать аудио: спрашиваем провайдера, а не имя."""
+    from .. import llm
+
+    conf = llm.provider_conf("cloudru")
+    if not conf.get("api_key"):
+        return False
+    res = _post_audio(conf, model, "probe.wav", _probe_wav(), "ru", timeout=45)
+    # модель-не-ASR отвечает 404/400 «model not found / not supported»,
+    # настоящая ASR принимает файл (пустой текст на тишине — это успех)
+    return res.get("http_ok", False)
 
 
 def transcribe_audio(path_or_data_url: str, language: str = "ru") -> Dict[str, Any]:
@@ -110,35 +169,50 @@ def transcribe_audio(path_or_data_url: str, language: str = "ru") -> Dict[str, A
         except Exception:
             pass
 
-    # Ищем настоящую audio-модель в каталоге. Раньше pick_model мог вернуть
-    # обычную чат-модель — и /audio/transcriptions отвечал 404.
+    # Модель, которая реально принимает аудио (проверено запросом, не именем).
     model = _pick_audio_model()
     if not model:
         return {"ok": False, "browser_asr": True,
                 "error": "В каталоге Cloud.ru нет доступной модели распознавания речи. "
                          "Переключаюсь на распознавание прямо в браузере."}
-    boundary = "----jarvis%d" % int(time.time())
-    parts = []
-    parts.append(("--%s\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n%s\r\n" % (boundary, model)).encode())
-    parts.append(("--%s\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n%s\r\n" % (boundary, language)).encode())
-    parts.append(("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
-                  "Content-Type: application/octet-stream\r\n\r\n" % (boundary, upload.name)).encode())
-    parts.append(upload.read_bytes())
-    parts.append(("\r\n--%s--\r\n" % boundary).encode())
-    body = b"".join(parts)
+    res = _post_audio(conf, model, upload.name, upload.read_bytes(), language, timeout=180)
+    if res.get("http_ok"):
+        text = res.get("text") or ""
+        return {"ok": bool(text), "text": text, "model": model}
+    # модель перестала отвечать — забываем выбор, в следующий раз ищем заново
+    global _AUDIO_MODEL
+    _AUDIO_MODEL = None
+    return {"ok": False, "browser_asr": True,
+            "error": "Сервер распознавания не ответил (%s). Слушаю через браузер." % res.get("error", "")}
+
+
+def _post_audio(conf: Dict[str, Any], model: str, filename: str, blob: bytes,
+                language: str = "ru", timeout: int = 180) -> Dict[str, Any]:
+    """Один-единственный способ отправить аудио в /audio/transcriptions.
+
+    Им же проверяется, ASR ли модель, — поэтому проба и рабочий вызов не могут
+    разойтись: то, что прошло проверку, гарантированно работает и в бою.
+    """
+    boundary = "----jarvis%d" % int(time.time() * 1000)
+    parts = [
+        ("--%s\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n%s\r\n" % (boundary, model)).encode(),
+        ("--%s\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n%s\r\n" % (boundary, language)).encode(),
+        ("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
+         "Content-Type: application/octet-stream\r\n\r\n" % (boundary, filename)).encode(),
+        blob,
+        ("\r\n--%s--\r\n" % boundary).encode(),
+    ]
     url = conf["base_url"].rstrip("/") + "/audio/transcriptions"
     try:
-        req = urllib.request.Request(url, data=body, method="POST", headers={
+        req = urllib.request.Request(url, data=b"".join(parts), method="POST", headers={
             "Authorization": "Bearer " + conf["api_key"],
             "Content-Type": "multipart/form-data; boundary=" + boundary,
         })
-        with urllib.request.urlopen(req, timeout=180, context=_CTX) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_CTX) as resp:
             payload = json.loads(resp.read().decode("utf-8", "replace"))
-        text = payload.get("text") or payload.get("result") or ""
-        return {"ok": bool(text), "text": text, "model": model}
+        return {"http_ok": True, "text": payload.get("text") or payload.get("result") or ""}
     except Exception as exc:
-        return {"ok": False, "browser_asr": True,
-                "error": "Сервер распознавания не ответил (%s). Слушаю через браузер." % exc}
+        return {"http_ok": False, "error": str(exc)[:200]}
 
 
 def analyze_image(image_ref: str, question: str = "Что на изображении? Опиши подробно.") -> Dict[str, Any]:

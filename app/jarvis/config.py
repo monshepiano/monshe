@@ -74,7 +74,9 @@ DEFAULTS: Dict[str, Any] = {
             "Qwen2.5-VL",
             "VL",
         ],
-        "audio": ["whisper", "audio", "Voxtral"],
+        # Точные имена, а не обрывки слов: подстроки ловили посторонние модели.
+        # Пусто = искать в каталоге ту, что реально принимает аудио.
+        "audio": [],
         "embed": ["Qwen3-Embedding-0.6B", "Embedding", "bge-m3"],
     },
     # Что УМЕЕТ модель каждого уровня. Раньше этого знания в системе не было
@@ -162,6 +164,13 @@ def _migrate(raw: Dict[str, Any]) -> Dict[str, Any]:
     cu = raw.get("computer_use")
     if isinstance(cu, dict):
         cu.pop("max_steps", None)
+    # В model_tiers.audio раньше лежали ОБРЫВКИ слов («whisper», «audio»),
+    # по которым модель угадывалась подстрокой — и выбиралась посторонняя.
+    # Теперь тут только точные имена; старые обрывки убираем, иначе
+    # сохранённый конфиг вернул бы сломанный микрофон.
+    tiers = raw.get("model_tiers")
+    if isinstance(tiers, dict) and isinstance(tiers.get("audio"), list):
+        tiers["audio"] = [m for m in tiers["audio"] if isinstance(m, str) and "/" in m]
     return raw
 
 

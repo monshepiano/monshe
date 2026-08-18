@@ -306,6 +306,17 @@ class Agent:
         yield {"type": "route", "tier": tier, "reason": route["reason"],
                "score": score, "verbose": verbose}
 
+        # Управление компьютером без разрешения системы невозможно: macOS
+        # молча гасит клики, и агент бесконечно «нажимает» впустую. Проверяем
+        # ДО работы и честно говорим, что включить, — одним сообщением.
+        if self.computer_use:
+            from .tools import system as _sys
+            if _sys.IS_MAC and not _sys.accessibility_ok():
+                yield {"type": "delta", "text": _sys._NO_ACCESS_HINT}
+                yield {"type": "done", "content": _sys._NO_ACCESS_HINT,
+                       "files": [], "tools": []}
+                return
+
         available = tools.schemas(_tool_groups(self.computer_use))
         if not route.get("offer_tools", True):
             # оркестратор отдал реплику дешёвой модели именно потому, что

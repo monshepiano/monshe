@@ -165,6 +165,49 @@ _JXA_PRELUDE = (
 )
 
 
+def accessibility_ok() -> bool:
+    """Разрешён ли системой синтетический ввод (Универсальный доступ).
+
+    Это ГЛАВНАЯ причина, по которой computer-use «не работал». Начиная с
+    macOS Mojave система молча выбрасывает синтетические события от процесса
+    без этого разрешения: osascript завершается с кодом 0, JXA возвращает
+    'ok', а курсор не двигается. Код возврата тут ничего не значит — нужно
+    спросить саму систему.
+    """
+    if not IS_MAC:
+        return False
+    res = _jxa("ObjC.import('ApplicationServices');"
+               "$.AXIsProcessTrusted() ? 'yes' : 'no'", timeout=15)
+    return res.get("out") == "yes"
+
+
+def _cursor_pos() -> tuple:
+    """Где сейчас курсор — по этому проверяем, что действие ДЕЙСТВИТЕЛЬНО прошло."""
+    res = _jxa(_JXA_PRELUDE +
+               "var c=$.CGEventGetLocation($.CGEventCreate($()));"
+               "[Math.round(c.x),Math.round(c.y)].join(' ')", timeout=15)
+    try:
+        x, y = res.get("out", "").split()
+        return (int(x), int(y))
+    except Exception:
+        return (-1, -1)
+
+
+_NO_ACCESS_HINT = (
+    "macOS блокирует управление мышью и клавиатурой: приложению, из которого "
+    "запущен JARVIS (Терминал), не выдан «Универсальный доступ». "
+    "Открой Системные настройки → Конфиденциальность и безопасность → "
+    "Универсальный доступ, включи Терминал и перезапусти JARVIS. "
+    "Без этого разрешения система молча отменяет все клики."
+)
+
+
+def _no_access(**extra: Any) -> Dict[str, Any]:
+    out = {"ok": False, "error": _NO_ACCESS_HINT, "needs_permission": "accessibility"}
+    out.update(extra)
+    return out
+
+
 def _png_size(data: bytes) -> tuple:
     """Ширина и высота PNG из заголовка IHDR — без сторонних библиотек."""
     try:
@@ -246,14 +289,23 @@ def mouse_move(x: int, y: int) -> Dict[str, Any]:
         "}'ok'"
     ) % (x, y)
     res = _jxa(script)
+    # успех подтверждаем позицией курсора, а не кодом возврата
     if res.get("ok"):
-        return {"ok": True, "x": x, "y": y}
+        cx, cy = _cursor_pos()
+        if abs(cx - x) <= 2 and abs(cy - y) <= 2:
+            return {"ok": True, "x": x, "y": y}
     # запасной путь — Quartz из Python, если вдруг установлен pyobjc
     code = ("import Quartz\n"
             "e=Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, (%d,%d), 0)\n"
             "Quartz.CGEventPost(Quartz.kCGHIDEventTap, e)\n" % (x, y))
     alt = run_python_system(code)
-    return {"ok": alt.get("ok", False), "x": x, "y": y,
+    if alt.get("ok"):
+        cx, cy = _cursor_pos()
+        if abs(cx - x) <= 2 and abs(cy - y) <= 2:
+            return {"ok": True, "x": x, "y": y, "via": "Quartz"}
+    if not accessibility_ok():
+        return _no_access(x=x, y=y)
+    return {"ok": False, "x": x, "y": y,
             "error": (res.get("err") or alt.get("stderr", ""))[:300]}
 
 
@@ -300,13 +352,22 @@ def mouse_click(x: int = -1, y: int = -1, button: str = "left", double: bool = F
         "}'ok'"
     ) % (x, y, clicks, down, btn, up, btn)
     res = _jxa(script)
-    if res.get("ok"):
+    # Код возврата 0 НЕ означает, что клик состоялся: без «Универсального
+    # доступа» macOS молча гасит событие. Проверяем факт — курсор обязан
+    # оказаться там, куда мы его послали.
+    if res.get("ok") and x >= 0 and y >= 0:
+        cx, cy = _cursor_pos()
+        if abs(cx - x) <= 2 and abs(cy - y) <= 2:
+            return {"ok": True, "x": x, "y": y, "button": button, "double": double}
+    elif res.get("ok"):
         return {"ok": True, "x": x, "y": y, "button": button, "double": double}
-    # запасной путь — System Events (нужны права «Универсальный доступ»)
+    # запасной путь — System Events (тоже требует «Универсальный доступ»)
     if x >= 0 and y >= 0:
         fallback = _osa('tell application "System Events" to click at {%d, %d}' % (x, y))
-        if fallback.get("ok"):
+        if fallback.get("ok") and not fallback.get("err"):
             return {"ok": True, "x": x, "y": y, "button": button, "via": "System Events"}
+    if not accessibility_ok():
+        return _no_access(x=x, y=y)
     return {"ok": False, "x": x, "y": y,
             "error": (res.get("err") or "не удалось выполнить клик")[:300]}
 
@@ -320,7 +381,11 @@ def mouse_scroll(amount: int = -3, horizontal: int = 0) -> Dict[str, Any]:
         "$.CGEventPost(0, e);'ok'" % (int(amount), int(horizontal))
     )
     res = _jxa(script)
-    return {"ok": res.get("ok", False), "amount": amount, "error": res.get("err", "")[:200]}
+    if res.get("ok"):
+        return {"ok": True, "amount": amount}
+    if not accessibility_ok():
+        return _no_access(amount=amount)
+    return {"ok": False, "amount": amount, "error": res.get("err", "")[:200]}
 
 
 def mouse_drag(x1: int, y1: int, x2: int, y2: int) -> Dict[str, Any]:
@@ -341,7 +406,13 @@ def mouse_drag(x1: int, y1: int, x2: int, y2: int) -> Dict[str, Any]:
         "$.CGEventPost(0, $.CGEventCreateMouseEvent($(), 2, b, 0));'ok'"
     ) % (x1, y1, x2, y2)
     res = _jxa(script)
-    return {"ok": res.get("ok", False), "from": [x1, y1], "to": [x2, y2],
+    if res.get("ok"):
+        cx, cy = _cursor_pos()
+        if abs(cx - x2) <= 3 and abs(cy - y2) <= 3:
+            return {"ok": True, "from": [x1, y1], "to": [x2, y2]}
+    if not accessibility_ok():
+        return _no_access(**{"from": [x1, y1], "to": [x2, y2]})
+    return {"ok": False, "from": [x1, y1], "to": [x2, y2],
             "error": res.get("err", "")[:200]}
 
 
@@ -350,7 +421,12 @@ def type_text(text: str) -> Dict[str, Any]:
     if IS_MAC:
         safe = text.replace("\\", "\\\\").replace('"', '\\"')
         res = _osa('tell application "System Events" to keystroke "%s"' % safe)
-        return {"ok": res.get("ok", False), "typed": text[:120], "error": res.get("err", "")}
+        # «not allowed assistive access» приходит в stderr при коде возврата 0
+        if res.get("ok") and not res.get("err"):
+            return {"ok": True, "typed": text[:120]}
+        if not accessibility_ok():
+            return _no_access(typed=text[:120])
+        return {"ok": False, "typed": text[:120], "error": res.get("err", "")[:300]}
     return {"ok": False, "error": "поддержано для macOS"}
 
 
@@ -372,7 +448,11 @@ def press_key(key: str, modifiers: str = "") -> Dict[str, Any]:
     else:
         script = 'tell application "System Events" to keystroke "%s"%s' % (key_l[:1] if len(key_l) == 1 else key_l, mod_str)
     res = _osa(script)
-    return {"ok": res.get("ok", False), "key": key, "modifiers": modifiers, "error": res.get("err", "")}
+    if res.get("ok") and not res.get("err"):
+        return {"ok": True, "key": key, "modifiers": modifiers}
+    if not accessibility_ok():
+        return _no_access(key=key, modifiers=modifiers)
+    return {"ok": False, "key": key, "modifiers": modifiers, "error": res.get("err", "")[:300]}
 
 
 def open_app(name: str) -> Dict[str, Any]:
