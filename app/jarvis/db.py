@@ -196,6 +196,12 @@ def get_message(msg_id: str) -> Optional[Dict[str, Any]]:
     return row
 
 
+def update_message_meta(msg_id: str, meta: Dict[str, Any]) -> None:
+    """Переписать meta сообщения целиком (варианты ответа, версии и т.п.)."""
+    execute("UPDATE messages SET meta=? WHERE id=?",
+            (json.dumps(meta, ensure_ascii=False), msg_id))
+
+
 def messages_after(chat_id: str, msg_id: str) -> List[Dict[str, Any]]:
     """Всё, что идёт в переписке после указанного сообщения."""
     msg = get_message(msg_id)

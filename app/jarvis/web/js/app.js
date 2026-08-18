@@ -172,6 +172,23 @@ function beep(freq, dur) {
   } catch (e) { /* тишина */ }
 }
 
+/* E. Тихий интерфейсный щелчок: очень короткий и тихий, чтобы отмечать
+   действие, а не привлекать внимание. Тумблер — «Интерфейсные звуки». */
+function blip(up) {
+  if (!S.config.ui || S.config.ui.sound === false) return;
+  try {
+    const ctx = beep.ctx || (beep.ctx = new (window.AudioContext || window.webkitAudioContext)());
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'triangle';
+    const t = ctx.currentTime;
+    o.frequency.setValueAtTime(up ? 620 : 520, t);
+    o.frequency.exponentialRampToValueAtTime(up ? 940 : 380, t + 0.05);
+    g.gain.setValueAtTime(0.028, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+    o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.08);
+  } catch (e) { /* тишина */ }
+}
+
 function modal(html, onMount) {
   const m = $('#modal');
   m.innerHTML = html;
@@ -355,6 +372,7 @@ async function syncChatTail() {
     node.root.dataset.msgId = m.id;
     node.body.innerHTML = '<div class="md">' + MD.render(m.content) + '</div>';
     foldCodeBlocks(node.body);
+    mountUiPanels(node.body);
     (meta.files || []).forEach((f) => attachFileChip(node.body, f));
     addMsgActions(node, m.content);
     added = true;
@@ -519,6 +537,7 @@ function renderMessages(host, messages) {
       restoreTrace(node, meta);
       node.body.appendChild(el('div', 'md', MD.render(m.content)));
       foldCodeBlocks(node.body);
+      mountUiPanels(node.body);
       if (meta.model) node.modelEl.textContent = meta.model;
       (meta.files || []).forEach((f) => attachFileChip(node.body, f));
       addMsgActions(node, m.content);
@@ -700,6 +719,22 @@ function renderVersions(node, versions, index) {
   node.appendChild(box);
 }
 
+/* Чистый текст реплики из пузыря.
+   В пузыре, кроме самого текста, лежат служебные узлы: бейдж времени и строки
+   вложений. Раньше правка брала bubble.textContent целиком — и время «19:42»
+   приклеивалось к тексту, уезжало в модель и стиралось вместе с ним при
+   удалении. Берём только текстовые узлы верхнего уровня. */
+function bubbleText(bubble) {
+  if (!bubble) return '';
+  let out = '';
+  bubble.childNodes.forEach((n) => {
+    if (n.nodeType === 3) out += n.nodeValue;
+    else if (n.nodeType === 1 && !n.classList.contains('msg-time') &&
+             !n.classList.contains('att-line')) out += n.textContent;
+  });
+  return out.trim();
+}
+
 /* ============ правка сообщения прямо в пузыре (как в GPT/DeepSeek) ============
    Пузырь превращается в textarea с кнопками «Отмена» и «Сохранить».
    Сохранение отправляет запрос заново и добавляет вторую версию сообщения. */
@@ -763,8 +798,8 @@ function addUserMsg(text, atts, info) {
   const m = el('div', 'msg msg-user');
   let extra = '';
   (atts || []).forEach((a) => {
-    if (!a) return;
-    extra += '<div style="margin-top:6px;font-size:11.5px;opacity:.75">' +
+    if (!a || a.fromCam) return;   // автокадр камеры остаётся невидимым для глаза
+    extra += '<div class="att-line" style="margin-top:6px;font-size:11.5px;opacity:.75">' +
       fileIcon(a.name) + ' ' + esc(a.name) + '</div>';
   });
   m.innerHTML = '<div class="bubble-user">' + esc(text) + extra + '</div>';
@@ -784,7 +819,7 @@ function addUserMsg(text, atts, info) {
   edit.addEventListener('click', () => {
     // правим прямо в пузыре; результат станет новой версией этого сообщения
     const cur = m.querySelector('.bubble-user');
-    startInlineEdit(m, (cur ? cur.textContent : text).trim());
+    startInlineEdit(m, bubbleText(cur) || text);
   });
   acts.appendChild(copy); acts.appendChild(edit);
   m.appendChild(acts);
@@ -826,7 +861,20 @@ function addMsgActions(node, text) {
     } catch (e) { toast('Синтез речи недоступен', 'error'); }
   });
   const again = el('button', 'act act-again', ICO.again + '<span>Ещё раз</span>');
-  again.addEventListener('click', () => { $('#input').value = S.lastPrompt || ''; autoGrow(); send(); });
+  // «Ещё раз» — это переспросить то же самое, а не завести новую ветку разговора.
+  // Раньше отправлялась новая реплика и лента росла дублями. Теперь открываем
+  // правку исходного вопроса: ответ станет новой версией того же сообщения.
+  again.addEventListener('click', () => {
+    let ask = node.root.previousElementSibling;
+    while (ask && !ask.classList.contains('msg-user')) ask = ask.previousElementSibling;
+    if (ask) {
+      const cur = ask.querySelector('.bubble-user');
+      startInlineEdit(ask, bubbleText(cur) || S.lastPrompt || '');
+      ask.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      return;
+    }
+    $('#input').value = S.lastPrompt || ''; autoGrow(); send();
+  });
   acts.appendChild(copy); acts.appendChild(speak); acts.appendChild(again);
   node.body.appendChild(acts);
 }
@@ -971,16 +1019,28 @@ function collapseToThumb(node, opts) {
     if (!node.parentNode) return;
     node.parentNode.insertBefore(holder, node);
     node.style.display = 'none';
-    node.classList.remove('collapsing');
+    node.classList.remove('collapsing', 'shrinking');
   };
   if (opts.instant) { put(); } else {
-    node.classList.add('collapsing');
-    setTimeout(put, 160);   // ровно столько же длится анимация foldOut
+    node.classList.add('shrinking');
+    setTimeout(() => { node.classList.remove('shrinking'); put(); }, 180);
   }
   thumb.addEventListener('click', () => {
     node.style.display = '';
     node.dataset.collapsed = '0';
     holder.remove();
+    // ПРИЧИНА «текст не появляется»: карточку сворачивали в миниатюру, когда её
+    // тело было закрыто (max-height:0). Разворачивая миниатюру, мы возвращали
+    // карточку как есть — с закрытым телом, — и пользователь видел один
+    // заголовок. Текст был на месте, но требовал второго клика. Теперь
+    // разворачивание миниатюры сразу раскрывает и содержимое.
+    const head = node.querySelector(':scope > .card-head');
+    const body = node.querySelector(':scope > .card-body');
+    if (head && body) { head.classList.add('open'); body.classList.add('open'); }
+    // рост из строки в полноразмерный блок — тот же объект, а не подмена
+    node.classList.remove('shrinking');
+    node.classList.add('unfolding');
+    setTimeout(() => node.classList.remove('unfolding'), 360);
     addFoldButton(node, opts);              // развернули — даём чем свернуть обратно
     node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
@@ -1018,6 +1078,115 @@ function addFoldButton(node, opts) {
 }
 
 /* Крупные блоки кода из ответа сразу прячем в миниатюру. */
+/* ========== D. Живые элементы управления прямо в ответе ==========
+   Джарвис может вернуть блок ```ui ... ``` — набор строк вида
+     slider Громкость 0..100 = 40
+     toggle Тёмная тема = on
+     tiles Куда едем: Москва | Питер | Казань
+     button Запустить сборку
+   Блок превращается в настоящие слайдеры/тумблеры/плитки. Значения
+   пользователь крутит вживую, а «Отправить» одним сообщением возвращает
+   Джарвису итог — так ответ становится инструментом, а не картинкой. */
+function parseUiSpec(src) {
+  const items = [];
+  String(src || '').split('\n').forEach((raw) => {
+    const ln = raw.trim();
+    if (!ln) return;
+    let m;
+    if ((m = ln.match(/^slider\s+(.+?)\s+(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)(?:\s+step\s+(\d+(?:\.\d+)?))?(?:\s*=\s*(-?\d+(?:\.\d+)?))?$/i))) {
+      const min = parseFloat(m[2]), max = parseFloat(m[3]);
+      items.push({ t: 'slider', label: m[1], min, max,
+                   step: m[4] ? parseFloat(m[4]) : ((max - min) % 1 ? 0.1 : 1),
+                   val: m[5] != null ? parseFloat(m[5]) : min });
+    } else if ((m = ln.match(/^toggle\s+(.+?)(?:\s*=\s*(on|off|да|нет|true|false))?$/i))) {
+      items.push({ t: 'toggle', label: m[1],
+                   val: /^(on|да|true)$/i.test(m[2] || '') });
+    } else if ((m = ln.match(/^tiles\s+(.+?)\s*:\s*(.+)$/i))) {
+      items.push({ t: 'tiles', label: m[1],
+                   opts: m[2].split('|').map((x) => x.trim()).filter(Boolean), val: null });
+    } else if ((m = ln.match(/^button\s+(.+)$/i))) {
+      items.push({ t: 'button', label: m[1] });
+    }
+  });
+  return items;
+}
+
+function mountUiPanels(root) {
+  if (!root) return;
+  $$('.ui-panel', root).forEach((box) => {
+    if (box.dataset.live === '1') return;
+    const items = parseUiSpec(box.dataset.ui || '');
+    if (!items.length) { box.remove(); return; }
+    box.dataset.live = '1';
+    box.innerHTML = '';
+
+    items.forEach((it) => {
+      const row = el('div', 'ui-row ui-' + it.t);
+      if (it.t === 'slider') {
+        row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) +
+          '</span><b class="ui-val">' + it.val + '</b></div>';
+        const inp = el('input', 'ui-range');
+        inp.type = 'range'; inp.min = it.min; inp.max = it.max;
+        inp.step = it.step; inp.value = it.val;
+        const out = row.querySelector('.ui-val');
+        const paint = () => {
+          const pct = ((inp.value - it.min) / (it.max - it.min || 1)) * 100;
+          inp.style.setProperty('--fill', pct + '%');
+        };
+        inp.addEventListener('input', () => {
+          it.val = parseFloat(inp.value); out.textContent = inp.value; paint();
+          out.classList.remove('bump'); void out.offsetWidth; out.classList.add('bump');
+        });
+        paint();
+        row.appendChild(inp);
+      } else if (it.t === 'toggle') {
+        row.innerHTML = '<span class="ui-lab-t">' + esc(it.label) + '</span>';
+        const sw = el('button', 'ui-sw' + (it.val ? ' on' : ''));
+        sw.innerHTML = '<i></i>';
+        sw.addEventListener('click', () => {
+          it.val = !it.val; sw.classList.toggle('on', it.val); blip(it.val);
+        });
+        row.appendChild(sw);
+      } else if (it.t === 'tiles') {
+        row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) + '</span></div>';
+        const grid = el('div', 'ui-tiles');
+        it.opts.forEach((o) => {
+          const t = el('button', 'ui-tile', o);
+          t.addEventListener('click', () => {
+            it.val = o;
+            $$('.ui-tile', grid).forEach((x) => x.classList.remove('on'));
+            t.classList.add('on'); blip(true);
+          });
+          grid.appendChild(t);
+        });
+        row.appendChild(grid);
+      } else {
+        const b = el('button', 'ui-btn', it.label);
+        b.addEventListener('click', () => {
+          $('#input').value = it.label; autoGrow(); send();
+        });
+        row.appendChild(b);
+      }
+      box.appendChild(row);
+    });
+
+    // одна кнопка на всю панель — итог уходит Джарвису человеческим текстом
+    if (items.some((x) => x.t !== 'button')) {
+      const go = el('button', 'ui-send', 'Отправить выбор');
+      go.addEventListener('click', () => {
+        const parts = items.filter((x) => x.t !== 'button').map((x) => {
+          if (x.t === 'slider') return x.label + ': ' + x.val;
+          if (x.t === 'toggle') return x.label + ': ' + (x.val ? 'да' : 'нет');
+          return x.label + ': ' + (x.val || '—');
+        });
+        $('#input').value = parts.join('\n'); autoGrow(); send();
+        go.disabled = true; go.textContent = 'Отправлено';
+      });
+      box.appendChild(go);
+    }
+  });
+}
+
 function foldCodeBlocks(root) {
   if (!root) return;
   $$('pre', root).forEach((pre) => {
@@ -1111,6 +1280,8 @@ async function send() {
   // старые варианты ответа относились к прошлой реплике — убираем сразу
   const rb = $('#replyBar');
   if (rb) { rb.hidden = true; rb.innerHTML = ''; }
+  S.replyTicket = (S.replyTicket || 0) + 1;   // аннулируем незавершённый заказ подсказок
+  foldAllNotes();   // диалог ожил — уведомления уплывают наверх, в ленту
 
   // камера включена — молча прикладываем текущий кадр, чтобы вопрос был «про то, что вижу»
   if (S.camStream && !S.attachments.some((a) => a.fromCam)) {
@@ -1123,7 +1294,14 @@ async function send() {
   S.editing = null;
   if (editing && editing.node && editing.node.isConnected) {
     const bubble = editing.node.querySelector('.bubble-user');
-    if (bubble) bubble.textContent = text;
+    // подменяем ТОЛЬКО текст: бейдж времени и строки вложений — служебные узлы,
+    // и присваивание textContent стирало их вместе с текстом
+    if (bubble) {
+      const keep = Array.from(bubble.childNodes).filter(
+        (n) => n.nodeType === 1 && (n.classList.contains('msg-time') || n.classList.contains('att-line')));
+      bubble.textContent = text;
+      keep.forEach((n) => bubble.appendChild(n));
+    }
     let sib = editing.node.nextElementSibling;
     while (sib) { const nx = sib.nextElementSibling; sib.remove(); sib = nx; }
   } else {
@@ -1155,7 +1333,7 @@ async function send() {
     files: [],
   };
   ui.statusEl = el('div', 'thinking-line');
-  ui.statusEl.innerHTML = '<div class="spinner"></div><span>Соединяюсь…</span>';
+  ui.statusEl.innerHTML = '<span class="dots"><span></span><span></span><span></span></span><span>Соединяюсь…</span>';
   node.body.appendChild(ui.statusEl);
 
   S.abort = new AbortController();
@@ -1206,15 +1384,58 @@ async function send() {
   }
   refreshState();
   loadChats();
+  fetchReplies();   // подсказки — уже после того, как ответ закрыт
+}
+
+/* Варианты продолжения тянем отдельным запросом. Пока их считают, полоса
+   показывает мерцающие заглушки: пусто было бы похоже на «ничего не будет». */
+async function fetchReplies() {
+  const box = $('#replyBar');
+  if (!box || !S.chatId) return;
+  const chat = S.chatId;
+  // Пока подсказки считаются, пользователь может отправить своё сообщение.
+  // Без метки заказа опоздавший ответ всплыл бы поверх нового разговора.
+  const ticket = (S.replyTicket = (S.replyTicket || 0) + 1);
+  box.hidden = false;
+  box.innerHTML = '<span class="reply-skel"></span><span class="reply-skel"></span>' +
+                  '<span class="reply-skel"></span>';
+  try {
+    const r = await api('/api/replies', { chat_id: chat });
+    if (S.replyTicket !== ticket || S.chatId !== chat) return;
+    showReplies(r.items || []);
+  } catch (e) {
+    if (S.replyTicket === ticket) showReplies([]);
+  }
 }
 
 function setStreaming(on) {
   S.streaming = on;
   updateSendBtn();
   $('#composer').classList.toggle('busy', on);
+  reactor(on ? 'busy' : 'idle');
+}
+
+/* A. Живое ядро: один визуальный индикатор состояния на весь интерфейс.
+   'busy' — работает, 'wait' — ждёт человека, 'ok'/'err' — короткая вспышка,
+   'idle' — спокойное дыхание. */
+function reactor(state) {
+  const b = document.body;
+  const r = $('#brandReactor');
+  if (state === 'ok' || state === 'err') {
+    if (!r) return;
+    const cls = state === 'ok' ? 'jv-ok' : 'jv-flash';
+    r.classList.remove('jv-ok', 'jv-flash');
+    void r.offsetWidth;                 // перезапуск анимации
+    r.classList.add(cls);
+    setTimeout(() => r.classList.remove(cls), 900);
+    return;
+  }
+  b.classList.toggle('jv-busy', state === 'busy');
+  b.classList.toggle('jv-wait', state === 'wait');
 }
 
 function showError(ui, msg) {
+  reactor('err');
   if (ui.statusEl) ui.statusEl.remove();
   const c = el('div', 'panel-card', '<div class="card-inner" style="padding:12px 13px;color:#ffb3c1">⚠ ' + esc(msg) + '</div>');
   ui.node.body.appendChild(c);
@@ -1232,15 +1453,23 @@ function typeInto(ui, chunk) {
   typerStart(ui);
 }
 
+/* B. Печать с характером: на знаках препинания печать на миг замирает, как
+   будто собеседник переводит дыхание. Пауза действует, только когда мы не
+   отстаём — иначе догоняем ровно, паузы не должны копить задержку. */
+const PAUSE_AFTER = { '.': 7, '!': 7, '?': 7, ',': 3, ';': 4, ':': 4, '\n': 5, '—': 3 };
+
 function typerStart(ui) {
   if (ui.typer) return;
+  ui.hold = 0;
   ui.typer = setInterval(() => {
     const left = ui.buffer.length - ui.shown.length;
     if (left <= 0) {
       clearInterval(ui.typer); ui.typer = null;
+      if (ui.mdEl) ui.mdEl.classList.remove('typing');
       if (ui.onTyped) { const cb = ui.onTyped; ui.onTyped = null; cb(); }
       return;
     }
+    if (ui.hold > 0) { ui.hold--; return; }
     // чем больше отставание, тем крупнее шаг — иначе на длинных ответах не догоним
     let step = 1;
     if (left > 1200) step = Math.ceil(left / 40);
@@ -1248,7 +1477,14 @@ function typerStart(ui) {
     else if (left > 120) step = 3;
     else if (left > 40) step = 2;
     ui.shown = ui.buffer.slice(0, ui.shown.length + step);
-    if (ui.mdEl) ui.mdEl.innerHTML = MD.render(ui.shown);
+    if (ui.mdEl) {
+      ui.mdEl.classList.add('typing');
+      ui.mdEl.innerHTML = MD.render(ui.shown);
+    }
+    if (step === 1 && left < 400) {
+      const last = ui.shown[ui.shown.length - 1];
+      ui.hold = PAUSE_AFTER[last] || 0;
+    }
     scrollDown();
   }, TYPE_MS);
 }
@@ -1266,6 +1502,21 @@ function typerStop(ui) {
 
 /* ================== голос Джарвиса ================== */
 function voiceOn() { return localStorage.getItem('jarvisVoice') === '1'; }
+
+/* Единственная точка переключения голоса: и кнопка в шапке, и тумблер в
+   настройках зовут её — иначе два источника истины разъезжаются. */
+function setVoice(on) {
+  localStorage.setItem('jarvisVoice', on ? '1' : '0');
+  syncVoiceBtn();
+  if (on) {
+    toast('Голос включён — буду озвучивать ответы', 'success', 'Голос');
+    speakReply('Голос включён, сэр. Я на связи.');
+  } else {
+    try { speechSynthesis.cancel(); } catch (e) {}
+    toast('Голос выключен', 'info', 'Голос');
+  }
+  api('/api/config/update', { patch: { ui: { voice_reply: on } } });
+}
 
 function syncVoiceBtn() {
   const b = $('#voiceBtn');
@@ -1302,19 +1553,7 @@ function speakReply(text) {
 }
 
 if ($('#voiceBtn')) {
-  $('#voiceBtn').addEventListener('click', () => {
-    const next = !voiceOn();
-    localStorage.setItem('jarvisVoice', next ? '1' : '0');
-    syncVoiceBtn();
-    if (next) {
-      toast('Голос включён — буду озвучивать ответы', 'success', 'Голос');
-      speakReply('Голос включён, сэр. Я на связи.');
-    } else {
-      try { speechSynthesis.cancel(); } catch (e) {}
-      toast('Голос выключен', 'info', 'Голос');
-    }
-    api('/api/config/update', { patch: { ui: { voice_reply: next } } });
-  });
+  $('#voiceBtn').addEventListener('click', () => setVoice(!voiceOn()));
 }
 
 const TIER_LABEL = { nano: 'экономный', base: 'базовый', smart: 'усиленный', coder: 'кодовый', vision: 'зрение' };
@@ -1368,8 +1607,11 @@ function handleEvent(ev, ui) {
 
     case 'status':
       if (ui.statusEl) {
-        ui.statusEl.innerHTML = '<div class="spinner"></div><span>' + esc(ev.text) +
-          '</span><span class="dots"><span></span><span></span><span></span></span>';
+        // Один индикатор, а не два: раньше рядом крутилась спираль И бежали
+        // точки — глаз не понимал, куда смотреть. Осталось три точки слева.
+        ui.statusEl.innerHTML =
+          '<span class="dots"><span></span><span></span><span></span></span>' +
+          '<span>' + esc(ev.text) + '</span>';
       }
       break;
 
@@ -1408,7 +1650,7 @@ function handleEvent(ev, ui) {
 
     case 'tool_hint':
       if (ui.statusEl) {
-        ui.statusEl.innerHTML = '<div class="spinner"></div><span>Готовлю инструмент: ' +
+        ui.statusEl.innerHTML = '<span class="dots"><span></span><span></span><span></span></span><span>Готовлю инструмент: ' +
           esc(ev.name) + '</span>';
       }
       break;
@@ -1420,7 +1662,7 @@ function handleEvent(ev, ui) {
       if (SILENT_TOOLS[ev.name]) {
         ui.silent[ev.id || ev.name] = true;
         if (ui.statusEl) {
-          ui.statusEl.innerHTML = '<div class="spinner"></div><span>смотрю на экран…</span>';
+          ui.statusEl.innerHTML = '<span class="dots"><span></span><span></span><span></span></span><span>смотрю на экран…</span>';
         }
         termLine('$ ' + ev.name, 'cmd');
         break;
@@ -1445,7 +1687,8 @@ function handleEvent(ev, ui) {
     }
 
     case 'approval_wait': {
-      if (ui.statusEl) ui.statusEl.innerHTML = '<div class="spinner"></div><span>Жду твоего решения…</span>';
+      reactor('wait');
+      if (ui.statusEl) ui.statusEl.innerHTML = '<span class="dots"><span></span><span></span><span></span></span><span>Жду твоего решения…</span>';
       const critical = /delete|shell|payment|pay|computer|click|type_text/.test(ev.tool || '');
       const card = el('div', 'panel-card approve-card' + (critical ? ' critical' : ''));
       card.innerHTML =
@@ -1480,14 +1723,16 @@ function handleEvent(ev, ui) {
     }
 
     case 'approval_done':
+      reactor('busy');
       S.streamApproval = false;
       refreshState(); break;
 
     // Уточняющий вопрос с готовыми вариантами. Джарвис останавливается и ждёт,
     // пока нажмут кнопку: лучше один вопрос, чем неверная догадка.
     case 'question': {
+      reactor('wait');
       if (ui.statusEl) ui.statusEl.innerHTML =
-        '<div class="spinner"></div><span>Жду твоего ответа…</span>';
+        '<span class="dots"><span></span><span></span><span></span></span><span>Жду твоего ответа…</span>';
       const card = questionCard(ev, (choice) => {
         api('/api/questions/answer', { id: ev.id, answer: choice });
       });
@@ -1497,7 +1742,7 @@ function handleEvent(ev, ui) {
       break;
     }
 
-    case 'replies':
+    case 'replies':          // старый путь, оставлен для совместимости
       showReplies(ev.items || []);
       break;
 
@@ -1546,7 +1791,7 @@ function handleEvent(ev, ui) {
       const wrap = ui.filesBox || (ui.filesBox = el('div', ''));
       if (!wrap.parentNode) node.body.insertBefore(wrap, ui.statusEl);
       attachFileChip(wrap, ev);
-      toast(ev.name + ' готов', 'success', 'Файл');
+      flyToFiles(wrap.lastElementChild, ev.name);
       beep(820, 0.1);
       break;
     }
@@ -1595,7 +1840,7 @@ function handleEvent(ev, ui) {
       if (ui.mdEl) { ui.mdEl.remove(); ui.mdEl = null; }
       if (!ui.statusEl) {
         ui.statusEl = el('div', 'thinking-line');
-        ui.statusEl.innerHTML = '<div class="spinner"></div><span>Переигрываю: беру инструмент…</span>';
+        ui.statusEl.innerHTML = '<span class="dots"><span></span><span></span><span></span></span><span>Переигрываю: беру инструмент…</span>';
         node.body.appendChild(ui.statusEl);
       }
       break;
@@ -1611,6 +1856,7 @@ function handleEvent(ev, ui) {
         ui.mdEl.classList.remove('typing');
         ui.mdEl.innerHTML = MD.render(content);
         foldCodeBlocks(ui.mdEl);
+        mountUiPanels(ui.mdEl);
         $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click', () => lightbox(im.src)));
         // ход мыслей отработал — прячем в миниатюру
         if (ui.thinkCard && ui.thinkCard.isConnected) {
@@ -1684,7 +1930,11 @@ function uploadFile(file) {
 
 function renderAttachments() {
   const box = $('#attachments'); box.innerHTML = '';
-  S.attachments.forEach((a, i) => {
+  // Кадр с камеры прикладывается сам и в списке вложений не показывается:
+  // пользователь и так видит себя в окне камеры, а плашка «camera_….jpg»
+  // появлялась при каждой реплике и только мозолила глаза.
+  S.attachments.filter((a) => !a.fromCam).forEach((a) => {
+    const i = S.attachments.indexOf(a);
     const n = el('div', 'att');
     n.innerHTML = (a.kind === 'image' && a.data ? '<img src="' + a.data + '">' : '<span>' + fileIcon(a.name) + '</span>') +
       '<b>' + esc(a.name) + '</b><small style="color:var(--tx3)">' + fmtSize(a.size) + '</small><i class="x">✕</i>';
@@ -2127,6 +2377,7 @@ function questionCard(ev, onPick) {
       if (card.dataset.done === '1') return;
       card.dataset.done = '1';
       box.innerHTML = '<span class="ask-picked">✓ ' + esc(o) + '</span>';
+      reactor('busy');            // ответ получен — Джарвис снова за работой
       if (onPick) onPick(o);
       collapseToThumb(card, { cls: 'th-ask', icon: '?', title: 'Вопрос',
                               sub: ev.question || '', tag: o });
@@ -2141,23 +2392,38 @@ function questionCard(ev, onPick) {
   return card;
 }
 
-/* Варианты продолжения над полем ввода. Нажатие сразу отправляет реплику —
-   это подсказка «что спросить дальше», а не форма для правки. */
+/* Варианты продолжения над полем ввода.
+   Обычный клик отправляет реплику сразу, клик по «карандашу» кладёт её в поле
+   ввода — можно дописать своё. Готовый вариант почти всегда хочется поправить,
+   и без этого подсказки превращались бы в жёсткое меню из трёх пунктов. */
 function showReplies(items) {
   const box = $('#replyBar');
   if (!box) return;
   box.innerHTML = '';
   if (!items.length) { box.hidden = true; return; }
   items.forEach((t, i) => {
-    const b = el('button', 'reply-chip', esc(t));
-    b.style.animationDelay = (i * 60) + 'ms';
-    b.addEventListener('click', () => {
+    const chip = el('span', 'reply-chip');
+    chip.style.animationDelay = (i * 60) + 'ms';
+    const go = el('button', 'rc-go', esc(t));
+    const ed = el('button', 'rc-ed', '✎');
+    ed.title = 'Вставить в поле ввода и дописать';
+    go.addEventListener('click', () => {
       box.hidden = true;
       $('#input').value = t;
       autoGrow();
       send();
     });
-    box.appendChild(b);
+    ed.addEventListener('click', (e) => {
+      e.stopPropagation();
+      box.hidden = true;
+      const input = $('#input');
+      input.value = t;
+      autoGrow();
+      input.focus();
+      input.setSelectionRange(t.length, t.length);
+    });
+    chip.appendChild(go); chip.appendChild(ed);
+    box.appendChild(chip);
   });
   box.hidden = false;
 }
@@ -2173,13 +2439,90 @@ function noteCard(n) {
   // крестик не удаляет уведомление, а сворачивает его в компактную строку
   card.querySelector('.note-x').addEventListener('click', (e) => {
     e.stopPropagation();
-    collapseToThumb(card, {
-      cls: 'th-note', icon: ICO.bell, title: n.title || 'Уведомление',
-      sub: (n.body || '').slice(0, 70), tag: 'прочитано',
-    });
-    api('/api/notifications/read', {});
+    foldNote(card, n);
   });
   return card;
+}
+
+/* Уведомление живёт в доке над полем ввода, а свернувшись — возвращается
+   обычной строкой в конец ленты, на своё привычное место. Перелёт делаем
+   вручную по фактическим координатам: анимация «из воздуха» выглядела бы
+   как исчезновение и появление двух разных вещей. */
+function foldNote(card, n) {
+  if (card.dataset.folding === '1') return;
+  card.dataset.folding = '1';
+  api('/api/notifications/read', {});
+
+  const from = card.getBoundingClientRect();
+  const host = stream();
+  const thumb = el('div', 'thumb th-note');
+  const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  thumb.innerHTML =
+    '<span class="th-ico">' + ICO.bell + '</span>' +
+    '<span class="th-t"><b>' + esc(n.title || 'Уведомление') + '</b>' +
+    ((n.body || '') ? ' · ' + esc((n.body || '').slice(0, 70)) : '') + '</span>' +
+    '<span class="th-tag">прочитано</span>' +
+    '<span class="th-time">' + time + '</span>';
+  thumb.style.visibility = 'hidden';
+  host.appendChild(thumb);
+  const to = thumb.getBoundingClientRect();
+
+  // карточка летит из дока на место миниатюры, уменьшаясь до её размера
+  const ghost = card.cloneNode(true);
+  ghost.classList.add('note-fly');
+  ghost.style.cssText += ';position:fixed;left:' + from.left + 'px;top:' + from.top +
+    'px;width:' + from.width + 'px;margin:0;z-index:120;pointer-events:none';
+  document.body.appendChild(ghost);
+  card.remove();
+  requestAnimationFrame(() => {
+    ghost.style.transform = 'translate(' + (to.left - from.left) + 'px,' +
+      (to.top - from.top) + 'px) scale(' + Math.max(0.35, to.width / from.width) + ')';
+    ghost.style.opacity = '0';
+  });
+  setTimeout(() => { ghost.remove(); thumb.style.visibility = ''; scrollDown(); }, 380);
+}
+
+function noteDock() { return $('#noteDock'); }
+
+/* C. Готовый файл летит к пункту «Файлы» в меню и там растворяется — не
+   приземляется, а тает: пользователь понимает, куда файл ушёл, но экран не
+   получает лишнего объекта. Летит копия, оригинальная плашка остаётся в чате. */
+function flyToFiles(chip, name) {
+  const target = document.querySelector('.nav-item[data-view="files"]');
+  if (!chip || !target || !chip.getBoundingClientRect) { toast((name || 'файл') + ' готов', 'success', 'Файл'); return; }
+  const a = chip.getBoundingClientRect();
+  const b = target.getBoundingClientRect();
+  if (!a.width || !b.width) { toast((name || 'файл') + ' готов', 'success', 'Файл'); return; }
+
+  const fly = el('div', 'file-fly');
+  fly.textContent = '📄 ' + (name || 'файл');
+  fly.style.left = a.left + 'px';
+  fly.style.top = a.top + 'px';
+  fly.style.width = Math.min(a.width, 260) + 'px';
+  document.body.appendChild(fly);
+
+  // дуга: сначала вверх и вбок, потом к цели — прямой перелёт выглядит мёртвым
+  const dx = (b.left + b.width / 2) - (a.left + Math.min(a.width, 260) / 2);
+  const dy = (b.top + b.height / 2) - (a.top + a.height / 2);
+  fly.animate([
+    { transform: 'translate(0,0) scale(1)', opacity: 1 },
+    { transform: 'translate(' + (dx * 0.45) + 'px,' + (dy * 0.35 - 46) + 'px) scale(.78)', opacity: .95, offset: .5 },
+    { transform: 'translate(' + (dx * 0.92) + 'px,' + (dy * 0.92) + 'px) scale(.42)', opacity: .5, offset: .84 },
+    { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(.2)', opacity: 0 }
+  ], { duration: 880, easing: 'cubic-bezier(.3,.7,.3,1)' }).onfinish = () => {
+    fly.remove();
+    target.classList.add('nav-lit');
+    setTimeout(() => target.classList.remove('nav-lit'), 900);
+  };
+}
+
+/* Пользователь заговорил — уведомления не должны загораживать разговор:
+   сворачиваем их все, они уплывают наверх в ленту. */
+function foldAllNotes() {
+  $$('#noteDock .note-item').forEach((c) => {
+    const n = c._note || {};
+    foldNote(c, n);
+  });
 }
 
 function renderNotes() {
@@ -2189,11 +2532,14 @@ function renderNotes() {
     S.notesReady = true;
     return;
   }
+  const dock = noteDock();
+  if (!dock) return;
   const fresh = S.notifications.filter((n) => !S.shownNotes.has(String(n.id)));
   fresh.reverse().forEach((n) => {
     S.shownNotes.add(String(n.id));
-    stream().appendChild(noteCard(n));
-    scrollDown();
+    const card = noteCard(n);
+    card._note = n;
+    dock.appendChild(card);
   });
 }
 
@@ -2622,11 +2968,10 @@ function startDragGhosts(e, cards, source) {
     // стартуем из настоящего положения карточки — миниатюра «взлетает» с места
     return {
       node: g, x: box.left + box.width / 2, y: box.top + box.height / 2, vx: 0, vy: 0,
-      // Пружина, подобранная численно и намеренно спокойная: на ходу стопка
-      // идёт вровень с курсором (отставание ~3 px), при резкой остановке
-      // проносится дальше всего на ~13 px и замирает за 0.3 с. Прошлый вариант
-      // (перелёт 19 px, полсекунды тряски) выглядел бешено.
-      k: 0.38 - i * 0.025, damp: 0.68 + i * 0.012,
+      // Пружина подобрана численно: мягче и медленнее прежней, с более
+      //долгим выбегом. Рывок на 140 px даёт перелёт ~62 px и покой за 0.68 с
+      // против 45 px / 0.43 с — движение заметно инертнее, но не мельтешит.
+      k: 0.26 - i * 0.02, damp: 0.78 + i * 0.01,
       dx: fan.dx, dy: fan.dy, rot: fan.rot, scale: 0.3 - i * 0.012,
     };
   });
@@ -2634,7 +2979,7 @@ function startDragGhosts(e, cards, source) {
     const more = el('div', 'drag-more', '+' + (list.length - 5));
     layer.appendChild(more);
     DRAG.ghosts.push({ node: more, x: DRAG.x, y: DRAG.y, vx: 0, vy: 0,
-                       k: 0.4, damp: 0.7, dx: 0, dy: 34, rot: 0, scale: 1, plain: true });
+                       k: 0.28, damp: 0.78, dx: 0, dy: 34, rot: 0, scale: 1, plain: true });
   }
   document.body.appendChild(layer);
   DRAG.layer = layer;
@@ -2658,10 +3003,9 @@ function startDragGhosts(e, cards, source) {
         g.node.style.transform = 'translate3d(' + (g.x - 12) + 'px,' + g.y + 'px,0)';
         continue;
       }
-      // Наклон по скорости — миниатюра чуть кренится в сторону движения.
-      // Предел снижен с 34° до 12°: на быстром ведении карточки заваливались
-      // почти набок и мельтешили.
-      const tilt = Math.max(-12, Math.min(12, g.vx * 0.55)) + g.rot;
+      // Наклон по скорости — миниатюра кренится в сторону движения. 34° было
+      // «набок», 12° почти не читалось; 20° — крен виден, но не пугает.
+      const tilt = Math.max(-20, Math.min(20, g.vx * 0.8)) + g.rot;
       g.node.style.transform =
         'translate3d(' + g.x + 'px,' + g.y + 'px,0) translate(-50%,-50%) ' +
         'rotate(' + tilt.toFixed(2) + 'deg) scale(' + g.scale + ')';
@@ -2704,7 +3048,15 @@ async function dropOnto(e, destDir) {
       const many = JSON.parse(e.dataTransfer.getData('text/jarvis-paths') || '[]');
       if (Array.isArray(many) && many.length) paths = many;
     } catch (err) { /* тянули одну карточку */ }
-    paths = paths.filter((p) => p && p !== destDir);
+    // Отбрасываем не только саму папку-приёмник, но и файлы, которые УЖЕ лежат
+    // в ней: бросок «туда же» — это не перемещение, и рапортовать об успехе,
+    // когда ничего не изменилось, значит врать пользователю.
+    const parentOf = (p) => {
+      const i = String(p).lastIndexOf('/');
+      return i <= 0 ? '' : String(p).slice(0, i);
+    };
+    const dest = String(destDir || '').replace(/\/+$/, '');
+    paths = paths.filter((p) => p && p !== dest && parentOf(p) !== dest);
     if (!paths.length) return;
     const r = await api('/api/sandbox/move_many', { paths, dest: destDir, chat_id: S.chatId || '' });
     if (r.moved) toast('Перемещено: ' + r.moved, 'success');
@@ -3049,7 +3401,7 @@ function renderSettings() {
       const row = el('div', 'switch', '<span>' + label + '</span>');
       const sw = el('div', 'sw' + (safety[key] ? ' on' : ''));
       sw.addEventListener('click', async () => {
-        sw.classList.toggle('on');
+        sw.classList.toggle('on'); blip(sw.classList.contains('on'));
         const patch = { safety: {} }; patch.safety[key] = sw.classList.contains('on');
         const r = await api('/api/config/update', { patch }); S.config = r.config || S.config;
       });
@@ -3065,7 +3417,7 @@ function renderSettings() {
     const row = el('div', 'switch', '<span>' + label + '</span>');
     const sw = el('div', 'sw' + (autoCfg[key] ? ' on' : ''));
     sw.addEventListener('click', async () => {
-      sw.classList.toggle('on');
+      sw.classList.toggle('on'); blip(sw.classList.contains('on'));
       const patch = { auto: {} }; patch.auto[key] = sw.classList.contains('on');
       const r = await api('/api/config/update', { patch }); S.config = r.config || S.config;
     });
@@ -3175,6 +3527,32 @@ function renderSettings() {
     else toast('Данные не пришли — проверь ключ и роль аккаунта', 'warn', 'Биллинг');
     refreshState(); renderSettings();
   });
+
+  // E. Интерфейс и звук
+  const ui = el('div', 'sset');
+  const uic = c.ui || {};
+  ui.innerHTML = '<h3>Интерфейс</h3>' +
+    '<div class="sd">Тихие звуки подтверждают действия, не отвлекая: щелчок переключателя, ' +
+    'мягкий тон при готовом файле, низкий — при ошибке.</div>';
+  const soundRow = el('div', 'switch', '<span>Интерфейсные звуки</span>');
+  const soundSw = el('div', 'sw' + (uic.sound !== false ? ' on' : ''));
+  soundSw.addEventListener('click', async () => {
+    soundSw.classList.toggle('on');
+    const on = soundSw.classList.contains('on');
+    const r = await api('/api/config/update', { patch: { ui: { sound: on } } });
+    S.config = r.config || S.config;
+    if (on) blip(true);                      // сразу слышно, что включилось
+  });
+  soundRow.appendChild(soundSw); ui.appendChild(soundRow);
+
+  const voiceRow = el('div', 'switch', '<span>Читать ответы вслух</span>');
+  const voiceSw = el('div', 'sw' + (voiceOn() ? ' on' : ''));
+  voiceSw.addEventListener('click', () => {
+    setVoice(!voiceOn());
+    voiceSw.classList.toggle('on', voiceOn());
+  });
+  voiceRow.appendChild(voiceSw); ui.appendChild(voiceRow);
+  grid.appendChild(ui);
 
   // Расходы
   const us = el('div', 'sset');

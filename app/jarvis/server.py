@@ -208,6 +208,29 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tasks/cancel":
             db.update_task(body.get("task_id", ""), status="cancelled")
             return self._json({"ok": True})
+        if path == "/api/replies":
+            # Варианты продолжения запрашиваются ОТДЕЛЬНО, уже после того как
+            # ответ закрыт: иначе они держали бы поток открытым и кнопка «стоп»
+            # горела бы лишние секунды. Считаются по последней паре реплик и
+            # сохраняются в сообщение, чтобы при возврате в диалог не считать
+            # их заново и не платить второй раз.
+            chat_id = body.get("chat_id", "")
+            msgs = db.get_messages(chat_id, limit=6) if chat_id else []
+            last = msgs[-1] if msgs else None
+            if not last or last.get("role") != "assistant":
+                return self._json({"ok": True, "items": []})
+            meta = last.get("meta") or {}
+            if isinstance(meta.get("replies"), list):
+                return self._json({"ok": True, "items": meta["replies"]})
+            asked = ""
+            for m in reversed(msgs[:-1]):
+                if m.get("role") == "user":
+                    asked = m.get("content", "")
+                    break
+            items = agent.suggest_replies(asked, last.get("content", ""))
+            meta["replies"] = items
+            db.update_message_meta(last["id"], meta)
+            return self._json({"ok": True, "items": items})
         if path == "/api/questions/answer":
             db.answer_question(body.get("id", ""), str(body.get("answer", ""))[:300])
             return self._json({"ok": True})
@@ -464,7 +487,6 @@ class Handler(BaseHTTPRequestHandler):
         final_text = ""
         files: List[Dict[str, Any]] = []
         used_tools: List[str] = []
-        replies: List[str] = []
         alive = True
         partial: List[str] = []
         thinking: List[str] = []
@@ -496,7 +518,6 @@ class Handler(BaseHTTPRequestHandler):
                     final_text = event.get("content", "")
                     files = event.get("files", [])
                     used_tools = event.get("tools", [])
-                    replies = event.get("replies", [])
                 if alive:
                     alive = self._sse(event)
                 # Если пользователь ушёл из диалога, соединение рвётся. Раньше мы
@@ -513,8 +534,7 @@ class Handler(BaseHTTPRequestHandler):
                 # они жили только в браузере и пропадали, стоило выйти из диалога.
                 db.add_message(chat_id, "assistant", final_text,
                                {"files": files, "tools": used_tools, "model": runner.model_used,
-                                "thinking": "".join(thinking)[:20000], "trace": trace[:60],
-                                "replies": replies})
+                                "thinking": "".join(thinking)[:20000], "trace": trace[:60]})
             if alive:
                 self._sse({"type": "end"})
             self._sse_close()

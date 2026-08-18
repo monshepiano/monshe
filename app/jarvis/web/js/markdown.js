@@ -49,6 +49,14 @@
         i++;
         while (i < lines.length && !/^\s*```+\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
         i++;
+        // D. Блок ```ui — не код, а живой элемент управления: слайдеры,
+        // переключатели, плитки. Разметку в HTML не превращаем здесь: она
+        // перерисовывается на каждом такте печати и стёрла бы состояние.
+        // Оставляем спецификацию в data-атрибуте, оживляет её app.js один раз.
+        if (lang === 'ui') {
+          out.push('<div class="ui-panel" data-ui="' + esc(buf.join('\n')) + '"></div>');
+          continue;
+        }
         out.push('<pre data-lang="' + esc(lang) + '"><code>' + esc(buf.join('\n')) + '</code></pre>');
         continue;
       }
