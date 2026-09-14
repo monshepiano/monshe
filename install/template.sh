@@ -205,8 +205,15 @@ if [ -d "$DESKTOP" ] && [ -f "$KEEP" ] && [ ! -e "$DESKTOP/Джарвис.comman
 fi
 
 # ---------------------------------------------------------- 8. Браузер
-if command -v open >/dev/null 2>&1; then open "$URL" >/dev/null 2>&1 || true
-elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$URL" >/dev/null 2>&1 || true
+# Автотест и серверная установка могут явно попросить не трогать графическую
+# сессию. Раньше JARVIS_NO_BROWSER передавался только Python-процессу, а сам
+# shell всё равно запускал open/xdg-open — флаг не выполнял обещание.
+NO_BROWSER="${JARVIS_NO_BROWSER:-0}"
+case " $* " in *" --install-only "*) NO_BROWSER=1 ;; esac
+if [ "$NO_BROWSER" != "1" ]; then
+  if command -v open >/dev/null 2>&1; then open "$URL" >/dev/null 2>&1 || true
+  elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$URL" >/dev/null 2>&1 || true
+  fi
 fi
 
 say ""

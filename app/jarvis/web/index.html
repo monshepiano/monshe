@@ -232,19 +232,20 @@
         </div>
       </div>
 
-      <div class="file-grid" id="fileGrid"></div>
-      <input type="file" id="filesUpload" multiple hidden>
-
-      <div class="term-block">
-        <div class="term-head">
-          <span class="term-dot"></span><span id="termTitle">ТЕРМИНАЛ</span>
-          <div class="term-acts">
-            <button class="term-act" id="termDownload" hidden>Скачать</button>
-            <button class="term-act" id="termClose" hidden>Закрыть файл</button>
+      <div class="files-work" id="filesWork">
+        <div class="file-grid" id="fileGrid"></div>
+        <div class="term-block" id="fileTerminal" hidden>
+          <div class="term-head">
+            <span class="term-dot"></span><span id="termTitle">ТЕРМИНАЛ</span>
+            <div class="term-acts">
+              <button class="term-act" id="termDownload" hidden>Скачать</button>
+              <button class="term-act" id="termClose" hidden>Закрыть файл</button>
+            </div>
           </div>
+          <div class="term" id="termFeed"></div>
         </div>
-        <div class="term" id="termFeed"></div>
       </div>
+      <input type="file" id="filesUpload" multiple hidden>
     </section>
 
     <!-- ---------- VIEW: ПАМЯТЬ ---------- -->

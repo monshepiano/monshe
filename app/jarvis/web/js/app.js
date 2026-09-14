@@ -22,6 +22,7 @@ const S = {
   computerUse: false,
   streaming: false,
   abort: null,
+  streamRun: 0,
   attachments: [],
   config: {},
   tasks: [],
@@ -57,6 +58,7 @@ const S = {
   fanchor: '',
   fselAuto: false,     // выделение поставлено самим перетаскиванием, не человеком
   frows: [],
+  fileViewToken: 0,
 };
 
 /* ============================ утилиты ============================ */
@@ -368,7 +370,12 @@ function showView(name) {
   $('#topTitle').textContent = titles[name] || '';
   $('#app').classList.remove('nav-open');
   if (name === 'auto') loadTasks();
-  if (name === 'files') loadFiles();
+  if (name === 'files') {
+    // Вход во вкладку всегда начинается с широкой сетки. Терминал — не
+    // постоянная нижняя панель, а прямой предпросмотр выбранного файла.
+    closeFileView();
+    loadFiles();
+  }
   if (name === 'memory') loadMemory();
   if (name === 'settings') renderSettings();
 }
@@ -1438,9 +1445,55 @@ function dropStrayDocks(keep) {
   $$('.plan-dock').forEach((d) => { if (d !== keep) d.remove(); });
 }
 
+/* Анимация первого показа плана живёт отдельно от печати ответа. Поэтому её
+   таймеры храним у конкретного ui-прогона: новый план, остановка или быстрый
+   ответ не должны оставлять старый setTimeout, который через секунду внезапно
+   поднимет уже неактуальную карточку наверх. */
+const PLAN_ITEM_MS = 290;       // короткая, но читаемая остановка между пунктами
+const PLAN_LOOK_MS = 1000;      // время спокойно оценить готовый план
+const PLAN_FLY_MS = 980;        // совпадает с transition .plan-dock.fly в CSS
+
+function clearPlanTimers(ui) {
+  (ui.planTimers || []).forEach((t) => clearTimeout(t));
+  ui.planTimers = [];
+}
+
+function planLater(ui, fn, ms) {
+  const t = setTimeout(() => {
+    ui.planTimers = (ui.planTimers || []).filter((x) => x !== t);
+    fn();
+  }, ms);
+  (ui.planTimers || (ui.planTimers = [])).push(t);
+  return t;
+}
+
+/* Единственная формула прогресса. Полоса должна заканчиваться НАД центром
+   текущего шага, а не перед ним: центры N равных колонок находятся в точках
+   (step - 0.5) / total. Сто процентов показываем только после выполнения. */
+function planProgress(step, total) {
+  const n = Math.max(1, Math.min(Number(step) || 1, Number(total) || 1));
+  return ((n - 0.5) / Math.max(1, Number(total) || 1)) * 100;
+}
+
+function paintDockStep(ui) {
+  const dock = ui.planDock;
+  if (!dock) return;
+  const total = ui.planItems.length || 1;
+  const n = Math.max(1, Math.min(ui.planStep || 1, total));
+  const label = dock.querySelector('.pd-step');
+  if (label) label.textContent = 'шаг ' + n + ' из ' + total;
+  const bar = dock.querySelector('.pd-fill');
+  if (bar) bar.style.width = planProgress(n, total).toFixed(2) + '%';
+  $$('.pd-s', dock).forEach((st, i) => {
+    st.classList.toggle('done', i < n - 1);
+    st.classList.toggle('now', i === n - 1);
+  });
+}
+
 function dockPlan(ui) {
   const card = ui.planCard;
-  if (!card || !card.isConnected || ui.planDock) return;
+  // Фоновый ответ из уже закрытого диалога не владеет общей верхней зоной.
+  if (!card || !card.isConnected || ui.planDock || ui.runId !== S.streamRun) return;
 
   // распорка держит место в ленте, чтобы она не подпрыгнула
   const box = card.getBoundingClientRect();
@@ -1473,6 +1526,9 @@ function dockPlan(ui) {
   holder.appendChild(dock);
   dropStrayDocks(dock);
   ui.planDock = dock;
+  // plan_step часто успевает прийти за время вступительной анимации. Dock не
+  // начинает заново с первого шага, а сразу рисует сохранённый факт.
+  paintDockStep(ui);
 
   // ПОЛЁТ «ОБЛАЧКОМ»: панель стартует там, где карточка стоит в ленте, и
   // плавно уплывает на своё место наверху, попутно сжимаясь. Раньше она
@@ -1484,16 +1540,23 @@ function dockPlan(ui) {
   dock.style.transformOrigin = 'top center';
   dock.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(' + sx + ')';
   dock.style.opacity = '0';
-  card.style.transition = 'opacity .3s ease-out';
+  card.style.transition = 'opacity .46s ease-out';
   card.style.opacity = '0';               // карточка растворяется, панель улетает
   requestAnimationFrame(() => {
     dock.classList.add('fly');            // .fly задаёт длинный мягкий переход
     dock.style.transform = 'none';
     dock.style.opacity = '1';
   });
-  setTimeout(() => { card.style.display = 'none'; card.style.opacity = ''; }, 320);
-  // пульсацию включаем ПОСЛЕ прилёта: иначе два движения спорят друг с другом
-  setTimeout(() => dock.classList.add('live'), 760);
+  planLater(ui, () => {
+    if (card.isConnected && ui.planDock === dock) {
+      card.style.display = 'none'; card.style.opacity = '';
+    }
+  }, 480);
+  // Пульсацию включаем ПОСЛЕ прилёта. Оба таймера принадлежат ui, поэтому
+  // завершение во время полёта отменит их, а не спрячет уже возвращённую карту.
+  planLater(ui, () => {
+    if (dock.isConnected && ui.planDock === dock) dock.classList.add('live');
+  }, PLAN_FLY_MS + 70);
 }
 
 /* Короткая подпись под кружком: первые два-три слова шага. */
@@ -1506,6 +1569,14 @@ function shortStep(t) {
 
 /* План выполнен: снять сверху и вернуть в ленту миниатюрой на своё место. */
 function undockPlan(ui) {
+  // Если задача закончилась раньше вступительной анимации, отложенный таймер
+  // больше не имеет права поднять план после завершения. Не успевшие появиться
+  // пункты всё равно возвращаем в список — миниатюра раскрывается целиком.
+  clearPlanTimers(ui);
+  (ui.planItems || []).forEach((li) => {
+    li.classList.remove('plan-pending');
+    if (ui.planList && !li.parentNode) ui.planList.appendChild(li);
+  });
   const dock = ui.planDock;
   const card = ui.planCard;
   ui.planDock = null;
@@ -1522,8 +1593,8 @@ function undockPlan(ui) {
       setTimeout(() => dock.remove(), 300);
     }, 700);
   }
-  // на всякий случай убираем всё, что могло остаться от прошлых планов
-  setTimeout(() => dropStrayDocks(null), 1100);
+  // Удаляем только dock этого прогона. Глобальный отложенный cleanup здесь
+  // опасен: старый диалог мог через секунду снести уже новый активный план.
 
   if (!card || !card.isConnected) return;
   card.style.display = '';
@@ -2081,8 +2152,20 @@ function foldCodeBlocks(root) {
 /* ============================ отправка ============================ */
 function autoGrow() {
   const t = $('#input');
-  t.style.height = 'auto';
-  t.style.height = Math.min(t.scrollHeight, 190) + 'px';
+  const MAX = 190;
+  // Измерять textarea через height:auto ненадёжно: браузер одновременно
+  // применяет rows, max-height и нативный overflow:auto, поэтому у пустой
+  // строки иногда остаётся лишний пиксель прокрутки. Сначала снимаем высоту
+  // до нуля, измеряем ПОЛНЫЙ контент, затем одним решением задаём и высоту,
+  // и режим overflow. Скролл появляется только когда контент реально выше MAX.
+  t.style.height = '0px';
+  const full = t.scrollHeight;
+  const cs = getComputedStyle(t);
+  const oneLine = Math.ceil((parseFloat(cs.lineHeight) || 22) +
+    (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0));
+  const wanted = t.value === '' ? oneLine : Math.max(oneLine, full);
+  t.style.height = Math.min(wanted, MAX) + 'px';
+  t.style.overflowY = wanted > MAX ? 'auto' : 'hidden';
   updateSendBtn();
 }
 $('#input').addEventListener('input', autoGrow);
@@ -2179,16 +2262,22 @@ async function send(opts) {
   S.attachments = []; renderAttachments();
 
   const node = addAiMsg();
+  const runId = ++S.streamRun;
   setStreaming(true);
   sfx('send');
 
   // блоки, которые появляются по ходу
   const ui = {
     node,
+    runId,
     statusEl: null,
     thinkCard: null,
     planCard: null,
     planItems: [],
+    planList: null,
+    planStep: 1,
+    planTimers: [],
+    planDock: null,
     verbose: true,
     mdEl: null,
     buffer: '',
@@ -2198,17 +2287,23 @@ async function send(opts) {
     tools: {},
     silent: {},
     files: [],
+    doneReceived: false,
+    visualDone: false,
   };
+  // Сетевой SSE может закрыться раньше, чем локальный typer покажет последний
+  // символ. finally ждёт именно эту границу, а не состояние сокета.
+  ui.visualDonePromise = new Promise((resolve) => { ui.resolveVisualDone = resolve; });
   ui.statusEl = el('div', 'thinking-line');
   node.body.appendChild(ui.statusEl);
   thinkMode(ui, 'Соединяюсь');
 
-  S.abort = new AbortController();
+  const controller = new AbortController();
+  S.abort = controller;
   try {
     const res = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      signal: S.abort.signal,
+      signal: controller.signal,
       body: JSON.stringify({
         chat_id: activeChatId() || '', kind: (camLive() && !camLinked()) ? 'cam' : '', text,
         edit_of: editing ? editing.id : '',
@@ -2218,41 +2313,72 @@ async function send(opts) {
         attachments: atts,
       }),
     });
+    if (!res.ok) throw new Error('Сервер ответил HTTP ' + res.status);
+    if (!res.body) throw new Error('Сервер не открыл поток ответа');
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
+    const dispatchSse = (part) => {
+      const line = part.split(/\r?\n/).find((l) => l.startsWith('data:'));
+      if (!line) return;
+      let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch (e) { return; }
+      handleEvent(ev, ui);
+    };
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buf += dec.decode(value, { stream: true });
-      const parts = buf.split('\n\n');
+      const parts = buf.split(/\r?\n\r?\n/);
       buf = parts.pop();
-      for (const part of parts) {
-        const line = part.split('\n').find((l) => l.startsWith('data:'));
-        if (!line) continue;
-        let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
-        handleEvent(ev, ui);
-      }
+      parts.forEach(dispatchSse);
     }
+    // TextDecoder и последний SSE-record могут иметь хвост без завершающей
+    // пустой строки. Потеря именно этого record раньше оставляла done/end за
+    // бортом и заставляла UI завершать удачный ответ как сетевой обрыв.
+    buf += dec.decode();
+    if (buf.trim()) buf.split(/\r?\n\r?\n/).forEach(dispatchSse);
   } catch (e) {
     if (e.name !== 'AbortError') {
-      showError(ui, String(e.message || e));
+      // Если полный done уже пришёл, последующий сетевой EOF не отменяет факт:
+      // спокойно даём локальной печати закончиться и не рисуем ложную ошибку.
+      if (!ui.doneReceived) {
+        showError(ui, String(e.message || e));
+        queueResponseFinish(ui, ui.buffer, false);
+      }
     } else {
+      // Явная остановка — единственный случай, когда пользователь сам просит
+      // оборвать анимацию. Здесь обещание обязательно разрешаем, иначе finally
+      // навсегда останется ждать callback остановленного тайпера.
       typerStop(ui);
-      if (ui.mdEl) { ui.mdEl.classList.remove('typing'); ui.mdEl.innerHTML = MD.render(ui.shown || ui.buffer); }
+      if (ui.mdEl) {
+        ui.mdEl.classList.remove('typing');
+        ui.mdEl.innerHTML = MD.render(stripSteps(ui.shown || ui.buffer));
+      }
       dropStatus(ui);
+      undockPlan(ui);
       node.body.appendChild(el('div', 'muted', 'Остановлено.'));
+      settleVisualDone(ui);
     }
   } finally {
-    // страховка: что бы ни случилось со стримом (обрыв, ошибка разбора,
-    // закрытие сокета) — кнопка обязана вернуться в исходное состояние
+    // Сокет — не источник истины для кнопки Stop и звука. Если сервер закрылся
+    // без end/done, всё равно сначала допечатываем уже полученный хвост.
+    if (!ui.doneReceived && !ui.visualDone) queueResponseFinish(ui, ui.buffer, false);
+    await ui.visualDonePromise;
     dropStatus(ui);
-    setStreaming(false);
-    S.abort = null;
+    // Ушли в другой диалог и уже запустили новый ответ: поздний finally старого
+    // прогона не должен выключать его Stop и обнулять его AbortController.
+    if (S.streamRun === runId) {
+      setStreaming(false);
+      if (S.abort === controller) S.abort = null;
+    }
   }
-  refreshState();
   loadChats();
-  fetchReplies();   // подсказки — уже после того, как ответ закрыт
+  // Поздний background-прогон не заказывает подсказки для чужого активного
+  // диалога и не обновляет его состояние посреди нового ответа.
+  if (S.streamRun === runId && node.isConnected) {
+    refreshState();
+    fetchReplies();   // подсказки — уже после того, как ответ закрыт
+  }
 }
 
 /* Варианты продолжения тянем отдельным запросом. Пока их считают, полоса
@@ -2800,6 +2926,101 @@ if ($('#bellBtn')) {
   });
 }
 
+/* Локальный конец ответа. Серверные done/end только сообщают факт; эта
+   функция заканчивает прогон после того, как ui.buffer действительно дошёл
+   до ui.shown. Это один источник истины для звука, плана и кнопки Stop. */
+function settleVisualDone(ui) {
+  if (!ui || ui.visualDone) return;
+  ui.visualDone = true;
+  if (ui.resolveVisualDone) {
+    ui.resolveVisualDone();
+    ui.resolveVisualDone = null;
+  }
+}
+
+function queueResponseFinish(ui, content, success) {
+  if (ui.doneReceived) return;
+  ui.doneReceived = true;
+  content = String(content || '');
+  if (!ui.mdEl) {
+    ui.mdEl = el('div', 'md');
+    ui.node.body.appendChild(ui.mdEl);
+  }
+
+  // done.content обычно равен склеенным delta. Но при серверной коррекции он
+  // может перестать быть продолжением уже показанного текста; тогда нельзя
+  // считать одинаковую длину «готовностью» — печатаем исправленную версию.
+  if (!content.startsWith(ui.shown || '')) {
+    ui.shown = '';
+    ui.frozen = null;
+    ui.mdEl.innerHTML = '';
+  }
+  ui.buffer = content;
+  ui.onTyped = () => {
+    if (ui.visualDone) return;
+    try {
+      ui.mdEl.classList.remove('typing');
+      const caret = ui.mdEl.querySelector('.caret');
+      if (caret) caret.remove();
+      ui.floor = 0;
+      ui.mdEl.style.minHeight = '';
+
+      // Последний такт renderTyped уже построил полный markdown. Не заменяем
+      // innerHTML ещё раз: такая ненужная пересборка уничтожала DOM-якорь
+      // панели и на узкой камере визуально меняла её местами с текстом.
+      if (ui.shown !== content) {
+        ui.shown = content;
+        ui.frozen = null;
+        renderTyped(ui);
+      }
+      const panels = $$('.ui-panel', ui.mdEl);
+      const scroller = ui.node.closest('.cam-chat') || stream();
+      const keepScroll = panels.length && scroller ? scroller.scrollTop : null;
+      foldCodeBlocks(ui.mdEl);
+      mountUiPanels(ui.mdEl);
+      $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click',
+        () => openPreview({ name: im.alt || 'изображение', url: im.src })));
+
+      if (ui.thinkCard && ui.thinkCard.isConnected) {
+        const ts = thinkFlush(ui.thinkCard);
+        collapseSoon(ui.thinkCard, {
+          cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
+          sub: ts ? fmtSize((ts.textContent || '').length) : '', tag: 'развернуть',
+        });
+      }
+
+      ui.planItems.forEach((li) => {
+        li.classList.remove('now');
+        li.classList.add('done');
+      });
+      undockPlan(ui);
+      if (success) {
+        addMsgActions(ui.node, content);
+        if (S.streamRun === ui.runId && ui.node.isConnected) {
+          speakReply(content);
+          sfx('done');
+        }
+      }
+      if (S.streamRun === ui.runId) $('#routeHint').classList.remove('show');
+
+      // Раскрытие живой панели увеличивает высоту ровно в точке ```ui. Не
+      // тянем после этого камеру к самому низу: иначе текст над панелью уезжал
+      // из кадра и казалось, что интерактив его заменил. Обычный ответ без UI
+      // по-прежнему автоматически догоняем.
+      if (ui.node.isConnected) {
+        if (keepScroll != null && scroller) {
+          requestAnimationFrame(() => { scroller.scrollTop = keepScroll; });
+        } else if (S.streamRun === ui.runId) {
+          scrollDown();
+        }
+      }
+    } finally {
+      settleVisualDone(ui);
+    }
+  };
+  typerFlush(ui);
+}
+
 const TIER_LABEL = { nano: 'экономный', base: 'базовый', smart: 'усиленный', coder: 'кодовый', vision: 'зрение' };
 
 function handleEvent(ev, ui) {
@@ -2882,6 +3103,7 @@ function handleEvent(ev, ui) {
       // новый). Прежнюю панель и прежнюю карточку убираем, иначе первая так и
       // останется висеть наверху: undockPlan знает только про последнюю.
       if (ui.planDock || ui.planCard) {
+        clearPlanTimers(ui);
         dropStrayDocks(null);
         ui.planDock = null;
         if (ui.planCard && ui.planCard.isConnected) ui.planCard.remove();
@@ -2892,10 +3114,13 @@ function handleEvent(ev, ui) {
       ui.planCard = makeCard('☰', 'План · ' + ev.steps.length + ' шаг(ов)', 'plan-card', true);
       markBorn(ui.planCard);
       const list = el('ul', 'plan-list');
+      ui.planList = list;
+      ui.planStep = 1;
       ev.steps.forEach((s, i) => {
-        const li = el('li', '', '<span class="plan-num">' + (i + 1) + '</span><span>' + esc(s) + '</span>');
-        li.style.animationDelay = (i * 0.06) + 's';
-        list.appendChild(li); ui.planItems.push(li);
+        const li = el('li', 'plan-pending', '<span class="plan-num">' + (i + 1) + '</span><span>' + esc(s) + '</span>');
+        // Пункты уже существуют как состояние (plan_step может прийти сразу),
+        // но в DOM входят по одному. Это не блокирует общий typer ответа.
+        ui.planItems.push(li);
       });
       ui.planCard.inner.appendChild(list);
       node.body.insertBefore(ui.planCard, ui.statusEl);
@@ -2912,8 +3137,18 @@ function handleEvent(ev, ui) {
       // промахивалась. Держим низ несколько кадров — тем же приёмом, что и при
       // открытии диалога.
       pinToBottom(stream());
-      // Через секунду план уезжает наверх и там остаётся, пока не выполнен.
-      setTimeout(() => dockPlan(ui), 1100);
+      // Пишем план пункт за пунктом. После ПОСЛЕДНЕГО — отдельная секунда на
+      // чтение, и лишь затем начинается более медленный перелёт наверх.
+      ui.planItems.forEach((li, i) => {
+        planLater(ui, () => {
+          if (!ui.planCard || !ui.planCard.isConnected) return;
+          list.appendChild(li);
+          requestAnimationFrame(() => li.classList.remove('plan-pending'));
+          pinToBottom(msgHost());
+        }, 70 + i * PLAN_ITEM_MS);
+      });
+      const writtenAt = 70 + Math.max(0, ui.planItems.length - 1) * PLAN_ITEM_MS + 260;
+      planLater(ui, () => dockPlan(ui), writtenAt + PLAN_LOOK_MS);
       break;
     }
 
@@ -2965,22 +3200,12 @@ function handleEvent(ev, ui) {
       // весь список — теперь это факт от самой модели.
       const n = ev.step | 0;
       const total = ui.planItems.length || 1;
+      ui.planStep = Math.max(1, Math.min(n || 1, total));
       ui.planItems.forEach((li, i) => {
         li.classList.toggle('done', i < n - 1);
         li.classList.toggle('now', i === n - 1);
       });
-      if (ui.planDock) {
-        const t = ui.planDock.querySelector('.pd-step');
-        if (t) t.textContent = 'шаг ' + n + ' из ' + total;
-        const bar = ui.planDock.querySelector('.pd-fill');
-        // полоса показывает СДЕЛАННОЕ: на первом шаге она пустая, на последнем
-        // почти полная, а 100% наступает только по завершении
-        if (bar) bar.style.width = Math.round((n - 1) / total * 100) + '%';
-        $$('.pd-s', ui.planDock).forEach((st, i) => {
-          st.classList.toggle('done', i < n - 1);
-          st.classList.toggle('now', i === n - 1);
-        });
-      }
+      if (ui.planDock) paintDockStep(ui);
       break;
     }
 
@@ -3151,59 +3376,20 @@ function handleEvent(ev, ui) {
 
     case 'done': {
       dropStatus(ui);
-      const content = ev.content || ui.buffer;
-      if (!ui.mdEl) { ui.mdEl = el('div', 'md'); node.body.appendChild(ui.mdEl); }
-      // догоняем печать: остаток дописываем плавно, финальную отделку делаем в конце
-      ui.buffer = content;
-      ui.onTyped = () => {
-        ui.mdEl.classList.remove('typing');
-        // подпорка высоты нужна только на время печати
-        ui.floor = 0; ui.mdEl.style.minHeight = '';
-        ui.mdEl.innerHTML = MD.render(stripSteps(content));
-        foldCodeBlocks(ui.mdEl);
-        mountUiPanels(ui.mdEl);
-        // картинки внутри ответа открываются тем же предпросмотром, что и файлы
-        $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click',
-          () => openPreview({ name: im.alt || 'изображение', url: im.src })));
-        // ход мыслей отработал — прячем в миниатюру
-        if (ui.thinkCard && ui.thinkCard.isConnected) {
-          const ts = thinkFlush(ui.thinkCard);
-          collapseSoon(ui.thinkCard, {
-            cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
-            sub: ts ? fmtSize((ts.textContent || '').length) : '', tag: 'развернуть',
-          });
-        }
-        // план сворачивает undockPlan(): он же снимает карточку с верха
-        addMsgActions(node, content);
-        speakReply(content);
-        scrollDown();
-      };
-      typerFlush(ui);
-      ui.planItems.forEach((li) => li.classList.remove('now'));
-      ui.planItems.forEach((li) => li.classList.add('done'));
-      undockPlan(ui);
-      sfx('done');
-      $('#routeHint').classList.remove('show');
-      scrollDown();
+      queueResponseFinish(ui, ev.content || ui.buffer, true);
       break;
     }
 
     case 'error':
       showError(ui, ev.error || 'неизвестная ошибка');
-      // прогон оборвался — план наверху больше не актуален, снимаем
-      undockPlan(ui);
+      queueResponseFinish(ui, ui.buffer, false);
       break;
 
     case 'end':
       dropStatus(ui);
-      // ПОСЛЕДНИЙ РУБЕЖ ПРОТИВ «ЗАВИСШЕГО» ПЛАНА. undockPlan вызывается по
-      // 'done', но прогон может кончиться иначе: ошибкой, остановкой,
-      // разрывом потока. Тогда панель оставалась наверху навсегда. 'end'
-      // приходит в любом случае — здесь и подчищаем.
-      if (ui.planDock || $('.plan-dock')) undockPlan(ui);
-      // поток завершён сервером — сразу возвращаем кнопку в «отправить»,
-      // не дожидаясь фактического закрытия сокета
-      setStreaming(false);
+      // end означает только конец SSE. Если done потерялся, всё равно дренируем
+      // локальный буфер; Stop → Send переключит finally после visualDonePromise.
+      if (!ui.doneReceived) queueResponseFinish(ui, ui.buffer, false);
       break;
   }
 }
@@ -4285,6 +4471,8 @@ function renderCrumbs(dir) {
   });
 }
 
+let fileDragEndedAt = 0;
+
 function fileCard(f, i) {
   const c = el('div', 'fcard' + (f.is_dir ? ' dir' : ''));
   c.style.animationDelay = (i * 0.02) + 's';
@@ -4317,6 +4505,9 @@ function fileCard(f, i) {
   });
 
   c.addEventListener('click', (e) => {
+    // Нативный drag-and-drop после отпускания иногда синтезирует click по
+    // исходной карточке. Это не прямой клик и не должно открывать терминал.
+    if (Date.now() - fileDragEndedAt < 260) { e.preventDefault(); return; }
     // Cmd/Ctrl и Shift — только выделение, без открытия: в Finder так же
     if (e.metaKey || e.ctrlKey) { e.preventDefault(); selectToggle(f.path); return; }
     if (e.shiftKey) { e.preventDefault(); selectRange(f.path); return; }
@@ -4345,6 +4536,7 @@ function fileCard(f, i) {
     startDragGhosts(e, cards, c);
   });
   c.addEventListener('dragend', () => {
+    fileDragEndedAt = Date.now();
     $$('#fileGrid .fcard.dragging').forEach((n) => n.classList.remove('dragging'));
     clearDropMarks();
     stopDragGhosts();
@@ -4580,6 +4772,11 @@ function renderSbxBar(info, entries) {
 }
 
 async function viewFile(f, card) {
+  const token = S.fileViewToken = (S.fileViewToken || 0) + 1;
+  const terminal = $('#fileTerminal');
+  const work = $('#filesWork');
+  if (terminal) terminal.hidden = false;
+  if (work) work.classList.add('terminal-open');
   $$('.fcard.viewing').forEach((n) => n.classList.remove('viewing'));
   if (card) card.classList.add('viewing');
   const feed = $('#termFeed');
@@ -4595,6 +4792,9 @@ async function viewFile(f, card) {
   const q = '/api/files/view?name=' + encodeURIComponent(f.path || f.name) +
     (S.chatId ? '&chat_id=' + encodeURIComponent(S.chatId) : '');
   const r = await api(q);
+  // Быстро нажали другой файл: медленный ответ первого не имеет права
+  // заменить уже открытый второй предпросмотр.
+  if (token !== S.fileViewToken) return;
   if (!r.ok) { feed.innerHTML = '<div class="term-line err">' + esc(r.error || 'не открылось') + '</div>'; return; }
   const head = '<div class="tf-head">' + esc(f.name) + ' · ' + fmtSize(r.size) + ' · ' +
     (r.kind === 'text' ? 'текст' : r.kind === 'image' ? 'изображение' : 'двоичный файл') + '</div>';
@@ -4612,7 +4812,12 @@ async function viewFile(f, card) {
 }
 
 function closeFileView() {
+  S.fileViewToken = (S.fileViewToken || 0) + 1;
   const feed = $('#termFeed');
+  const terminal = $('#fileTerminal');
+  const work = $('#filesWork');
+  if (terminal) terminal.hidden = true;
+  if (work) work.classList.remove('terminal-open');
   if (!feed) return;
   feed.classList.remove('big');
   feed.innerHTML = '';
@@ -5044,5 +5249,6 @@ window.addEventListener('keydown', (e) => {
       toast('Открой Настройки и вставь API-ключ, чтобы я заработал.', 'warn', 'Нужен ключ');
     }, 2600);
   }
+  autoGrow();
   $('#input').focus();
 })();

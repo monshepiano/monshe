@@ -664,7 +664,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .composer.busy{border-color:rgba(217,164,65,.5)}
 .composer-inner{display:flex;align-items:flex-end;gap:9px;padding:9px 10px 9px 12px}
 #input{flex:1;background:transparent;border:0;outline:0;resize:none;font-size:14.5px;line-height:1.55;
-  padding:9px 2px;max-height:190px;color:var(--tx)}
+  padding:9px 2px;max-height:190px;overflow-y:hidden;color:var(--tx)}
 #input::placeholder{color:var(--tx3)}
 .comp-left{display:flex;align-items:center;gap:6px;flex-shrink:0;padding-bottom:2px}
 .comp-btn{width:34px;height:34px;border-radius:11px;border:1px solid var(--line);background:transparent;
@@ -1663,7 +1663,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   backdrop-filter:blur(10px);font-size:11px;color:var(--tx2);
   opacity:0}
 /* полёт «облачком»: длинный мягкий переход, панель приплывает из ленты */
-.plan-dock.fly{transition:transform .62s cubic-bezier(.22,.85,.3,1),
+.plan-dock.fly{transition:transform .98s cubic-bezier(.22,.85,.3,1),
   opacity .42s ease-out,box-shadow .3s,border-color .3s}
 /* Пульс ярче и чаще, чем был: 1.35 с вместо 2.1 и заметно сильнее свечение. */
 .plan-dock.live{animation:planPulse 1.35s ease-in-out infinite}
@@ -1731,3 +1731,51 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   .pd-cap{display:none}
   .pd-s::before{top:9px}
 }
+
+
+/* ===== Пакет 27: рабочая область файлов =====
+   Терминал больше не занимает постоянную строку под сеткой. Он отсутствует из
+   layout, пока пользователь напрямую не открыл файл; затем становится второй
+   колонкой, поэтому сетка честно пересчитывает доступную ширину. */
+.files-work{flex:1 1 auto;min-height:0;display:flex;align-items:stretch;gap:14px;
+  padding:6px 26px 20px;overflow:hidden}
+.files-work>.file-grid{flex:1 1 auto;min-width:0;padding:0;transition:flex-basis .32s ease}
+.files-work>.term-block{margin:0;min-width:300px;flex:0 1 min(42%,500px);min-height:0}
+.files-work>.term-block[hidden]{display:none!important}
+.files-work>.term-block:not([hidden]){display:flex;flex-direction:column;animation:fileTermIn .34s cubic-bezier(.2,.8,.3,1) both}
+.files-work>.term-block .term{flex:1 1 auto;min-height:0;max-height:none}
+.files-work>.term-block .term.big{max-height:none}
+@keyframes fileTermIn{from{opacity:0;transform:translateX(18px)}}
+@media (max-width:720px){
+  .files-work{padding-left:14px;padding-right:14px;flex-direction:column}
+  .files-work>.term-block{flex:0 0 min(42vh,340px);width:100%;min-width:0}
+  .files-work>.file-grid{min-height:180px}
+}
+
+
+/* ===== Пакет 27: стабильный поток интерактивов =====
+   Панель и каждая её строка остаются обычными flex-блоками в document flow.
+   Это устраняет схлопывание вертикальных margin и не позволяет анимационному
+   transform одной строки геометрически наложиться на соседнюю (в частности,
+   тумблеру на выбор цвета) в узкой колонке камеры. */
+.ui-panel:not(:empty){display:flex;flex-direction:column;gap:14px;min-width:0;
+  overflow-anchor:none;isolation:isolate}
+.ui-panel>.ui-row{position:relative;flex:0 0 auto;min-width:0;width:100%;margin:0}
+.ui-panel>.ui-go{flex:0 0 auto;margin-top:0}
+.ui-panel>.ui-go-off{display:none}
+.ui-row>*{min-width:0}
+.ui-toggle{min-height:28px}
+.ui-color{display:block;max-width:100%}
+.cam-chat .ai-content,.cam-chat .msg-body,.cam-chat .md,.cam-chat .ui-panel{min-width:0;max-width:100%}
+.cam-chat .ui-panel{width:100%;padding:12px}
+
+/* Текущий пункт обведён тонкой фигурой, не ещё одной тяжёлой заливкой. */
+.pd-s.now::after{content:'';position:absolute;z-index:0;inset:-4px 4px -4px;
+  border:1px solid rgba(255,217,138,.28);border-radius:12px;
+  background:rgba(217,164,65,.035);pointer-events:none}
+.pd-s.now .pd-cap{position:relative;z-index:1}
+.plan-list li{position:relative}
+.plan-list li.now::after{content:'';position:absolute;inset:2px -7px;
+  border:1px solid rgba(0,200,240,.2);border-radius:11px;
+  background:rgba(0,200,240,.025);pointer-events:none}
+.plan-list li.now>*{position:relative;z-index:1}
