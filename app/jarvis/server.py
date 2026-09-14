@@ -28,6 +28,21 @@ def _json_bytes(data: Any) -> bytes:
     return json.dumps(data, ensure_ascii=False).encode("utf-8")
 
 
+def _canonical_response_content(chunks: List[str], done_content: Any) -> str:
+    """Один владелец текста ответа: ровно тот поток, который увидел браузер.
+
+    Многошаговый Agent отдаёт delta каждого шага, но его done.content исторически
+    содержал только последний шаг. Фронтенд уже показывал весь поток, затем видел
+    несовпадающий финал, стирал DOM и печатал последний кусок заново. Если delta
+    были, именно их точная склейка является каноническим ответом и для done, и
+    для БД. done.content остаётся запасным путём для непроточных ответов.
+    """
+    streamed = "".join(str(chunk or "") for chunk in chunks)
+    if streamed.strip():
+        return streamed
+    return str(done_content or "")
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "JARVIS/" + VERSION
@@ -495,14 +510,19 @@ class Handler(BaseHTTPRequestHandler):
 
         messages = [{"role": "system", "content": agent.build_system_prompt(agent_mode, computer_use)}]
         messages.extend(history)
-        if has_image:
-            # Короткий vision-контракт стоит рядом с изображением: слабая
-            # мультимодальная модель не должна терять правило ```ui в длинном
-            # общем prompt. Это часть ТОГО ЖЕ запроса, не дополнительный LLM-call.
-            messages.append({"role": "system", "content": agent.VISION_UI_CONTRACT})
+        # Один короткий nearby-контракт ставится перед КАЖДЫМ актуальным user
+        # turn. Раньше напоминание было только рядом с изображением, поэтому
+        # следующий текст «давай уточним» снова терял controls. Vision-добавка
+        # объединяется здесь же: один источник протокола и всё тот же LLM-call.
+        messages.append({"role": "system", "content": agent.turn_ui_contract(has_image)})
         messages.append(user_message)
 
         runner = agent.Agent(chat_id=chat_id, agent_mode=agent_mode, computer_use=computer_use)
+        # Prompt просит дождаться выбора, а этот флаг делает ожидание границей
+        # исполнения: generate_image не будет dispatch-нут для неопределённой
+        # творческой обработки кадра, даже если конкретная модель проигнорирует
+        # инструкцию. Конкретный «в стиле X / про Y» проходит без остановки.
+        require_ui_choice = agent.needs_creative_image_choice(text, has_image)
         final_text = ""
         files: List[Dict[str, Any]] = []
         used_tools: List[str] = []
@@ -511,7 +531,9 @@ class Handler(BaseHTTPRequestHandler):
         thinking: List[str] = []
         trace: List[Dict[str, Any]] = []
         try:
-            for event in runner.run(messages, user_text=text, has_image=has_image):
+            for event in runner.run(
+                    messages, user_text=text, has_image=has_image,
+                    require_ui_choice=require_ui_choice):
                 etype = event.get("type")
                 if etype == "delta":
                     partial.append(event.get("text", ""))
@@ -534,7 +556,12 @@ class Handler(BaseHTTPRequestHandler):
                                   "options": event.get("options", []),
                                   "answer": event.get("answer", "")})
                 elif etype == "done":
-                    final_text = event.get("content", "")
+                    # `done` не имеет права подменить уже показанный поток своей
+                    # альтернативной версией. Канонизируем ДО отправки события,
+                    # затем ту же строку сохраняем — UI и история тождественны.
+                    final_text = _canonical_response_content(partial, event.get("content", ""))
+                    event = dict(event)
+                    event["content"] = final_text
                     files = event.get("files", [])
                     used_tools = event.get("tools", [])
                 if alive:
@@ -547,7 +574,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._sse({"type": "error", "error": str(exc)})
         finally:
             if not final_text:
-                final_text = "".join(partial).strip()
+                final_text = _canonical_response_content(partial, "")
             if final_text:
                 # Ход мыслей и список действий сохраняем вместе с ответом: раньше
                 # они жили только в браузере и пропадали, стоило выйти из диалога.

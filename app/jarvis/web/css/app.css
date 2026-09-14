@@ -334,17 +334,18 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   box-shadow:0 10px 26px rgba(207,154,60,.15)}
 @keyframes popIn{from{opacity:0;transform:translateY(14px) scale(.97)}}
 
-.day-separator{width:min(900px,100%);margin:7px auto 19px;display:flex;align-items:center;gap:12px;
-  color:var(--tx3);font-family:var(--fm);font-size:9.5px;letter-spacing:.7px;text-transform:lowercase;
-  animation:dayIn .32s ease both}
-.day-separator::before,.day-separator::after{content:'';height:1px;flex:1;
-  background:linear-gradient(90deg,transparent,rgba(92,132,157,.24))}
-.day-separator::after{background:linear-gradient(90deg,rgba(92,132,157,.24),transparent)}
-.day-separator span{padding:4px 10px;border:1px solid rgba(92,132,157,.18);border-radius:999px;
-  background:rgba(6,13,23,.72);white-space:nowrap}
-@keyframes dayIn{from{opacity:0;transform:translateY(5px)}}
-.cam-chat .day-separator{margin:3px auto 12px;gap:7px;font-size:8.5px}
-.cam-chat .day-separator span{padding:3px 7px}
+/* Дата как в Telegram: не строка между сообщениями, а маленький transient
+   badge над лентой. Он не участвует в flow и не двигает переписку. */
+.view-chat{position:relative}
+.scroll-date{position:absolute;z-index:20;top:9px;left:50%;pointer-events:none;
+  max-width:calc(100% - 40px);padding:5px 11px;border-radius:999px;
+  border:1px solid rgba(92,180,211,.3);background:rgba(7,18,29,.9);
+  color:#b9eaff;font-family:var(--fm);font-size:10px;letter-spacing:.35px;
+  white-space:nowrap;backdrop-filter:blur(9px);
+  box-shadow:0 7px 22px rgba(0,0,0,.35),0 0 14px rgba(0,200,240,.12);
+  opacity:0;transform:translate(-50%,-7px) scale(.96);
+  transition:opacity .18s ease,transform .22s cubic-bezier(.2,.8,.3,1)}
+.scroll-date.show{opacity:1;transform:translate(-50%,0) scale(1)}
 .msg{max-width:900px;margin:0 auto 22px;animation:msgIn .45s cubic-bezier(.2,.8,.3,1) both}
 @keyframes msgIn{from{opacity:0;transform:translateY(16px)}}
 /* Своя реплика — колонка: пузырь, под ним кнопки. Никакого flex-wrap:
@@ -470,12 +471,20 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   max-height:150px;overflow:hidden;padding:12px 0;scroll-behavior:smooth;position:relative;
   -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 26%,#000 74%,transparent 100%);
   mask-image:linear-gradient(180deg,transparent 0,#000 26%,#000 74%,transparent 100%)}
-/* Почти прозрачная неоновая дымка идёт по потоку мыслей, но не заменяет
-   затемнённые края и не создаёт курсор. Один compositor-friendly overlay. */
-.think-card.live .think-stream::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:.14;
-  background:linear-gradient(105deg,transparent 22%,rgba(70,240,255,.15) 42%,rgba(177,137,255,.34) 50%,transparent 68%);
-  background-size:240% 100%;mix-blend-mode:screen;animation:thinkNeon 2.8s linear infinite}
-@keyframes thinkNeon{from{background-position:170% 0}to{background-position:-70% 0}}
+/* Яркая неоновая дымка идёт по потоку мыслей, но не заменяет затемнённые
+   края и не создаёт курсор. Прежние opacity .14 / alpha .15 были практически
+   невидимы; теперь cyan/violet ядро заметно с первого взгляда. Всё ещё один
+   compositor-friendly overlay — без дополнительных узлов и layout work. */
+.think-card.live{background:linear-gradient(118deg,rgba(7,15,26,.97),rgba(0,197,242,.12) 46%,
+  rgba(111,83,224,.14) 56%,rgba(7,15,26,.97) 78%);background-size:220% 100%;
+  animation:thinkCardGlow 3.4s linear infinite}
+.think-card.live .think-stream{color:#9db9c7}
+.think-card.live .think-stream::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:.68;
+  background:linear-gradient(105deg,transparent 18%,rgba(35,222,255,.18) 34%,
+    rgba(92,245,255,.6) 45%,rgba(190,146,255,.72) 52%,rgba(81,92,255,.28) 61%,transparent 74%);
+  background-size:280% 100%;mix-blend-mode:screen;animation:thinkNeon 2.45s linear infinite}
+@keyframes thinkNeon{from{background-position:175% 0}to{background-position:-75% 0}}
+@keyframes thinkCardGlow{from{background-position:180% 0}to{background-position:-40% 0}}
 /* пока блок «живой» — тонкая бегущая полоска сверху и мягкое свечение рамки */
 .panel-card.live{border-color:rgba(0,200,240,.34);box-shadow:0 0 0 1px rgba(0,200,240,.07),0 6px 22px rgba(0,0,0,.3)}
 .panel-card.live .card-head{position:relative}
@@ -666,6 +675,17 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .ask-opt.good:hover{background:rgba(63,191,149,.24);border-color:var(--green)}
 .ask-opt.bad{border-color:rgba(221,85,102,.5);color:#ffb3bd;background:rgba(221,85,102,.12)}
 .ask-opt.bad:hover{background:rgba(221,85,102,.24);border-color:var(--red)}
+.ask-own{flex:1 0 100%;display:flex;gap:7px;padding-top:9px;margin-top:2px;
+  border-top:1px solid rgba(0,200,240,.14)}
+.ask-own-i{flex:1;min-width:0;border:1px solid var(--line2);border-radius:9px;
+  background:rgba(4,13,23,.78);color:var(--tx);padding:8px 10px;outline:none;font:12px var(--fm)}
+.ask-own-i::placeholder{color:var(--tx3)}
+.ask-own-i:focus{border-color:var(--cy);box-shadow:0 0 12px rgba(0,200,240,.12)}
+.ask-own-go{width:34px;height:34px;display:grid;place-items:center;border-radius:9px;
+  border:1px solid rgba(0,200,240,.45);background:rgba(0,200,240,.13);color:var(--cy2)}
+.ask-own-go svg{width:15px;height:15px;fill:currentColor}
+.ask-own-go:disabled{opacity:.25;pointer-events:none}
+.ask-own-go:not(:disabled):hover{background:rgba(0,200,240,.25);box-shadow:0 0 13px rgba(0,200,240,.18)}
 .ask-picked{font-size:12.5px;color:var(--green);animation:chipIn .3s both}
 
 .attachments{display:flex;flex-wrap:wrap;gap:8px;max-width:900px;margin:0 auto 8px}
@@ -1312,12 +1332,13 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    отдельной строкой снизу — курсор оказывался «просто внизу», отдельно от
    текста, который в это время печатался выше. */
 .caret{display:inline-block;vertical-align:-2px;
-  width:7px;height:15px;margin-left:3px;border-radius:1px;
-  background:var(--cy);opacity:.5;
+  width:6px;height:15px;margin-left:3px;border-radius:2px;
+  background:linear-gradient(180deg,#e9fcff 0%,#65e7ff 44%,#00bff3 100%);opacity:1;
+  box-shadow:0 0 6px #69eaff,0 0 14px rgba(0,200,255,.92),0 0 24px rgba(0,123,255,.48);
   animation:spark 1.05s steps(1) infinite}
-@keyframes spark{50%{opacity:.12}}
-.caret.caret-important{background:linear-gradient(180deg,#fff,#f4d27f 50%,var(--gold));opacity:1;
-  box-shadow:0 0 8px var(--gold),0 0 17px rgba(217,164,65,.48)}
+@keyframes spark{50%{opacity:.3;box-shadow:0 0 5px #69eaff,0 0 11px rgba(0,200,255,.75)}}
+.caret.caret-important{background:linear-gradient(180deg,#fff,#fff09a 42%,#ffc83d);opacity:1;
+  box-shadow:0 0 8px #ffe36c,0 0 18px rgba(255,190,37,.82),0 0 28px rgba(255,137,17,.42)}
 /* курсор живёт только пока идёт печать */
 .md:not(.typing) .caret{display:none}
 /* пока идёт печать, весь абзац еле заметно «подсвечен изнутри» — видно, что
@@ -1755,11 +1776,19 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   box-shadow:0 0 11px rgba(217,164,65,.72);animation:nowBeat 1.6s ease-in-out infinite}
 @keyframes nowBeat{50%{box-shadow:0 0 18px rgba(217,164,65,.88)}}
 .plan-copy{min-width:0}
-.important-trail{color:transparent;background:linear-gradient(90deg,rgba(217,164,65,.2),#ffe4a3);
-  -webkit-background-clip:text;background-clip:text;text-shadow:0 0 9px rgba(217,164,65,.22)}
+/* Один bounded span последних 5–6 букв: мягкий световой хвост без россыпи
+   DOM-узлов и layout thrashing. Цвет следует режиму текущего действия. */
+.typing-trail{transition:color .08s linear,text-shadow .08s linear}
+.normal-trail{color:transparent;
+  background:linear-gradient(90deg,rgba(72,206,255,.16),rgba(126,232,255,.58),#c9f7ff);
+  -webkit-background-clip:text;background-clip:text;
+  text-shadow:0 0 7px rgba(48,202,255,.42),0 0 13px rgba(0,138,255,.2)}
+.important-trail{color:transparent;background:linear-gradient(90deg,rgba(217,164,65,.2),#fff0a4);
+  -webkit-background-clip:text;background-clip:text;
+  text-shadow:0 0 8px rgba(255,218,80,.52),0 0 15px rgba(255,151,20,.25)}
 .important-caret{display:inline-block;width:6px;height:14px;margin-left:3px;vertical-align:-2px;border-radius:1px;
-  background:linear-gradient(180deg,#fff,#f4d27f 50%,var(--gold));
-  box-shadow:0 0 8px var(--gold),0 0 16px rgba(217,164,65,.42);
+  background:linear-gradient(180deg,#fff,#fff09a 45%,#ffc83d);
+  box-shadow:0 0 8px #ffe36c,0 0 18px rgba(255,190,37,.72);
   animation:twBlink 1.05s steps(1,end) infinite}
 .plan-card.plan-complete{border-color:rgba(63,191,149,.72);background:rgba(7,30,23,.95);
   box-shadow:0 0 26px rgba(63,191,149,.24);

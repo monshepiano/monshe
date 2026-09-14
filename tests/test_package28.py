@@ -99,14 +99,15 @@ class BackgroundRoutingTests(unittest.TestCase):
 
 
 class VisionUiContractTests(unittest.TestCase):
-    def test_contract_requires_style_tiles_without_duplicate_submit_ui(self) -> None:
-        contract = agent.VISION_UI_CONTRACT
+    def test_contract_requires_contextual_tiles_without_duplicate_submit_ui(self) -> None:
+        contract = agent.turn_ui_contract(has_image=True)
         self.assertIn("```ui", contract)
         self.assertRegex(contract, r"tiles\s+Стиль:")
-        self.assertIn("НЕ перечисляй варианты обычным Markdown-списком", contract)
-        self.assertIn("Не добавляй кнопку «Сгенерировать»", contract)
+        self.assertIn("Варианты не оформляй\nобычным Markdown-списком", contract)
+        self.assertIn("Не добавляй button\n«Сгенерировать»", contract)
         self.assertIn("«Свой вариант»", contract)
-        self.assertIn("Если стиль\nуже явно задан", contract)
+        self.assertIn("Если стиль уже\nявно задан", contract)
+        self.assertIn("НЕ показывай ui для\nфактического вопроса, сводки новостей", contract)
 
     def test_image_contract_and_payload_share_one_ordered_model_call(self) -> None:
         """The UI reminder is a message in the vision request, not a preflight LLM."""
@@ -157,15 +158,141 @@ class VisionUiContractTests(unittest.TestCase):
         blocking_chat.assert_not_called()
         messages = chat_stream.call_args.args[0]
         self.assertEqual(messages[0], {"role": "system", "content": "BASE SYSTEM"})
-        self.assertEqual(messages[-2], {"role": "system", "content": agent.VISION_UI_CONTRACT})
+        self.assertEqual(messages[-2], {
+            "role": "system", "content": agent.turn_ui_contract(has_image=True),
+        })
         self.assertEqual(messages[-1]["role"], "user")
         parts = messages[-1]["content"]
         self.assertEqual(parts[0], {"type": "text", "text": "Сделай мем"})
         self.assertEqual(parts[1]["type"], "image_url")
         self.assertEqual(parts[1]["image_url"]["url"], attachment["data"])
-        self.assertNotIn(agent.VISION_UI_CONTRACT, [
+        self.assertNotIn(agent.turn_ui_contract(has_image=True), [
             item.get("content") for item in messages[:-2] if item.get("role") == "system"
         ])
+
+    def test_creative_frame_classifier_stops_only_underspecified_generation(self) -> None:
+        self.assertTrue(agent.needs_creative_image_choice("Сделай мем", has_image=True))
+        self.assertTrue(agent.needs_creative_image_choice(
+            "Преврати это в постер", has_image=True,
+        ))
+        self.assertFalse(agent.needs_creative_image_choice(
+            "Сделай мем про понедельник", has_image=True,
+        ))
+        self.assertFalse(agent.needs_creative_image_choice(
+            "Сделай постер в стиле киберпанк", has_image=True,
+        ))
+        self.assertFalse(agent.needs_creative_image_choice(
+            "Что видно на фотографии?", has_image=True,
+        ))
+        self.assertFalse(agent.needs_creative_image_choice("Сделай мем", has_image=False))
+
+    def test_generate_image_cannot_run_before_contextual_choice(self) -> None:
+        """The contract is an execution gate, not a best-effort prompt hint."""
+        turns = iter(("forbidden-generate", "choice"))
+
+        def fake_stream(*_args, **_kwargs):
+            turn = next(turns)
+            if turn == "forbidden-generate":
+                yield {
+                    "type": "done",
+                    "tool_calls": [{
+                        "id": "image-before-choice",
+                        "type": "function",
+                        "function": {
+                            "name": "generate_image",
+                            "arguments": json.dumps({"prompt": "guess"}),
+                        },
+                    }],
+                }
+                return
+            text = (
+                "В кадре два человека у кофемашины — выбери шутку.\n\n"
+                "```ui\ntiles Стиль: спор за кофе | утро понедельника | офисный шпион\n```"
+            )
+            yield {"type": "delta", "text": text}
+            yield {"type": "done", "tool_calls": []}
+
+        route = {
+            "tier": "vision", "reason": "image", "score": 0,
+            "verbose": False, "offer_tools": True,
+        }
+        schema = [{
+            "type": "function",
+            "function": {"name": "generate_image", "parameters": {"type": "object"}},
+        }]
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=fake_stream), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(agent.tools, "call") as dispatch:
+            events = list(agent.Agent().run(
+                [{"role": "user", "content": "Сделай мем"}],
+                user_text="Сделай мем", has_image=True, require_ui_choice=True,
+            ))
+
+        dispatch.assert_not_called()
+        done = [event for event in events if event.get("type") == "done"][-1]
+        self.assertTrue(agent.has_choice_ui(done["content"]))
+        self.assertIn("кофемашины", done["content"])
+        self.assertNotIn("generate_image", done["tools"])
+
+    def test_choice_panel_and_generation_in_same_turn_still_cannot_dispatch(self) -> None:
+        """Rendering options is not consent; only the user's next turn is consent."""
+        panel = (
+            "Выбери идею для кадра.\n\n"
+            "```ui\ntiles Стиль: сухой юмор | киноафиша | ретро\n```"
+        )
+
+        def fake_stream(*_args, **_kwargs):
+            yield {"type": "delta", "text": panel}
+            yield {
+                "type": "done",
+                "tool_calls": [{
+                    "id": "premature-image",
+                    "type": "function",
+                    "function": {
+                        "name": "generate_image",
+                        "arguments": json.dumps({"prompt": "too early"}),
+                    },
+                }],
+            }
+
+        route = {
+            "tier": "vision", "reason": "image", "score": 0,
+            "verbose": False, "offer_tools": True,
+        }
+        schema = [{
+            "type": "function",
+            "function": {"name": "generate_image", "parameters": {"type": "object"}},
+        }]
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=fake_stream) as stream, \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(agent.tools, "call") as dispatch:
+            events = list(agent.Agent().run(
+                [{"role": "user", "content": "Сделай мем"}],
+                user_text="Сделай мем", has_image=True, require_ui_choice=True,
+            ))
+
+        stream.assert_called_once()
+        dispatch.assert_not_called()
+        done = [event for event in events if event.get("type") == "done"][-1]
+        self.assertEqual(done["content"], panel)
+        self.assertEqual(done["tools"], [])
+
+    def test_choice_fence_cannot_borrow_separator_from_later_text(self) -> None:
+        self.assertFalse(agent.has_choice_ui("```ui\ntext Тема\n```\nобычный A | B"))
+        self.assertTrue(agent.has_choice_ui("```ui\ntiles Тема: A | B\n```"))
+
+    def test_streamed_text_is_the_only_canonical_final_answer(self) -> None:
+        streamed = ["Шаг один завершён.\n\n", "Шаг два завершён.\n\n", "Полный итог."]
+        self.assertEqual(
+            server._canonical_response_content(streamed, "Только последний пункт."),
+            "".join(streamed),
+        )
+        self.assertEqual(
+            server._canonical_response_content([], "Непроточный ответ."),
+            "Непроточный ответ.",
+        )
 
     def test_direct_vision_endpoint_still_has_one_media_owner(self) -> None:
         handler = mock.Mock()

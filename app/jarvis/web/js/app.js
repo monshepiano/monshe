@@ -85,10 +85,10 @@ function fmtTime(ts) {
   if (d.toDateString() === today.toDateString()) return t;
   return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) + ' ' + t;
 }
-/* Дата принадлежит разговору, а не пузырю. Раньше старые сообщения получали
-   крошечную дату прямо на бейдже времени: она была плохо читаема и повторялась
-   у каждой реплики. Теперь контейнер разговора сам вставляет один центрированный
-   разделитель при смене календарного дня — как в Telegram/VK. */
+/* Telegram-подобная дата не живёт постоянной строкой в переписке. Каждая
+   реплика хранит свой календарный день в data-атрибутах, а маленький badge
+   появляется у верхней кромки только когда человек ушёл прокруткой от низа.
+   Поэтому дата не повторяется и не отнимает высоту у разговора. */
 function dayKey(ts) {
   const d = new Date((Number(ts) || Date.now() / 1000) * 1000);
   return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'),
@@ -109,25 +109,48 @@ function dayLabel(ts) {
   });
 }
 
-function ensureDaySeparator(host, ts) {
+function scrollDayMessage(host) {
   if (!host) return null;
-  const key = dayKey(ts);
-  // В обычном live/history append последний разделитель хранится на самом
-  // контейнере: так день проверяется за O(1), а длинная суточная переписка не
-  // превращает последовательную отрисовку в O(n²). После очистки/правки DOM
-  // кэш сам инвалидируется через isConnected/parentNode и сканирует хвост один раз.
-  let previous = host._daySeparator;
-  if (!previous || !previous.isConnected || previous.parentNode !== host) {
-    previous = host.lastElementChild;
-    while (previous && !previous.classList.contains('day-separator')) previous = previous.previousElementSibling;
-    host._daySeparator = previous || null;
+  const messages = $$('.msg', host).filter((node) => node.dataset && node.dataset.ts);
+  if (!messages.length) return null;
+  const edge = host.getBoundingClientRect().top + 10;
+  // Первый элемент, нижняя грань которого ещё не ушла за верх ленты, задаёт
+  // текущий день. Один линейный проход только по scroll animation frame;
+  // DOM не меняется и никаких дополнительных узлов на каждый день нет.
+  for (const node of messages) {
+    if (node.getBoundingClientRect().bottom > edge) return node;
   }
-  if (previous && previous.dataset.day === key) return null;
-  const sep = el('div', 'day-separator', '<span>' + esc(dayLabel(ts)) + '</span>');
-  sep.dataset.day = key;
-  host.appendChild(sep);
-  host._daySeparator = sep;
-  return sep;
+  return messages[messages.length - 1];
+}
+
+function setupScrollDate(host, badge) {
+  if (!host || !badge || host._scrollDateReady) return;
+  host._scrollDateReady = true;
+  let frame = 0;
+  let hideTimer = 0;
+  const hide = () => {
+    badge.classList.remove('show');
+    badge.setAttribute('aria-hidden', 'true');
+  };
+  const paint = () => {
+    frame = 0;
+    // Внизу дата не нужна: пользователь и так находится в сегодняшнем ходе.
+    if (host.scrollHeight - host.scrollTop - host.clientHeight < 18) {
+      clearTimeout(hideTimer);
+      hide();
+      return;
+    }
+    const node = scrollDayMessage(host);
+    if (!node) { hide(); return; }
+    badge.textContent = dayLabel(Number(node.dataset.ts));
+    badge.classList.add('show');
+    badge.setAttribute('aria-hidden', 'false');
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(hide, 1150);
+  };
+  host.addEventListener('scroll', () => {
+    if (!frame) frame = requestAnimationFrame(paint);
+  }, { passive: true });
 }
 
 /* Возле самой реплики остаётся только время. Сервер хранит Unix timestamp в
@@ -135,6 +158,8 @@ function ensureDaySeparator(host, ts) {
 function stampTime(node, ts) {
   if (!node) return null;
   const sec = Number(ts) || (Date.now() / 1000);
+  node.dataset.ts = String(sec);
+  node.dataset.day = dayKey(sec);
   const prev = node.querySelector('.msg-time');
   if (prev) prev.remove();
   const d = new Date(sec * 1000);
@@ -1029,7 +1054,6 @@ function addUserMsg(text, atts, info, hostOverride) {
   m.appendChild(acts);
 
   const host = hostOverride || msgHost();
-  ensureDaySeparator(host, info.ts);
   host.appendChild(m);
   scrollDown(true);
   return m;
@@ -1044,7 +1068,6 @@ function addAiMsg(ts, hostOverride) {
     '<div class="ai-content"></div></div>';
   stampTime(m, ts);
   const host = hostOverride || msgHost();
-  ensureDaySeparator(host, ts);
   host.appendChild(m);
   scrollDown(true);
   return {
@@ -2439,6 +2462,7 @@ async function send(opts) {
     mdEl: null,
     buffer: '',
     shown: '',
+    actionAccent: false, // закрытый yellow-mode: подтверждённое важное действие
     typer: null,
     onTyped: null,
     tools: {},
@@ -2796,7 +2820,7 @@ const TYPE_MS = 11;              // такт печати
    Теперь скорость задаётся в знаках в секунду, накапливается дробно и
    сглаживается, поэтому переходы не видны, а темп ровный. */
 const CPS_TALK = 95;             // разговор: его читают на ходу
-const CPS_IMPORTANT = 72;        // заголовок — чуть медленнее, без вязкости
+const CPS_IMPORTANT = 82;        // только заголовок — слегка медленнее, без вязкости
 const CPS_CODE = 400;            // код и таблицы: ровная средняя, без выстрелов
 /* 400 зн/с вместо прежних 1180. Прежнее «быстро» осушало буфер быстрее, чем
    модель успевала присылать, — печать выстреливала пачкой и замирала в
@@ -2836,6 +2860,16 @@ function fastLine(text) {
 function importantLine(text) {
   const nl = text.lastIndexOf('\n');
   return /^#{1,4}\s/.test(text.slice(nl + 1));
+}
+
+function headingEndedSince(text, from) {
+  let end = text.indexOf('\n', Math.max(0, Number(from) || 0));
+  while (end >= 0) {
+    const start = text.lastIndexOf('\n', end - 1) + 1;
+    if (/^#{1,4}\s+\S/.test(text.slice(start, end))) return true;
+    end = text.indexOf('\n', end + 1);
+  }
+  return false;
 }
 
 /* Инкрементальный рендер печати. Раньше каждый такт (70 раз в секунду)
@@ -2882,7 +2916,7 @@ function renderTyped(ui) {
   // только что был. Растёт — пожалуйста, это естественно.
   const before = ui.mdEl.offsetHeight;
   ui.mdEl.innerHTML = html + MD.render(stripSteps(text.slice(src.length)));
-  placeCaret(ui.mdEl);
+  placeCaret(ui.mdEl, ui.actionAccent);
   const after = ui.mdEl.offsetHeight;
   if (after < before) {
     ui.floor = Math.max(ui.floor || 0, before);
@@ -2906,14 +2940,14 @@ function clearTypingDecorations(mdEl) {
   if (!mdEl) return;
   const caret = mdEl.querySelector('.caret');
   if (caret) caret.remove();
-  const trail = mdEl.querySelector('.important-trail');
+  const trail = mdEl.querySelector('.typing-trail');
   if (trail && trail.parentNode) {
     trail.parentNode.insertBefore(document.createTextNode(trail.textContent || ''), trail);
     trail.remove();
   }
 }
 
-function placeCaret(mdEl) {
+function placeCaret(mdEl, actionAccent) {
   clearTypingDecorations(mdEl);
 
   // ПОЧЕМУ КУРСОР «ЗАДЕРЖИВАЛСЯ» ПОЗАДИ ТЕКСТА.
@@ -2942,26 +2976,27 @@ function placeCaret(mdEl) {
   const c = document.createElement('span');
   c.className = 'caret';
 
-  // Markdown-заголовки — ограниченный класс важных фраз. Только у них курсор
-  // золотой, а последние шесть символов получают один градиентный span.
-  // Никаких посимвольных россыпей узлов и layout-read здесь нет.
+  // Два закрытых визуальных режима. Обычный ответ всегда получает яркую синюю
+  // искру и один bounded span последних шести букв. Золотой режим включают
+  // markdown-заголовок ИЛИ факт реального действия (tool_start) — не список
+  // фраз/тем. Цвет не влияет на скорость: typer замедляет только heading line.
   let p = host;
-  let important = false;
+  let important = !!actionAccent;
   while (p && p !== mdEl) {
     if (/^H[1-4]$/.test(p.tagName || '')) { important = true; break; }
     p = p.parentNode;
   }
   const tail = host.lastChild;
-  if (important && tail && tail.nodeType === 3 && tail.nodeValue) {
+  if (tail && tail.nodeType === 3 && tail.nodeValue) {
     const chars = Array.from(tail.nodeValue);
     const cut = Math.max(0, chars.length - 6);
     tail.nodeValue = chars.slice(0, cut).join('');
     const trail = document.createElement('span');
-    trail.className = 'important-trail';
+    trail.className = 'typing-trail ' + (important ? 'important-trail' : 'normal-trail');
     trail.textContent = chars.slice(cut).join('');
     host.appendChild(trail);
-    c.classList.add('caret-important');
   }
+  if (important) c.classList.add('caret-important');
   host.appendChild(c);
 }
 
@@ -3011,17 +3046,18 @@ function typerStart(ui) {
     ui.acc -= step;
     if (step < 1) return;
 
+    const beforeLen = ui.shown.length;
     ui.shown = ui.buffer.slice(0, ui.shown.length + step);
     if (ui.mdEl) {
       ui.mdEl.classList.add('typing');
       renderTyped(ui);
     }
-    // Паузы — только в разговорной части: в коде «дыхание» неуместно, там оно
-    // читается как подтормаживание. Длину паузы соразмеряем с текущим темпом,
-    // иначе на быстром ходу она превращается в провал.
+    // Жёлтый action-текст идёт с обычной скоростью. Чуть более долгая
+    // читаемая пауза допустима только после фактически допечатанного heading;
+    // код по-прежнему движется ровно, без «дыхания».
     if (!code) {
       const last = ui.shown[ui.shown.length - 1];
-      const p = PAUSE_AFTER[last] || 0;
+      const p = headingEndedSince(ui.shown, beforeLen) ? 12 : (PAUSE_AFTER[last] || 0);
       ui.hold = p ? Math.max(1, Math.round(p * (CPS_TALK / ui.cps))) : 0;
     }
     scrollSoon(ui);
@@ -3149,21 +3185,20 @@ function settleVisualDone(ui) {
 function queueResponseFinish(ui, content, success) {
   if (ui.doneReceived) return;
   ui.doneReceived = true;
-  content = String(content || '');
+  const doneContent = String(content || '');
   if (!ui.mdEl) {
     ui.mdEl = el('div', 'md');
     ui.node.body.appendChild(ui.mdEl);
   }
 
-  // done.content обычно равен склеенным delta. Но при серверной коррекции он
-  // может перестать быть продолжением уже показанного текста; тогда нельзя
-  // считать одинаковую длину «готовностью» — печатаем исправленную версию.
-  if (!content.startsWith(ui.shown || '')) {
-    ui.shown = '';
-    ui.frozen = null;
-    ui.mdEl.innerHTML = '';
-  }
-  ui.buffer = content;
+  // У ответа один владелец: delta-buffer, уже увиденный браузером. Раньше
+  // несовпадающий done.content стирал весь DOM и запускал печать заново — в
+  // многошаговом AGENT это как раз заменяло полный ответ последним пунктом.
+  // Сервер теперь присылает каноническую склейку, но фронт всё равно не имеет
+  // права откатывать показанное. doneContent используется лишь для действительно
+  // непроточного ответа, когда ни одного delta не было.
+  if (!ui.buffer) ui.buffer = doneContent;
+  content = ui.buffer;
   ui.onTyped = () => {
     if (ui.visualDone) return;
     try {
@@ -3172,14 +3207,9 @@ function queueResponseFinish(ui, content, success) {
       ui.floor = 0;
       ui.mdEl.style.minHeight = '';
 
-      // Последний такт renderTyped уже построил полный markdown. Не заменяем
-      // innerHTML ещё раз: такая ненужная пересборка уничтожала DOM-якорь
-      // панели и на узкой камере визуально меняла её местами с текстом.
-      if (ui.shown !== content) {
-        ui.shown = content;
-        ui.frozen = null;
-        renderTyped(ui);
-      }
+      // Последний такт renderTyped уже построил полный markdown. Ничего не
+      // пересобираем и не присваиваем повторно: callback достигается только при
+      // ui.shown === ui.buffer, а buffer и есть канонический ответ.
       const panels = $$('.ui-panel', ui.mdEl);
       const scroller = ui.node.closest('.cam-chat') || stream();
       const keepScroll = panels.length && scroller ? scroller.scrollTop : null;
@@ -3311,6 +3341,7 @@ function handleEvent(ev, ui) {
     }
 
     case 'plan': {
+      ui.actionAccent = true;
       // Агент может составить план дважды за прогон (уточнил задачу — сделал
       // новый). Прежнюю панель и прежнюю карточку убираем, иначе первая так и
       // останется висеть наверху: undockPlan знает только про последнюю.
@@ -3363,6 +3394,9 @@ function handleEvent(ev, ui) {
       break;
 
     case 'tool_start': {
+      // Факт действия, а не догадка по теме, включает золотой cursor/glow.
+      // Скорость текста от этого не меняется — её задаёт только markdown mode.
+      ui.actionAccent = true;
       // раз дошло до инструментов — задача не «простая», кухню открываем
       ui.verbose = true;
       // «Глаза» агента (снимок экрана, параметры экрана) — служебные шаги.
@@ -3414,6 +3448,7 @@ function handleEvent(ev, ui) {
     }
 
     case 'approval_wait': {
+      ui.actionAccent = true;
       reactor('wait');
       busyMode(ui, ['Жду твоего решения', 'нужно подтверждение', '· ' + (ev.label || ev.tool || '')], 1500);
       const critical = /delete|shell|payment|pay|computer|click|type_text/.test(ev.tool || '');
@@ -3457,6 +3492,7 @@ function handleEvent(ev, ui) {
     // Уточняющий вопрос с готовыми вариантами. Джарвис останавливается и ждёт,
     // пока нажмут кнопку: лучше один вопрос, чем неверная догадка.
     case 'question': {
+      ui.actionAccent = true;
       reactor('wait');
       busyMode(ui, ['Жду твоего ответа', 'выбери вариант выше'], 1500);
       const card = questionCard(ev, (choice) => {
@@ -3518,6 +3554,7 @@ function handleEvent(ev, ui) {
     }
 
     case 'file': {
+      ui.actionAccent = true;
       ui.files.push(ev);
       const wrap = ui.filesBox || (ui.filesBox = el('div', ''));
       if (!wrap.parentNode) node.body.insertBefore(wrap, ui.statusEl);
@@ -4149,20 +4186,39 @@ function questionCard(ev, onPick) {
     '<div class="ask-h"><span class="ask-i">?</span>' + esc(ev.question || '') + '</div>' +
     '<div class="ask-opts"></div>';
   const box = card.querySelector('.ask-opts');
+  const pick = (value) => {
+    const answer = String(value || '').trim();
+    if (!answer || card.dataset.done === '1') return;
+    card.dataset.done = '1';
+    box.innerHTML = '<span class="ask-picked">✓ ' + esc(answer) + '</span>';
+    reactor('busy');            // ответ получен — Джарвис снова за работой
+    if (onPick) onPick(answer);
+    collapseToThumb(card, { cls: 'th-ask', icon: '?', title: 'Вопрос',
+                            sub: ev.question || '', tag: answer });
+  };
   opts.forEach((o, i) => {
     const tone = yesNo ? (i === 0 ? ' good' : ' bad') : '';
     const b = el('button', 'ask-opt' + tone, esc(o));
-    b.addEventListener('click', () => {
-      if (card.dataset.done === '1') return;
-      card.dataset.done = '1';
-      box.innerHTML = '<span class="ask-picked">✓ ' + esc(o) + '</span>';
-      reactor('busy');            // ответ получен — Джарвис снова за работой
-      if (onPick) onPick(o);
-      collapseToThumb(card, { cls: 'th-ask', icon: '?', title: 'Вопрос',
-                              sub: ev.question || '', tag: o });
-    });
+    b.addEventListener('click', () => pick(o));
     box.appendChild(b);
   });
+  // У любого живого выбора есть выход из конечного списка. Раньше ```ui уже
+  // добавлял «Свой вариант», а блокирующий ask_user — нет; один и тот же
+  // контракт интерфейса зависел от того, каким путём пошла модель.
+  if (onPick && !ev.answer) {
+    const own = el('div', 'ask-own');
+    const input = el('input', 'ask-own-i');
+    input.type = 'text'; input.placeholder = 'Свой вариант…';
+    const send = el('button', 'ask-own-go', ICO.send);
+    send.title = 'Отправить свой вариант';
+    send.disabled = true;
+    input.addEventListener('input', () => { send.disabled = !input.value.trim(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); pick(input.value); }
+    });
+    send.addEventListener('click', () => pick(input.value));
+    own.appendChild(input); own.appendChild(send); box.appendChild(own);
+  }
   // если ответ уже был дан раньше (перечитываем историю) — показываем выбор
   if (ev.answer) {
     card.dataset.done = '1';
@@ -5501,6 +5557,7 @@ window.addEventListener('keydown', (e) => {
 
 (async function init() {
   syncVoiceBtn();
+  setupScrollDate($('#stream'), $('#scrollDate'));
   $('#stream').appendChild(buildWelcome());
   // состояние и список диалогов тянем параллельно, а не гуськом.
   // Подсказки не ждём вовсе: экран уже показан со встроенными, а личные

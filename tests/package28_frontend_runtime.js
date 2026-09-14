@@ -110,6 +110,7 @@ class MiniNode {
     this.parentNode = null;
     this.dataset = {};
     this.style = {};
+    this.attributes = {};
     this.listeners = {};
     this.id = '';
     this._className = '';
@@ -200,7 +201,11 @@ class MiniNode {
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   addEventListener(name, fn) { this.listeners[name] = fn; }
   removeEventListener(name) { delete this.listeners[name]; }
-  getBoundingClientRect() { return { top: 100, left: 30, width: 500, height: 120 }; }
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+  getAttribute(name) { return this.attributes[name] == null ? null : this.attributes[name]; }
+  getBoundingClientRect() {
+    return this._rect || { top: 100, bottom: 220, left: 30, width: 500, height: 120 };
+  }
 }
 
 const miniDocument = {
@@ -238,50 +243,62 @@ function testLiveStatusHasNoSpinner() {
   assert.strictEqual(q.textContent, 'проверяю', 'work labels must stay alive');
 }
 
-function testDaySeparatorsAndTimeOnlyMeta() {
+function testTelegramDateHudAndTimeOnlyMeta() {
   const host = new MiniNode('div');
-  const ctx = loadFunctions(['dayKey', 'dayLabel', 'ensureDaySeparator', 'stampTime'], {
-    Date, Number, String, Math, document: miniDocument, el: miniEl, esc: (text) => String(text),
-  });
-  const d1 = Date.parse('2026-09-14T10:00:00Z') / 1000;
-  const d2 = Date.parse('2026-09-15T10:00:00Z') / 1000;
-  assert(ctx.ensureDaySeparator(host, d1));
-  host.appendChild(new MiniNode('div'));
-  assert.strictEqual(ctx.ensureDaySeparator(host, d1), null, 'one separator per calendar day');
-  assert(ctx.ensureDaySeparator(host, d2), 'calendar change must add a separator');
-  assert.strictEqual(host.querySelectorAll('.day-separator').length, 2);
+  host._rect = { top: 50, bottom: 450, left: 0, width: 700, height: 400 };
+  host.scrollHeight = 1200; host.scrollTop = 300; host.clientHeight = 400;
+  const old = new MiniNode('div'); old.className = 'msg';
+  old.dataset.ts = String(Date.parse('2026-09-14T10:00:00Z') / 1000);
+  old._rect = { top: 0, bottom: 40, left: 0, width: 500, height: 40 };
+  const visible = new MiniNode('div'); visible.className = 'msg';
+  visible.dataset.ts = String(Date.parse('2026-09-15T10:00:00Z') / 1000);
+  visible._rect = { top: 65, bottom: 125, left: 0, width: 500, height: 60 };
+  host.appendChild(old); host.appendChild(visible);
+  const badge = new MiniNode('div');
+  const timers = [];
+  const frames = [];
+  const ctx = loadFunctions(
+    ['dayKey', 'dayLabel', 'scrollDayMessage', 'setupScrollDate', 'stampTime'],
+    {
+      Date, Number, String, Math, document: miniDocument, el: miniEl,
+      esc: (text) => String(text),
+      $$: (selector, node) => node.querySelectorAll(selector),
+      requestAnimationFrame(fn) { frames.push(fn); return frames.length; },
+      setTimeout(fn, ms) { timers.push({ fn, ms }); return timers.length; },
+      clearTimeout() {},
+    },
+  );
+  ctx.setupScrollDate(host, badge);
+  assert(host.listeners.scroll, 'date HUD must subscribe to the transcript scroll');
+  host.listeners.scroll(); frames.shift()();
+  assert.strictEqual(badge.textContent, ctx.dayLabel(Number(visible.dataset.ts)),
+    'first visible message owns the transient calendar label');
+  assert(badge.classList.contains('show'));
+  assert.strictEqual(badge.getAttribute('aria-hidden'), 'false');
+  const hide = timers.find((timer) => timer.ms === 1150);
+  assert(hide, 'date HUD must schedule disappearance');
+  hide.fn();
+  assert(!badge.classList.contains('show'));
+  assert.strictEqual(badge.getAttribute('aria-hidden'), 'true');
 
-  // Hot append path must use the separator cache, never walk backwards through
-  // all messages from the same day (which made a long transcript O(n²)).
-  const guardedTail = new MiniNode('div');
-  Object.defineProperty(guardedTail, 'previousElementSibling', {
-    configurable: true,
-    get() { throw new Error('linear separator scan on cached append'); },
-  });
-  host.appendChild(guardedTail);
-  assert.strictEqual(ctx.ensureDaySeparator(host, d2), null);
-
-  // Clearing/removing DOM invalidates the cache and permits exactly one
-  // fallback reconstruction before normal O(1) appends resume.
-  const cached = host._daySeparator;
-  cached.remove();
-  delete guardedTail.previousElementSibling;
-  const rebuilt = ctx.ensureDaySeparator(host, d2);
-  assert(rebuilt && rebuilt !== cached, 'detached separator cache must be rebuilt');
-  assert.strictEqual(host._daySeparator, rebuilt);
+  host.scrollTop = host.scrollHeight - host.clientHeight;
+  host.listeners.scroll(); frames.shift()();
+  assert(!badge.classList.contains('show'), 'date stays hidden at transcript bottom');
 
   const msg = new MiniNode('div');
   const bubble = new MiniNode('div');
   bubble.className = 'bubble-user';
   msg.appendChild(bubble);
-  const stamp = ctx.stampTime(msg, d2);
+  const stamp = ctx.stampTime(msg, Number(visible.dataset.ts));
   assert(stamp.classList.contains('msg-time'));
   assert(stamp.classList.contains('in-bubble'));
   assert(!stamp.classList.contains('two'), 'live message meta must contain time only');
   assert(!/\d{2}\.\d{2}/.test(stamp.textContent), 'date must not be repeated beside a message');
+  assert.strictEqual(msg.dataset.day, ctx.dayKey(Number(visible.dataset.ts)));
 
-  assert(/\.day-separator\s*\{[^}]*display\s*:\s*flex[^}]*align-items\s*:\s*center/s.test(css));
-  assert(/\.day-separator::before,\.day-separator::after\s*\{/.test(css));
+  assert(/class="scroll-date"\s+id="scrollDate"/.test(html));
+  assert(/\.scroll-date\s*\{[^}]*position\s*:\s*absolute[^}]*opacity\s*:\s*0/s.test(css));
+  assert(!/\.day-separator\s*\{/.test(css), 'per-message static calendar rows must be gone');
   assert(/\.msg-time\.two\.in-bubble\s*\{[^}]*display\s*:\s*flex/s.test(css),
     'legacy saved two-line stamps must remain readable');
 }
@@ -308,13 +325,18 @@ function testFileViewportAndCloseButton() {
 }
 
 function testImportantHeadingCaretAndTrail() {
-  const ctx = loadFunctions(['importantLine', 'clearTypingDecorations', 'placeCaret'], {
-    document: miniDocument,
-  });
+  const ctx = loadFunctions(
+    ['importantLine', 'headingEndedSince', 'clearTypingDecorations', 'placeCaret'],
+    { document: miniDocument },
+  );
   assert.strictEqual(ctx.importantLine('текст\n### Важное действие'), true);
   assert.strictEqual(ctx.importantLine('текст\n- обычный пункт'), false);
-  assert(/const CPS_IMPORTANT\s*=\s*72/.test(js));
-  assert(/importantLine\(ui\.shown\)/.test(js), 'typer must select the important heading rate');
+  assert.strictEqual(ctx.headingEndedSince('вступление\n## Заголовок\nтекст', 10), true);
+  assert.strictEqual(ctx.headingEndedSince('обычный текст\nпродолжение', 0), false);
+  assert(/const CPS_IMPORTANT\s*=\s*82/.test(js));
+  assert(/importantLine\(ui\.shown\)/.test(js), 'typer must select the heading-only rate');
+  assert(/headingEndedSince\(ui\.shown,\s*beforeLen\)/.test(js),
+    'only a completed markdown heading adds the deliberate pause');
 
   const md = new MiniNode('div');
   const heading = new MiniNode('h2');
@@ -345,8 +367,25 @@ function testImportantHeadingCaretAndTrail() {
   ctx.placeCaret(plain);
   assert(!plain.querySelector('.caret').classList.contains('caret-important'));
   assert.strictEqual(plain.querySelector('.important-trail'), null);
-  assert(/\.caret\.caret-important\s*\{[^}]*var\(--gold\)[^}]*box-shadow/s.test(css));
-  assert(/\.important-trail\s*\{[^}]*linear-gradient/s.test(css));
+  assert.strictEqual(Array.from(plain.querySelector('.normal-trail').textContent).length, 6,
+    'ordinary typing has the same bounded six-character blue trail');
+  ctx.placeCaret(plain, true);
+  assert(plain.querySelector('.caret').classList.contains('caret-important'),
+    'a real action can enter important mode without changing typer speed');
+  assert(plain.querySelector('.important-trail'));
+  assert(/\.caret\s*\{[^}]*#00bff3[^}]*box-shadow/s.test(css), 'normal cursor is visibly bright blue');
+  assert(/\.caret\.caret-important\s*\{[^}]*#ffc83d[^}]*box-shadow/s.test(css));
+  assert(/\.normal-trail\s*\{[^}]*linear-gradient[^}]*text-shadow/s.test(css));
+  assert(/\.important-trail\s*\{[^}]*linear-gradient[^}]*text-shadow/s.test(css));
+  const events = extractFunction(js, 'handleEvent');
+  ['plan', 'tool_start', 'approval_wait', 'question', 'file'].forEach((type) => {
+    const at = events.indexOf("case '" + type + "'");
+    assert(at >= 0 && /ui\.actionAccent\s*=\s*true/.test(events.slice(at, at + 700)),
+      type + ' must enable the closed important-action visual mode');
+  });
+  const question = extractFunction(js, 'questionCard');
+  assert(/ask-own/.test(question) && /Свой вариант/.test(question),
+    'blocking ask_user controls must offer the same custom answer escape hatch');
 }
 
 function makePlanItem(text) {
@@ -448,8 +487,17 @@ function testPlanTypingCompletionAndDockRaces() {
   const current = css.match(/\.pd-s\.now \.pd-cap\s*\{([^}]*)\}/s);
   assert(current && /color\s*:\s*#ffd98a/.test(current[1]), 'current step uses a nearby brighter gold');
   assert(/\.plan-card\.plan-complete/.test(css) && /\.plan-dock\.done/.test(css));
+  const doneRule = css.match(/\.plan-dock\.done\s*\{([^}]*)\}/s);
+  assert(doneRule && /background\s*:\s*linear-gradient\([^}]*rgba\(7,30,23/.test(doneRule[1]),
+    'the complete dock itself, not just its labels, turns green immediately');
   assert(!/collapseSoon\s*\(\s*(?:ui\.)?planCard/.test(extractFunction(js, 'undockPlan')),
     'completion must never return a plan thumbnail');
+  const finish = extractFunction(js, 'queueResponseFinish');
+  assert(/if\s*\(!ui\.buffer\)\s*ui\.buffer\s*=\s*doneContent/.test(finish));
+  assert(/content\s*=\s*ui\.buffer/.test(finish));
+  assert(!/ui\.shown\s*=\s*['"]{2}/.test(finish),
+    'done must never erase a fully streamed multi-step answer and retype the last step');
+  assert(!/ui\.mdEl\.innerHTML\s*=\s*['"]{2}/.test(finish));
 }
 
 function testRepeatedPlanEventReplacesOwnership() {
@@ -694,8 +742,10 @@ async function testCameraLifecycleOwnershipAndLateResults() {
 function testThinkingGradientContract() {
   const rule = css.match(/\.think-card\.live \.think-stream::after\s*\{([^}]*)\}/s);
   assert(rule, 'live thinking must have one moving overlay');
-  assert(/opacity\s*:\s*\.14/.test(rule[1]));
-  assert(/linear-gradient/.test(rule[1]));
+  const opacity = Number((rule[1].match(/opacity\s*:\s*([\d.]+)/) || [])[1]);
+  assert(opacity >= 0.6, 'thinking gradient must be visibly brighter than the former .14 haze');
+  assert(/rgba\(92,245,255,\.6\)/.test(rule[1]));
+  assert(/rgba\(190,146,255,\.72\)/.test(rule[1]));
   assert(/animation\s*:\s*thinkNeon/.test(rule[1]));
   assert(/@keyframes thinkNeon/.test(css));
   assert(!/\.think-stream::(?:before|after)[^{]*\{[^}]*caret/s.test(css),
@@ -704,7 +754,7 @@ function testThinkingGradientContract() {
 
 (async () => {
   testLiveStatusHasNoSpinner();
-  testDaySeparatorsAndTimeOnlyMeta();
+  testTelegramDateHudAndTimeOnlyMeta();
   testFileViewportAndCloseButton();
   testImportantHeadingCaretAndTrail();
   testPlanTypingCompletionAndDockRaces();
