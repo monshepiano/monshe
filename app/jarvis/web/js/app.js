@@ -30,6 +30,7 @@ const S = {
   notifications: [],
   unread: 0,
   camStream: null,
+  camRun: 0,          // поколение media-запроса: поздний getUserMedia не воскресит закрытую камеру
   recorder: null,
   recChunks: [],
   pendingApprovalNode: null,
@@ -577,7 +578,7 @@ function startRenameChat(item, c) {
 }
 
 function newChat() {
-  if (S.camStream) stopCam();          // камера жила в старом диалоге — гасим
+  if (S.camNode || S.camStream) stopCam(); // чистим и активный, и ошибочный/pending-сеанс
   S.sanctionNodes = {};
   S.chatId = null;
   S.fdir = '';
@@ -590,7 +591,7 @@ function newChat() {
 $('#newChatBtn').addEventListener('click', newChat);
 
 async function openChat(id) {
-  if (S.camStream) stopCam();
+  if (S.camNode || S.camStream) stopCam();
   // Уходим из диалога во время ответа: генерацию НЕ обрываем — сервер доведёт
   // её до конца и сохранит в переписку. Просто отпускаем интерфейс.
   if (S.streaming && id !== S.chatId) {
@@ -1501,6 +1502,10 @@ function dockPlan(ui) {
 
   const n = ui.planItems.length;
   const dock = el('div', 'plan-dock');
+  // Владелец записан на самом DOM-узле. Даже если ссылка ui.planDock будет
+  // потеряна при смене контейнера камеры, завершение найдёт и уберёт СВОЙ dock,
+  // не задевая план более нового ответа.
+  dock.dataset.runId = String(ui.runId);
   dock.innerHTML =
     '<div class="pd-top">' +
       '<span class="pd-ico">☰</span>' +
@@ -1577,24 +1582,30 @@ function undockPlan(ui) {
     li.classList.remove('plan-pending');
     if (ui.planList && !li.parentNode) ui.planList.appendChild(li);
   });
-  const dock = ui.planDock;
+  const owned = $$('.plan-dock').filter((d) => d.dataset.runId === String(ui.runId));
+  const dock = ui.planDock || owned[owned.length - 1] || null;
   const card = ui.planCard;
   ui.planDock = null;
-  if (dock) {
-    dock.classList.remove('live');
-    dock.classList.add('done');
-    const t = dock.querySelector('.pd-t');
+  // Убираем только dock этого прогона. Dataset-владелец закрывает редкую дыру,
+  // когда карточка камеры сменила DOM-контейнер и JS-ссылка потерялась. Каждый
+  // найденный дубль получает transitionend И резервный таймер — панель не
+  // может остаться поверх камеры навсегда даже при отменённой CSS-анимации.
+  (owned.length ? owned : (dock ? [dock] : [])).forEach((ownDock) => {
+    ownDock.classList.remove('live');
+    ownDock.classList.add('done');
+    const t = ownDock.querySelector('.pd-t');
     if (t) t.textContent = 'План выполнен';
-    const fill = dock.querySelector('.pd-fill');
+    const fill = ownDock.querySelector('.pd-fill');
     if (fill) fill.style.width = '100%';
     setTimeout(() => {
-      dock.style.transform = 'translateY(-16px) scale(.94)';
-      dock.style.opacity = '0';
-      setTimeout(() => dock.remove(), 300);
-    }, 700);
-  }
-  // Удаляем только dock этого прогона. Глобальный отложенный cleanup здесь
-  // опасен: старый диалог мог через секунду снести уже новый активный план.
+      if (!ownDock.isConnected) return;
+      const remove = () => ownDock.remove();
+      ownDock.addEventListener('transitionend', remove, { once: true });
+      ownDock.style.transform = 'translateY(-12px) scale(.96)';
+      ownDock.style.opacity = '0';
+      setTimeout(remove, 360);
+    }, 700); // коротко показываем «План выполнен»; полностью исчезает примерно за 1 с
+  });
 
   if (!card || !card.isConnected) return;
   card.style.display = '';
@@ -2411,12 +2422,10 @@ async function fetchReplies() {
 }
 
 /* ============ состояние «думаю» и остальные статусы ============
-   Пока JARVIS молчит перед первым словом, крутилка не нужна: вместо неё
-   мигает курсор — тот самый, что через мгновение поедет вместе с текстом.
-   Справа от него очень мелкая подпись, которая сама себя подменяет, создавая
-   ощущение, что внутри действительно что-то происходит.
-   Во ВСЕХ остальных состояниях (инструмент, ожидание, шаг плана) крутилка
-   возвращается: там она честно показывает работу, а не пустое ожидание. */
+   Пока JARVIS молчит перед первым словом, мигает тот же курсор, который затем
+   поедет вместе с текстом. Инструменты, шаги плана и ожидание используют его
+   же: единый индикатор не меняет форму и не может «застыть кружком» между фазами.
+   Справа живёт мелкая подпись; если фраз несколько, они сменяют друг друга. */
 const THINK_QUIPS = [
   'думаю', 'взвешиваю', 'соображаю', 'подбираю слова', 'листаю память',
   'связываю мысли', 'проверяю себя', 'ищу формулировку', 'считаю варианты',
@@ -2429,9 +2438,9 @@ const THINK_QUIPS = [
    надпись рядом с крутилкой. Всё, что не «думаю» (инструмент, ожидание,
    шаг плана), попадало во вторую и замирало. Дело не в оформлении, а в
    том, что механизм смены текста существовал только у одного состояния.
-   Теперь механизм ОДИН: runStatus крутит любой набор строк. Разница между
-   состояниями осталась только в том, что это за строки и что стоит слева —
-   мигающий курсор ожидания или крутилка работы. */
+   Теперь механизм ОДИН: runStatus крутит любой набор строк, а слева всегда
+   живёт мигающий курсор. Круглый spinner исключён из жизненного цикла ответа:
+   при долгом ожидании и при «уменьшить движение» он выглядел зависшим. */
 function runStatus(ui, lines, opts) {
   const box = ui && ui.statusEl;
   if (!box) return;
@@ -2439,10 +2448,9 @@ function runStatus(ui, lines, opts) {
   const list = (Array.isArray(lines) ? lines : [lines]).filter(Boolean);
   if (!list.length) return;
   stopQuips(ui);
-  box.className = 'thinking-line' + (o.caret ? ' think-wait' : '');
-  box.innerHTML = (o.caret ? '<span class="tw-caret"></span>' : '<span class="spinner"></span>')
-    + '<span class="' + (o.caret ? 'tw-quip' : 'st-text') + '"></span>';
-  const q = box.querySelector(o.caret ? '.tw-quip' : '.st-text');
+  box.className = 'thinking-line ' + (o.caret ? 'think-wait' : 'work-wait');
+  box.innerHTML = '<span class="tw-caret"></span><span class="tw-quip"></span>';
+  const q = box.querySelector('.tw-quip');
   const swap = (txt) => {
     q.classList.remove('in'); void q.offsetWidth;
     q.textContent = txt; q.classList.add('in');
@@ -2569,8 +2577,8 @@ function stopQuips(ui) {
   if (ui && ui.quipTimer) { clearInterval(ui.quipTimer); ui.quipTimer = null; }
 }
 
-/* Обычный статус: крутилка + текст. Принимает и одну строку, и набор —
-   тогда строки сменяют друг друга, как у «думаю». */
+/* Обычный статус: тот же мигающий курсор + текст. Принимает и одну строку,
+   и набор — тогда строки сменяют друг друга, как у «думаю». */
 function busyMode(ui, text, every) {
   runStatus(ui, text, { caret: false, every: every || 1500 });
 }
@@ -3071,8 +3079,8 @@ function handleEvent(ev, ui) {
       break;
 
     case 'status':
-      // Состояние приходит с сервера полем phase, а не угадывается по тексту:
-      // "думаю" — мигающий курсор с меняющейся подписью, всё прочее — крутилка.
+      // Состояние приходит с сервера полем phase, а не угадывается по тексту.
+      // Во всех фазах — живой курсор; think дополнительно перебирает реплики.
       if (ev.phase === 'think') thinkMode(ui);
       else busyMode(ui, ev.text);
       break;
@@ -3659,53 +3667,95 @@ function buildCamCard() {
 }
 
 async function startCam() {
-  if (S.camNode) return;
+  // Уже ИДЁТ трансляция — повторный клик ничего не дублирует. Одного наличия
+  // camNode недостаточно: после отказа permission карточка остаётся с ошибкой,
+  // и именно старый `if (S.camNode) return` навсегда блокировал повторную попытку.
+  if (S.camStream) return;
   showView('chat');
   killWelcome();
-  // Каждое включение камеры — чистый лист: разговор «что я вижу» не должен
-  // ни продолжать прошлый сеанс, ни примешиваться к основному диалогу.
-  S.camChatId = null;
-  S.camLink = false;                   // по умолчанию камера вне контекста
-  S.camNode = buildCamCard();
-  stream().appendChild(S.camNode);
-  const link = $('#camLink');
-  if (link) {
-    link.checked = false;
-    link.addEventListener('change', () => {
-      S.camLink = link.checked;
-      blip(link.checked);
-      camSay(link.checked
-        ? 'Теперь вижу текущий диалог — отвечаю с учётом того, о чём мы говорили.'
-        : 'Отвязался от диалога: снова смотрю только на кадр.', 'sys');
-    });
+
+  // Потерянный/disconnected узел не является живым сеансом.
+  if (S.camNode && !S.camNode.isConnected) S.camNode = null;
+  if (!S.camNode) {
+    // Каждое новое окно камеры — чистый изолированный разговор.
+    S.camChatId = null;
+    S.camLink = false;
+    S.camNode = buildCamCard();
+    stream().appendChild(S.camNode);
+    const link = S.camNode.querySelector('#camLink');
+    if (link) {
+      link.checked = false;
+      link.addEventListener('change', () => {
+        S.camLink = link.checked;
+        blip(link.checked);
+        camSay(link.checked
+          ? 'Теперь вижу текущий диалог — отвечаю с учётом того, о чём мы говорили.'
+          : 'Отвязался от диалога: снова смотрю только на кадр.', 'sys');
+      });
+    }
+    // окно камеры сворачивается кликом по любому пустому месту (не по видео)
+    addFoldButton(S.camNode, { cls: 'th-cam', icon: ICO.cam, title: 'Камера', tag: 'свёрнута' });
+    scrollDown(true);
   }
-  // окно камеры сворачивается кликом по любому пустому месту (не по видео)
-  addFoldButton(S.camNode, { cls: 'th-cam', icon: ICO.cam, title: 'Камера', tag: 'свёрнута' });
-  scrollDown(true);
+
+  const run = ++S.camRun;
+  camState('включаю камеру…', false);
   try {
-    S.camStream = await navigator.mediaDevices.getUserMedia({
+    // Держим stream локально до проверки поколения. Если пользователь успел
+    // выключить камеру или сменить чат, поздний Promise обязан сразу отпустить
+    // hardware, а не воскресить невидимый старый сеанс.
+    const media = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment', width: { ideal: 1280 } }, audio: false,
     });
-    $('#cam').srcObject = S.camStream;
+    if (run !== S.camRun || !S.cameraOn || !S.camNode || !S.camNode.isConnected) {
+      media.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    S.camStream = media;
+    const video = S.camNode.querySelector('#cam');
+    if (video) video.srcObject = media;
+    // macOS/Safari может завершить track сам (смена устройства, системная
+    // блокировка). Сбрасываем именно активное поколение — иначе camStream
+    // остаётся truthy и следующий startCam ошибочно считает камеру включённой.
+    media.getVideoTracks().forEach((track) => track.addEventListener('ended', () => {
+      if (run !== S.camRun || S.camStream !== media) return;
+      if (S.camTimer) { clearInterval(S.camTimer); S.camTimer = null; }
+      S.camStream = null;
+      if (video) video.srcObject = null;
+      S.camPrevPix = null;
+      S.cameraOn = false;
+      const toggle = $('#tgCamera');
+      if (toggle) toggle.classList.remove('on');
+      camState('трансляция остановлена · включи снова', false);
+    }));
     camState('трансляция · смотрю', true);
     camSay('Камера включена. Смотрю, что происходит.', 'sys');
     sfx('start');
     S.camPrevPix = null;
+    if (S.camTimer) clearInterval(S.camTimer);
     S.camTimer = setInterval(camTick, CAM_TICK);
   } catch (e) {
-    camState('нет доступа к камере', false);
-    camSay('Не получилось включить камеру: браузер не дал доступ. Разреши камеру для этого сайта.', 'err');
+    // Ошибка уже отменённого запроса не имеет права портить новый сеанс.
+    if (run !== S.camRun) return;
+    S.camStream = null;
+    S.cameraOn = false;
+    const toggle = $('#tgCamera');
+    if (toggle) toggle.classList.remove('on');
+    camState('нет доступа к камере · можно повторить', false);
+    camSay('Не получилось включить камеру: браузер не дал доступ. Разреши камеру для этого сайта и включи её снова.', 'err');
     toast('Нет доступа к камере', 'error');
   }
 }
 
 function stopCam() {
+  // Отменяет и уже работающую трансляцию, и ещё не завершившийся getUserMedia.
+  ++S.camRun;
   if (S.camTimer) { clearInterval(S.camTimer); S.camTimer = null; }
   if (S.camStream) { S.camStream.getTracks().forEach((t) => t.stop()); S.camStream = null; }
-  const v = $('#cam');
+  const node = S.camNode;
+  const v = node && node.querySelector('#cam');
   if (v) v.srcObject = null;
-  if (S.camNode) {
-    const node = S.camNode;
+  if (node) {
     node.classList.add('done');
     camState('трансляция завершена', false);
     // блок камеры отработал — сворачиваем его в компактную строку
@@ -3717,8 +3767,10 @@ function stopCam() {
     S.camNode = null;
   }
   S.camPrevPix = null;
+  S.camBusy = false;
   S.cameraOn = false;
-  $('#tgCamera').classList.remove('on');
+  const toggle = $('#tgCamera');
+  if (toggle) toggle.classList.remove('on');
 }
 
 function camState(text, live) {
@@ -4508,10 +4560,13 @@ function fileCard(f, i) {
     // Нативный drag-and-drop после отпускания иногда синтезирует click по
     // исходной карточке. Это не прямой клик и не должно открывать терминал.
     if (Date.now() - fileDragEndedAt < 260) { e.preventDefault(); return; }
-    // Cmd/Ctrl и Shift — только выделение, без открытия: в Finder так же
+    // Cmd/Ctrl и Shift — только выделение, без открытия: в Finder так же.
+    // Прямой клик, наоборот, только открывает: старая selectOnly() включала
+    // заодно синюю галочку и панель массовых операций, хотя человек ничего
+    // не выбирал.
     if (e.metaKey || e.ctrlKey) { e.preventDefault(); selectToggle(f.path); return; }
     if (e.shiftKey) { e.preventDefault(); selectRange(f.path); return; }
-    selectOnly(f.path);
+    clearSelection();
     if (f.is_dir) { closeFileView(); loadFiles(f.path); }
     else viewFile(f, c);
   });

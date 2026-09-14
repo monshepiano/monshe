@@ -367,6 +367,10 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .msg-time.in-bubble{display:block;width:max-content;margin:6px 0 -2px auto;
   color:#cfe0ff;border-color:rgba(147,158,219,.45);background:rgba(10,14,32,.7);
   box-shadow:none;opacity:.85}
+/* Одинаковая специфичность .two и .in-bubble раньше приводила к тому, что
+   более поздний display:block склеивал два узла в «19.0800:07». Явно
+   сохраняем двухстрочную геометрию у старых сообщений. */
+.msg-time.two.in-bubble{display:flex;flex-direction:column;align-items:center;gap:1px}
 /* в узкой колонке камеры бейдж времени у ответа не нужен — он налезает на текст */
 .cam-chat .msg-ai > .ai-avatar > .msg-time{bottom:-8px;font-size:9px;padding:2px 4px}
 
@@ -409,25 +413,22 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 
 /* «думает» */
 .thinking-line{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--tx2);padding:5px 2px}
-/* Кружок работы — просто синий, одноцветный. Двухцветная «гоночная» окружность
-   спорила за внимание с бегущей строкой справа: смотреть надо на слова, а
-   кружок лишь отмечает, что работа идёт. */
-.spinner{width:13px;height:13px;border-radius:50%;border:2px solid rgba(0,200,240,.2);
-  border-top-color:var(--cy);animation:spin .8s linear infinite;flex-shrink:0}
+/* Круглого spinner здесь намеренно нет: у ответа один индикатор — живой курсор. */
 .dots span{display:inline-block;width:4px;height:4px;margin:0 1.5px;border-radius:50%;background:var(--cy);
   animation:bounce 1.3s infinite}
 .dots span:nth-child(2){animation-delay:.18s;background:var(--teal)}
 .dots span:nth-child(3){animation-delay:.36s;background:var(--violet)}
 @keyframes bounce{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-5px);opacity:1}}
-/* --- состояние «думаю»: мигающий курсор вместо крутилки ---
+/* --- единый живой курсор статуса ---
    Курсор тот же самый, что через миг поедет вместе с текстом ответа, поэтому
-   ожидание и печать читаются как одно непрерывное движение. Подпись справа
-   намеренно крошечная: она развлекает, но не спорит с ответом за внимание. */
-.think-wait{gap:7px;padding:6px 2px}
+   ожидание, инструменты и печать читаются как одно непрерывное движение. */
+.think-wait,.work-wait{gap:7px;padding:6px 2px}
 .tw-caret{display:inline-block;width:7px;height:15px;border-radius:2px;flex-shrink:0;
   background:linear-gradient(180deg,#fff,var(--cy2) 55%,var(--cy));
   box-shadow:0 0 8px var(--cy),0 0 18px rgba(0,200,240,.6);
   animation:twBlink 1.05s steps(1,end) infinite}
+.work-wait .tw-caret{background:linear-gradient(180deg,#fff,#f4d27f 55%,var(--gold));
+  box-shadow:0 0 8px var(--gold),0 0 18px rgba(217,164,65,.45)}
 @keyframes twBlink{0%,49%{opacity:1}50%,100%{opacity:.12}}
 /* ЖИВАЯ ПОДПИСЬ СТАТУСА.
    Была 9.5px цветом --tx3 (#4d6d84) при opacity .62 — на тёмном фоне это
@@ -1120,6 +1121,11 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .term-act{padding:3px 9px;border-radius:7px;border:1px solid rgba(63,191,149,.3);background:transparent;
   color:var(--green);font-family:var(--ff);font-size:10.5px;letter-spacing:.4px;cursor:pointer;transition:.18s}
 .term-act:hover{background:rgba(63,191,149,.14);border-color:var(--green)}
+.term-act.term-close{width:25px;height:25px;padding:0;display:grid;place-items:center;
+  border:0;border-radius:50%;font-family:Arial,sans-serif;font-size:21px;line-height:1;
+  color:var(--tx2)}
+.term-act.term-close[hidden]{display:none}
+.term-act.term-close:hover{color:#fff;background:rgba(221,85,102,.18)}
 .term-file{color:#cfe9ff}
 .term-file .tf-head{color:var(--gold);font-family:var(--fm);font-size:10.5px;letter-spacing:1px;
   padding-bottom:6px;margin-bottom:8px;border-bottom:1px solid rgba(217,164,65,.22)}
@@ -1733,23 +1739,22 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 }
 
 
-/* ===== Пакет 27: рабочая область файлов =====
-   Терминал больше не занимает постоянную строку под сеткой. Он отсутствует из
-   layout, пока пользователь напрямую не открыл файл; затем становится второй
-   колонкой, поэтому сетка честно пересчитывает доступную ширину. */
-.files-work{flex:1 1 auto;min-height:0;display:flex;align-items:stretch;gap:14px;
-  padding:6px 26px 20px;overflow:hidden}
-.files-work>.file-grid{flex:1 1 auto;min-width:0;padding:0;transition:flex-basis .32s ease}
-.files-work>.term-block{margin:0;min-width:300px;flex:0 1 min(42%,500px);min-height:0}
+/* ===== Пакет 28: рабочая область файлов =====
+   Единый вертикальный поток: сетка сверху, терминал предпросмотра под ней.
+   Пока пользователь напрямую не открыл файл, терминала в layout нет. */
+.files-work{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:14px;
+  padding:6px 26px 20px;overflow:auto}
+.files-work>.file-grid{flex:0 0 auto;width:100%;min-width:0;padding:0}
+.files-work>.term-block{margin:0;width:100%;min-width:0;flex:0 0 auto;min-height:0}
 .files-work>.term-block[hidden]{display:none!important}
-.files-work>.term-block:not([hidden]){display:flex;flex-direction:column;animation:fileTermIn .34s cubic-bezier(.2,.8,.3,1) both}
-.files-work>.term-block .term{flex:1 1 auto;min-height:0;max-height:none}
-.files-work>.term-block .term.big{max-height:none}
-@keyframes fileTermIn{from{opacity:0;transform:translateX(18px)}}
+.files-work>.term-block:not([hidden]){display:flex;flex-direction:column;
+  animation:fileTermIn .3s cubic-bezier(.2,.8,.3,1) both}
+.files-work>.term-block .term{min-height:190px;max-height:min(42vh,420px)}
+.files-work>.term-block .term.big{max-height:min(42vh,420px)}
+@keyframes fileTermIn{from{opacity:0;transform:translateY(10px)}}
 @media (max-width:720px){
-  .files-work{padding-left:14px;padding-right:14px;flex-direction:column}
-  .files-work>.term-block{flex:0 0 min(42vh,340px);width:100%;min-width:0}
-  .files-work>.file-grid{min-height:180px}
+  .files-work{padding-left:14px;padding-right:14px}
+  .files-work>.term-block .term,.files-work>.term-block .term.big{max-height:340px}
 }
 
 
@@ -1769,10 +1774,12 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .cam-chat .ai-content,.cam-chat .msg-body,.cam-chat .md,.cam-chat .ui-panel{min-width:0;max-width:100%}
 .cam-chat .ui-panel{width:100%;padding:12px}
 
-/* Текущий пункт обведён тонкой фигурой, не ещё одной тяжёлой заливкой. */
-.pd-s.now::after{content:'';position:absolute;z-index:0;inset:-4px 4px -4px;
-  border:1px solid rgba(255,217,138,.28);border-radius:12px;
-  background:rgba(217,164,65,.035);pointer-events:none}
+/* Текущий пункт подчёркнут одной тонкой золотой нитью. Рамка вокруг всей
+   ячейки пересекала двухстрочную подпись и визуально казалась толстой. */
+.pd-s.now::after{content:'';position:absolute;z-index:0;left:18%;right:18%;bottom:-5px;
+  height:1px;border:0;border-radius:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,217,138,.72),transparent);
+  box-shadow:0 0 5px rgba(217,164,65,.28);pointer-events:none}
 .pd-s.now .pd-cap{position:relative;z-index:1}
 .plan-list li{position:relative}
 .plan-list li.now::after{content:'';position:absolute;inset:2px -7px;

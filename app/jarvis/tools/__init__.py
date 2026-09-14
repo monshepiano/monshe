@@ -225,23 +225,13 @@ def _recall(kind: str = "") -> Dict[str, Any]:
 
 
 def _schedule_task(title: str, prompt: str, schedule: str = "") -> Dict[str, Any]:
-    from .. import auto, db, sandbox
-    schedule = (schedule or "").strip()
-    # модель могла прислать расписание словами — нормализуем
-    if schedule and auto.parse_schedule(schedule) is None:
-        schedule = auto.detect_schedule(schedule) or ""
-    chat_id = ""
-    try:
-        chat_id = sandbox.current_chat() or ""
-    except Exception:
-        chat_id = ""
-    task = auto.create_background_task(title=title, prompt=prompt, schedule=schedule, chat_id=chat_id)
-    human = auto.describe_schedule(schedule)
-    # Без уведомления: о постановке задачи пользователь уже узнаёт из карточки
-    # «В фоне» в диалоге и из вкладки AUTO. Третий раз повторять незачем.
-    return {"ok": True, "task_id": task["id"], "title": title, "schedule": schedule,
-            "when": human,
-            "note": "Задача создана во вкладке AUTO (%s). Результат придёт уведомлением." % human}
+    """Закрытый sentinel для распознавания галлюцинаций старых моделей.
+
+    Имя остаётся в реестре, чтобы текст ``schedule_task(...)`` был вырезан из
+    ответа и попал под runtime allowlist агента. Создать задачу отсюда нельзя:
+    единственный рабочий вход в AUTO — серверный маршрутизатор.
+    """
+    return {"ok": False, "error": "AUTO маршрутизирует только сервер до запуска агента."}
 
 
 register("remember", _remember,
@@ -284,14 +274,12 @@ register("ask_user", _ask_user,
          "safe", "base", "Уточняющий вопрос")
 
 register("schedule_task", _schedule_task,
-         "Отправить задачу в фон (вкладка AUTO). ОБЯЗАТЕЛЬНО вызывай для просьб вида "
-         "'напомни', 'напиши мне через N минут', 'проверяй каждый день', 'следи за', "
-         "'пришли утром', а также для долгих задач и мониторинга.",
+         "Зарезервированное серверное имя. Агенту не выдаётся и задачу не создаёт; "
+         "нужно только для безопасного перехвата старого текстового function call.",
          {"title": S("короткое название задачи", True),
-          "prompt": S("что именно сделать, когда придёт время", True),
-          "schedule": S("когда: 'in 10s', 'in 5m', 'in 2h', 'every 30m', 'every 1h', "
-                        "'every 2d', 'daily 09:00'; пусто — выполнить сразу в фоне")},
-         "safe", "auto", "Фоновая задача")
+          "prompt": S("что именно сделать", True),
+          "schedule": S("зарезервированное расписание")},
+         "safe", "server", "Серверный AUTO-маршрут")
 
 
 # ------------------------------------------------------------------ ДИСПЕТЧЕР

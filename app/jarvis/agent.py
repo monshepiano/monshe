@@ -56,7 +56,6 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) ->
 • медиа: generate_image, analyze_image, analyze_video, transcribe_audio;
 • память: remember (сохраняй важные факты о пользователе САМ, без напоминаний), recall, forget;
 • диалог: ask_user — задать короткий уточняющий вопрос с кнопками-вариантами;
-• фон: schedule_task — если задача долгая, регулярная или пользователь не должен ждать, отправь её в AUTO;
 • компьютер пользователя: screenshot, screen_info, mouse_click, mouse_move, mouse_scroll, mouse_drag, type_text, press_key, open_app.
 
 ПРАВИЛА:
@@ -137,13 +136,12 @@ JSON-описание вызова прямо в тексте. Любые их �
 человеческий ответ по этому результату. Пустой ответ недопустим: если инструмент
 не сработал, скажи об этом словами.
 
-КОГДА ОТПРАВЛЯТЬ ЗАДАЧУ В ФОН:
-Просьбы «напомни», «напиши мне через N минут», «проверяй каждый день», «следи за…»,
-«пришли утром» — это schedule_task. Вызови его сразу, одним вызовом, с полями
-title (коротко о чём), prompt (что именно сделать, когда придёт время)
-и schedule в одном из форматов: «in 10s», «in 5m», «in 2h», «every 30m»,
-«every 1h», «every 2d», «daily 09:00». Ничего не переспрашивай — просто поставь
-задачу и подтверди человеку одной фразой, когда она сработает.
+ФОН И AUTO:
+Ты никогда не решаешь сам, что задача «слишком долгая» для текущего диалога,
+и не пытаешься поставить её в AUTO. Явные напоминания, расписания, мониторинг
+и просьбы «выполни в фоне» маршрутизирует сервер ДО твоего запуска. Всё, что
+пришло тебе, выполни прямо сейчас в этом диалоге — в том числе игру, код,
+исследование или большой файл.
 """
     if computer_use:
         base += """
@@ -184,7 +182,11 @@ title (коротко о чём), prompt (что именно сделать, к
 
 
 def _tool_groups(computer_use: bool) -> List[str]:
-    groups = ["web", "sandbox", "media", "memory", "auto", "base"]
+    # AUTO маршрутизирует только сервер, до запуска модели. Интерактивному
+    # агенту и исполнителю уже созданной фоновой задачи группа ``auto`` не
+    # выдаётся вообще: иначе снова появляются два источника решения и модель
+    # может самовольно отправить обычную долгую работу в фон.
+    groups = ["web", "sandbox", "media", "memory", "base"]
     if computer_use and CONFIG.get("computer_use.enabled", True):
         groups.append("computer")
     return groups
@@ -598,11 +600,15 @@ class Agent:
             # оркестратор отдал реплику дешёвой модели именно потому, что
             # инструменты тут не нужны — не суём их ей в руки
             available = []
-        if self.task_id:
-            # мы УЖЕ внутри фоновой задачи: планировать ещё одну запрещено,
-            # иначе AUTO наполняется клонами одной и той же просьбы
-            available = [t for t in available
-                         if (t.get("function") or {}).get("name") != "schedule_task"]
+        # Не доверяем одному лишь списку schemas: некоторые модели способны
+        # напечатать/галлюцинировать вызов функции, которой в нём нет. Перед
+        # фактическим dispatch сверяемся с тем же закрытым набором. Это и есть
+        # архитектурная граница: schedule_task остаётся серверным механизмом и
+        # не может быть выполнен ни интерактивным, ни headless-агентом.
+        allowed_tool_names = {
+            (t.get("function") or {}).get("name") for t in available
+            if (t.get("function") or {}).get("name")
+        }
         max_steps = _max_steps(self.agent_mode)
 
         plan: List[str] = []
@@ -830,6 +836,16 @@ class Agent:
                 if not isinstance(args, dict):
                     args = {}
 
+                # Function-calling и распознавание текстовых вызовов сходятся
+                # здесь. Никакой из этих путей не вправе обойти набор схем,
+                # реально выданный модели в данном прогоне.
+                if name not in allowed_tool_names:
+                    self._append_tool_result(convo, call, name, {
+                        "ok": False,
+                        "error": "Этот инструмент недоступен в текущем диалоге.",
+                    }, from_text)
+                    continue
+
                 # Модель может залипнуть, повторяя один и тот же вызов с теми же
                 # аргументами. Раньше это молча съедало все шаги, и пользователь
                 # видел «думаю» до самого конца. Считаем повторы и вмешиваемся.
@@ -908,14 +924,6 @@ class Agent:
                                      (".png", ".jpg", ".jpeg", ".gif", ".webp")) else "file"}
                     self.created_files.append(file_info)
                     yield {"type": "file", **file_info}
-
-                # задача ушла в AUTO — показываем это карточкой, а не сухим результатом
-                if name == "schedule_task" and isinstance(result, dict) and result.get("ok"):
-                    yield {"type": "background", "task_id": result.get("task_id", ""),
-                           "title": result.get("title", ""),
-                           "schedule": result.get("schedule", ""),
-                           "when": result.get("when", ""),
-                           "reason": "я решил выполнить это в фоне"}
 
                 yield {"type": "tool_result", "id": call.get("id"), "name": name,
                        "result": result, "elapsed": elapsed}
