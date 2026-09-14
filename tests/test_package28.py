@@ -10,7 +10,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
 
-from jarvis import agent, auto  # noqa: E402
+from jarvis import agent, auto, server  # noqa: E402
 
 
 class BackgroundRoutingTests(unittest.TestCase):
@@ -96,6 +96,91 @@ class BackgroundRoutingTests(unittest.TestCase):
         done = [event for event in events if event.get("type") == "done"]
         self.assertTrue(done)
         self.assertIn("диалоге", done[-1]["content"])
+
+
+class VisionUiContractTests(unittest.TestCase):
+    def test_contract_requires_style_tiles_without_duplicate_submit_ui(self) -> None:
+        contract = agent.VISION_UI_CONTRACT
+        self.assertIn("```ui", contract)
+        self.assertRegex(contract, r"tiles\s+Стиль:")
+        self.assertIn("НЕ перечисляй варианты обычным Markdown-списком", contract)
+        self.assertIn("Не добавляй кнопку «Сгенерировать»", contract)
+        self.assertIn("«Свой вариант»", contract)
+        self.assertIn("Если стиль\nуже явно задан", contract)
+
+    def test_image_contract_and_payload_share_one_ordered_model_call(self) -> None:
+        """The UI reminder is a message in the vision request, not a preflight LLM."""
+        history = [
+            {"role": "user", "content": "Предыдущий вопрос"},
+            {"role": "assistant", "content": "Предыдущий ответ"},
+            {"role": "user", "content": "Сделай мем"},
+        ]
+        handler = mock.Mock()
+        handler._sse.return_value = True
+        handler._sse_open.return_value = None
+        handler._sse_close.return_value = None
+
+        stream_events = [
+            {"type": "delta", "text": "Выбери стиль.\n```ui\ntiles Стиль: сухой | кино | ретро\n```"},
+            {"type": "done", "tool_calls": []},
+        ]
+        route = {
+            "tier": "vision", "reason": "image", "score": 0,
+            "verbose": False, "offer_tools": False,
+        }
+        attachment = {
+            "name": "frame.jpg", "kind": "image",
+            "data": "data:image/jpeg;base64,ZmFrZQ==", "download_url": "/frame.jpg",
+        }
+
+        with mock.patch.object(server.llm, "active_providers", return_value=["test"]), \
+             mock.patch.object(server.llm, "chat_stream", return_value=stream_events) as chat_stream, \
+             mock.patch.object(server.llm, "chat") as blocking_chat, \
+             mock.patch.object(server.db, "add_message", return_value={"id": "message-1"}), \
+             mock.patch.object(server.db, "get_messages", return_value=history), \
+             mock.patch.object(server.db, "rename_chat"), \
+             mock.patch.object(server.sandbox, "set_chat"), \
+             mock.patch.object(server.auto, "should_background",
+                               return_value={"background": False, "schedule": "", "reason": ""}), \
+             mock.patch.object(server.orchestrator, "summarize_history", side_effect=lambda items: items), \
+             mock.patch.object(server.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(server.agent, "build_system_prompt", return_value="BASE SYSTEM"), \
+             mock.patch.object(server.agent.tools, "schemas", return_value=[]):
+            server.Handler._chat_stream(handler, {
+                "chat_id": "camera-chat",
+                "kind": "cam",
+                "text": "Сделай мем",
+                "attachments": [attachment],
+            })
+
+        self.assertEqual(chat_stream.call_count, 1, "vision UI must not require a preflight model call")
+        blocking_chat.assert_not_called()
+        messages = chat_stream.call_args.args[0]
+        self.assertEqual(messages[0], {"role": "system", "content": "BASE SYSTEM"})
+        self.assertEqual(messages[-2], {"role": "system", "content": agent.VISION_UI_CONTRACT})
+        self.assertEqual(messages[-1]["role"], "user")
+        parts = messages[-1]["content"]
+        self.assertEqual(parts[0], {"type": "text", "text": "Сделай мем"})
+        self.assertEqual(parts[1]["type"], "image_url")
+        self.assertEqual(parts[1]["image_url"]["url"], attachment["data"])
+        self.assertNotIn(agent.VISION_UI_CONTRACT, [
+            item.get("content") for item in messages[:-2] if item.get("role") == "system"
+        ])
+
+    def test_direct_vision_endpoint_still_has_one_media_owner(self) -> None:
+        handler = mock.Mock()
+        expected = {"ok": True, "description": "кадр"}
+        with mock.patch.object(server.media, "analyze_image", return_value=expected) as analyze, \
+             mock.patch.object(server.llm, "chat") as chat, \
+             mock.patch.object(server.llm, "chat_stream") as chat_stream:
+            result = server.Handler._vision(handler, {
+                "image": "data:image/jpeg;base64,ZmFrZQ==",
+                "question": "Что видно?",
+            })
+        self.assertEqual(result, expected)
+        analyze.assert_called_once_with("data:image/jpeg;base64,ZmFrZQ==", "Что видно?")
+        chat.assert_not_called()
+        chat_stream.assert_not_called()
 
 
 if __name__ == "__main__":

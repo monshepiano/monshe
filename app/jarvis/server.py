@@ -495,6 +495,11 @@ class Handler(BaseHTTPRequestHandler):
 
         messages = [{"role": "system", "content": agent.build_system_prompt(agent_mode, computer_use)}]
         messages.extend(history)
+        if has_image:
+            # Короткий vision-контракт стоит рядом с изображением: слабая
+            # мультимодальная модель не должна терять правило ```ui в длинном
+            # общем prompt. Это часть ТОГО ЖЕ запроса, не дополнительный LLM-call.
+            messages.append({"role": "system", "content": agent.VISION_UI_CONTRACT})
         messages.append(user_message)
 
         runner = agent.Agent(chat_id=chat_id, agent_mode=agent_mode, computer_use=computer_use)

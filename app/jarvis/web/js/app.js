@@ -63,10 +63,11 @@ const S = {
 };
 
 /* ============================ утилиты ============================ */
-function api(path, body) {
+function api(path, body, extra) {
   const opt = body
     ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
     : {};
+  if (extra) Object.assign(opt, extra);
   return fetch(path, opt).then((r) => r.json()).catch((e) => ({ ok: false, error: String(e) }));
 }
 
@@ -84,10 +85,53 @@ function fmtTime(ts) {
   if (d.toDateString() === today.toDateString()) return t;
   return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) + ' ' + t;
 }
-/* Время сообщения. Единственный источник истины — created_at из базы: он
-   приходит вместе с перепиской и одинаков во всех вкладках. У только что
-   отправленной реплики его ещё нет (сервер сохранит её через миг), поэтому
-   берём текущий момент — расхождение меньше секунды. */
+/* Дата принадлежит разговору, а не пузырю. Раньше старые сообщения получали
+   крошечную дату прямо на бейдже времени: она была плохо читаема и повторялась
+   у каждой реплики. Теперь контейнер разговора сам вставляет один центрированный
+   разделитель при смене календарного дня — как в Telegram/VK. */
+function dayKey(ts) {
+  const d = new Date((Number(ts) || Date.now() / 1000) * 1000);
+  return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'),
+    String(d.getDate()).padStart(2, '0')].join('-');
+}
+
+function dayLabel(ts) {
+  const sec = Number(ts) || Date.now() / 1000;
+  const d = new Date(sec * 1000);
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const that = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = Math.round((start - that) / 86400000);
+  if (days === 0) return 'Сегодня';
+  if (days === 1) return 'Вчера';
+  return d.toLocaleDateString('ru-RU', {
+    day: 'numeric', month: 'long', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric',
+  });
+}
+
+function ensureDaySeparator(host, ts) {
+  if (!host) return null;
+  const key = dayKey(ts);
+  // В обычном live/history append последний разделитель хранится на самом
+  // контейнере: так день проверяется за O(1), а длинная суточная переписка не
+  // превращает последовательную отрисовку в O(n²). После очистки/правки DOM
+  // кэш сам инвалидируется через isConnected/parentNode и сканирует хвост один раз.
+  let previous = host._daySeparator;
+  if (!previous || !previous.isConnected || previous.parentNode !== host) {
+    previous = host.lastElementChild;
+    while (previous && !previous.classList.contains('day-separator')) previous = previous.previousElementSibling;
+    host._daySeparator = previous || null;
+  }
+  if (previous && previous.dataset.day === key) return null;
+  const sep = el('div', 'day-separator', '<span>' + esc(dayLabel(ts)) + '</span>');
+  sep.dataset.day = key;
+  host.appendChild(sep);
+  host._daySeparator = sep;
+  return sep;
+}
+
+/* Возле самой реплики остаётся только время. Сервер хранит Unix timestamp в
+   секундах; для живого сообщения берём текущий момент. */
 function stampTime(node, ts) {
   if (!node) return null;
   const sec = Number(ts) || (Date.now() / 1000);
@@ -95,18 +139,10 @@ function stampTime(node, ts) {
   if (prev) prev.remove();
   const d = new Date(sec * 1000);
   const hhmm = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-  // Бейдж узкий — шире иконки ему быть нельзя, иначе он лезет на текст.
-  // Поэтому дата (если сообщение не сегодняшнее) уходит отдельной строкой сверху.
-  const sameDay = d.toDateString() === new Date().toDateString();
-  const day = sameDay ? '' : d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
-  const t = el('span', 'msg-time' + (day ? ' two' : ''),
-    (day ? '<i>' + esc(day) + '</i>' : '') + esc(hhmm));
-  t.title = new Date(sec * 1000).toLocaleString('ru-RU');
-  // Время живёт на самой иконке сообщения: у ответа — бейджем на реакторе,
-  // у своей реплики — такой же меткой рядом с пузырём. Отдельной строки под
-  // сообщением больше нет, лента не растёт по высоте из-за времени.
-  // у ответа — бейдж на иконке-реакторе, у своей реплики — внутри пузыря,
-  // прижат к нижнему правому углу (текст обтекает его отступом)
+  const t = el('span', 'msg-time', esc(hhmm));
+  t.title = d.toLocaleString('ru-RU');
+  // У ответа время сидит на реакторе, у своей реплики — внутри пузыря,
+  // прижатое к нижнему правому углу.
   const av = node.querySelector(':scope > .ai-avatar');
   if (av) { av.appendChild(t); return t; }
   const bubble = node.querySelector(':scope > .bubble-user');
@@ -755,13 +791,20 @@ function setActiveChat(id) {
   if (camLive() && !camLinked()) S.camChatId = id; else S.chatId = id;
 }
 
+function camPart(selector) {
+  // У камеры один владелец DOM — активная S.camNode. Старые свёрнутые карточки
+  // намеренно остаются в истории, поэтому глобальный querySelector выбирал
+  // первую (уже скрытую) карточку и отправлял туда новые сообщения/кадры.
+  // Все live-узлы ищутся только внутри карточки текущего поколения.
+  const node = S.camNode;
+  return node && node.isConnected ? node.querySelector(selector) : null;
+}
+
 function msgHost() {
   // перерисовка может идти в явно заданный контейнер (например, в переписку
   // внутри карточки камеры) — тогда он важнее общих правил
   if (S.forceHost && S.forceHost.isConnected) return S.forceHost;
-  const cc = $('#camChat');
-  if (cc && S.camNode && S.camNode.isConnected) return cc;
-  return stream();
+  return camPart('.cam-chat') || stream();
 }
 function scrollDown(force) {
   // в карточке камеры прокручивается только колонка переписки: видео слева и
@@ -949,7 +992,7 @@ async function submitEdit(node, text) {
   send();
 }
 
-function addUserMsg(text, atts, info) {
+function addUserMsg(text, atts, info, hostOverride) {
   info = info || {};
   killWelcome();
   const m = el('div', 'msg msg-user');
@@ -985,12 +1028,14 @@ function addUserMsg(text, atts, info) {
   acts.appendChild(copy); acts.appendChild(edit);
   m.appendChild(acts);
 
-  msgHost().appendChild(m);
+  const host = hostOverride || msgHost();
+  ensureDaySeparator(host, info.ts);
+  host.appendChild(m);
   scrollDown(true);
   return m;
 }
 
-function addAiMsg(ts) {
+function addAiMsg(ts, hostOverride) {
   const m = el('div', 'msg msg-ai');
   m.innerHTML =
     '<div class="ai-avatar"><div class="reactor sm" style="width:34px;height:34px">' +
@@ -998,7 +1043,9 @@ function addAiMsg(ts) {
     '<div class="ai-body"><div class="ai-name">JARVIS<span class="ai-model"></span></div>' +
     '<div class="ai-content"></div></div>';
   stampTime(m, ts);
-  msgHost().appendChild(m);
+  const host = hostOverride || msgHost();
+  ensureDaySeparator(host, ts);
+  host.appendChild(m);
   scrollDown(true);
   return {
     root: m,
@@ -1450,8 +1497,9 @@ function dropStrayDocks(keep) {
    таймеры храним у конкретного ui-прогона: новый план, остановка или быстрый
    ответ не должны оставлять старый setTimeout, который через секунду внезапно
    поднимет уже неактуальную карточку наверх. */
-const PLAN_ITEM_MS = 290;       // короткая, но читаемая остановка между пунктами
-const PLAN_LOOK_MS = 1000;      // время спокойно оценить готовый план
+const PLAN_CHAR_MS = 26;        // важные действия печатаются чуть медленнее ответа
+const PLAN_ITEM_PAUSE = 760;    // заметная пауза: пункт успевают прочитать
+const PLAN_LOOK_MS = 1200;      // время спокойно оценить готовый план
 const PLAN_FLY_MS = 980;        // совпадает с transition .plan-dock.fly в CSS
 
 function clearPlanTimers(ui) {
@@ -1466,6 +1514,68 @@ function planLater(ui, fn, ms) {
   }, ms);
   (ui.planTimers || (ui.planTimers = [])).push(t);
   return t;
+}
+
+/* Важный пункт плана набирается отдельным спокойным темпом. На каждом такте
+   меняются только два уже существующих text node/span: след всегда ограничен
+   шестью последними символами и не плодит DOM-узлы по мере роста строки. */
+function typePlanItem(ui, li, done) {
+  const host = li && li.querySelector('.plan-copy');
+  const chars = Array.from((li && li._planText) || '');
+  if (!host) { if (done) done(); return; }
+  host.textContent = '';
+  const lead = document.createTextNode('');
+  const trail = el('span', 'important-trail');
+  const caret = el('i', 'important-caret');
+  host.appendChild(lead);
+  host.appendChild(trail);
+  host.appendChild(caret);
+  let at = 0;
+  const timer = setInterval(() => {
+    if (!li.isConnected || ui.runId !== S.streamRun) {
+      clearInterval(timer);
+      ui.planTimers = (ui.planTimers || []).filter((x) => x !== timer);
+      return;
+    }
+    at = Math.min(chars.length, at + 1);
+    const cut = Math.max(0, at - 6);
+    lead.nodeValue = chars.slice(0, cut).join('');
+    trail.textContent = chars.slice(cut, at).join('');
+    if (at < chars.length) return;
+    clearInterval(timer);
+    ui.planTimers = (ui.planTimers || []).filter((x) => x !== timer);
+    caret.remove();
+    // После набора обычный цвет возвращается без пересоздания всей строки.
+    lead.nodeValue = chars.join('');
+    trail.textContent = '';
+    if (done) done();
+  }, PLAN_CHAR_MS);
+  (ui.planTimers || (ui.planTimers = [])).push(timer);
+}
+
+function revealPlanItems(ui, at) {
+  if (!ui.planCard || !ui.planCard.isConnected || ui.runId !== S.streamRun) return;
+  if (at >= ui.planItems.length) {
+    planLater(ui, () => dockPlan(ui), PLAN_LOOK_MS);
+    return;
+  }
+  const li = ui.planItems[at];
+  if (!li.parentNode) ui.planList.appendChild(li);
+  requestAnimationFrame(() => li.classList.remove('plan-pending'));
+  pinToBottom(msgHost());
+  typePlanItem(ui, li, () => {
+    planLater(ui, () => revealPlanItems(ui, at + 1), PLAN_ITEM_PAUSE);
+  });
+}
+
+function finishPlanItems(ui) {
+  (ui.planItems || []).forEach((li) => {
+    li.classList.remove('plan-pending', 'now');
+    li.classList.add('done');
+    const copy = li.querySelector('.plan-copy');
+    if (copy) copy.textContent = li._planText || '';
+    if (ui.planList && !li.parentNode) ui.planList.appendChild(li);
+  });
 }
 
 /* Единственная формула прогресса. Полоса должна заканчиваться НАД центром
@@ -1496,9 +1606,10 @@ function dockPlan(ui) {
   // Фоновый ответ из уже закрытого диалога не владеет общей верхней зоной.
   if (!card || !card.isConnected || ui.planDock || ui.runId !== S.streamRun) return;
 
-  // распорка держит место в ленте, чтобы она не подпрыгнула
+  // Верхняя панель — отдельный flying visual. Исходная карточка остаётся в
+  // normal flow лишь на время полёта и одновременно мягко схлопывается: ни
+  // фиксированной распорки, ни пустого места после неё в ленте нет.
   const box = card.getBoundingClientRect();
-  if (ui.planHome) ui.planHome.style.height = box.height + 'px';
 
   const n = ui.planItems.length;
   const dock = el('div', 'plan-dock');
@@ -1545,18 +1656,22 @@ function dockPlan(ui) {
   dock.style.transformOrigin = 'top center';
   dock.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(' + sx + ')';
   dock.style.opacity = '0';
-  card.style.transition = 'opacity .46s ease-out';
-  card.style.opacity = '0';               // карточка растворяется, панель улетает
+  card.style.height = box.height + 'px';
+  card.style.overflow = 'hidden';
+  card.style.transition = 'height .46s cubic-bezier(.33,1,.68,1),margin .46s ease,opacity .34s ease,border-width .46s ease';
   requestAnimationFrame(() => {
     dock.classList.add('fly');            // .fly задаёт длинный мягкий переход
     dock.style.transform = 'none';
     dock.style.opacity = '1';
+    card.style.height = '0px';
+    card.style.marginTop = '0';
+    card.style.marginBottom = '0';
+    card.style.borderWidth = '0';
+    card.style.opacity = '0';
   });
   planLater(ui, () => {
-    if (card.isConnected && ui.planDock === dock) {
-      card.style.display = 'none'; card.style.opacity = '';
-    }
-  }, 480);
+    if (card.isConnected && ui.planDock === dock) card.remove();
+  }, 500);
   // Пульсацию включаем ПОСЛЕ прилёта. Оба таймера принадлежат ui, поэтому
   // завершение во время полёта отменит их, а не спрячет уже возвращённую карту.
   planLater(ui, () => {
@@ -1572,49 +1687,58 @@ function shortStep(t) {
   return out || '—';
 }
 
-/* План выполнен: снять сверху и вернуть в ленту миниатюрой на своё место. */
+/* План выполнен: весь блок сразу зеленеет, остаётся читаемым ровно две
+   секунды и исчезает полностью. Никакой миниатюры и скрытой распорки. */
 function undockPlan(ui) {
+  if (!ui || ui.planFinished) return;
+  ui.planFinished = true;
   // Если задача закончилась раньше вступительной анимации, отложенный таймер
-  // больше не имеет права поднять план после завершения. Не успевшие появиться
-  // пункты всё равно возвращаем в список — миниатюра раскрывается целиком.
+  // больше не имеет права поднять план после завершения. Недописанные пункты
+  // показываем целиком: зелёный финальный кадр обязан содержать весь план.
   clearPlanTimers(ui);
-  (ui.planItems || []).forEach((li) => {
-    li.classList.remove('plan-pending');
-    if (ui.planList && !li.parentNode) ui.planList.appendChild(li);
-  });
+  finishPlanItems(ui);
   const owned = $$('.plan-dock').filter((d) => d.dataset.runId === String(ui.runId));
   const dock = ui.planDock || owned[owned.length - 1] || null;
   const card = ui.planCard;
   ui.planDock = null;
-  // Убираем только dock этого прогона. Dataset-владелец закрывает редкую дыру,
-  // когда карточка камеры сменила DOM-контейнер и JS-ссылка потерялась. Каждый
-  // найденный дубль получает transitionend И резервный таймер — панель не
-  // может остаться поверх камеры навсегда даже при отменённой CSS-анимации.
-  (owned.length ? owned : (dock ? [dock] : [])).forEach((ownDock) => {
-    ownDock.classList.remove('live');
-    ownDock.classList.add('done');
-    const t = ownDock.querySelector('.pd-t');
-    if (t) t.textContent = 'План выполнен';
-    const fill = ownDock.querySelector('.pd-fill');
-    if (fill) fill.style.width = '100%';
-    setTimeout(() => {
-      if (!ownDock.isConnected) return;
-      const remove = () => ownDock.remove();
-      ownDock.addEventListener('transitionend', remove, { once: true });
-      ownDock.style.transform = 'translateY(-12px) scale(.96)';
-      ownDock.style.opacity = '0';
-      setTimeout(remove, 360);
-    }, 700); // коротко показываем «План выполнен»; полностью исчезает примерно за 1 с
-  });
 
+  const docks = owned.length ? owned : (dock ? [dock] : []);
+  if (docks.length) {
+    // Original card могла ещё схлопываться во время быстрого завершения. Она
+    // больше не занимает flow: две секунды зелёного состояния показывает dock.
+    if (card && card.isConnected) card.remove();
+    docks.forEach((ownDock) => {
+      ownDock.classList.remove('live');
+      ownDock.classList.add('done');
+      const t = ownDock.querySelector('.pd-t');
+      if (t) t.textContent = 'План выполнен';
+      const step = ownDock.querySelector('.pd-step');
+      if (step) step.textContent = 'готово';
+      const fill = ownDock.querySelector('.pd-fill');
+      if (fill) fill.style.width = '100%';
+      $$('.pd-s', ownDock).forEach((st) => {
+        st.classList.remove('now');
+        st.classList.add('done');
+      });
+      setTimeout(() => {
+        if (ownDock.isConnected) ownDock.classList.add('plan-gone');
+      }, 1700);
+      setTimeout(() => ownDock.remove(), 2000);
+    });
+    return;
+  }
+
+  // Очень быстрая задача могла завершиться ещё до перелёта. Тогда зеленеет
+  // исходная карточка, но контракт тот же: fade начинается на 1.7 с, на 2.0 с
+  // узла уже нет и ответ занимает освободившееся место.
   if (!card || !card.isConnected) return;
-  card.style.display = '';
-  card.style.opacity = '';
-  if (ui.planHome) { ui.planHome.style.height = ''; ui.planHome.remove(); ui.planHome = null; }
-  collapseSoon(card, {
-    cls: 'th-plan', icon: '☰',
-    title: 'План · ' + ui.planItems.length + ' шаг(ов)', tag: 'выполнен',
-  });
+  card.classList.remove('live');
+  card.classList.add('plan-complete');
+  if (card.setTitle) card.setTitle('План выполнен');
+  setTimeout(() => {
+    if (card.isConnected) card.classList.add('plan-gone');
+  }, 1700);
+  setTimeout(() => card.remove(), 2000);
 }
 
 function markBorn(card) {
@@ -2232,11 +2356,14 @@ function updateSendBtn() {
 async function send(opts) {
   opts = opts || {};
   const input = $('#input');
-  const text = input.value.trim();
-  if (!text && !S.attachments.length) return;
-  // предыдущий ответ ещё идёт — аккуратно прерываем и отправляем новый
+  if (!input.value.trim() && !S.attachments.length) return;
+  // Предыдущий ответ ещё идёт — аккуратно прерываем и только ПОСЛЕ ожидания
+  // снимаем новый текст/вложения. Иначе символы, набранные за эти миллисекунды,
+  // стирались, а запрос уходил со старой копией поля.
   if (S.streaming) { await stopStream(); }
   if (S.streaming) return;
+  const text = input.value.trim();
+  if (!text && !S.attachments.length) return;
   S.lastPrompt = text;
   // старые варианты ответа относились к прошлой реплике — убираем сразу
   const rb = $('#replyBar');
@@ -2244,16 +2371,34 @@ async function send(opts) {
   S.replyTicket = (S.replyTicket || 0) + 1;   // аннулируем незавершённый заказ подсказок
   foldAllNotes();   // диалог ожил — уведомления уплывают наверх, в ленту
 
-  // камера включена — молча прикладываем текущий кадр, чтобы вопрос был «про то, что вижу»
-  if (S.camStream && !S.attachments.some((a) => a.fromCam)) {
-    const frame = await camAttachFrame();
-    if (frame) { frame.fromCam = true; S.attachments.push(frame); }
-  }
+  // Снимок владельца запроса. Пока грузится кадр или идёт SSE, камеру можно
+  // закрыть и открыть заново. Динамический msgHost()/activeChatId() тогда уже
+  // укажет на НОВУЮ карточку, и поздний ответ старого сеанса способен записать
+  // ей чужой chat_id. Каждый запрос навсегда привязан к DOM/context поколения,
+  // в котором был отправлен; новый сеанс получает только свои новые сообщения.
+  const requestCamNode = camLive() ? S.camNode : null;
+  const requestHost = (requestCamNode && requestCamNode.querySelector('.cam-chat')) || stream();
+  const requestIsolatedCam = !!(requestCamNode && !S.camLink);
+  const requestChatId = requestIsolatedCam ? (S.camChatId || '') : (S.chatId || '');
+  const requestKind = requestIsolatedCam ? 'cam' : '';
 
-  // правка: подменяем текст на месте и убираем устаревший ответ ниже
+  // Вложения, правка и текст тоже принадлежат этому запросу. Раньше снимок
+  // делался ПОСЛЕ await загрузки автокадра: за это время повторное открытие
+  // камеры или второй клик Send могли подменить глобальные S.attachments,
+  // S.editing и даже стереть уже новый текст из input. Забираем всё синхронно
+  // до первой точки ожидания и сразу переводим интерфейс в streaming.
+  const atts = S.attachments.slice();
+  S.attachments = [];
+  renderAttachments();
   const editing = S.editing && S.editing.id ? S.editing : null;
   S.editing = null;
+  input.value = '';
+  autoGrow();
+
+  // правка: подменяем текст на месте и убираем устаревший ответ ниже
+  let userMsgNode = null;
   if (editing && editing.node && editing.node.isConnected) {
+    userMsgNode = editing.node;
     const bubble = editing.node.querySelector('.bubble-user');
     // подменяем ТОЛЬКО текст: бейдж времени и строки вложений — служебные узлы,
     // и присваивание textContent стирало их вместе с текстом
@@ -2266,13 +2411,10 @@ async function send(opts) {
     let sib = editing.node.nextElementSibling;
     while (sib) { const nx = sib.nextElementSibling; sib.remove(); sib = nx; }
   } else if (!opts.silent) {
-    addUserMsg(text, S.attachments);
+    userMsgNode = addUserMsg(text, atts, null, requestHost);
   }
-  input.value = ''; autoGrow();
-  const atts = S.attachments.slice();
-  S.attachments = []; renderAttachments();
 
-  const node = addAiMsg();
+  const node = addAiMsg(null, requestHost);
   const runId = ++S.streamRun;
   setStreaming(true);
   sfx('send');
@@ -2281,6 +2423,9 @@ async function send(opts) {
   const ui = {
     node,
     runId,
+    userMsgNode,
+    cameraNode: requestCamNode,
+    isolatedCamera: requestIsolatedCam,
     statusEl: null,
     thinkCard: null,
     planCard: null,
@@ -2289,6 +2434,7 @@ async function send(opts) {
     planStep: 1,
     planTimers: [],
     planDock: null,
+    planFinished: false,
     verbose: true,
     mdEl: null,
     buffer: '',
@@ -2311,12 +2457,25 @@ async function send(opts) {
   const controller = new AbortController();
   S.abort = controller;
   try {
+    // Камера включена — молча прикладываем снимок именно к локальному atts.
+    // Upload слушает тот же AbortController, что и SSE: Stop во время медленной
+    // загрузки не может через секунду самовольно запустить уже отменённый ответ.
+    if (S.camStream && !atts.some((a) => a.fromCam)) {
+      const frame = await camAttachFrame(requestChatId, controller.signal);
+      if (frame) { frame.fromCam = true; atts.push(frame); }
+    }
+    if (controller.signal.aborted || S.streamRun !== runId) {
+      const aborted = new Error('Запрос остановлен');
+      aborted.name = 'AbortError';
+      throw aborted;
+    }
+
     const res = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
       body: JSON.stringify({
-        chat_id: activeChatId() || '', kind: (camLive() && !camLinked()) ? 'cam' : '', text,
+        chat_id: requestChatId, kind: requestKind, text,
         edit_of: editing ? editing.id : '',
         agent_mode: S.agentMode,
         computer_use: S.computerUse,
@@ -2386,7 +2545,7 @@ async function send(opts) {
   loadChats();
   // Поздний background-прогон не заказывает подсказки для чужого активного
   // диалога и не обновляет его состояние посреди нового ответа.
-  if (S.streamRun === runId && node.isConnected) {
+  if (S.streamRun === runId && node.root && node.root.isConnected) {
     refreshState();
     fetchReplies();   // подсказки — уже после того, как ответ закрыт
   }
@@ -2637,6 +2796,7 @@ const TYPE_MS = 11;              // такт печати
    Теперь скорость задаётся в знаках в секунду, накапливается дробно и
    сглаживается, поэтому переходы не видны, а темп ровный. */
 const CPS_TALK = 95;             // разговор: его читают на ходу
+const CPS_IMPORTANT = 72;        // заголовок — чуть медленнее, без вязкости
 const CPS_CODE = 400;            // код и таблицы: ровная средняя, без выстрелов
 /* 400 зн/с вместо прежних 1180. Прежнее «быстро» осушало буфер быстрее, чем
    модель успевала присылать, — печать выстреливала пачкой и замирала в
@@ -2668,6 +2828,14 @@ function fastLine(text) {
   const nl = text.lastIndexOf('\n');
   const line = text.slice(nl + 1);
   return line.startsWith('|') || line.startsWith('    ');
+}
+
+/* Закрытый класс «важного текста»: markdown-заголовки. Действия плана идут
+   своим typePlanItem, а обычные списки не замедляем — иначе длинный ответ
+   снова проваливался бы в медленный режим. */
+function importantLine(text) {
+  const nl = text.lastIndexOf('\n');
+  return /^#{1,4}\s/.test(text.slice(nl + 1));
 }
 
 /* Инкрементальный рендер печати. Раньше каждый такт (70 раз в секунду)
@@ -2734,9 +2902,19 @@ function renderTyped(ui) {
    него. Именно это и выглядело как «печатает медленно и без курсора».
    Ставим курсор настоящим узлом внутрь последнего текстового элемента —
    тогда он всегда там же, где последняя буква. */
+function clearTypingDecorations(mdEl) {
+  if (!mdEl) return;
+  const caret = mdEl.querySelector('.caret');
+  if (caret) caret.remove();
+  const trail = mdEl.querySelector('.important-trail');
+  if (trail && trail.parentNode) {
+    trail.parentNode.insertBefore(document.createTextNode(trail.textContent || ''), trail);
+    trail.remove();
+  }
+}
+
 function placeCaret(mdEl) {
-  const old = mdEl.querySelector('.caret');
-  if (old) old.remove();
+  clearTypingDecorations(mdEl);
 
   // ПОЧЕМУ КУРСОР «ЗАДЕРЖИВАЛСЯ» ПОЗАДИ ТЕКСТА.
   // Спуск шёл по .children, а это ТОЛЬКО элементы — текстовые узлы в список
@@ -2763,6 +2941,27 @@ function placeCaret(mdEl) {
   if (OPAQUE(host)) return;
   const c = document.createElement('span');
   c.className = 'caret';
+
+  // Markdown-заголовки — ограниченный класс важных фраз. Только у них курсор
+  // золотой, а последние шесть символов получают один градиентный span.
+  // Никаких посимвольных россыпей узлов и layout-read здесь нет.
+  let p = host;
+  let important = false;
+  while (p && p !== mdEl) {
+    if (/^H[1-4]$/.test(p.tagName || '')) { important = true; break; }
+    p = p.parentNode;
+  }
+  const tail = host.lastChild;
+  if (important && tail && tail.nodeType === 3 && tail.nodeValue) {
+    const chars = Array.from(tail.nodeValue);
+    const cut = Math.max(0, chars.length - 6);
+    tail.nodeValue = chars.slice(0, cut).join('');
+    const trail = document.createElement('span');
+    trail.className = 'important-trail';
+    trail.textContent = chars.slice(cut).join('');
+    host.appendChild(trail);
+    c.classList.add('caret-important');
+  }
   host.appendChild(c);
 }
 
@@ -2792,10 +2991,11 @@ function typerStart(ui) {
     if (ui.hold > 0) { ui.hold--; return; }
 
     const code = inCodeBlock(ui.shown) || fastLine(ui.shown);
+    const important = !code && importantLine(ui.shown);
     // Цель по темпу. Отставание подмешивается плавной добавкой, а не
     // ступенькой по порогу: чем больше не показано, тем быстрее идём, но без
     // единого скачка. Потолок не даёт обогнать автопрокрутку.
-    let want = code ? CPS_CODE : CPS_TALK;
+    let want = code ? CPS_CODE : (important ? CPS_IMPORTANT : CPS_TALK);
     want *= 1 + Math.min(left / 1800, 1.2);
     if (want > 620) want = 620;
     // Сглаживание: к новой цели подходим за ~четверть секунды. Именно оно
@@ -2934,9 +3134,9 @@ if ($('#bellBtn')) {
   });
 }
 
-/* Локальный конец ответа. Серверные done/end только сообщают факт; эта
-   функция заканчивает прогон после того, как ui.buffer действительно дошёл
-   до ui.shown. Это один источник истины для звука, плана и кнопки Stop. */
+/* Локальный конец ответа. Серверный done сразу завершает план, но звук,
+   actions и кнопка Stop ждут, пока ui.buffer действительно дойдёт до ui.shown.
+   Так сетевой EOF не выдаёт недопечатанный ответ за визуально готовый. */
 function settleVisualDone(ui) {
   if (!ui || ui.visualDone) return;
   ui.visualDone = true;
@@ -2968,8 +3168,7 @@ function queueResponseFinish(ui, content, success) {
     if (ui.visualDone) return;
     try {
       ui.mdEl.classList.remove('typing');
-      const caret = ui.mdEl.querySelector('.caret');
-      if (caret) caret.remove();
+      clearTypingDecorations(ui.mdEl);
       ui.floor = 0;
       ui.mdEl.style.minHeight = '';
 
@@ -3035,14 +3234,19 @@ function handleEvent(ev, ui) {
   const node = ui.node;
   switch (ev.type) {
     case 'chat':
-      setActiveChat(ev.chat_id); break;
+      // Ответ знает владельца с момента send(). Поздний chat-event старой
+      // камеры не имеет права присвоить свой id уже повторно открытой карточке.
+      if (ui.isolatedCamera) {
+        if (ui.cameraNode && ui.cameraNode === S.camNode) S.camChatId = ev.chat_id;
+      } else {
+        S.chatId = ev.chat_id;
+      }
+      break;
 
     case 'user_msg': {
-      // сервер сообщил id только что сохранённой реплики — привязываем к пузырю,
-      // иначе «Редактировать» не сможет создать вторую версию
-      const mine = $$('.msg-user', stream());
-      const last = mine[mine.length - 1];
-      if (last && !last.dataset.msgId) last.dataset.msgId = ev.id;
+      // id относится к пузырю ЭТОГО запроса. Поиск «последнего .msg-user во
+      // всей ленте» ломался при двух поколениях camera card и гонке ответов.
+      if (ui.userMsgNode && !ui.userMsgNode.dataset.msgId) ui.userMsgNode.dataset.msgId = ev.id;
       break;
     }
 
@@ -3119,24 +3323,25 @@ function handleEvent(ev, ui) {
         ui.planHome = null;
         ui.planItems = [];
       }
+      ui.planFinished = false;
       ui.planCard = makeCard('☰', 'План · ' + ev.steps.length + ' шаг(ов)', 'plan-card', true);
       markBorn(ui.planCard);
       const list = el('ul', 'plan-list');
       ui.planList = list;
       ui.planStep = 1;
       ev.steps.forEach((s, i) => {
-        const li = el('li', 'plan-pending', '<span class="plan-num">' + (i + 1) + '</span><span>' + esc(s) + '</span>');
+        const li = el('li', 'plan-pending', '<span class="plan-num">' + (i + 1) + '</span><span class="plan-copy"></span>');
+        li._planText = String(s || '');
         // Пункты уже существуют как состояние (plan_step может прийти сразу),
-        // но в DOM входят по одному. Это не блокирует общий typer ответа.
+        // но в DOM входят и спокойно печатаются по одному. Общий typer ответа
+        // работает независимо и никогда не ждёт эту вступительную анимацию.
         ui.planItems.push(li);
       });
       ui.planCard.inner.appendChild(list);
       node.body.insertBefore(ui.planCard, ui.statusEl);
-      // Место, где план стоял в ленте: сюда он вернётся миниатюрой, когда
-      // будет выполнен. Без якоря он вернулся бы в конец переписки, к тому
-      // моменту уже уехавший от своего сообщения.
-      ui.planHome = el('div', 'plan-home');
-      node.body.insertBefore(ui.planHome, ui.planCard);
+      // Flying dock сам является визуальной копией. Якорь-распорка здесь не
+      // нужен: именно он оставлял пустую дыру перед началом ответа.
+      ui.planHome = null;
       sfx('pop');
       // ПОЧЕМУ ЭКРАН НЕ ЕХАЛ ВНИЗ ЗА ПЛАНОМ.
       // Одного scrollDown() мало: в этот момент карточка только вставлена, её
@@ -3145,18 +3350,9 @@ function handleEvent(ev, ui) {
       // промахивалась. Держим низ несколько кадров — тем же приёмом, что и при
       // открытии диалога.
       pinToBottom(stream());
-      // Пишем план пункт за пунктом. После ПОСЛЕДНЕГО — отдельная секунда на
-      // чтение, и лишь затем начинается более медленный перелёт наверх.
-      ui.planItems.forEach((li, i) => {
-        planLater(ui, () => {
-          if (!ui.planCard || !ui.planCard.isConnected) return;
-          list.appendChild(li);
-          requestAnimationFrame(() => li.classList.remove('plan-pending'));
-          pinToBottom(msgHost());
-        }, 70 + i * PLAN_ITEM_MS);
-      });
-      const writtenAt = 70 + Math.max(0, ui.planItems.length - 1) * PLAN_ITEM_MS + 260;
-      planLater(ui, () => dockPlan(ui), writtenAt + PLAN_LOOK_MS);
+      // Пункты идут строго последовательно: спокойная печать, затем заметная
+      // пауза для чтения. Это независимая дорожка — ответ и сеть не блокирует.
+      planLater(ui, () => revealPlanItems(ui, 0), 100);
       break;
     }
 
@@ -3384,6 +3580,11 @@ function handleEvent(ev, ui) {
 
     case 'done': {
       dropStatus(ui);
+      // Выполнение уже завершено на сервере. Локальная печать ответа может ещё
+      // догонять буфер, но план не должен притворяться работающим всё это время:
+      // зеленеет сейчас и исчезает ровно через две секунды. Повторный вызов из
+      // финала typer безопасен — undockPlan идемпотентен.
+      undockPlan(ui);
       queueResponseFinish(ui, ev.content || ui.buffer, true);
       break;
     }
@@ -3644,22 +3845,22 @@ function buildCamCard() {
       '<div class="cam-live">' +
         '<div class="cam-col-left">' +
           '<div class="cam-wrap">' +
-            '<video id="cam" autoplay playsinline muted></video>' +
+            '<video class="cam-video" autoplay playsinline muted></video>' +
             '<div class="cam-scan"></div>' +
             '<div class="cam-corners"><i></i><i></i><i></i><i></i></div>' +
-            '<div class="cam-hud"><span class="cam-rec"></span><span id="camState">включаю камеру…</span></div>' +
+            '<div class="cam-hud"><span class="cam-rec"></span><span class="cam-state">включаю камеру…</span></div>' +
           '</div>' +
           '<div class="cam-note muted">Смотрю трансляцию и комментирую справа. ' +
           'Спроси прямо в чате — «что это?», «где купить» — отвечу по тому, что сейчас в кадре.</div>' +
           // По умолчанию камера — отдельный разговор: болтовня «вижу кружку»
           // не должна засорять основной диалог. Но иногда кадр нужен именно
           // как продолжение беседы — тогда этот тумблер подцепляет контекст.
-          '<label class="cam-link"><input type="checkbox" id="camLink"><i></i>' +
+          '<label class="cam-link"><input type="checkbox"><i></i>' +
           '<span>Контекст диалога</span></label>' +
         '</div>' +
         '<div class="cam-col-right">' +
-          '<div class="cam-feed" id="camFeed"></div>' +
-          '<div class="cam-chat" id="camChat"></div>' +
+          '<div class="cam-feed"></div>' +
+          '<div class="cam-chat"></div>' +
         '</div>' +
       '</div>' +
     '</div></div>';
@@ -3680,9 +3881,10 @@ async function startCam() {
     // Каждое новое окно камеры — чистый изолированный разговор.
     S.camChatId = null;
     S.camLink = false;
+    S.camLast = '';
     S.camNode = buildCamCard();
     stream().appendChild(S.camNode);
-    const link = S.camNode.querySelector('#camLink');
+    const link = S.camNode.querySelector('.cam-link input');
     if (link) {
       link.checked = false;
       link.addEventListener('change', () => {
@@ -3712,7 +3914,7 @@ async function startCam() {
       return;
     }
     S.camStream = media;
-    const video = S.camNode.querySelector('#cam');
+    const video = camPart('.cam-video');
     if (video) video.srcObject = media;
     // macOS/Safari может завершить track сам (смена устройства, системная
     // блокировка). Сбрасываем именно активное поколение — иначе camStream
@@ -3753,7 +3955,7 @@ function stopCam() {
   if (S.camTimer) { clearInterval(S.camTimer); S.camTimer = null; }
   if (S.camStream) { S.camStream.getTracks().forEach((t) => t.stop()); S.camStream = null; }
   const node = S.camNode;
-  const v = node && node.querySelector('#cam');
+  const v = node && node.querySelector('.cam-video');
   if (v) v.srcObject = null;
   if (node) {
     node.classList.add('done');
@@ -3774,14 +3976,14 @@ function stopCam() {
 }
 
 function camState(text, live) {
-  const st = $('#camState');
+  const st = camPart('.cam-state');
   if (st) st.textContent = text;
-  const wrap = S.camNode && S.camNode.querySelector('.cam-live');
+  const wrap = camPart('.cam-live');
   if (wrap) wrap.classList.toggle('live', !!live);
 }
 
 function camSay(text, kind) {
-  const feed = $('#camFeed');
+  const feed = camPart('.cam-feed');
   if (!feed) return;
   const line = el('div', 'cam-line ' + (kind || ''));
   line.innerHTML = '<span class="cam-t">' +
@@ -3799,7 +4001,7 @@ function camSay(text, kind) {
 
 /* текущий кадр как data-url (для отправки модели) */
 function camFrame(maxW) {
-  const v = $('#cam');
+  const v = camPart('.cam-video');
   if (!v || !v.videoWidth) return null;
   const w = Math.min(maxW || 900, v.videoWidth);
   const h = Math.round(v.videoHeight * (w / v.videoWidth));
@@ -3811,7 +4013,7 @@ function camFrame(maxW) {
 
 /* грубая оценка «что-то изменилось в кадре» — чтобы не жечь деньги впустую */
 function camMotion() {
-  const v = $('#cam');
+  const v = camPart('.cam-video');
   if (!v || !v.videoWidth) return 0;
   const c = document.createElement('canvas');
   c.width = 48; c.height = 36;
@@ -3835,6 +4037,8 @@ function camMotion() {
 
 async function camTick() {
   if (S.camBusy || S.streaming || !S.camStream) return;
+  const run = S.camRun;
+  const media = S.camStream;
   const move = camMotion();
   if (move < CAM_MOTION && S.camLast) { camState('трансляция · кадр без изменений', true); return; }
   const data = camFrame();
@@ -3848,22 +4052,28 @@ async function camTick() {
         'скажи, что сейчас в кадре: объект, что с ним происходит, важные детали (текст, марка, состояние). ' +
         'Без вступлений и без «на изображении».',
     });
+    // Ответ старого vision-запроса может прийти уже после закрытия и нового
+    // открытия камеры. Поколение и MediaStream обязаны совпасть, иначе старая
+    // подпись снова попадёт в свежую карточку.
+    if (run !== S.camRun || media !== S.camStream || !camLive()) return;
     const txt = (r.answer || r.content || r.text || '').trim();
     if (r.ok && txt && txt !== S.camLast) { S.camLast = txt; camSay(txt); }
     else if (!r.ok) camState('трансляция · ' + (r.error || 'модель молчит'), true);
     if (r.ok) camState('трансляция · смотрю', true);
   } finally {
-    S.camBusy = false;
+    if (run === S.camRun) S.camBusy = false;
   }
 }
 
 /* если камера включена — к сообщению в чат автоматически прикладывается текущий кадр */
-async function camAttachFrame() {
+async function camAttachFrame(chatId, signal) {
   if (!S.camStream) return null;
   const data = camFrame();
   if (!data) return null;
-  const r = await api('/api/upload', { name: 'camera_' + Date.now() + '.jpg', data, chat_id: activeChatId() || '' });
-  if (!r.ok) return null;
+  const r = await api('/api/upload', {
+    name: 'camera_' + Date.now() + '.jpg', data, chat_id: chatId || '',
+  }, signal ? { signal } : null);
+  if (!r.ok || (signal && signal.aborted)) return null;
   r.data = data;
   return r;
 }

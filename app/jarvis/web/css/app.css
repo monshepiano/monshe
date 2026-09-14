@@ -334,6 +334,17 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   box-shadow:0 10px 26px rgba(207,154,60,.15)}
 @keyframes popIn{from{opacity:0;transform:translateY(14px) scale(.97)}}
 
+.day-separator{width:min(900px,100%);margin:7px auto 19px;display:flex;align-items:center;gap:12px;
+  color:var(--tx3);font-family:var(--fm);font-size:9.5px;letter-spacing:.7px;text-transform:lowercase;
+  animation:dayIn .32s ease both}
+.day-separator::before,.day-separator::after{content:'';height:1px;flex:1;
+  background:linear-gradient(90deg,transparent,rgba(92,132,157,.24))}
+.day-separator::after{background:linear-gradient(90deg,rgba(92,132,157,.24),transparent)}
+.day-separator span{padding:4px 10px;border:1px solid rgba(92,132,157,.18);border-radius:999px;
+  background:rgba(6,13,23,.72);white-space:nowrap}
+@keyframes dayIn{from{opacity:0;transform:translateY(5px)}}
+.cam-chat .day-separator{margin:3px auto 12px;gap:7px;font-size:8.5px}
+.cam-chat .day-separator span{padding:3px 7px}
 .msg{max-width:900px;margin:0 auto 22px;animation:msgIn .45s cubic-bezier(.2,.8,.3,1) both}
 @keyframes msgIn{from{opacity:0;transform:translateY(16px)}}
 /* Своя реплика — колонка: пузырь, под ним кнопки. Никакого flex-wrap:
@@ -456,9 +467,15 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    текст проявляется из темноты и в неё же уходит — читается середина.
    Полосы прокрутки нет: это поток, а не документ. */
 .think-stream{font-family:var(--fm);font-size:11.5px;color:var(--tx3);line-height:1.75;white-space:pre-wrap;
-  max-height:150px;overflow:hidden;padding:12px 0;scroll-behavior:smooth;
+  max-height:150px;overflow:hidden;padding:12px 0;scroll-behavior:smooth;position:relative;
   -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 26%,#000 74%,transparent 100%);
   mask-image:linear-gradient(180deg,transparent 0,#000 26%,#000 74%,transparent 100%)}
+/* Почти прозрачная неоновая дымка идёт по потоку мыслей, но не заменяет
+   затемнённые края и не создаёт курсор. Один compositor-friendly overlay. */
+.think-card.live .think-stream::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:.14;
+  background:linear-gradient(105deg,transparent 22%,rgba(70,240,255,.15) 42%,rgba(177,137,255,.34) 50%,transparent 68%);
+  background-size:240% 100%;mix-blend-mode:screen;animation:thinkNeon 2.8s linear infinite}
+@keyframes thinkNeon{from{background-position:170% 0}to{background-position:-70% 0}}
 /* пока блок «живой» — тонкая бегущая полоска сверху и мягкое свечение рамки */
 .panel-card.live{border-color:rgba(0,200,240,.34);box-shadow:0 0 0 1px rgba(0,200,240,.07),0 6px 22px rgba(0,0,0,.3)}
 .panel-card.live .card-head{position:relative}
@@ -868,7 +885,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .cam-wrap{position:relative;border-radius:13px;overflow:hidden;border:1px solid var(--line2);
   background:#000;aspect-ratio:4/3;flex:0 0 auto}
 /* зеркалим картинку — так привычнее, как в зеркале */
-#cam{width:100%;height:100%;object-fit:cover;display:block;transform:scaleX(-1)}
+.cam-video{width:100%;height:100%;object-fit:cover;display:block;transform:scaleX(-1)}
 .cam-scan{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--cy),transparent);
   box-shadow:0 0 16px var(--cy);animation:scan 3s ease-in-out infinite}
 @keyframes scan{0%,100%{top:4%}50%{top:96%}}
@@ -1122,10 +1139,10 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   color:var(--green);font-family:var(--ff);font-size:10.5px;letter-spacing:.4px;cursor:pointer;transition:.18s}
 .term-act:hover{background:rgba(63,191,149,.14);border-color:var(--green)}
 .term-act.term-close{width:25px;height:25px;padding:0;display:grid;place-items:center;
-  border:0;border-radius:50%;font-family:Arial,sans-serif;font-size:21px;line-height:1;
-  color:var(--tx2)}
+  border:1px solid rgba(63,191,149,.34);border-radius:6px;background:rgba(3,14,17,.5);
+  font-family:Arial,sans-serif;font-size:19px;line-height:1;color:var(--tx2)}
 .term-act.term-close[hidden]{display:none}
-.term-act.term-close:hover{color:#fff;background:rgba(221,85,102,.18)}
+.term-act.term-close:hover{color:#fff;border-color:rgba(221,85,102,.62);background:rgba(221,85,102,.18)}
 .term-file{color:#cfe9ff}
 .term-file .tf-head{color:var(--gold);font-family:var(--fm);font-size:10.5px;letter-spacing:1px;
   padding-bottom:6px;margin-bottom:8px;border-bottom:1px solid rgba(217,164,65,.22)}
@@ -1299,6 +1316,8 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   background:var(--cy);opacity:.5;
   animation:spark 1.05s steps(1) infinite}
 @keyframes spark{50%{opacity:.12}}
+.caret.caret-important{background:linear-gradient(180deg,#fff,#f4d27f 50%,var(--gold));opacity:1;
+  box-shadow:0 0 8px var(--gold),0 0 17px rgba(217,164,65,.48)}
 /* курсор живёт только пока идёт печать */
 .md:not(.typing) .caret{display:none}
 /* пока идёт печать, весь абзац еле заметно «подсвечен изнутри» — видно, что
@@ -1678,9 +1697,11 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
           border-color:rgba(217,164,65,.45)}
   50%    {box-shadow:0 14px 38px rgba(0,0,0,.55),0 0 46px rgba(217,164,65,.55);
           border-color:rgba(217,164,65,1)}}
-.plan-dock.done{animation:none;border-color:rgba(63,191,149,.65);
+.plan-dock.done{animation:none;color:var(--green);border-color:rgba(63,191,149,.72);
+  background:linear-gradient(180deg,rgba(7,30,23,.97),rgba(5,19,17,.97));
   box-shadow:0 14px 38px rgba(0,0,0,.55),0 0 30px rgba(63,191,149,.3);
-  transition:transform .3s ease-in,opacity .3s ease-in,border-color .3s,box-shadow .3s}
+  transition:transform .3s ease-in,opacity .3s ease-in,border-color .3s,box-shadow .3s,background .3s}
+.plan-dock.plan-gone{transform:translateY(-12px) scale(.96)!important;opacity:0!important}
 
 .pd-top{display:flex;align-items:center;gap:9px;margin-bottom:8px}
 .pd-ico{color:var(--gold);font-size:12px}
@@ -1722,16 +1743,31 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   box-shadow:0 0 16px var(--gold);animation:dotBeat 1.05s ease-in-out infinite}
 .pd-s.now .pd-cap{color:#ffd98a}
 @keyframes dotBeat{50%{box-shadow:0 0 26px var(--gold);transform:scale(1.12)}}
-.plan-dock.done .pd-s .pd-dot{border-color:rgba(63,191,149,.6);
-  background:rgba(63,191,149,.85);color:#04150f;box-shadow:none;animation:none}
+.plan-dock.done .pd-s::before{background:rgba(63,191,149,.58)}
+.plan-dock.done .pd-s .pd-dot{border-color:rgba(63,191,149,.7);
+  background:rgba(63,191,149,.9);color:#04150f;box-shadow:none;animation:none}
+.plan-dock.done .pd-s .pd-cap{color:#7ce8b5;text-decoration:none;text-shadow:0 0 8px rgba(63,191,149,.18)}
 
-/* пункты в самой карточке плана */
-.plan-list li.now{color:var(--cy)}
-.plan-list li.now .plan-num{background:var(--cy);color:#03121b;
-  box-shadow:0 0 10px var(--cy);animation:nowBeat 1.6s ease-in-out infinite}
-@keyframes nowBeat{50%{box-shadow:0 0 18px var(--cy)}}
-/* распорка держит место плана в ленте, пока он наверху */
-.plan-home{width:100%}
+/* пункты в самой карточке плана: текущий отличается только более ярким
+   близким оттенком и мягким glow — никаких линий/подчёркиваний. */
+.plan-list li.now{color:#f4d27f;text-shadow:0 0 10px rgba(217,164,65,.24)}
+.plan-list li.now .plan-num{background:var(--gold);border-color:#ffd98a;color:#1a1305;
+  box-shadow:0 0 11px rgba(217,164,65,.72);animation:nowBeat 1.6s ease-in-out infinite}
+@keyframes nowBeat{50%{box-shadow:0 0 18px rgba(217,164,65,.88)}}
+.plan-copy{min-width:0}
+.important-trail{color:transparent;background:linear-gradient(90deg,rgba(217,164,65,.2),#ffe4a3);
+  -webkit-background-clip:text;background-clip:text;text-shadow:0 0 9px rgba(217,164,65,.22)}
+.important-caret{display:inline-block;width:6px;height:14px;margin-left:3px;vertical-align:-2px;border-radius:1px;
+  background:linear-gradient(180deg,#fff,#f4d27f 50%,var(--gold));
+  box-shadow:0 0 8px var(--gold),0 0 16px rgba(217,164,65,.42);
+  animation:twBlink 1.05s steps(1,end) infinite}
+.plan-card.plan-complete{border-color:rgba(63,191,149,.72);background:rgba(7,30,23,.95);
+  box-shadow:0 0 26px rgba(63,191,149,.24);
+  transition:opacity .3s ease,transform .3s ease,border-color .25s,background .25s}
+.plan-card.plan-complete .card-head,.plan-card.plan-complete .card-head .k{color:var(--green)}
+.plan-card.plan-complete .plan-list li{color:#7ce8b5;text-decoration:none;text-shadow:none}
+.plan-card.plan-complete .plan-num{background:var(--green);border-color:#7ce8b5;color:#04150f;box-shadow:none;animation:none}
+.plan-card.plan-gone{opacity:0;transform:translateY(-8px) scale(.98)}
 @media(max-width:700px){
   .plan-dock{width:calc(100% - 20px);padding:8px 10px 10px}
   .pd-cap{display:none}
@@ -1739,18 +1775,19 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 }
 
 
-/* ===== Пакет 28: рабочая область файлов =====
-   Единый вертикальный поток: сетка сверху, терминал предпросмотра под ней.
-   Пока пользователь напрямую не открыл файл, терминала в layout нет. */
+/* ===== Рабочая область файлов =====
+   Прокручивается только сетка. Предпросмотр занимает нижнюю часть видимого
+   viewport и сразу уменьшает доступную сетке высоту — он никогда не уезжает
+   после последнего файла. Пока файл не открыт, терминала в layout нет. */
 .files-work{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:14px;
-  padding:6px 26px 20px;overflow:auto}
-.files-work>.file-grid{flex:0 0 auto;width:100%;min-width:0;padding:0}
-.files-work>.term-block{margin:0;width:100%;min-width:0;flex:0 0 auto;min-height:0}
+  padding:6px 26px 20px;overflow:hidden}
+.files-work>.file-grid{flex:1 1 0;width:100%;min-width:0;min-height:0;padding:0;overflow-y:auto}
+.files-work>.term-block{margin:0;width:100%;min-width:0;flex:0 0 auto;min-height:0;max-height:min(44vh,440px)}
 .files-work>.term-block[hidden]{display:none!important}
 .files-work>.term-block:not([hidden]){display:flex;flex-direction:column;
   animation:fileTermIn .3s cubic-bezier(.2,.8,.3,1) both}
-.files-work>.term-block .term{min-height:190px;max-height:min(42vh,420px)}
-.files-work>.term-block .term.big{max-height:min(42vh,420px)}
+.files-work>.term-block .term{min-height:190px;max-height:min(38vh,390px)}
+.files-work>.term-block .term.big{max-height:min(38vh,390px)}
 @keyframes fileTermIn{from{opacity:0;transform:translateY(10px)}}
 @media (max-width:720px){
   .files-work{padding-left:14px;padding-right:14px}
@@ -1774,15 +1811,8 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .cam-chat .ai-content,.cam-chat .msg-body,.cam-chat .md,.cam-chat .ui-panel{min-width:0;max-width:100%}
 .cam-chat .ui-panel{width:100%;padding:12px}
 
-/* Текущий пункт подчёркнут одной тонкой золотой нитью. Рамка вокруг всей
-   ячейки пересекала двухстрочную подпись и визуально казалась толстой. */
-.pd-s.now::after{content:'';position:absolute;z-index:0;left:18%;right:18%;bottom:-5px;
-  height:1px;border:0;border-radius:1px;
-  background:linear-gradient(90deg,transparent,rgba(255,217,138,.72),transparent);
-  box-shadow:0 0 5px rgba(217,164,65,.28);pointer-events:none}
-.pd-s.now .pd-cap{position:relative;z-index:1}
+/* Текущий пункт — только glow. Псевдоэлементов-линий и рамок здесь
+   намеренно нет: они выглядели как подчёркивание золотого плана. */
+.pd-s.now .pd-cap{position:relative;z-index:1;text-shadow:0 0 9px rgba(217,164,65,.38)}
 .plan-list li{position:relative}
-.plan-list li.now::after{content:'';position:absolute;inset:2px -7px;
-  border:1px solid rgba(0,200,240,.2);border-radius:11px;
-  background:rgba(0,200,240,.025);pointer-events:none}
 .plan-list li.now>*{position:relative;z-index:1}

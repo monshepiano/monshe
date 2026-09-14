@@ -1,6 +1,6 @@
 'use strict';
 
-/* Browser-free runtime contracts for the package 28 regressions.
+/* Browser-free deterministic contracts for package 28 and its UI follow-up.
    Run with: node tests/package28_frontend_runtime.js */
 
 const assert = require('assert');
@@ -60,12 +60,163 @@ function loadFunctions(names, context) {
   return context;
 }
 
+class MiniClassList {
+  constructor(node) { this.node = node; }
+  _set() { return new Set((this.node._className || '').split(/\s+/).filter(Boolean)); }
+  _save(set) { this.node._className = Array.from(set).join(' '); }
+  add(...names) { const set = this._set(); names.forEach((name) => set.add(name)); this._save(set); }
+  remove(...names) { const set = this._set(); names.forEach((name) => set.delete(name)); this._save(set); }
+  contains(name) { return this._set().has(name); }
+  toggle(name, force) {
+    const set = this._set();
+    const on = force === undefined ? !set.has(name) : !!force;
+    if (on) set.add(name); else set.delete(name);
+    this._save(set);
+    return on;
+  }
+}
+
+function simpleSelector(selector) {
+  let clean = selector.trim();
+  if (clean.includes(',')) clean = clean.split(',')[0].trim();
+  if (clean.includes('>')) clean = clean.split('>').pop().trim();
+  if (clean.includes(' ')) clean = clean.split(/\s+/).pop();
+  clean = clean.replace(/^:scope/, '').trim();
+  return clean;
+}
+
+function selectorMatches(node, selector) {
+  if (!node || node.nodeType !== 1) return false;
+  const clean = simpleSelector(selector);
+  if (!clean) return false;
+  if (clean.startsWith('.')) {
+    return clean.slice(1).split('.').every((name) => node.classList.contains(name));
+  }
+  if (clean.startsWith('#')) return node.id === clean.slice(1);
+  const attr = clean.match(/^\[data-([\w-]+)="([^"]*)"\]$/);
+  if (attr) {
+    const key = attr[1].replace(/-([a-z])/g, (_m, ch) => ch.toUpperCase());
+    return String(node.dataset[key] || '') === attr[2];
+  }
+  return node.tagName === clean.toUpperCase();
+}
+
+class MiniNode {
+  constructor(tag, text) {
+    this.nodeType = tag ? 1 : 3;
+    this.tagName = tag ? String(tag).toUpperCase() : undefined;
+    this.nodeValue = tag ? null : String(text || '');
+    this.childNodes = [];
+    this.parentNode = null;
+    this.dataset = {};
+    this.style = {};
+    this.listeners = {};
+    this.id = '';
+    this._className = '';
+    this._connected = true;
+    this._innerHTML = '';
+    this.classList = new MiniClassList(this);
+  }
+  get className() { return this._className; }
+  set className(value) { this._className = String(value || ''); }
+  get isConnected() { return this._connected; }
+  set isConnected(value) { this._connected = !!value; }
+  get children() { return this.childNodes.filter((node) => node.nodeType === 1); }
+  get lastChild() { return this.childNodes[this.childNodes.length - 1] || null; }
+  get lastElementChild() {
+    const items = this.children;
+    return items[items.length - 1] || null;
+  }
+  get previousElementSibling() {
+    if (!this.parentNode) return null;
+    const items = this.parentNode.children;
+    return items[items.indexOf(this) - 1] || null;
+  }
+  get nextElementSibling() {
+    if (!this.parentNode) return null;
+    const items = this.parentNode.children;
+    return items[items.indexOf(this) + 1] || null;
+  }
+  get textContent() {
+    if (this.nodeType === 3) return this.nodeValue;
+    return this.childNodes.map((node) => node.textContent).join('');
+  }
+  set textContent(value) {
+    if (this.nodeType === 3) { this.nodeValue = String(value || ''); return; }
+    this.childNodes.forEach((node) => { node.parentNode = null; node._connected = false; });
+    this.childNodes = [];
+    const text = String(value || '');
+    if (text) this.appendChild(new MiniNode(null, text));
+  }
+  get innerHTML() { return this._innerHTML; }
+  set innerHTML(value) { this._innerHTML = String(value || ''); this.childNodes = []; }
+  appendChild(node) {
+    if (node.parentNode) node.parentNode._detach(node);
+    this.childNodes.push(node);
+    node.parentNode = this;
+    node._connected = this._connected;
+    return node;
+  }
+  insertBefore(node, ref) {
+    if (!ref || !this.childNodes.includes(ref)) return this.appendChild(node);
+    if (node.parentNode) node.parentNode._detach(node);
+    const at = this.childNodes.indexOf(ref);
+    this.childNodes.splice(at, 0, node);
+    node.parentNode = this;
+    node._connected = this._connected;
+    return node;
+  }
+  replaceChild(node, old) {
+    const at = this.childNodes.indexOf(old);
+    assert(at >= 0, 'replaceChild target must exist');
+    if (node.parentNode) node.parentNode._detach(node);
+    this.childNodes[at] = node;
+    node.parentNode = this;
+    node._connected = this._connected;
+    old.parentNode = null;
+    old._connected = false;
+    return old;
+  }
+  _detach(node) {
+    const at = this.childNodes.indexOf(node);
+    if (at >= 0) this.childNodes.splice(at, 1);
+    node.parentNode = null;
+  }
+  remove() {
+    if (this.parentNode) this.parentNode._detach(this);
+    this._connected = false;
+  }
+  querySelectorAll(selector) {
+    const out = [];
+    const walk = (node) => {
+      node.childNodes.forEach((child) => {
+        if (selectorMatches(child, selector)) out.push(child);
+        if (child.nodeType === 1) walk(child);
+      });
+    };
+    walk(this);
+    return out;
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  addEventListener(name, fn) { this.listeners[name] = fn; }
+  removeEventListener(name) { delete this.listeners[name]; }
+  getBoundingClientRect() { return { top: 100, left: 30, width: 500, height: 120 }; }
+}
+
+const miniDocument = {
+  createElement(tag) { return new MiniNode(tag); },
+  createTextNode(text) { return new MiniNode(null, text); },
+};
+function miniEl(tag, cls, markup) {
+  const node = miniDocument.createElement(tag);
+  node.className = cls || '';
+  if (markup != null) node.innerHTML = markup;
+  return node;
+}
+
 function testLiveStatusHasNoSpinner() {
   const timers = [];
-  const q = {
-    textContent: '', offsetWidth: 10,
-    classList: { remove() {}, add() {} },
-  };
+  const q = { textContent: '', offsetWidth: 10, classList: { remove() {}, add() {} } };
   const box = {
     className: '', markup: '',
     set innerHTML(value) { this.markup = value; },
@@ -87,77 +238,267 @@ function testLiveStatusHasNoSpinner() {
   assert.strictEqual(q.textContent, 'проверяю', 'work labels must stay alive');
 }
 
-function testTimeAndFilesCssContracts() {
+function testDaySeparatorsAndTimeOnlyMeta() {
+  const host = new MiniNode('div');
+  const ctx = loadFunctions(['dayKey', 'dayLabel', 'ensureDaySeparator', 'stampTime'], {
+    Date, Number, String, Math, document: miniDocument, el: miniEl, esc: (text) => String(text),
+  });
+  const d1 = Date.parse('2026-09-14T10:00:00Z') / 1000;
+  const d2 = Date.parse('2026-09-15T10:00:00Z') / 1000;
+  assert(ctx.ensureDaySeparator(host, d1));
+  host.appendChild(new MiniNode('div'));
+  assert.strictEqual(ctx.ensureDaySeparator(host, d1), null, 'one separator per calendar day');
+  assert(ctx.ensureDaySeparator(host, d2), 'calendar change must add a separator');
+  assert.strictEqual(host.querySelectorAll('.day-separator').length, 2);
+
+  // Hot append path must use the separator cache, never walk backwards through
+  // all messages from the same day (which made a long transcript O(n²)).
+  const guardedTail = new MiniNode('div');
+  Object.defineProperty(guardedTail, 'previousElementSibling', {
+    configurable: true,
+    get() { throw new Error('linear separator scan on cached append'); },
+  });
+  host.appendChild(guardedTail);
+  assert.strictEqual(ctx.ensureDaySeparator(host, d2), null);
+
+  // Clearing/removing DOM invalidates the cache and permits exactly one
+  // fallback reconstruction before normal O(1) appends resume.
+  const cached = host._daySeparator;
+  cached.remove();
+  delete guardedTail.previousElementSibling;
+  const rebuilt = ctx.ensureDaySeparator(host, d2);
+  assert(rebuilt && rebuilt !== cached, 'detached separator cache must be rebuilt');
+  assert.strictEqual(host._daySeparator, rebuilt);
+
+  const msg = new MiniNode('div');
+  const bubble = new MiniNode('div');
+  bubble.className = 'bubble-user';
+  msg.appendChild(bubble);
+  const stamp = ctx.stampTime(msg, d2);
+  assert(stamp.classList.contains('msg-time'));
+  assert(stamp.classList.contains('in-bubble'));
+  assert(!stamp.classList.contains('two'), 'live message meta must contain time only');
+  assert(!/\d{2}\.\d{2}/.test(stamp.textContent), 'date must not be repeated beside a message');
+
+  assert(/\.day-separator\s*\{[^}]*display\s*:\s*flex[^}]*align-items\s*:\s*center/s.test(css));
+  assert(/\.day-separator::before,\.day-separator::after\s*\{/.test(css));
   assert(/\.msg-time\.two\.in-bubble\s*\{[^}]*display\s*:\s*flex/s.test(css),
-    'old message date and time must keep separate flex rows');
-  assert(/\.files-work\s*\{[^}]*flex-direction\s*:\s*column/s.test(css),
-    'file preview terminal must be below the grid');
-  assert(/\.files-work>\.term-block\[hidden\]\s*\{[^}]*display\s*:\s*none/s.test(css),
-    'file terminal must remain absent until a file is opened');
+    'legacy saved two-line stamps must remain readable');
+}
+
+function testFileViewportAndCloseButton() {
+  assert(/\.files-work\s*\{[^}]*flex\s*:\s*1 1 auto[^}]*min-height\s*:\s*0[^}]*overflow\s*:\s*hidden/s.test(css),
+    'file workspace must be bounded by the visible view');
+  assert(/\.files-work>\.file-grid\s*\{[^}]*flex\s*:\s*1 1 0[^}]*overflow-y\s*:\s*auto/s.test(css),
+    'only the file grid must consume and scroll through remaining height');
+  assert(/\.files-work>\.term-block\s*\{[^}]*flex\s*:\s*0 0 auto[^}]*max-height\s*:/s.test(css),
+    'visible preview must reserve the viewport bottom instead of following all files');
+  assert(/\.files-work>\.term-block\[hidden\]\s*\{[^}]*display\s*:\s*none/s.test(css));
   const close = html.match(/<button[^>]*id="termClose"[^>]*>([^<]*)<\/button>/);
-  assert(close && close[1].trim() === '×', 'file close control must be a compact cross');
+  assert(close && close[1].trim() === '×', 'file close control must be a cross');
+  assert(/\.term-act\.term-close\s*\{[^}]*width\s*:\s*25px[^}]*height\s*:\s*25px[^}]*display\s*:\s*grid/s.test(css),
+    'file close control must be a square dialog button');
 
   const fileCard = extractFunction(js, 'fileCard');
   const click = fileCard.slice(fileCard.indexOf("c.addEventListener('click'"),
     fileCard.indexOf("c.addEventListener('dblclick'"));
   const executable = click.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-  assert(/\bclearSelection\s*\(\s*\)/.test(executable), 'direct open must clear selection');
-  assert(!/\bselectOnly\s*\(/.test(executable), 'direct open must not select the card');
+  assert(/\bclearSelection\s*\(\s*\)/.test(executable));
+  assert(!/\bselectOnly\s*\(/.test(executable));
 }
 
-function testCompletedPlanAlwaysLeavesDock() {
-  const timers = [];
-  const title = { textContent: '' };
-  const fill = { style: {} };
-  const classes = new Set(['plan-dock', 'live']);
-  const dock = {
-    dataset: { runId: '28' }, isConnected: true, style: {}, listeners: {},
-    classList: {
-      add(name) { classes.add(name); },
-      remove(name) { classes.delete(name); },
-    },
-    querySelector(selector) { return selector === '.pd-t' ? title : selector === '.pd-fill' ? fill : null; },
-    addEventListener(name, fn) { this.listeners[name] = fn; },
-    remove() { this.isConnected = false; },
+function testImportantHeadingCaretAndTrail() {
+  const ctx = loadFunctions(['importantLine', 'clearTypingDecorations', 'placeCaret'], {
+    document: miniDocument,
+  });
+  assert.strictEqual(ctx.importantLine('текст\n### Важное действие'), true);
+  assert.strictEqual(ctx.importantLine('текст\n- обычный пункт'), false);
+  assert(/const CPS_IMPORTANT\s*=\s*72/.test(js));
+  assert(/importantLine\(ui\.shown\)/.test(js), 'typer must select the important heading rate');
+
+  const md = new MiniNode('div');
+  const heading = new MiniNode('h2');
+  const original = 'Пуск 🚀 системы';
+  heading.appendChild(miniDocument.createTextNode(original));
+  md.appendChild(heading);
+  ctx.placeCaret(md);
+  assert.strictEqual(md.querySelectorAll('.caret').length, 1);
+  assert(md.querySelector('.caret').classList.contains('caret-important'));
+  assert.strictEqual(md.querySelectorAll('.important-trail').length, 1);
+  assert.strictEqual(Array.from(md.querySelector('.important-trail').textContent).length, 6,
+    'trail must be bounded by six Unicode characters');
+  assert.strictEqual(heading.textContent, original, 'decorations must not change visible heading text');
+
+  ctx.placeCaret(md);
+  assert.strictEqual(md.querySelectorAll('.caret').length, 1, 'each tick owns exactly one caret');
+  assert.strictEqual(md.querySelectorAll('.important-trail').length, 1, 'trail nodes must not accumulate');
+  assert.strictEqual(heading.textContent, original);
+  ctx.clearTypingDecorations(md);
+  assert.strictEqual(md.querySelector('.caret'), null);
+  assert.strictEqual(md.querySelector('.important-trail'), null);
+  assert.strictEqual(heading.textContent, original, 'completion must restore a plain text node');
+
+  const plain = new MiniNode('div');
+  const p = new MiniNode('p');
+  p.appendChild(miniDocument.createTextNode('Обычный ответ'));
+  plain.appendChild(p);
+  ctx.placeCaret(plain);
+  assert(!plain.querySelector('.caret').classList.contains('caret-important'));
+  assert.strictEqual(plain.querySelector('.important-trail'), null);
+  assert(/\.caret\.caret-important\s*\{[^}]*var\(--gold\)[^}]*box-shadow/s.test(css));
+  assert(/\.important-trail\s*\{[^}]*linear-gradient/s.test(css));
+}
+
+function makePlanItem(text) {
+  const li = new MiniNode('li');
+  li._planText = text;
+  const copy = new MiniNode('span');
+  copy.className = 'plan-copy';
+  li.appendChild(copy);
+  return { li, copy };
+}
+
+function testPlanTypingCompletionAndDockRaces() {
+  let nextTimer = 1;
+  const intervals = new Map();
+  const timeouts = [];
+  const cancelled = new Set();
+  const setIntervalFake = (fn, ms) => {
+    const id = nextTimer++; intervals.set(id, { fn, ms }); return id;
   };
-  const li = { parentNode: {}, classList: { remove() {} } };
-  const card = { isConnected: true, style: {} };
-  let collapsed = false;
-  const ctx = loadFunctions(['undockPlan'], {
-    clearPlanTimers() {},
-    $$(selector) { return selector === '.plan-dock' ? [dock] : []; },
-    setTimeout(fn, ms) { timers.push({ fn, ms }); return timers.length; },
-    collapseSoon() { collapsed = true; },
+  const clearFake = (id) => { intervals.delete(id); cancelled.add(id); };
+  const setTimeoutFake = (fn, ms) => { const id = nextTimer++; timeouts.push({ id, fn, ms }); return id; };
+  const S = { streamRun: 28 };
+  const ctx = loadFunctions(
+    ['clearPlanTimers', 'finishPlanItems', 'typePlanItem', 'undockPlan'],
+    {
+      S, PLAN_CHAR_MS: 26, document: miniDocument, el: miniEl,
+      setInterval: setIntervalFake, clearInterval: clearFake,
+      setTimeout: setTimeoutFake, clearTimeout: clearFake,
+      $$: (selector, node) => node ? node.querySelectorAll(selector) : [],
+    },
+  );
+
+  // Completion while an item is still typing: interval is cancelled, all
+  // text is restored, the plan turns green immediately, then disappears at 2s.
+  const list = new MiniNode('ul');
+  const { li, copy } = makePlanItem('Проверить жизненный цикл');
+  list.appendChild(li);
+  const card = new MiniNode('div');
+  card.className = 'plan-card live';
+  card.appendChild(list);
+  card.setTitle = (text) => { card.titleText = text; };
+  const ui = {
+    runId: 28, planTimers: [], planFinished: false, planItems: [li],
+    planList: list, planCard: card, planDock: null,
+  };
+  ctx.typePlanItem(ui, li, () => { throw new Error('cancelled typer must not finish later'); });
+  const typingTimer = ui.planTimers[0];
+  intervals.get(typingTimer).fn();
+  intervals.get(typingTimer).fn();
+  assert.strictEqual(copy.childNodes.length, 3, 'typing uses a bounded lead/trail/caret trio');
+  ctx.undockPlan(ui);
+  assert(cancelled.has(typingTimer), 'completion must cancel the in-flight item typer');
+  assert.strictEqual(copy.textContent, li._planText);
+  assert(card.classList.contains('plan-complete'), 'pre-dock completion turns the card green immediately');
+  assert.strictEqual(card.titleText, 'План выполнен');
+  assert(timeouts.some((timer) => timer.ms === 1700));
+  const removeCard = timeouts.find((timer) => timer.ms === 2000);
+  assert(removeCard, 'completed pre-dock plan must be removed at exactly 2 seconds');
+  removeCard.fn();
+  assert.strictEqual(card.isConnected, false);
+
+  // Completion during the dock flight owns the flying clone. The source card
+  // leaves normal flow immediately; no thumbnail/collapse placeholder returns.
+  const dock = new MiniNode('div');
+  dock.className = 'plan-dock fly live';
+  dock.dataset.runId = '29';
+  const title = new MiniNode('span'); title.className = 'pd-t';
+  const step = new MiniNode('span'); step.className = 'pd-step';
+  const fill = new MiniNode('i'); fill.className = 'pd-fill';
+  const dockStep = new MiniNode('div'); dockStep.className = 'pd-s now';
+  dock.appendChild(title); dock.appendChild(step); dock.appendChild(fill); dock.appendChild(dockStep);
+  const card2 = new MiniNode('div');
+  const plan2 = makePlanItem('Завершить полёт');
+  const list2 = new MiniNode('ul'); list2.appendChild(plan2.li); card2.appendChild(list2);
+  const ui2 = {
+    runId: 29, planTimers: [], planFinished: false, planItems: [plan2.li],
+    planList: list2, planCard: card2, planDock: dock,
+  };
+  const ctx2 = loadFunctions(['clearPlanTimers', 'finishPlanItems', 'undockPlan'], {
+    setTimeout: setTimeoutFake, clearTimeout: clearFake,
+    $$: (selector, node) => node ? node.querySelectorAll(selector) : (selector === '.plan-dock' ? [dock] : []),
+  });
+  ctx2.undockPlan(ui2);
+  assert.strictEqual(card2.isConnected, false, 'flying plan source must not reserve response space');
+  assert(dock.classList.contains('done'));
+  assert(!dock.classList.contains('live'));
+  assert.strictEqual(title.textContent, 'План выполнен');
+  assert.strictEqual(step.textContent, 'готово');
+  assert.strictEqual(fill.style.width, '100%');
+  assert(dockStep.classList.contains('done'));
+  assert(!dockStep.classList.contains('now'));
+  const dockRemove = timeouts.filter((timer) => timer.ms === 2000).pop();
+  dockRemove.fn();
+  assert.strictEqual(dock.isConnected, false, 'flying plan must disappear completely after 2 seconds');
+
+  assert(/const PLAN_ITEM_PAUSE\s*=\s*760/.test(js));
+  assert(/const PLAN_LOOK_MS\s*=\s*1200/.test(js));
+  assert(!/\.pd-s\.now::after\s*\{/.test(css), 'current dock step must have no underline pseudo-element');
+  const current = css.match(/\.pd-s\.now \.pd-cap\s*\{([^}]*)\}/s);
+  assert(current && /color\s*:\s*#ffd98a/.test(current[1]), 'current step uses a nearby brighter gold');
+  assert(/\.plan-card\.plan-complete/.test(css) && /\.plan-dock\.done/.test(css));
+  assert(!/collapseSoon\s*\(\s*(?:ui\.)?planCard/.test(extractFunction(js, 'undockPlan')),
+    'completion must never return a plan thumbnail');
+}
+
+function testRepeatedPlanEventReplacesOwnership() {
+  const removedDocks = [];
+  const scheduled = [];
+  const completionOrder = [];
+  const status = new MiniNode('div');
+  const body = new MiniNode('div');
+  body.appendChild(status);
+  const oldCard = new MiniNode('div');
+  body.insertBefore(oldCard, status);
+  const oldDock = new MiniNode('div');
+  let clears = 0;
+  const makeCard = () => {
+    const card = new MiniNode('div');
+    card.inner = new MiniNode('div');
+    card.appendChild(card.inner);
+    return card;
+  };
+  const ctx = loadFunctions(['handleEvent'], {
+    S: {},
+    clearPlanTimers() { clears += 1; },
+    dropStrayDocks(keep) { removedDocks.push(keep); oldDock.remove(); },
+    makeCard, markBorn() {}, el: miniEl,
+    pinToBottom() {}, stream() { return body; },
+    planLater(_ui, fn, ms) { scheduled.push({ fn, ms }); },
+    revealPlanItems() {}, sfx() {},
+    dropStatus() { completionOrder.push('status'); },
+    undockPlan() { completionOrder.push('plan'); },
+    queueResponseFinish() { completionOrder.push('typing'); },
   });
   const ui = {
-    runId: 28, planItems: [li], planList: {}, planDock: null,
-    planCard: card, planHome: null,
+    node: { body }, statusEl: status, planDock: oldDock, planCard: oldCard,
+    planItems: [], planList: null, planHome: null, planFinished: false,
   };
-  ctx.undockPlan(ui);
-  assert(classes.has('done'));
-  assert.strictEqual(title.textContent, 'План выполнен');
-  assert.strictEqual(fill.style.width, '100%');
-  assert(collapsed, 'completed plan card must return as a thumbnail');
-  assert(timers.some((timer) => timer.ms === 700),
-    'completed caption must remain briefly readable before fly-out');
-  while (timers.length) timers.shift().fn();
-  assert.strictEqual(dock.isConnected, false, 'owned dock must be removed by fallback timer');
+  ctx.handleEvent({ type: 'plan', steps: ['Один', 'Два'] }, ui);
+  const firstReplacement = ui.planCard;
+  assert.strictEqual(oldCard.isConnected, false);
+  assert.strictEqual(ui.planItems.length, 2);
+  assert.strictEqual(scheduled[0].ms, 100);
+  ctx.handleEvent({ type: 'plan', steps: ['Новый'] }, ui);
+  assert.strictEqual(firstReplacement.isConnected, false, 'a repeated plan event must remove its predecessor');
+  assert.strictEqual(ui.planItems.length, 1);
+  assert.strictEqual(clears, 2);
+  assert.strictEqual(removedDocks.length, 2);
 
-  const currentRule = css.match(/\.pd-s\.now::after\s*\{([^}]*)\}/s);
-  assert(currentRule && /height\s*:\s*1px/.test(currentRule[1]));
-  assert(currentRule && /border\s*:\s*0/.test(currentRule[1]),
-    'current plan step uses a thin underline, not a frame over its caption');
-  assert(/dock\.dataset\.runId\s*=\s*String\(ui\.runId\)/.test(js),
-    'plan dock must carry per-response ownership');
-}
-
-function makeNode(video) {
-  return {
-    isConnected: true,
-    classList: { add() {} },
-    querySelector(selector) { return selector === '#cam' ? video : null; },
-    querySelectorAll() { return []; },
-  };
+  ctx.handleEvent({ type: 'done', content: 'готово' }, ui);
+  assert.deepStrictEqual(completionOrder, ['status', 'plan', 'typing'],
+    'server completion must paint the plan before waiting for local response typing');
 }
 
 function makeMedia() {
@@ -174,16 +515,28 @@ function makeMedia() {
   };
 }
 
-async function testCameraCanRestartAndCancelsLateMedia() {
+function makeCameraNode(video, feed, chat) {
+  const node = new MiniNode('div');
+  node.parts = { '.cam-video': video, '.cam-feed': feed, '.cam-chat': chat };
+  node.querySelector = function query(selector) { return this.parts[selector] || null; };
+  node.querySelectorAll = function queryAll(selector) {
+    if (selector === '.cam-line' && feed) return feed.querySelectorAll(selector);
+    return [];
+  };
+  return node;
+}
+
+async function testCameraLifecycleOwnershipAndLateResults() {
   const toggle = { classList: { remove() {} } };
   const video = { srcObject: null };
   let nextMedia = makeMedia();
   let requests = 0;
+  const card = makeCameraNode(video, new MiniNode('div'), new MiniNode('div'));
   const S = {
-    camRun: 0, camStream: null, camNode: makeNode(video), cameraOn: true,
+    camRun: 0, camStream: null, camNode: card, cameraOn: true,
     camTimer: null, camPrevPix: null, camBusy: false,
   };
-  const ctx = loadFunctions(['startCam', 'stopCam'], {
+  const ctx = loadFunctions(['camPart', 'startCam', 'stopCam'], {
     S, CAM_TICK: 2500, ICO: { cam: '' },
     navigator: { mediaDevices: { async getUserMedia() { requests += 1; return nextMedia; } } },
     showView() {}, killWelcome() {}, buildCamCard() { throw new Error('unexpected rebuild'); },
@@ -194,11 +547,10 @@ async function testCameraCanRestartAndCancelsLateMedia() {
     $(selector) { return selector === '#tgCamera' ? toggle : null; },
   });
 
-  // A connected error/ended card is reusable. The old `if (S.camNode) return`
-  // failed this exact case and never asked the browser for a stream again.
   await ctx.startCam();
   assert.strictEqual(requests, 1);
   assert.strictEqual(S.camStream, nextMedia);
+  assert.strictEqual(video.srcObject, nextMedia, 'live video lookup is scoped to the owned camera card');
   nextMedia.listeners.ended();
   assert.strictEqual(S.camStream, null);
   assert.strictEqual(S.cameraOn, false);
@@ -206,16 +558,16 @@ async function testCameraCanRestartAndCancelsLateMedia() {
   S.cameraOn = true;
   nextMedia = makeMedia();
   await ctx.startCam();
-  assert.strictEqual(requests, 2, 'camera must request media again after the first session ended');
-  assert.strictEqual(S.camStream, nextMedia);
+  assert.strictEqual(requests, 2, 'camera must request hardware again after track ended');
   ctx.stopCam();
   assert.strictEqual(nextMedia.track.stopped, 1);
   assert.strictEqual(S.camNode, null);
   assert.strictEqual(S.camBusy, false);
 
-  // A getUserMedia result that resolves after stopCam must release its track.
+  // getUserMedia resolving after close must release hardware and must not
+  // resurrect a stale generation.
   const lateVideo = { srcObject: null };
-  S.camNode = makeNode(lateVideo);
+  S.camNode = makeCameraNode(lateVideo, new MiniNode('div'), new MiniNode('div'));
   S.cameraOn = true;
   let resolveLate;
   const lateMedia = makeMedia();
@@ -224,16 +576,142 @@ async function testCameraCanRestartAndCancelsLateMedia() {
   ctx.stopCam();
   resolveLate(lateMedia);
   await pending;
-  assert.strictEqual(lateMedia.track.stopped, 1, 'late media stream must not leak after close');
+  assert.strictEqual(lateMedia.track.stopped, 1);
   assert.strictEqual(S.camStream, null);
+
+  // Reopened cards own their feed. Duplicate old camera markup can remain in
+  // history without receiving current comments or messages.
+  const oldFeed = new MiniNode('div');
+  const newFeed = new MiniNode('div');
+  const oldCard = makeCameraNode({}, oldFeed, new MiniNode('div'));
+  const newCard = makeCameraNode({}, newFeed, new MiniNode('div'));
+  S.camNode = newCard;
+  const sayCtx = loadFunctions(['camPart', 'camSay'], {
+    S, Date, el: miniEl, esc: String, MD: { render: String }, scrollDown() {},
+  });
+  sayCtx.camSay('новый сеанс');
+  assert.strictEqual(oldFeed.childNodes.length, 0);
+  assert.strictEqual(newFeed.childNodes.length, 1);
+  sayCtx.camSay('обновлённый кадр');
+  assert.strictEqual(newFeed.childNodes.length, 1, 'live scene description replaces itself instead of growing');
+
+  // A late `chat` event from oldCard cannot overwrite the chat id of newCard;
+  // user message ids are assigned to the exact node owned by the request.
+  const userNode = new MiniNode('div'); userNode.dataset.msgId = '';
+  S.camNode = newCard; S.camChatId = 'new-session'; S.chatId = 'main';
+  const eventCtx = loadFunctions(['handleEvent'], { S });
+  eventCtx.handleEvent({ type: 'chat', chat_id: 'stale-id' }, {
+    node: {}, isolatedCamera: true, cameraNode: oldCard, userMsgNode: userNode,
+  });
+  assert.strictEqual(S.camChatId, 'new-session');
+  eventCtx.handleEvent({ type: 'chat', chat_id: 'active-id' }, {
+    node: {}, isolatedCamera: true, cameraNode: newCard, userMsgNode: userNode,
+  });
+  assert.strictEqual(S.camChatId, 'active-id');
+  eventCtx.handleEvent({ type: 'user_msg', id: 'message-28' }, {
+    node: {}, isolatedCamera: true, cameraNode: newCard, userMsgNode: userNode,
+  });
+  assert.strictEqual(userNode.dataset.msgId, 'message-28');
+
+  const sendSource = extractFunction(js, 'send');
+  assert(/const requestCamNode\s*=\s*camLive\(\)\s*\?\s*S\.camNode/.test(sendSource));
+  assert(/const atts\s*=\s*S\.attachments\.slice\(\)/.test(sendSource));
+  assert(sendSource.indexOf('const atts = S.attachments.slice()') < sendSource.indexOf('await camAttachFrame'),
+    'request attachments must be captured before the camera upload yields');
+  assert(/camAttachFrame\(requestChatId, controller\.signal\)/.test(sendSource));
+  assert(/frame\.fromCam\s*=\s*true;\s*atts\.push\(frame\)/.test(sendSource));
+  assert(!/S\.attachments\.push\(frame\)/.test(sendSource),
+    'a late frame must never leak into the next request attachment tray');
+  assert(/addAiMsg\(null, requestHost\)/.test(sendSource));
+  assert(/chat_id:\s*requestChatId,\s*kind:\s*requestKind/.test(sendSource));
+  assert(!/querySelector\('#cam/.test(js), 'camera runtime must not use duplicate global ids');
+
+  // Deterministic slow-upload race: compose state is already request-owned,
+  // Stop aborts the upload itself, and no cancelled request can start its SSE.
+  const input = { value: 'сделай мем' };
+  const reply = { hidden: false, innerHTML: 'old' };
+  const requestChat = new MiniNode('div');
+  const requestCard = makeCameraNode({}, new MiniNode('div'), requestChat);
+  const mainHost = new MiniNode('div');
+  const requestState = {
+    attachments: [{ name: 'notes.txt' }], editing: null, streaming: false,
+    streamRun: 0, abort: null, camStream: {}, camNode: requestCard,
+    camLink: false, camChatId: 'camera-owned', chatId: 'main',
+    agentMode: true, computerUse: false, replyTicket: 0,
+  };
+  let markUploadStarted;
+  const uploadStarted = new Promise((resolve) => { markUploadStarted = resolve; });
+  let streamRequests = 0;
+  const fetchFake = (url, options) => {
+    if (url === '/api/upload') {
+      markUploadStarted();
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => {
+          const error = new Error('aborted'); error.name = 'AbortError'; reject(error);
+        }, { once: true });
+      });
+    }
+    streamRequests += 1;
+    throw new Error('cancelled camera upload reached the SSE endpoint');
+  };
+  let renderedAttachments = -1;
+  let stoppedPlans = 0;
+  const aiRoot = new MiniNode('div');
+  const aiBody = new MiniNode('div');
+  aiRoot.appendChild(aiBody);
+  const sendCtx = loadFunctions(['api', 'camAttachFrame', 'stopStream', 'send'], {
+    S: requestState, AbortController, fetch: fetchFake,
+    setInterval, clearInterval,
+    $: (selector) => selector === '#input' ? input : (selector === '#replyBar' ? reply : null),
+    foldAllNotes() {}, camLive() { return true; }, stream() { return mainHost; },
+    renderAttachments() { renderedAttachments = requestState.attachments.length; },
+    autoGrow() {}, addUserMsg() { return new MiniNode('div'); },
+    addAiMsg() { return { root: aiRoot, body: aiBody, modelEl: new MiniNode('span') }; },
+    setStreaming(value) { requestState.streaming = value; }, sfx() {}, thinkMode() {},
+    camFrame() { return 'data:image/jpeg;base64,frame'; },
+    typerStop() {}, dropStatus() {}, undockPlan() { stoppedPlans += 1; },
+    el: miniEl,
+    settleVisualDone(ui) {
+      ui.visualDone = true;
+      if (ui.resolveVisualDone) ui.resolveVisualDone();
+    },
+    queueResponseFinish() { throw new Error('aborted upload must not finalize as a response'); },
+    loadChats() {}, refreshState() {}, fetchReplies() {},
+  });
+  const pendingSend = sendCtx.send();
+  await uploadStarted;
+  assert.strictEqual(input.value, '', 'input must be detached before camera upload waits');
+  assert.strictEqual(renderedAttachments, 0, 'global tray belongs to the next compose immediately');
+  assert.strictEqual(requestState.streaming, true, 'Stop must be available during upload');
+  const pendingStop = sendCtx.stopStream();
+  await Promise.all([pendingSend, pendingStop]);
+  assert.strictEqual(streamRequests, 0);
+  assert.strictEqual(requestState.attachments.length, 0);
+  assert.strictEqual(requestState.streaming, false);
+  assert.strictEqual(stoppedPlans, 1);
+}
+
+function testThinkingGradientContract() {
+  const rule = css.match(/\.think-card\.live \.think-stream::after\s*\{([^}]*)\}/s);
+  assert(rule, 'live thinking must have one moving overlay');
+  assert(/opacity\s*:\s*\.14/.test(rule[1]));
+  assert(/linear-gradient/.test(rule[1]));
+  assert(/animation\s*:\s*thinkNeon/.test(rule[1]));
+  assert(/@keyframes thinkNeon/.test(css));
+  assert(!/\.think-stream::(?:before|after)[^{]*\{[^}]*caret/s.test(css),
+    'thinking stays a masked scrolling stream, not a cursor animation');
 }
 
 (async () => {
   testLiveStatusHasNoSpinner();
-  testTimeAndFilesCssContracts();
-  testCompletedPlanAlwaysLeavesDock();
-  await testCameraCanRestartAndCancelsLateMedia();
-  console.log('package28_frontend_runtime: 6 regression groups passed');
+  testDaySeparatorsAndTimeOnlyMeta();
+  testFileViewportAndCloseButton();
+  testImportantHeadingCaretAndTrail();
+  testPlanTypingCompletionAndDockRaces();
+  testRepeatedPlanEventReplacesOwnership();
+  await testCameraLifecycleOwnershipAndLateResults();
+  testThinkingGradientContract();
+  console.log('package28_frontend_runtime: 8 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
