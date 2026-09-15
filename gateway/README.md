@@ -35,15 +35,16 @@ Timeweb is the simplest production path because one Russian account provides
 both an OpenAI-compatible image API and App Platform hosting with a technical
 HTTPS domain. Create an AI Gateway key, enable an image-capable model (the
 recommended starting point is `gemini-3.1-flash-image-preview`), and deploy this
-public repository as a Python Backend in App Platform:
+public repository as a Docker Backend in App Platform:
 
 - repository: `https://github.com/monshepiano/monshe.git`;
-- project directory: repository root;
-- start command: `python3 gateway/image_gateway.py`;
+- staging branch: `arena/01a0113d-monshe` (switch to `main` after merge);
+- project directory and build context: repository root;
+- Dockerfile: `Dockerfile`; its command starts only the gateway;
 - healthcheck: `/health`;
-- environment: values from `env.example`, except `JARVIS_GATEWAY_HOST` must be
-  `0.0.0.0` and `JARVIS_GATEWAY_PORT` should be omitted (App Platform provides
-  `PORT`).
+- environment: Timeweb and rate-limit values from `env.example`; omit
+  `JARVIS_GATEWAY_HOST` and `JARVIS_GATEWAY_PORT` because the image binds
+  publicly and automatically honours App Platform's `PORT`.
 
 Use the generated `https://…` technical domain as
 `JARVIS_IMAGE_GATEWAY_URL`. The selected model name must match the ID shown in

@@ -1,0 +1,3 @@
+**
+!gateway/image_gateway.py
+!app/jarvis/certs/russian_trusted_root_ca.pem
