@@ -12,6 +12,7 @@ const root = path.resolve(__dirname, '..');
 const js = fs.readFileSync(path.join(root, 'app/jarvis/web/js/app.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'app/jarvis/web/css/app.css'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'app/jarvis/web/index.html'), 'utf8');
+const markdown = fs.readFileSync(path.join(root, 'app/jarvis/web/js/markdown.js'), 'utf8');
 
 function extractFunction(source, name) {
   const re = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
@@ -259,7 +260,7 @@ function testTelegramDateHudAndTimeOnlyMeta() {
   const timers = [];
   const frames = [];
   const ctx = loadFunctions(
-    ['dayKey', 'dayLabel', 'scrollDayMessage', 'setupScrollDate', 'stampTime'],
+    ['dayKey', 'dayLabel', 'scrollDayMessage', 'setupScrollDate', 'stampTime', 'placeDaySeparator'],
     {
       Date, Number, String, Math, document: miniDocument, el: miniEl,
       esc: (text) => String(text),
@@ -297,12 +298,31 @@ function testTelegramDateHudAndTimeOnlyMeta() {
   assert(!/\d{2}\.\d{2}/.test(stamp.textContent), 'date must not be repeated beside a message');
   assert.strictEqual(msg.dataset.day, ctx.dayKey(Number(visible.dataset.ts)));
 
+  const dayHost = new MiniNode('div');
+  const first = new MiniNode('div'); first.className = 'msg';
+  ctx.stampTime(first, Date.parse('2026-09-14T08:00:00Z') / 1000);
+  dayHost.appendChild(first);
+  const firstSep = ctx.placeDaySeparator(first);
+  assert(firstSep && firstSep.classList.contains('day-separator'),
+    'conversation must begin with a permanent calendar separator');
+  assert.strictEqual(first.previousElementSibling, firstSep);
+  const same = new MiniNode('div'); same.className = 'msg';
+  ctx.stampTime(same, Date.parse('2026-09-14T09:00:00Z') / 1000);
+  dayHost.appendChild(same);
+  assert.strictEqual(ctx.placeDaySeparator(same), null,
+    'one calendar row is enough for consecutive messages on the same day');
+  const tomorrow = new MiniNode('div'); tomorrow.className = 'msg';
+  ctx.stampTime(tomorrow, Date.parse('2026-09-15T09:00:00Z') / 1000);
+  dayHost.appendChild(tomorrow);
+  assert(ctx.placeDaySeparator(tomorrow), 'a changed day must create the next separator');
+
   assert(/class="scroll-date"\s+id="scrollDate"/.test(html));
   assert(/\.scroll-date\s*\{[^}]*position\s*:\s*absolute[^}]*top\s*:\s*24px[^}]*opacity\s*:\s*0/s.test(css),
     'date stays fixed at the desktop transcript start while scrolling');
   assert(/@media[^}]*[\s\S]*\.scroll-date\s*\{\s*top\s*:\s*16px/s.test(css),
     'mobile date aligns with the mobile transcript start');
-  assert(!/\.day-separator\s*\{/.test(css), 'per-message static calendar rows must be gone');
+  assert(/\.day-separator\s*\{[^}]*display\s*:\s*flex[^}]*margin/s.test(css),
+    'a permanent day separator must remain at the beginning of each date group');
   assert(/\.msg-time\.two\.in-bubble\s*\{[^}]*display\s*:\s*flex/s.test(css),
     'legacy saved two-line stamps must remain readable');
 }
@@ -390,9 +410,10 @@ function testImportantHeadingCaretAndTrail() {
   assert(plain.querySelector('.important-trail'));
   assert(/\.caret\s*\{[^}]*#00bff3[^}]*box-shadow/s.test(css), 'normal cursor is visibly bright blue');
   assert(/\.caret\.caret-important\s*\{[^}]*#ffc83d[^}]*box-shadow/s.test(css));
-  assert(/\.normal-trail\s*\{[^}]*linear-gradient\(90deg,#8fbbcf[^}]*#65e7ff[^}]*#f2feff[^}]*text-shadow/s.test(css));
-  assert(/\.important-trail\s*\{[^}]*linear-gradient\(90deg,#8fbbcf[^}]*#82e7f4[^}]*#ffe477[^}]*#fffde3[^}]*text-shadow/s.test(css),
-    'gold trail must progress from ordinary blue through cyan to near-cursor gold');
+  assert(/\.normal-trail\s*\{[^}]*linear-gradient\(90deg,#7898aa[^}]*#54b9d0[^}]*#a9e6f1[^}]*text-shadow/s.test(css),
+    'ordinary cursor trail must use the subdued blue palette');
+  assert(/\.important-trail\s*\{[^}]*linear-gradient\(90deg,var\(--tx\)\s+0%[^}]*#ead68c[^}]*#ffe477[^}]*#fffde3[^}]*text-shadow/s.test(css),
+    'gold trail must begin at ordinary answer white and heat up only near the caret');
   assert(/\.caret\s*\{[^}]*animation\s*:\s*cursorBreathe[^}]*\}/s.test(css));
   assert(!/@keyframes (?:spark|twBlink)[^{]*\{[^}]*box-shadow/s.test(css),
     'cursor animation must stay on compositor opacity/transform');
@@ -770,19 +791,64 @@ async function testCameraLifecycleOwnershipAndLateResults() {
   assert.strictEqual(stoppedPlans, 1);
 }
 
+function testInteractiveFenceReachesFrontendPanel() {
+  const context = { window: {} };
+  vm.createContext(context);
+  vm.runInContext(markdown, context);
+  const rendered = context.window.MD.render(
+    'Какой формат выбираем?\n\n```ui\ntiles Формат: PDF | Word | Markdown\n```',
+  );
+  assert(/<div class="ui-panel" data-ui="tiles Формат: PDF \| Word \| Markdown"><\/div>/.test(rendered),
+    'canonical backend UI fence must arrive as a live frontend panel, not a code/plain list');
+  const panels = extractFunction(js, 'mountUiPanels');
+  assert(/parseUiSpec\(box\.dataset\.ui/.test(panels));
+  assert(/addEventListener\(['"]click/.test(panels),
+    'rendered choice tiles must have a real click handler');
+  const events = extractFunction(js, 'handleEvent');
+  assert(/case 'reply_ui':[\s\S]*ui\.replyUiSpec\s*=/.test(events),
+    'frontend must consume the parser-independent reply_ui SSE event');
+  const finish = extractFunction(js, 'queueResponseFinish');
+  assert(/ui\.replyUiSpec\s*&&\s*!ui\.mdEl\.querySelector\('\.ui-panel'\)/.test(finish));
+  assert(/fallbackPanel\.dataset\.ui\s*=\s*ui\.replyUiSpec/.test(finish),
+    'a missing markdown panel must be reconstructed directly in the final DOM');
+
+  const root = new MiniNode('div');
+  const list = new MiniNode('ol');
+  ['Минимализм — светлый кадр', 'Ретро — плёнка', 'Кино — контраст'].forEach((text) => {
+    const li = new MiniNode('li'); li.textContent = text; list.appendChild(li);
+  });
+  const question = new MiniNode('p'); question.textContent = 'Какой вариант выбираем?';
+  const panel = new MiniNode('div'); panel.className = 'ui-panel';
+  root.appendChild(list); root.appendChild(question); root.appendChild(panel);
+  const helpers = loadFunctions(['choiceKey', 'stripMirroredChoiceList'], {
+    String, $$: (selector, node) => node.querySelectorAll(selector),
+  });
+  helpers.stripMirroredChoiceList(panel, [{
+    t: 'tiles', opts: ['Минимализм', 'Ретро', 'Кино'],
+  }]);
+  assert.strictEqual(list.parentNode, null,
+    'plain mirrored options must be replaced by the styled tile controls');
+  assert.strictEqual(question.parentNode, root, 'the actual question must stay visible');
+}
+
 function testThinkingGradientContract() {
   const rule = css.match(/\.think-card\.live \.think-stream::after\s*\{([^}]*)\}/s);
   assert(rule, 'live thinking must have one moving overlay');
   const opacity = Number((rule[1].match(/opacity\s*:\s*([\d.]+)/) || [])[1]);
-  assert(opacity >= 0.3 && opacity <= 0.5,
-    'thinking gradient stays visible but dimmer than the previous .68 haze');
-  assert(/rgba\(92,229,255,\.34\)/.test(rule[1]));
-  assert(/rgba\(177,139,255,\.38\)/.test(rule[1]));
-  assert(/will-change\s*:\s*transform,opacity/.test(rule[1]));
-  assert(/animation\s*:\s*thinkNeon\s+4\.8s/.test(rule[1]));
+  const width = Number((rule[1].match(/width\s*:\s*([\d.]+)%/) || [])[1]);
+  assert(opacity >= 0.75, 'narrow thinking beam must visibly colour the letters');
+  assert(width > 0 && width <= 30, 'thinking beam must stay narrow');
+  assert(/rgba\(92,229,255,\.62\)/.test(rule[1]));
+  assert(/rgba\(190,145,255,\.68\)/.test(rule[1]));
+  assert(/mix-blend-mode\s*:\s*screen/.test(rule[1]));
+  assert(/will-change\s*:\s*transform/.test(rule[1]));
+  assert(/animation\s*:\s*thinkNeon\s+1\.65s/.test(rule[1]));
   assert(/@keyframes thinkNeon\s*\{to\s*\{transform\s*:\s*translate3d/s.test(css));
   const liveBar = css.match(/\.panel-card\.live \.card-head::after\s*\{([^}]*)\}/s);
-  assert(liveBar && /will-change\s*:\s*transform/.test(liveBar[1]));
+  assert(liveBar && /width\s*:\s*24%/.test(liveBar[1]));
+  assert(/mix-blend-mode\s*:\s*screen/.test(liveBar[1]));
+  assert(/will-change\s*:\s*transform/.test(liveBar[1]));
+  assert(/animation\s*:\s*liveBar\s+1\.45s/.test(liveBar[1]));
   const executableCss = css.replace(/\/\*[\s\S]*?\*\//g, '');
   assert(!/background-position\s*:/.test(executableCss),
     'no animated gradient may trigger background repaint frames');
@@ -801,8 +867,9 @@ function testThinkingGradientContract() {
   testPlanTypingCompletionAndDockRaces();
   testRepeatedPlanEventReplacesOwnership();
   await testCameraLifecycleOwnershipAndLateResults();
+  testInteractiveFenceReachesFrontendPanel();
   testThinkingGradientContract();
-  console.log('package28_frontend_runtime: 8 regression groups passed');
+  console.log('package28_frontend_runtime: 9 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

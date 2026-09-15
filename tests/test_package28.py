@@ -321,6 +321,10 @@ class VisionUiContractTests(unittest.TestCase):
         self.assertIn(question, done["content"])
         self.assertIn("```ui\ntext Твой ответ = Напиши свой вариант\n```", done["content"])
         self.assertTrue(agent.has_interactive_ui(done["content"]))
+        direct_ui = [event for event in events if event.get("type") == "reply_ui"]
+        self.assertEqual(direct_ui, [{
+            "type": "reply_ui", "spec": "text Твой ответ = Напиши свой вариант",
+        }], "SSE must carry a parser-independent frontend control specification")
         self.assertEqual(done["tools"], [])
 
     def test_clarification_fallback_preserves_listed_options_as_tiles(self) -> None:
@@ -329,6 +333,28 @@ class VisionUiContractTests(unittest.TestCase):
         self.assertIn("tiles Какой формат выбрать: PDF | Word | Markdown", panel)
         self.assertTrue(agent.needs_reply_ui(text))
         self.assertTrue(agent.has_interactive_ui(panel))
+
+        # Самый частый реальный формат ответа: сначала красивые пункты с
+        # описаниями, вопрос «что выбираем?» — последней строкой. Раньше gate
+        # видел вопрос, но fallback искал варианты только ПОСЛЕ него.
+        before_question = (
+            "Есть три варианта:\n"
+            "1. **Минимализм** — чистый светлый кадр\n"
+            "2. **Ретро** — плёнка и зерно\n"
+            "3. **Кино** — контраст и широкий формат\n"
+            "Какой вариант выбираем?"
+        )
+        before_panel = agent.reply_ui_fallback(before_question)
+        self.assertTrue(agent.needs_reply_ui(before_question, "Сделай обложку"))
+        self.assertIn("tiles Какой вариант выбираем: Минимализм | Ретро | Кино", before_panel)
+        self.assertTrue(agent.has_interactive_ui(before_panel))
+
+        # «Вот варианты» без знака вопроса — тоже ожидание решения, если сам
+        # пользователь не просил выдать каталог альтернатив как конечный ответ.
+        implicit = "Варианты:\n- Быстро\n- Точно\n- С балансом"
+        self.assertTrue(agent.needs_reply_ui(implicit, "Выполни задачу"))
+        self.assertFalse(agent.needs_reply_ui(implicit, "Предложи варианты выполнения"))
+
         unrelated = agent.reply_ui_fallback(
             "Могу подготовить:\n- отчёт\n- таблицу\nНо какой дедлайн?"
         )

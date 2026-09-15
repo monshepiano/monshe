@@ -118,11 +118,50 @@ _UI_CONTROL = re.compile(
     r"^\s*(?:tiles|multi|rank|slider|number|rate|toggle|text|area|date|color|button)\s+\S",
     re.IGNORECASE | re.MULTILINE,
 )
-_REPLY_IMPERATIVE = re.compile(
-    r"(?:^|\n)\s*(?:уточни(?:те)?|выбери(?:те)?|подскажи(?:те)?|ответь(?:те)?|"
-    r"напиши(?:те)?|укажи(?:те)?)\b",
+_REPLY_REQUEST = re.compile(
+    r"\b(?:уточни(?:те)?|выбери(?:те)?|выбрать|выбира(?:й|ешь|ете)|"
+    r"подскажи(?:те)?|ответь(?:те)?|напиши(?:те)?|укажи(?:те)?|"
+    r"скажи(?:те)?|что\s+предпочита(?:ешь|ете)|какой\s+вариант)\b",
     re.IGNORECASE,
 )
+_OPTION_LINE = re.compile(
+    r"^\s*(?:#{1,4}\s*)?(?:[-*•]|\d+[.)])\s+(.+?)\s*$",
+    re.IGNORECASE,
+)
+_USER_REQUESTS_ALTERNATIVES = re.compile(
+    r"\b(?:предложи(?:те)?|придумай(?:те)?|назови(?:те)?|перечисли(?:те)?|дай(?:те)?)"
+    r"\b.{0,55}\b(?:вариант|иде|способ|пример)",
+    re.IGNORECASE | re.DOTALL,
+)
+_OPTIONAL_FOLLOWUP = re.compile(
+    r"^(?:хочешь|хотите|могу\s+ли\s+я|нужно\s+ли\s+ещ[её])\b",
+    re.IGNORECASE,
+)
+
+
+def _clean_option(raw: str) -> str:
+    """Короткая подпись плитки из обычного Markdown-пункта модели."""
+    bold = re.search(r"\*\*(.+?)\*\*", raw)
+    item = bold.group(1) if bold else raw
+    item = re.sub(r"[*_`#]", "", item).strip().rstrip(".;")
+    item = re.sub(r"^вариант\s*\d+\s*[:.)-]?\s*", "", item, flags=re.IGNORECASE)
+    if len(item) > 76:
+        item = re.split(r"\s+[—–-]\s+|:\s+", item, maxsplit=1)[0].strip()
+    return item.replace("|", "/")[:76].strip()
+
+
+def _listed_options(lines: List[str], start: int = 0) -> List[str]:
+    options: List[str] = []
+    for raw in lines[max(0, start):]:
+        match = _OPTION_LINE.match(raw)
+        if not match:
+            continue
+        item = _clean_option(match.group(1))
+        if 2 <= len(item) <= 76 and item not in options:
+            options.append(item)
+        if len(options) == 6:
+            break
+    return options
 
 
 def has_interactive_ui(text: str) -> bool:
@@ -131,67 +170,66 @@ def has_interactive_ui(text: str) -> bool:
                for match in _UI_FENCE.finditer(str(text or "")))
 
 
-def needs_reply_ui(text: str) -> bool:
-    """Короткий ответ модели на самом деле просит реплику пользователя.
+def needs_reply_ui(text: str, user_text: str = "") -> bool:
+    """Ответ модели ждёт реплику — значит, обычного Markdown недостаточно.
 
-    Это закрытый structural gate, а не список тематик: короткая реплика
-    заканчивается вопросом/прямой просьбой уточнить. Длинный готовый ответ с
-    риторическим «хочешь ещё?» не превращаем в навязчивую панель — особенно у
-    сводок, где выбора для выполнения исходной задачи уже не требовалось.
+    Проверяется структура последних строк, а не тема запроса. Вопросы внутри
+    нумерованного материала не считаются обращением к человеку. Отдельный
+    закрытый класс — когда пользователь сам попросил список альтернатив: такой
+    список является готовым результатом, а не скрытым уточнением.
     """
     raw = str(text or "").strip()
-    if not raw or len(raw) > 700:
+    if not raw:
         return False
     prose = _UI_FENCE.sub("", raw).strip()
     if not prose:
-        # Модель уже вернула только controls — это и есть ожидание ответа.
         return has_interactive_ui(raw)
     lines = [line.strip() for line in prose.splitlines() if line.strip()]
     if not lines:
         return False
-    tail = lines[-6:]
-    is_option = lambda line: bool(re.match(r"^(?:[-*•]|\d+[.)])\s+", line))
-    # Вопрос считается обращённым к пользователю, только если после него нет
-    # готового ответа — допустимы лишь перечисленные варианты. Так список
-    # «10 вопросов для собеседования» не превратится в ложное уточнение.
+    tail = lines[-10:]
+    is_option = lambda line: bool(_OPTION_LINE.match(line))
     for index, line in enumerate(tail):
-        direct_question = line.rstrip().endswith("?") and not is_option(line)
-        direct_request = bool(_REPLY_IMPERATIVE.search(line)) and not is_option(line)
+        clean = re.sub(r"[*_`]", "", line).strip()
+        direct_question = (clean.rstrip().endswith("?") and not is_option(line)
+                           and not _OPTIONAL_FOLLOWUP.search(clean))
+        direct_request = bool(_REPLY_REQUEST.search(clean)) and not is_option(line)
         if (direct_question or direct_request) and all(is_option(x) for x in tail[index + 1:]):
             return True
-    return False
+
+    # Модели часто пишут «Вот варианты:» и замолкают без вопросительного знака.
+    # Если это не запрошенный пользователем каталог идей, явная лексика выбора
+    # плюс 2+ Markdown-пункта означает ожидание решения и обязана стать UI.
+    options = _listed_options(lines)
+    choice_cue = bool(re.search(r"\b(?:на\s+выбор|выбрать|выбор|вариант(?:а|ы|ов)?)\b", prose,
+                                re.IGNORECASE))
+    return bool(len(options) >= 2 and choice_cue
+                and not _USER_REQUESTS_ALTERNATIVES.search(str(user_text or "")))
 
 
 def reply_ui_fallback(text: str = "") -> str:
     """Превратить забытый моделью текстовый вопрос в рабочий control.
 
-    Если модель уже перечислила варианты списком, сохраняем их как плитки.
-    Иначе показываем одно поле ввода: выдумывать варианты за пользователя хуже,
-    чем дать честный свободный ответ. Это не второй LLM-вызов и не задержка.
+    Модель ставит вопрос и до списка, и после него. В первом случае берём пункты
+    после вопроса; во втором — весь список, но только когда финальная реплика
+    действительно просит выбрать вариант. Так описание перед вопросом о сроке
+    не превращается в ложные плитки.
     """
-    options: List[str] = []
     question = ""
     lines = str(text or "").splitlines()
     anchor = -1
+    choice_question = False
     for index, raw in enumerate(lines):
         line = re.sub(r"[*_`]", "", raw).strip()
-        if ((line.endswith("?") or _REPLY_IMPERATIVE.search(line))
-                and len(line) <= 120):
+        if ((line.endswith("?") or _REPLY_REQUEST.search(line)) and len(line) <= 140):
             anchor = index
             question = line.rstrip("?:").replace(":", " —")
-    # Вариантами считаем только список ПОСЛЕ последнего прямого вопроса. Иначе
-    # пункты уже готового объяснения перед «какой дедлайн?» стали бы ложными
-    # плитками дедлайна.
-    for raw in lines[anchor + 1:]:
-        match = re.match(r"^\s*(?:[-*•]|\d+[.)])\s+(.+?)\s*$", raw)
-        if not match:
-            continue
-        item = re.sub(r"[*_`]", "", match.group(1)).strip().rstrip(".;")
-        item = item.replace("|", "/")
-        if 2 <= len(item) <= 64 and item not in options:
-            options.append(item)
-        if len(options) == 4:
-            break
+            choice_question = bool(re.search(
+                r"\b(?:выб|вариант|предпочита|подходит|остановимся)\w*\b", line,
+                re.IGNORECASE))
+    options = _listed_options(lines, anchor + 1)
+    if len(options) < 2 and choice_question:
+        options = _listed_options(lines)
     if len(options) >= 2:
         label = question or "Выбери вариант"
         return "```ui\ntiles %s: %s\n```" % (label, " | ".join(options))
@@ -1013,6 +1051,9 @@ class Agent:
                 if not gate_open and text_piece:
                     yield {"type": "delta", "text": text_piece}
                     gate_open = True
+                panels = list(_UI_FENCE.finditer(text_piece))
+                if panels:
+                    yield {"type": "reply_ui", "spec": panels[-1].group(1).strip()}
                 break
 
             missing_required_choice = bool(
@@ -1026,6 +1067,9 @@ class Agent:
                 if choice_failures >= 2:
                     final_text = contextual_choice_fallback(text_piece)
                     yield {"type": "delta", "text": final_text}
+                    panels = list(_UI_FENCE.finditer(final_text))
+                    if panels:
+                        yield {"type": "reply_ui", "spec": panels[-1].group(1).strip()}
                     break
                 if text_piece.strip():
                     convo.append({"role": "assistant", "content": text_piece})
@@ -1047,7 +1091,7 @@ class Agent:
             # текстовый вопрос дополняется рабочим ui-fence детерминированно.
             # В AGENT это также немедленно завершает run: нельзя продолжать план,
             # сделав вид, будто вопрос уже получил ответ.
-            if needs_reply_ui(text_piece):
+            if needs_reply_ui(text_piece, user_text):
                 if not has_interactive_ui(text_piece):
                     panel = reply_ui_fallback(text_piece)
                     addition = ("\n\n" if text_piece.strip() else "") + panel
@@ -1060,6 +1104,12 @@ class Agent:
                 elif not gate_open:
                     yield {"type": "delta", "text": text_piece}
                     gate_open = True
+                # Отдельный UI-event — второй, независимый путь до DOM. Даже
+                # если конкретный Markdown-парсер/частичный fence даст сбой,
+                # фронт получит чистую спецификацию и построит controls сам.
+                panels = list(_UI_FENCE.finditer(text_piece))
+                if panels:
+                    yield {"type": "reply_ui", "spec": panels[-1].group(1).strip()}
                 final_text = text_piece
                 break
 

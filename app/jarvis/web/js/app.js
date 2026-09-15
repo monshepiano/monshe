@@ -85,10 +85,9 @@ function fmtTime(ts) {
   if (d.toDateString() === today.toDateString()) return t;
   return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) + ' ' + t;
 }
-/* Telegram-подобная дата не живёт постоянной строкой в переписке. Каждая
-   реплика хранит свой календарный день в data-атрибутах, а маленький badge
-   появляется у верхней кромки только когда человек ушёл прокруткой от низа.
-   Поэтому дата не повторяется и не отнимает высоту у разговора. */
+/* Telegram-подобная дата имеет два слоя: один обычный разделитель в начале
+   каждого календарного дня и временный badge у верхней кромки при прокрутке.
+   У самих реплик дата не повторяется — возле них остаётся только время. */
 function dayKey(ts) {
   const d = new Date((Number(ts) || Date.now() / 1000) * 1000);
   return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'),
@@ -174,6 +173,25 @@ function stampTime(node, ts) {
   if (bubble) { t.classList.add('in-bubble'); bubble.appendChild(t); }
   else node.appendChild(t);
   return t;
+}
+
+/* Обычный разделитель дня остаётся в истории, как в Telegram. Временная дата
+   при прокрутке — отдельный слой #scrollDate; поэтому одно не подменяет другое. */
+function placeDaySeparator(node) {
+  if (!node || !node.parentNode || !node.dataset || !node.dataset.ts) return null;
+  let prev = node.previousElementSibling;
+  while (prev && prev.classList.contains('day-separator')) prev = prev.previousElementSibling;
+  if (prev && prev.classList.contains('msg') && prev.dataset.day === node.dataset.day) return null;
+  const immediate = node.previousElementSibling;
+  if (immediate && immediate.classList.contains('day-separator') &&
+      immediate.dataset.day === node.dataset.day) return immediate;
+  const sep = el('div', 'day-separator', esc(dayLabel(Number(node.dataset.ts))));
+  sep.dataset.day = node.dataset.day;
+  sep.dataset.ts = node.dataset.ts;
+  sep.setAttribute('role', 'separator');
+  sep.setAttribute('aria-label', 'Дата: ' + dayLabel(Number(node.dataset.ts)));
+  node.parentNode.insertBefore(sep, node);
+  return sep;
 }
 
 /* Иконки файлов — тонкая линейная графика, каждый тип со своим сдержанным
@@ -1055,6 +1073,7 @@ function addUserMsg(text, atts, info, hostOverride) {
 
   const host = hostOverride || msgHost();
   host.appendChild(m);
+  placeDaySeparator(m);
   scrollDown(true);
   return m;
 }
@@ -1069,6 +1088,7 @@ function addAiMsg(ts, hostOverride) {
   stampTime(m, ts);
   const host = hostOverride || msgHost();
   host.appendChild(m);
+  placeDaySeparator(m);
   scrollDown(true);
   return {
     root: m,
@@ -2012,12 +2032,41 @@ function parseUiSpec(src) {
   return real.length ? real : items;
 }
 
+function choiceKey(text) {
+  return String(text || '').toLocaleLowerCase('ru-RU')
+    .replace(/[^a-zа-яё0-9]+/gi, ' ').trim();
+}
+
+/* Модель может напечатать те же варианты обычным списком, а deterministic gate
+   добавить плитки ниже. После появления controls убираем только зеркальную
+   копию списка — вопрос и контекст остаются. Сравнение закрытое: минимум два
+   пункта должны попарно совпасть с labels плиток, чужой список не трогаем. */
+function stripMirroredChoiceList(box, items) {
+  const tiles = (items || []).find((item) => item.t === 'tiles');
+  if (!box || !tiles || !tiles.opts || tiles.opts.length < 2) return;
+  const wanted = tiles.opts.map(choiceKey);
+  let node = box.previousElementSibling;
+  for (let distance = 0; node && distance < 4; distance += 1) {
+    const prev = node.previousElementSibling;
+    if (node.tagName === 'UL' || node.tagName === 'OL') {
+      const listed = $$('li', node).map((li) => choiceKey(li.textContent));
+      const same = listed.length >= 2 && listed.every((label) =>
+        wanted.some((option) => option === label || option.startsWith(label + ' ') ||
+          label.startsWith(option + ' ')));
+      if (same) node.remove();
+      return;
+    }
+    node = prev;
+  }
+}
+
 function mountUiPanels(root) {
   if (!root) return;
   $$('.ui-panel', root).forEach((box) => {
     if (box.dataset.live === '1') return;
     const items = parseUiSpec(box.dataset.ui || '');
     if (!items.length) { box.remove(); return; }
+    stripMirroredChoiceList(box, items);
     box.dataset.live = '1';
     box.innerHTML = '';
 
@@ -3258,6 +3307,14 @@ function queueResponseFinish(ui, content, success) {
       // Последний такт renderTyped уже построил полный markdown. Ничего не
       // пересобираем и не присваиваем повторно: callback достигается только при
       // ui.shown === ui.buffer, а buffer и есть канонический ответ.
+      // `reply_ui` идёт отдельным SSE-событием и служит реальным DOM-fallback:
+      // если fence потерялся/сломался в конкретном рендерере, controls всё равно
+      // создаются из чистой спецификации, а не остаются простым списком текста.
+      if (ui.replyUiSpec && !ui.mdEl.querySelector('.ui-panel')) {
+        const fallbackPanel = el('div', 'ui-panel');
+        fallbackPanel.dataset.ui = ui.replyUiSpec;
+        ui.mdEl.appendChild(fallbackPanel);
+      }
       const panels = $$('.ui-panel', ui.mdEl);
       const scroller = ui.node.closest('.cam-chat') || stream();
       const keepScroll = panels.length && scroller ? scroller.scrollTop : null;
@@ -3648,6 +3705,14 @@ function handleEvent(ev, ui) {
       typeInto(ui, ev.text);
       break;
     }
+
+    case 'reply_ui':
+      // Чистая спецификация приходит отдельно от Markdown. Сейчас только
+      // запоминаем её: controls монтируются после последней напечатанной буквы,
+      // чтобы панель не прыгала и не исчезала при очередном renderTyped.
+      ui.replyUiSpec = String(ev.spec || '').trim();
+      ui.actionAccent = true;
+      break;
 
     case 'reset': {
       // сервер понял, что модель напечатала вызов инструмента текстом,
