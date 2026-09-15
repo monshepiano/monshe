@@ -28,6 +28,22 @@ def is_social_only(text: str) -> bool:
     return bool(_SOCIAL_ONLY.match((text or "").strip()))
 
 
+# Узкий положительный сигнал именно СОЗДАНИЯ программного результата. Это не
+# общий список «сложных тем»: объяснение кода или упоминание игры сюда не
+# попадают. Такой запрос выгоднее сразу отдать специализированной coder-модели,
+# чем сначала платить base, а затем эскалацию после неудачного файла.
+_CODING_BUILD = re.compile(
+    r"\b(?:напиши|создай|сделай|разработай|реализуй|собери|запрограммируй|build|create|implement)\b"
+    r"[^\n.!?]{0,100}\b(?:игр\w*|сайт\w*|приложен\w*|бот\w*|скрипт\w*|программ\w*|"
+    r"код\w*|api|интерфейс\w*|калькулятор\w*|game|website|app|script|program)\b",
+    re.IGNORECASE,
+)
+
+
+def is_coding_build(text: str) -> bool:
+    return bool(_CODING_BUILD.search(str(text or "")))
+
+
 def tier_can(tier: str, cap: str) -> bool:
     """Умеет ли уровень то, что от него требуется (инструменты, зрение)."""
     caps = CONFIG.get("model_caps." + tier, None)
@@ -71,26 +87,33 @@ def _score_complexity(text: str) -> float:
 def _choose_tier_raw(text: str, has_image: bool = False, agent_mode: bool = False,
                      has_tools: bool = False, computer_use: bool = False) -> Dict[str, Any]:
     """Предпочтительный уровень по «сложности» текста (без учёта способностей)."""
-    forced = CONFIG.get("orchestrator.force_tier") or ""
-    if forced:
-        return {"tier": forced, "reason": "принудительно в настройках", "score": 1.0}
-    if not CONFIG.get("orchestrator.auto_route", True):
-        return {"tier": "base", "reason": "авто-маршрутизация выключена", "score": 0.5}
+    # Способности и social hard-gate стоят ВЫШЕ пользовательского force-tier:
+    # принудительная модель не должна лишать вложение зрения или превращать
+    # «привет» с включённым AGENT в дорогой проект.
+    if has_image:
+        return {"tier": "vision", "reason": "во вложении изображение — нужна vision-модель", "score": 1.0}
     if computer_use:
         # НЕ переключаемся на vision-модель: она не умеет вызывать инструменты,
         # и агент превращается в болтуна. Экран ей покажет отдельный вызов
         # (см. agent._describe_screen), а рулит процессом tool-capable модель.
         return {"tier": "smart", "reason": "управление компьютером — нужен точный вызов действий",
                 "score": 1.0}
-    if has_image:
-        return {"tier": "vision", "reason": "во вложении изображение — нужна vision-модель", "score": 1.0}
 
     score = _score_complexity(text)
-
     # Вежливость («привет», «спасибо») — единственный случай, который можно
-    # перечислить полностью, и он уходит в самую дешёвую модель.
-    if is_social_only(text) and not agent_mode:
+    # перечислить полностью, и он уходит в самую дешёвую модель. AGENT и
+    # force-tier здесь ничего не меняют: тумблер не превращает приветствие в проект.
+    if is_social_only(text):
         return {"tier": "nano", "reason": "короткая реплика — экономим", "score": score}
+
+    forced = CONFIG.get("orchestrator.force_tier") or ""
+    if forced:
+        return {"tier": forced, "reason": "принудительно в настройках", "score": 1.0}
+    if not CONFIG.get("orchestrator.auto_route", True):
+        return {"tier": "base", "reason": "авто-маршрутизация выключена", "score": 0.5}
+
+    if is_coding_build(text):
+        return {"tier": "coder", "reason": "создание программного решения", "score": score}
 
     # Всё остальное — рабочая модель base. Она умеет вызывать инструменты,
     # то есть сама сходит в интернет, в песочницу и к файлам, если надо.

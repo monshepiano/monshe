@@ -29,6 +29,88 @@ def _now_str() -> str:
     return time.strftime("%d.%m.%Y %H:%M")
 
 
+def _fact_value(value: str, limit: int = 120) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n,.;:!?—–-")[:limit]
+
+
+def extract_obvious_memories(text: str) -> List[Dict[str, str]]:
+    """Извлечь только явно заявленные личные факты без LLM и лишних токенов.
+
+    Это не попытка «понять весь язык». Закрытые конструкции первого лица
+    достаточно надёжны для фактов, потеря которых особенно заметна: новый
+    город, любимая еда, ограничения и аллергии. Остальное по-прежнему может
+    сохранить штатный remember-инструмент модели.
+    """
+    raw = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not raw:
+        return []
+    facts: List[Dict[str, str]] = []
+
+    city_patterns = (
+        r"\b(?:я\s+)?переехал(?:а)?(?:\s+из\s+[^,.!?]{1,45})?\s+в\s+"
+        r"([A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\- ]{1,45}?)"
+        r"(?=\s+(?:и|но|а)\s+|[,.;!?]|$)",
+        r"\bя\s+(?:теперь\s+)?живу\s+в\s+"
+        r"([A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\- ]{1,45}?)"
+        r"(?=\s+(?:и|но|а)\s+|[,.;!?]|$)",
+        r"\bмой\s+(?:новый\s+)?город\s*(?:—|–|-|:|это)\s*"
+        r"([A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\- ]{1,45}?)"
+        r"(?=\s+(?:и|но|а)\s+|[,.;!?]|$)",
+    )
+    for pattern in city_patterns:
+        found = re.search(pattern, raw, re.I)
+        if not found:
+            continue
+        city = _fact_value(found.group(1), 48)
+        # «переехал в новую квартиру/дом» — событие, но не новый город.
+        if city and not re.search(r"\b(?:квартир|дом|офис|комнат|общежит)\w*\b", city, re.I):
+            facts.append({"kind": "person", "key": "Город", "value": city})
+        break
+
+    favourite = re.search(
+        r"\b(?:моя\s+)?любим(?:ая|ое)\s+(?:еда|блюдо|кухня)\s*(?:—|–|-|:|это)?\s*"
+        r"([^,.!?]{2,80})", raw, re.I)
+    if favourite:
+        value = _fact_value(favourite.group(1))
+        if value:
+            facts.append({"kind": "preference", "key": "Любимая еда", "value": value})
+
+    excluded = re.search(r"\bя\s+(?:не\s+ем|не\s+пью|избегаю)\s+([^,.!?]{2,80})", raw, re.I)
+    if excluded:
+        value = _fact_value(excluded.group(1))
+        if value:
+            facts.append({"kind": "preference", "key": "Питание: исключения", "value": value})
+
+    allergy = re.search(
+        r"\b(?:у\s+меня\s+(?:есть\s+)?)?аллергия\s+на\s+([^,.!?]{2,80})", raw, re.I)
+    if allergy:
+        value = _fact_value(allergy.group(1))
+        if value:
+            facts.append({"kind": "preference", "key": "Питание: аллергия", "value": value})
+
+    # Окончание «-лю» уже однозначно первое лицо, поэтому местоимение не
+    # обязательно: «я переехал в Казань и люблю острую еду» — один говорящий.
+    preference = re.search(r"\b(?:я\s+)?(?:люблю|обожаю|предпочитаю)\s+([^,.!?]{2,80})", raw, re.I)
+    if preference:
+        value = _fact_value(preference.group(1))
+        food = bool(re.search(
+            r"\b(?:ед\w*|блюд\w*|кухн\w*|пицц\w*|суши|ролл\w*|мяс\w*|рыб\w*|"
+            r"овощ\w*|фрукт\w*|кофе|чай|сыр\w*|сладк\w*|остр\w*|веган\w*|"
+            r"вегетариан\w*)\b", value, re.I))
+        key = "Питание: предпочтения" if food else "Предпочтение"
+        if value and not any(item["key"] == key for item in facts):
+            facts.append({"kind": "preference", "key": key, "value": value})
+
+    return facts
+
+
+def remember_obvious_facts(text: str) -> List[Dict[str, Any]]:
+    saved = []
+    for fact in extract_obvious_memories(text):
+        saved.append(db.remember(fact["kind"], fact["key"], fact["value"], 1.15))
+    return saved
+
+
 # Длинный общий prompt — плохое место для протокола интерфейса: после истории,
 # изображения и результатов инструментов даже сильная модель иногда забывает
 # правило, а на следующем текстовом ходе vision-напоминания уже вовсе не было.
@@ -579,21 +661,6 @@ def _parse_replies(out: str) -> List[str]:
 # Служебные отметки шагов плана: их видит фронт, но не пользователь.
 # [ШАГ 3] — модель сама объявила номер; [ШАГ ГОТОВ] — модель закрыла текущий.
 _STEP_MARK = re.compile(r"\[\s*ШАГ\s*(?:\d+|ГОТОВ)\s*\]\s*")
-_STEP_DONE = re.compile(r"\[\s*ШАГ\s*ГОТОВ\s*\]")
-
-
-def _next_step_note(n: int, total: int, steps: List[str]) -> str:
-    """Что сказать модели, когда предыдущий шаг закрыт.
-
-    Шаг выдаётся ровно один — так план исполняется по-настоящему, а не
-    пересказывается целиком в первом же ответе.
-    """
-    body = steps[n - 1] if 0 < n <= len(steps) else ""
-    tail = ("Это последний шаг: закончив его, подведи короткий общий итог "
-            "для пользователя." if n >= total else
-            "Сделай только его и напиши [ШАГ ГОТОВ]. Итог пока не подводи.")
-    return "Шаг %d выполнен. Переходим к ШАГУ %d из %d: %s\n%s" % (
-        n - 1, n, total, body, tail)
 
 
 def _step_text(item: Any) -> str:
@@ -732,8 +799,17 @@ class Agent:
         self.model_used = ""
         self.plan_len = 0          # сколько шагов в плане (0 — плана нет)
         self.plan_at = 0           # какой шаг идёт сейчас
-        self.plan_steps: List[str] = []   # формулировки шагов (нужны для подсказок)
+        self.plan_steps: List[str] = []   # формулировки шагов для prompt/UI
         self.show_thinking = False # показывать ли ход мыслей (решается по ходу)
+
+    def _advance_plan(self, target: int) -> List[Dict[str, Any]]:
+        """Продвинуть UI-план до реальной границы, не вызывая ради неё LLM."""
+        events: List[Dict[str, Any]] = []
+        target = min(max(0, int(target)), self.plan_len)
+        while self.plan_at and self.plan_at < target:
+            self.plan_at += 1
+            events.append({"type": "plan_step", "step": self.plan_at})
+        return events
 
     # ------------------------------------------------------------ approvals
     def _wait_approval(self, tool_name: str, args: Dict[str, Any], reason: str,
@@ -796,16 +872,40 @@ class Agent:
 
     # ------------------------------------------------------------- planning
     def make_plan(self, task: str) -> List[str]:
-        try:
-            result = llm.chat([
-                {"role": "system", "content":
-                 "Ты планировщик. Разбей задачу на 3-6 конкретных исполнимых шагов. "
-                 "Ответь ТОЛЬКО JSON-массивом строк на русском, без пояснений."},
-                {"role": "user", "content": task},
-            ], tier="base", max_tokens=600, temperature=0.3)
-            return parse_plan_steps(result.get("content", ""))
-        except Exception:
+        """Мгновенный локальный план без отдельного LLM-запроса.
+
+        План нужен интерфейсу как карта выполнения, но прежняя реализация до
+        старта работы делала полноценный base-вызов ради трёх коротких строк.
+        Для «напиши игру шахматы» это была лишняя цена и несколько секунд
+        пустого ожидания. Три фазы исполнения известны детерминированно; тема
+        лишь выбирает узкий шаблон и не влияет на безопасность/инструменты.
+        """
+        text = re.sub(r"\s+", " ", str(task or "")).strip()
+        if not text:
             return []
+        if orchestrator.is_coding_build(text):
+            return [
+                "Продумать структуру и критерии готовности",
+                "Реализовать интерфейс и основную логику",
+                "Проверить сценарии и сохранить готовые файлы",
+            ]
+        if self.computer_use:
+            return [
+                "Осмотреть текущее состояние экрана",
+                "Выполнить действие в нужном приложении",
+                "Проверить результат на экране",
+            ]
+        if re.search(r"\b(?:найди|исследуй|сравни|проверь|проанализируй)\w*\b", text, re.I):
+            return [
+                "Уточнить критерии и собрать данные",
+                "Сопоставить факты и выполнить задачу",
+                "Проверить выводы и оформить результат",
+            ]
+        return [
+            "Разобрать задачу и подготовить решение",
+            "Выполнить необходимые действия",
+            "Проверить результат и представить итог",
+        ]
 
     # ------------------------------------------------------------------ run
     def run(self, messages: List[Dict[str, Any]], user_text: str = "",
@@ -817,10 +917,12 @@ class Agent:
             user_text, has_image=has_image, agent_mode=self.agent_mode, has_tools=True,
             computer_use=self.computer_use)
         tier = route["tier"]
-        # «Сложность» решает, показывать ли пользователю кухню (ход мыслей,
-        # терминал, план). На простой вопрос он ждёт ответ, а не отчёт.
+        social_only = orchestrator.is_social_only(user_text)
+        # Социальный gate сильнее положения AGENT-тумблера. «Привет» остаётся
+        # одной обычной репликой: без плана, кухни и последующего reply UI.
         score = float(route.get("score") or 0)
-        verbose = bool(self.agent_mode or self.computer_use or score >= 0.30)
+        verbose = bool(not social_only and
+                       (self.agent_mode or self.computer_use or score >= 0.30))
         yield {"type": "route", "tier": tier, "reason": route["reason"],
                "score": score, "verbose": verbose}
 
@@ -852,47 +954,37 @@ class Agent:
         max_steps = _max_steps(self.agent_mode)
 
         plan: List[str] = []
-        if self.agent_mode and user_text:
+        if self.agent_mode and user_text and not social_only:
             yield {"type": "status", "text": "Составляю план"}
             plan = self.make_plan(user_text)
             if plan:
                 yield {"type": "plan", "steps": plan}
                 self.plan_len = len(plan)
                 self.plan_steps = plan
-                # ПОЧЕМУ ПЛАН РАНЬШЕ «ЗАЧЁРКИВАЛСЯ ВЕСЬ СРАЗУ».
-                # Прогресс держался на одном честном слове модели: её просили
-                # печатать [ШАГ N]. Но в агентском ходе, где вызывается
-                # инструмент, текстовая часть ответа почти всегда пуста —
-                # печатать маркер просто негде. Маркеров не приходило ни одного,
-                # plan_at оставался нулём, а на 'done' фронт красил все пункты
-                # разом. Отсюда и «зачеркнул всё сразу».
-                # Лечим причину: план перестаёт быть подсказкой в промпте и
-                # становится состоянием, которым управляет сам агент. Шаги
-                # выдаются модели ПО ОДНОМУ, и следующий она получает только
-                # после того, как закрыла текущий. Маркер остаётся приятным
-                # дополнением (модель может обогнать нас), но больше ни на чём
-                # не держится.
+                # Прогресс раньше зависел от маркеров модели, а затем его
+                # «починили» отдельным обязательным LLM-вызовом на КАЖДЫЙ пункт.
+                # Так план стал последовательным, но даже создание небольшого
+                # файла платило за три облачных хода вместо естественной пары
+                # «создать → проверить/ответить». План — состояние оркестратора,
+                # а не повод искусственно вызывать модель. Поэтому дальше шаги
+                # двигаются на реальных границах: начало результата/инструмента,
+                # возврат результата инструмента и финальный ответ.
                 self.plan_at = 1
                 yield {"type": "plan_step", "step": 1}
-                # Бюджет ходов должен вмещать план: каждый шаг съедает минимум
-                # один ход, иначе план физически не успеет пройти до конца и
-                # снова оборвётся на середине.
-                max_steps = max(max_steps, len(plan) * 2 + 2)
                 messages = messages + [{
                     "role": "system",
                     "content": (
                         "План выполнения (%d шаг(ов)):\n" % len(plan)
                         + "\n".join("%d. %s" % (i + 1, s) for i, s in enumerate(plan))
-                        + "\n\nРаботай строго по одному шагу за раз. Сейчас идёт "
-                          "ШАГ 1: %s\n" % plan[0]
-                        + "Сделай только его. Когда шаг закончен, напиши строку "
-                          "[ШАГ ГОТОВ] — я дам следующий. Не забегай вперёд и не "
-                          "подводи общий итог, пока не пройдены все шаги."),
+                        + "\n\nВыполни пункты по порядку, используя необходимые "
+                          "инструменты. Не делай отдельный текстовый отчёт после "
+                          "каждого пункта: это один рабочий цикл. Общий итог дай "
+                          "только после проверки результата."),
                 }]
 
         # Сложность задачи не угадываем по теме: берём измеримые признаки.
         # Остальным включателем служит сам ход работы — см. ниже, шаг >= 2.
-        self.show_thinking = bool(self.agent_mode or self.computer_use)
+        self.show_thinking = bool(not social_only and (self.agent_mode or self.computer_use))
 
         convo = list(messages)
         final_text = ""
@@ -911,10 +1003,17 @@ class Agent:
             if step == 0:
                 yield {"type": "status", "text": "Думаю", "phase": "think"}
             else:
-                # дошли до второго шага — значит одним ответом не обошлось:
+                # Новый модельный ход после инструмента — естественная граница
+                # проверки результата. План двигается здесь, но дополнительный
+                # облачный вызов только ради смены сегмента не создаётся.
+                if self.used_tools and self.plan_at and self.plan_at < self.plan_len:
+                    for progress in self._advance_plan(self.plan_at + 1):
+                        yield progress
+                # дошли до второго хода — значит одним ответом не обошлось:
                 # это ровно тот случай, когда показать мысли уместно
                 self.show_thinking = True
-                yield {"type": "status", "text": "Работаю над шагом %d" % (step + 1)}
+                yield {"type": "status", "text": "Проверяю результат" if self.used_tools
+                       else "Продолжаю работу"}
             acc_text: List[str] = []
             tool_calls: List[Dict[str, Any]] = []
             stream_failed = None
@@ -948,8 +1047,8 @@ class Agent:
                         for mark in re.finditer(r"\[\s*ШАГ\s*(\d+)\s*\]", "".join(acc_text)):
                             n = int(mark.group(1))
                             if 0 < n <= self.plan_len and n > self.plan_at:
-                                self.plan_at = n
-                                yield {"type": "plan_step", "step": n}
+                                for progress in self._advance_plan(n):
+                                    yield progress
                     if gate_open:
                         yield {"type": "delta", "text": event["text"]}
                     else:
@@ -1096,7 +1195,7 @@ class Agent:
             # текстовый вопрос дополняется рабочим ui-fence детерминированно.
             # В AGENT это также немедленно завершает run: нельзя продолжать план,
             # сделав вид, будто вопрос уже получил ответ.
-            if needs_reply_ui(text_piece, user_text):
+            if not social_only and needs_reply_ui(text_piece, user_text):
                 if not has_interactive_ui(text_piece):
                     panel = reply_ui_fallback(text_piece)
                     addition = ("\n\n" if text_piece.strip() else "") + panel
@@ -1124,24 +1223,20 @@ class Agent:
                 gate_open = True
 
             if not tool_calls:
-                # ШАГ ЗАКРЫТ ТЕКСТОМ. Раньше здесь цикл просто заканчивался —
-                # первый же ответ без вызова инструмента считался финальным,
-                # сколько бы шагов в плане ни оставалось. Поэтому план и не
-                # выполнялся: работа обрывалась на первом шаге, а пункты
-                # закрашивались все разом по 'done'.
-                # Теперь текст закрывает ТЕКУЩИЙ шаг, а не всю задачу: пока
-                # план не пройден до конца, выдаём следующий шаг и продолжаем.
+                # Текстовый результат закрывает оставшиеся фазы одним
+                # естественным model turn. Сегменты всё равно проходят по порядку,
+                # но мы больше не платим за пустые «перейди к шагу N» запросы.
                 if self.plan_at and self.plan_at < self.plan_len:
-                    if text_piece.strip():
-                        final_text = text_piece
-                        convo.append({"role": "assistant", "content": text_piece})
-                    self.plan_at += 1
-                    yield {"type": "plan_step", "step": self.plan_at}
-                    convo.append({"role": "user", "content": _next_step_note(
-                        self.plan_at, self.plan_len, self.plan_steps)})
-                    continue
+                    for progress in self._advance_plan(self.plan_len):
+                        yield progress
                 final_text = text_piece
                 break
+
+            # Первый реальный вызов инструмента означает переход от разбора к
+            # выполнению. Это честная граница второго сегмента без model turn.
+            if self.plan_at and self.plan_at < min(2, self.plan_len):
+                for progress in self._advance_plan(2):
+                    yield progress
 
             # модель решила вызвать инструменты
             if from_text:
@@ -1274,17 +1369,13 @@ class Agent:
 
                 self._append_tool_result(convo, call, name, result, from_text)
 
-            # Шаг мог закрыться прямо в ходе с инструментом: модель сделала
-            # дело и написала [ШАГ ГОТОВ] той же репликой. Двигаем план сразу,
-            # не дожидаясь отдельного текстового ответа.
-            if (self.plan_at and self.plan_at < self.plan_len
-                    and _STEP_DONE.search(text_piece or "")):
-                self.plan_at += 1
-                yield {"type": "plan_step", "step": self.plan_at}
-                convo.append({"role": "user", "content": _next_step_note(
-                    self.plan_at, self.plan_len, self.plan_steps)})
+            # Следующий естественный ход модели получит результаты этих
+            # инструментов и переведёт UI к фазе проверки в начале цикла.
 
         if not final_text:
+            if self.plan_at and self.plan_at < self.plan_len:
+                for progress in self._advance_plan(self.plan_len):
+                    yield progress
             yield {"type": "status", "text": "Формулирую ответ"}
             try:
                 closing = llm.chat(convo + [{

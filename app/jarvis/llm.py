@@ -270,7 +270,7 @@ def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> flo
 _REASONING_EFFORT = {
     "nano": "low",      # болтовня — думать не о чем
     "base": "low",      # обычные вопросы: ответ важнее внутреннего монолога
-    "coder": "medium",  # код требует аккуратности
+    "coder": "low",     # специализированная coder уже умеет код; AGENT важнее начать быстро
     "vision": "low",    # описать картинку — не задача на рассуждение
     "smart": "high",    # сюда попадают только те, кому рассуждение и нужно
 }

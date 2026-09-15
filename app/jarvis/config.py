@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import threading
@@ -125,9 +126,12 @@ DEFAULTS: Dict[str, Any] = {
         "refresh_minutes": 30,
     },
     "media": {
-        # Картинки создаёт официальный GigaChat API встроенной text2image
-        # (Kandinsky). Работает из России; в UI хранится единый Authorization Key.
-        "image_provider": "gigachat",       # gigachat | off
+        # Release использует российский cloud gateway: upstream-credential
+        # остаётся на сервере, а не извлекается из публичного ZIP. Прямой
+        # GigaChat сохранён как персональный/dev fallback.
+        "image_provider": "auto",       # auto | gateway | gigachat | off
+        "image_gateway_url": "",
+        "image_gateway_token": "",
         "gigachat_auth_key": "",
         "gigachat_scope": "GIGACHAT_API_PERS",
         "gigachat_model": "GigaChat",
@@ -188,14 +192,15 @@ def _migrate(raw: Dict[str, Any]) -> Dict[str, Any]:
         media.pop("image_base", None)
         media.pop("image_model", None)
         media.pop("puter", None)
-        if media.get("image_provider") != "off":
+        current = str(media.get("image_provider") or "")
+        if current not in ("off", "gateway", "gigachat", "auto"):
             media["image_provider"] = DEFAULTS["media"]["image_provider"]
     return raw
 
 
 class Config:
     def __init__(self) -> None:
-        self._data: Dict[str, Any] = dict(DEFAULTS)
+        self._data: Dict[str, Any] = copy.deepcopy(DEFAULTS)
         self.load()
 
     # ------------------------------------------------------------------ IO
@@ -209,19 +214,26 @@ class Config:
                     raw = _migrate(raw)
                     self._data = _merge(DEFAULTS, raw)
                 except Exception:
-                    self._data = dict(DEFAULTS)
+                    self._data = copy.deepcopy(DEFAULTS)
             else:
-                self._data = dict(DEFAULTS)
+                self._data = copy.deepcopy(DEFAULTS)
             # переменные окружения имеют приоритет (удобно для сервера)
             env_cloud = os.environ.get("CLOUDRU_API_KEY")
             env_ds = os.environ.get("DEEPSEEK_API_KEY")
             env_gigachat = os.environ.get("GIGACHAT_AUTH_KEY")
+            env_image_gateway = os.environ.get("JARVIS_IMAGE_GATEWAY_URL")
+            env_image_token = os.environ.get("JARVIS_IMAGE_GATEWAY_TOKEN")
             if env_cloud:
                 self._data["providers"]["cloudru"]["api_key"] = env_cloud
             if env_ds:
                 self._data["providers"]["deepseek"]["api_key"] = env_ds
             if env_gigachat:
                 self._data["media"]["gigachat_auth_key"] = env_gigachat
+            if env_image_gateway and env_image_token:
+                self._data["media"]["image_gateway_url"] = env_image_gateway
+                self._data["media"]["image_gateway_token"] = env_image_token
+                if self._data["media"].get("image_provider") != "off":
+                    self._data["media"]["image_provider"] = "gateway"
             if os.environ.get("JARVIS_PORT"):
                 try:
                     self._data["server"]["port"] = int(os.environ["JARVIS_PORT"])
@@ -279,6 +291,11 @@ class Config:
             else ("…" if image_key else ""))
         media["has_gigachat_key"] = bool(
             self._data.get("media", {}).get("gigachat_auth_key"))
+        gateway_token = str(media.get("image_gateway_token") or "")
+        media["image_gateway_token"] = "…" if gateway_token else ""
+        media["has_image_gateway"] = bool(
+            self._data.get("media", {}).get("image_gateway_url") and
+            self._data.get("media", {}).get("image_gateway_token"))
         token = data.get("telegram", {}).get("bot_token") or ""
         if token:
             data["telegram"]["bot_token"] = token[:8] + "…"

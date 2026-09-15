@@ -1723,14 +1723,9 @@ function finishPlanItems(ui) {
   });
 }
 
-/* Единственная формула прогресса. Полоса должна заканчиваться НАД центром
-   текущего шага, а не перед ним: центры N равных колонок находятся в точках
-   (step - 0.5) / total. Сто процентов показываем только после выполнения. */
-function planProgress(step, total) {
-  const n = Math.max(1, Math.min(Number(step) || 1, Number(total) || 1));
-  return ((n - 0.5) / Math.max(1, Number(total) || 1)) * 100;
-}
-
+/* Прогресс и задачи имеют одну и ту же сетку. Один непрерывный fill не мог
+   показать, к какому пункту относится мерцание: сегменты — ровно по одному
+   на пункт, поэтому активный блик всегда находится над своей подписью. */
 function paintDockStep(ui) {
   const dock = ui.planDock;
   if (!dock) return;
@@ -1738,8 +1733,10 @@ function paintDockStep(ui) {
   const n = Math.max(1, Math.min(ui.planStep || 1, total));
   const label = dock.querySelector('.pd-step');
   if (label) label.textContent = 'шаг ' + n + ' из ' + total;
-  const bar = dock.querySelector('.pd-fill');
-  if (bar) bar.style.width = planProgress(n, total).toFixed(2) + '%';
+  $$('.pd-seg', dock).forEach((seg, i) => {
+    seg.classList.toggle('done', i < n - 1);
+    seg.classList.toggle('now', i === n - 1);
+  });
   $$('.pd-s', dock).forEach((st, i) => {
     st.classList.toggle('done', i < n - 1);
     st.classList.toggle('now', i === n - 1);
@@ -1771,7 +1768,7 @@ function dockPlan(ui, arrived) {
       '<span class="pd-t">План выполняется</span>' +
       '<span class="pd-step">шаг 1 из ' + n + '</span>' +
     '</div>' +
-    '<div class="pd-bar"><i class="pd-fill"></i></div>' +
+    '<div class="pd-bar">' + Array.from({ length: n }, () => '<i class="pd-seg"></i>').join('') + '</div>' +
     '<div class="pd-steps"></div>' +
     '<ol class="pd-full"></ol>';
 
@@ -1891,9 +1888,7 @@ function undockPlan(ui) {
     if (title) title.textContent = 'План выполнен';
     const step = ownDock.querySelector('.pd-step');
     if (step) step.textContent = 'готово';
-    const fill = ownDock.querySelector('.pd-fill');
-    if (fill) fill.style.width = '100%';
-    $$('.pd-s', ownDock).forEach((item) => {
+    [...$$('.pd-seg', ownDock), ...$$('.pd-s', ownDock)].forEach((item) => {
       item.classList.remove('now'); item.classList.add('done');
     });
     setTimeout(() => {
@@ -2666,6 +2661,8 @@ async function send(opts) {
     files: [],
     doneReceived: false,
     visualDone: false,
+    routeEl: null,
+    pendingReplyUi: '',
   };
   // Сетевой SSE может закрыться раньше, чем локальный typer покажет последний
   // символ. finally ждёт именно эту границу, а не состояние сокета.
@@ -3036,8 +3033,40 @@ const CPS_CODE = 360;            // код и таблицы: быстро, но
    или мелкий SSE-chunk. Меняется лишь класс содержимого, переход сглажен. */
 const CPS_SMOOTH_MS = 220;
 
+function deferMountedReplyUi(ui) {
+  if (!ui || !ui.replyLive || !ui.replyLive.isConnected) return;
+  // Поздний delta означает, что прежняя граница ответа была лишь сетевой
+  // паузой. Controls снова становятся pending и не обгоняют новый текст.
+  ui.pendingReplyUi = ui.replyUiSpec || ui.pendingReplyUi || '';
+  ui.replyLive.remove();
+  ui.replyLive = null;
+}
+
+function flushPendingReplyUi(ui) {
+  if (!ui || !ui.pendingReplyUi || ui.shown !== ui.buffer) return false;
+  if (ui.replyLive && ui.replyLive.isConnected) ui.replyLive.remove();
+  const live = el('div', 'reply-ui-live');
+  const panel = el('div', 'ui-panel');
+  panel.dataset.ui = ui.pendingReplyUi;
+  live.appendChild(panel);
+  if (ui.statusEl && ui.statusEl.parentNode === ui.node.body) {
+    ui.node.body.insertBefore(live, ui.statusEl);
+  } else {
+    ui.node.body.appendChild(live);
+  }
+  ui.replyLive = live;
+  ui.pendingReplyUi = '';
+  mountUiPanels(live);
+  scrollDown(true);
+  followGrowingPanel(live, 900);
+  return true;
+}
+
 function typeInto(ui, chunk) {
-  ui.buffer += chunk;
+  const text = String(chunk || '');
+  if (!text) return;
+  deferMountedReplyUi(ui);
+  ui.buffer += text;
   if (ui.shown == null) ui.shown = '';
   typerStart(ui);
 }
@@ -3121,6 +3150,7 @@ function renderTyped(ui) {
   const measure = now - (ui.lastHeightCheck || 0) >= 100;
   const before = measure ? ui.mdEl.offsetHeight : 0;
   ui.mdEl.innerHTML = html + MD.render(stripSteps(text.slice(src.length)));
+  markImportantThought(ui.mdEl);
   placeCaret(ui.mdEl);
   if (measure) {
     ui.lastHeightCheck = now;
@@ -3153,6 +3183,20 @@ function clearTypingDecorations(mdEl) {
     trail.parentNode.insertBefore(document.createTextNode(trail.textContent || ''), trail);
     trail.remove();
   }
+}
+
+/* Жёлтая искра включается без подсказок модели и дополнительных токенов.
+   Закрытый семантический сигнал редкий: явное «Важно/Критично» либо измеримый
+   риск (необратимость, потеря, подтверждение). Обычный ответ и таблицы синие. */
+function markImportantThought(mdEl) {
+  if (!mdEl) return;
+  const parts = $$('p,li,blockquote', mdEl);
+  const last = parts[parts.length - 1];
+  if (!last) return;
+  const text = (last.textContent || '').trim();
+  const important = /^(?:⚠\ufe0f?\s*)?(?:важно|критично|обязательно|не забудьте|important|critical)\s*[:—.!]/i.test(text) ||
+    /\b(?:необратим\w*|нельзя отменить|без резервной копии|риск потери|потребуется подтверждение)\b/i.test(text);
+  last.classList.toggle('action-important', important);
 }
 
 function placeCaret(mdEl) {
@@ -3239,7 +3283,14 @@ function typerStart(ui) {
     const left = ui.buffer.length - ui.shown.length;
     if (left <= 0) {
       clearInterval(ui.typer); ui.typer = null;
-      if (ui.mdEl) ui.mdEl.classList.remove('typing');
+      if (ui.mdEl) {
+        ui.mdEl.classList.remove('typing');
+        // Сетевой поток может ненадолго осушиться до следующего chunk. Каретка
+        // уже скрылась, значит и цветной trail обязан немедленно стать обычным
+        // текстом — последнее слово не остаётся синим/жёлтым в паузе.
+        clearTypingDecorations(ui.mdEl);
+      }
+      flushPendingReplyUi(ui);
       // Поток мог временно осушиться до следующего SSE-chunk. Не переносим
       // скорость предыдущей (например, табличной) строки в новый кусок.
       ui.cps = 0;
@@ -3293,7 +3344,14 @@ function typerFlush(ui) {
 }
 
 function typerStop(ui) {
+  if (!ui) return;
   if (ui.typer) { clearInterval(ui.typer); ui.typer = null; }
+  if (ui.mdEl) {
+    ui.mdEl.classList.remove('typing');
+    clearTypingDecorations(ui.mdEl);
+  }
+  ui.cps = 0;
+  ui.acc = 0;
   ui.onTyped = null;
 }
 
@@ -3395,8 +3453,15 @@ if ($('#bellBtn')) {
 /* Локальный конец ответа. Серверный done сразу завершает план, но звук,
    actions и кнопка Stop ждут, пока ui.buffer действительно дойдёт до ui.shown.
    Так сетевой EOF не выдаёт недопечатанный ответ за визуально готовый. */
+function clearRunRoute(ui) {
+  if (!ui || !ui.routeEl) return;
+  ui.routeEl.remove();
+  ui.routeEl = null;
+}
+
 function settleVisualDone(ui) {
   if (!ui || ui.visualDone) return;
+  clearRunRoute(ui);
   ui.visualDone = true;
   if (ui.resolveVisualDone) {
     ui.resolveVisualDone();
@@ -3486,7 +3551,8 @@ function queueResponseFinish(ui, content, success) {
           sfx('done');
         }
       }
-      if (S.streamRun === ui.runId) $('#routeHint').classList.remove('show');
+      // Route принадлежит этому ответу и исчезнет в settleVisualDone — вместе
+      // с фактическим завершением визуальной печати, а не по сетевому done.
 
       // Если человек сам ушёл вверх, не перетягиваем его. Если он следил за
       // текущим ответом у нижней кромки, показываем смонтированные controls в
@@ -3553,9 +3619,18 @@ function handleEvent(ev, ui) {
     }
 
     case 'route': {
-      const hint = $('#routeHint');
-      hint.textContent = 'маршрут: ' + (TIER_LABEL[ev.tier] || ev.tier) + ' · ' + (ev.reason || '');
-      hint.classList.add('show');
+      // Route — состояние конкретного прогона, поэтому живёт в заголовке его
+      // ответа, а не в composer. Там он не занимает место AGENT и не остаётся
+      // после окончания визуальной печати.
+      if (!ui.routeEl) {
+        ui.routeEl = el('span', 'ai-route');
+        const head = node.root.querySelector('.ai-name');
+        if (head) head.appendChild(ui.routeEl);
+      }
+      if (ui.routeEl) {
+        ui.routeEl.textContent = 'маршрут: ' + (TIER_LABEL[ev.tier] || ev.tier);
+        ui.routeEl.title = ev.reason || '';
+      }
       // Кухню показываем только на сложных задачах: на «привет» и короткий
       // вопрос пользователь ждёт ответ, а не ход мыслей и терминал.
       ui.verbose = ev.verbose !== false;
@@ -3678,9 +3753,9 @@ function handleEvent(ev, ui) {
       node.body.insertBefore(card, ui.statusEl);
       ui.tools[ev.id || ev.name] = card;
       termLine('$ ' + ev.name + ' ' + JSON.stringify(ev.args || {}).slice(0, 300), 'cmd');
-      // отметить шаг плана
-      const doneCount = Object.keys(ui.tools).length;
-      if (ui.planItems[doneCount - 2]) ui.planItems[doneCount - 2].classList.add('done');
+      // Прогрессом владеют только plan_step-события оркестратора. Число
+      // инструментов не равно числу шагов: один пункт может вызвать пять tools,
+      // а другой — ни одного. Локальный счётчик преждевременно красил проверку.
       beep(520, 0.05);
       scrollDown();
       break;
@@ -3855,22 +3930,15 @@ function handleEvent(ev, ui) {
     }
 
     case 'reply_ui': {
-      // SSE-событие владеет отдельной live-панелью, не DOM внутри Markdown:
-      // renderTyped пересобирает только ui.mdEl и больше не может стереть controls.
+      // Событие может прийти между двумя delta. Поэтому сначала сохраняем его,
+      // а монтируем только на визуальной границе shown === buffer. Если после
+      // раннего mount придёт ещё текст, typeInto снова отложит ту же панель.
       const spec = String(ev.spec || '').trim();
       ui.replyUiSpec = spec;
-      if (!spec) break;
+      ui.pendingReplyUi = spec;
       if (ui.replyLive && ui.replyLive.isConnected) ui.replyLive.remove();
-      const live = el('div', 'reply-ui-live');
-      const panel = el('div', 'ui-panel');
-      panel.dataset.ui = spec;
-      live.appendChild(panel);
-      if (ui.statusEl && ui.statusEl.parentNode === node.body) node.body.insertBefore(live, ui.statusEl);
-      else node.body.appendChild(live);
-      ui.replyLive = live;
-      mountUiPanels(live);
-      scrollDown(true);
-      followGrowingPanel(live, 900);
+      ui.replyLive = null;
+      if (spec) flushPendingReplyUi(ui);
       break;
     }
 
@@ -3880,6 +3948,7 @@ function handleEvent(ev, ui) {
       typerStop(ui);
       ui.buffer = ''; ui.shown = ''; ui.frozen = null;
       ui.replyUiSpec = '';
+      ui.pendingReplyUi = '';
       if (ui.replyLive && ui.replyLive.isConnected) ui.replyLive.remove();
       ui.replyLive = null;
       if (ui.mdEl) { ui.mdEl.remove(); ui.mdEl = null; }
@@ -5654,24 +5723,33 @@ function renderSettings() {
       '<div class="modal-acts"><button class="btn primary" onclick="document.getElementById(\'modalBack\').classList.remove(\'open\')">Ок</button></div>');
   });
 
-  // Изображения: официальный GigaChat/Kandinsky вместо Puter. Пользователю
-  // нужен один Authorization Key; access token JARVIS получает и обновляет сам.
+  // Изображения идут через российский release gateway. В ZIP лежит только
+  // ограниченный revocable token; настоящий provider credential остаётся на
+  // сервере. Пользователь ничего не регистрирует и не настраивает.
   const mediaCfg = c.media || {};
   const mediaSet = el('div', 'sset');
-  mediaSet.innerHTML = '<h3>Генерация изображений</h3>' +
-    '<div class="sd">GigaChat создаёт изображения через Kandinsky без watermark и работает из России. ' +
-    'JARVIS сам получает временный токен — вставить нужно только Authorization Key.</div>' +
-    '<div class="prov-state"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:' +
-    (mediaCfg.has_gigachat_key ? 'var(--green)' : 'var(--red)') + '"></span> GigaChat: ' +
-    (mediaCfg.has_gigachat_key ? 'ключ установлен' : 'нужен ключ') + '</div>' +
-    '<div class="field"><label>Authorization Key GigaChat</label><input id="kGiga" type="password" autocomplete="off" placeholder="' +
-    esc(mediaCfg.gigachat_auth_key || 'вставь ключ без слова Basic') + '"></div>' +
-    '<div class="sd giga-help">1. Открой кабинет разработчика Сбера. 2. Создай проект GigaChat API для физлица. ' +
-    '3. В разделе авторизации скопируй Authorization Key и вставь выше. ' +
-    '<a href="https://developers.sber.ru/docs/ru/gigachat/quickstart/ind-using-api" target="_blank" rel="noopener">Пошаговая официальная инструкция ↗</a></div>' +
-    '<button class="btn primary" id="saveGiga">Сохранить ключ</button>';
+  if (mediaCfg.has_image_gateway) {
+    mediaSet.innerHTML = '<h3>Генерация изображений</h3>' +
+      '<div class="sd">Облачная генерация уже включена в установщик. Работает из России ' +
+      'без VPN, создаёт одно изображение без watermark и не требует ваших ключей.</div>' +
+      '<div class="prov-state"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:var(--green)"></span> ' +
+      'JARVIS Image Cloud: подключено</div>';
+  } else {
+    // Персональный GigaChat остаётся только dev/fallback режимом для сборок без
+    // gateway. Production installer никогда не просит пользователя об этом.
+    mediaSet.innerHTML = '<h3>Генерация изображений</h3>' +
+      '<div class="sd">В этой сборке облачный канал не подключён. Для персонального dev-режима ' +
+      'можно использовать свой Authorization Key GigaChat.</div>' +
+      '<div class="prov-state"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:' +
+      (mediaCfg.has_gigachat_key ? 'var(--green)' : 'var(--red)') + '"></span> GigaChat fallback: ' +
+      (mediaCfg.has_gigachat_key ? 'ключ установлен' : 'не подключён') + '</div>' +
+      '<div class="field"><label>Authorization Key GigaChat</label><input id="kGiga" type="password" autocomplete="off" placeholder="' +
+      esc(mediaCfg.gigachat_auth_key || 'вставь ключ без слова Basic') + '"></div>' +
+      '<button class="btn primary" id="saveGiga">Сохранить fallback-ключ</button>';
+  }
   grid.appendChild(mediaSet);
-  $('#saveGiga', mediaSet).addEventListener('click', async () => {
+  const saveGiga = $('#saveGiga', mediaSet);
+  if (saveGiga) saveGiga.addEventListener('click', async () => {
     const key = $('#kGiga', mediaSet).value.trim().replace(/^Basic\s+/i, '');
     if (!key) { toast('Вставь Authorization Key GigaChat', 'warn'); return; }
     const r = await api('/api/config/update', {
@@ -5680,7 +5758,7 @@ function renderSettings() {
     });
     if (!r.ok) { toast(r.error || 'Не удалось сохранить ключ', 'error'); return; }
     S.config = r.config || S.config;
-    toast('GigaChat для изображений подключён', 'success');
+    toast('Персональная генерация подключена', 'success');
     renderSettings();
   });
 

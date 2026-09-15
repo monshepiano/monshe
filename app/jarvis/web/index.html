@@ -167,13 +167,9 @@
               </button>
             </div>
             <textarea id="input" rows="1" placeholder="Сообщение для JARVIS…"></textarea>
-            <div class="send-stack">
-              <button class="send-btn" id="sendBtn" title="Отправить">
-                <svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg>
-              </button>
-              <button class="agent-switch" id="tgAgent" type="button" aria-pressed="false"
-                      title="AGENT · многошаговая задача с планом"><span></span></button>
-            </div>
+            <button class="send-btn" id="sendBtn" title="Отправить">
+              <svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg>
+            </button>
           </div>
           <div class="toggles">
             <button class="toggle" id="tgCamera" data-tip="Живое распознавание: камера прямо в диалоге">
@@ -182,8 +178,11 @@
             <button class="toggle" id="tgComputer" data-tip="Управление мышью и клавиатурой">
               <span class="tg-dot"></span>Компьютер
             </button>
+            <button class="toggle" id="tgAgent" type="button" aria-pressed="false"
+                    data-tip="Многошаговая задача: составлю план и выполню сам">
+              <span class="tg-dot"></span>AGENT
+            </button>
             <div class="spacer"></div>
-            <div class="hint" id="routeHint"></div>
           </div>
         </div>
       </div>

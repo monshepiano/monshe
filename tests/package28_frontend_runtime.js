@@ -362,10 +362,11 @@ function testFileViewportAndCloseButton() {
 function testImportantHeadingCaretAndTrail() {
   let cursorClock = 100;
   const ctx = loadFunctions(
-    ['clearTypingDecorations', 'syncCursorPhase', 'placeCaret'],
+    ['clearTypingDecorations', 'markImportantThought', 'syncCursorPhase', 'placeCaret'],
     {
       document: miniDocument, CURSOR_BREATHE_MS: 1050,
       performance: { now: () => (cursorClock += 20) },
+      $$: (selector, node) => node.querySelectorAll(selector),
     },
   );
   assert(/const TYPE_MS\s*=\s*20/.test(js), 'DOM typing is capped at 50 renders per second');
@@ -429,6 +430,19 @@ function testImportantHeadingCaretAndTrail() {
   assert.strictEqual(plain.querySelector('.important-trail'), null);
   assert.strictEqual(Array.from(plain.querySelector('.normal-trail').textContent).length, 7,
     'ordinary typing has the shorter bounded blue trail');
+  ctx.clearTypingDecorations(plain);
+  p.textContent = 'Важно: перед удалением нужна резервная копия';
+  ctx.markImportantThought(plain);
+  ctx.placeCaret(plain);
+  assert(p.classList.contains('action-important') && plain.querySelector('.important-trail'),
+    'explicitly important thoughts receive the rare gold trail without model markup');
+  ctx.clearTypingDecorations(plain);
+  assert.strictEqual(plain.querySelector('.typing-trail'), null,
+    'when typing pauses, the last word must immediately return to plain text');
+  p.textContent = 'Обычный ответ без риска';
+  ctx.markImportantThought(plain);
+  assert(!p.classList.contains('action-important'),
+    'semantic highlighting must clear when the current thought is ordinary');
   const marked = new MiniNode('mark');
   marked.appendChild(miniDocument.createTextNode('Подтвердить действие'));
   plain.appendChild(marked);
@@ -524,6 +538,8 @@ function testPlanTypingCompletionAndDockRaces() {
   assert(/PLAN_ITEM_PAUSE/.test(reveal) && /PLAN_LOOK_MS/.test(reveal));
   assert(/await waitForPlanGate\(ui\)/.test(extractFunction(js, 'send')),
     'stream completion must also wait for the visual plan gate');
+  assert(!/doneCount\s*=\s*Object\.keys\(ui\.tools\)/.test(js),
+    'tool count must never guess or prematurely complete plan steps');
 
   // Completion first turns the real dock wholly green, then leaves an
   // accessible archive in the message. It never restores the old card.
@@ -532,7 +548,7 @@ function testPlanTypingCompletionAndDockRaces() {
   const dock = new MiniNode('div'); dock.className = 'plan-dock live expanded'; dock.dataset.runId = '7';
   const title = new MiniNode('span'); title.className = 'pd-t'; dock.appendChild(title);
   const step = new MiniNode('span'); step.className = 'pd-step'; dock.appendChild(step);
-  const fill = new MiniNode('span'); fill.className = 'pd-fill'; dock.appendChild(fill);
+  const segment = new MiniNode('span'); segment.className = 'pd-seg now'; dock.appendChild(segment);
   const dot = new MiniNode('span'); dot.className = 'pd-s now'; dock.appendChild(dot);
   const card = new MiniNode('div');
   const finishCtx = loadFunctions(['undockPlan'], {
@@ -553,7 +569,7 @@ function testPlanTypingCompletionAndDockRaces() {
   assert(dock.classList.contains('done') && !dock.classList.contains('live'));
   assert.strictEqual(title.textContent, 'План выполнен');
   assert.strictEqual(step.textContent, 'готово');
-  assert.strictEqual(fill.style.width, '100%');
+  assert(segment.classList.contains('done') && !segment.classList.contains('now'));
   assert(dot.classList.contains('done') && !dot.classList.contains('now'));
   assert.deepStrictEqual(timers.map((timer) => timer.ms), [320, 620],
     'green completion acknowledgement stays short before the dock disappears');
@@ -566,6 +582,13 @@ function testPlanTypingCompletionAndDockRaces() {
   assert(!/archiveCompletedPlan/.test(extractFunction(js, 'discardPlan')),
     'stopped or failed plans must not be misrepresented as completed archives');
   assert(!/\.pd-s\.now::after\s*\{/.test(css), 'current dock step must have no underline pseudo-element');
+  assert(/Array\.from\(\{ length: n \}[\s\S]*pd-seg/.test(extractFunction(js, 'dockPlan')),
+    'the top progress bar must create exactly one equal segment per plan item');
+  assert(/\.pd-bar\s*\{[^}]*display:flex[^}]*gap/s.test(css) &&
+    /\.pd-seg\s*\{[^}]*flex:1 1 0/s.test(css),
+    'plan progress segments must share the available width equally');
+  assert(/\.pd-seg\.now::after\s*\{[^}]*animation:segmentShimmer/s.test(css),
+    'only the current task segment carries the moving shimmer');
   assert(/\.plan-card\.plan-complete/.test(css) && /\.plan-dock\.done/.test(css));
 
   const finish = extractFunction(js, 'queueResponseFinish');
@@ -818,55 +841,80 @@ async function testCameraLifecycleOwnershipAndLateResults() {
   assert.strictEqual(stoppedPlans, 1);
 }
 
-function testLiveInteractivePanelMountsBeforeStreamSettlement() {
+function testPendingInteractivePanelAndRouteLifecycle() {
   const scroller = new MiniNode('div'); scroller.className = 'cam-chat';
   scroller.scrollHeight = 1000; scroller.scrollTop = 500; scroller.clientHeight = 400;
   const node = new MiniNode('article');
   const body = new MiniNode('div'); node.body = body; node.appendChild(body); scroller.appendChild(node);
   const md = new MiniNode('div'); md.className = 'md'; body.appendChild(md);
-  const panel = new MiniNode('div'); panel.className = 'ui-panel';
-  panel.dataset.ui = 'tiles Формат: PDF | Word | Markdown'; md.appendChild(panel);
-  const routeHint = new MiniNode('div'); routeHint.className = 'show';
-  const frames = [];
-  let settled = 0;
-  const ctx = loadFunctions(['queueResponseFinish'], {
-    String,
-    S: { streamRun: 'run-live' },
-    el: miniEl,
-    $$: (selector, root) => root.querySelectorAll(selector),
-    $: (selector) => selector === '#routeHint' ? routeHint : null,
-    clearTypingDecorations() {}, foldCodeBlocks() {},
-    mountUiPanels(root) {
-      const live = root.querySelector('.ui-panel');
-      live.dataset.live = '1';
-      live.appendChild(new MiniNode('button'));
-      scroller.scrollHeight = 1300;
+  const status = new MiniNode('div'); body.appendChild(status);
+  let mounted = 0;
+  let followed = 0;
+  let typerStarts = 0;
+  const ctx = loadFunctions(
+    ['deferMountedReplyUi', 'flushPendingReplyUi', 'typeInto', 'clearRunRoute', 'settleVisualDone'],
+    {
+      String, el: miniEl,
+      mountUiPanels(root) {
+        mounted += 1;
+        const panel = root.querySelector('.ui-panel');
+        panel.dataset.live = '1';
+        panel.appendChild(new MiniNode('button'));
+      },
+      scrollDown() {},
+      followGrowingPanel() { followed += 1; },
+      typerStart() { typerStarts += 1; },
     },
-    addMsgActions() {}, speakReply() {}, sfx() {},
-    thinkFlush() {}, collapseSoon() {}, undockPlan() {}, discardPlan() {}, scrollDown() {},
-    requestAnimationFrame(fn) { frames.push(fn); return frames.length; },
-    settleVisualDone(ui) { ui.visualDone = true; settled += 1; },
-    typerFlush(ui) { const done = ui.onTyped; ui.onTyped = null; done(); },
-  });
+  );
+  const spec = 'tiles Формат: PDF | Word | Markdown';
   const ui = {
-    runId: 'run-live', node, mdEl: md, buffer: 'Выбери формат', shown: 'Выбери формат',
-    doneReceived: false, visualDone: false, replyUiSpec: '', thinkCard: null,
-    planItems: [],
+    node, mdEl: md, statusEl: status,
+    buffer: 'Текст ещё печатается', shown: 'Текст ещё',
+    replyUiSpec: spec, pendingReplyUi: spec, replyLive: null,
+    visualDone: false,
   };
-  ctx.queueResponseFinish(ui, 'Выбери формат', false);
-  assert.strictEqual(panel.dataset.live, '1',
-    'the live response lifecycle itself must mount controls without reopening the chat');
-  assert(panel.querySelector('button'), 'mounted controls must already exist before response settlement');
-  assert.strictEqual(settled, 1);
-  assert.strictEqual(frames.length, 1, 'panel growth must schedule one follow-to-bottom frame');
-  frames[0]();
-  assert.strictEqual(scroller.scrollTop, 1300,
-    'a user following the answer must see the newly grown controls immediately');
 
+  assert.strictEqual(ctx.flushPendingReplyUi(ui), false);
+  assert.strictEqual(mounted, 0,
+    'controls must remain pending until every preceding character is visible');
+  ui.shown = ui.buffer;
+  assert.strictEqual(ctx.flushPendingReplyUi(ui), true);
+  const firstLive = ui.replyLive;
+  assert(firstLive && firstLive.querySelector('button'));
+  assert.strictEqual(mounted, 1);
+  assert.strictEqual(followed, 1);
+  assert.strictEqual(body.children.indexOf(firstLive), body.children.indexOf(status) - 1,
+    'the visual-boundary controls belong immediately after the completed response');
+
+  ctx.typeInto(ui, ' и это поздний delta');
+  assert.strictEqual(firstLive.isConnected, false,
+    'a late text delta must unmount controls that would otherwise overtake it');
+  assert.strictEqual(ui.replyLive, null);
+  assert.strictEqual(ui.pendingReplyUi, spec);
+  assert.strictEqual(typerStarts, 1);
+  ui.shown = ui.buffer;
+  assert.strictEqual(ctx.flushPendingReplyUi(ui), true);
+  assert.notStrictEqual(ui.replyLive, firstLive,
+    'the same controls remount only at the next real visual boundary');
+  assert.strictEqual(mounted, 2);
+
+  const route = new MiniNode('span'); body.appendChild(route);
+  let resolved = 0;
+  ui.routeEl = route;
+  ui.resolveVisualDone = () => { resolved += 1; };
+  ctx.settleVisualDone(ui);
+  assert.strictEqual(route.isConnected, false);
+  assert.strictEqual(ui.routeEl, null);
+  assert.strictEqual(resolved, 1);
+  ctx.settleVisualDone(ui);
+  assert.strictEqual(resolved, 1, 'visual settlement and route cleanup are idempotent');
+
+  const events = extractFunction(js, 'handleEvent');
+  assert(/case 'reply_ui':[\s\S]*pendingReplyUi\s*=\s*spec[\s\S]*flushPendingReplyUi\(ui\)/.test(events));
+  assert(/case 'delta':[\s\S]*typeInto\(ui, ev\.text\)/.test(events));
   const finish = extractFunction(js, 'queueResponseFinish');
-  assert(/const followPanel[\s\S]*mountUiPanels[\s\S]*requestAnimationFrame/.test(finish));
   assert(!/savedScroll|oldScroll|scrollTop\s*=\s*(?:before|old|saved)/i.test(finish),
-    'mounting must preserve follow-at-bottom intent, not restore a stale scrollTop coordinate');
+    'panel mounting must preserve follow intent, not restore a stale scroll coordinate');
 }
 
 function testInteractiveFenceReachesFrontendPanel() {
@@ -912,17 +960,25 @@ function testInteractiveFenceReachesFrontendPanel() {
 function testRussianImageAndHudFollowupContract() {
   assert(!/js\.puter\.com|puter\.ai|loadPuter|handleBrowserImageRequest|case 'image_request'/.test(js + html),
     'the rejected Puter browser handoff must not remain in production UI');
-  assert(/gigachat/.test(js) && /Authorization Key/.test(js),
-    'settings must expose the Russia-accessible backend GigaChat setup');
+  assert(/has_image_gateway/.test(js) && /Image Cloud/.test(js) && /не требует ваших ключей/.test(js),
+    'production settings must expose zero-setup Russian image gateway status');
 
-  const stackAt = html.indexOf('<div class="send-stack">');
-  const sendAt = html.indexOf('id="sendBtn"', stackAt);
-  const agentAt = html.indexOf('id="tgAgent"', stackAt);
-  assert(stackAt >= 0 && sendAt > stackAt && agentAt > sendAt,
-    'the horizontal AGENT switch must sit directly below Send');
-  assert(/\.agent-switch\s*\{[^}]*background:rgba\(3,8,15,\.96\)/s.test(css));
-  assert(/\.agent-switch\.on\s*\{[^}]*rgba\(143,134,207,\.27\)/s.test(css),
-    'AGENT is dark off and keeps the previous violet accent on');
+  const togglesAt = html.indexOf('<div class="toggles">');
+  const togglesEnd = html.indexOf('</div>', togglesAt);
+  const cameraAt = html.indexOf('id="tgCamera"', togglesAt);
+  const computerAt = html.indexOf('id="tgComputer"', togglesAt);
+  const agentAt = html.indexOf('id="tgAgent"', togglesAt);
+  assert(togglesAt >= 0 && cameraAt < computerAt && computerAt < agentAt && agentAt < togglesEnd,
+    'the labelled AGENT control must share the Camera/Computer row');
+  assert(/id="tgAgent"[\s\S]{0,180}<span class="tg-dot"><\/span>AGENT/.test(html),
+    'AGENT must retain a visible label instead of becoming an ambiguous icon');
+  assert(/\.toggle\s*\{[^}]*min-height:28px[^}]*padding:5px 12px/s.test(css));
+  assert(/#tgAgent\.on\s*\{[^}]*rgba\(143,134,207,\.17\)/s.test(css),
+    'AGENT uses the same fixed toggle geometry with its violet active accent');
+  const tipRule = css.match(/\.toggle\[data-tip\][^{]*::after\s*\{([^}]*)\}/s);
+  assert(/\.composer\s*\{[^}]*overflow:visible/s.test(css) && tipRule &&
+    /z-index:60/.test(tipRule[1]) && /white-space:nowrap/.test(tipRule[1]),
+    'toggle tooltips must render whole above the composer and adjacent borders');
 
   const refresh = extractFunction(js, 'refreshState');
   assert(/st\.running_tasks/.test(refresh) && /auto-running', running > 0/.test(refresh),
@@ -937,10 +993,14 @@ function testRussianImageAndHudFollowupContract() {
     'successful memory writes get the stronger one-shot pulse');
   assert(/case 'file':[\s\S]*pulseNav\('files', false\)/.test(events),
     'actual file saves get the subtle one-shot pulse');
-  assert(/@keyframes fileSaveGlint/.test(css) && /@keyframes memorySaveGlint/.test(css));
+  const fileGlint = css.match(/@keyframes fileSaveGlint\s*\{([\s\S]*?)\n\}/);
+  assert(/\.nav-item\.save-glint\s*\{animation:fileSaveGlint \.72s/.test(css) && fileGlint &&
+    /rgba\(143,179,90,\.26\)/.test(fileGlint[1]) && /rgba\(0,212,255,\.12\)/.test(fileGlint[1]),
+    'Files must receive one quick, clearly visible cyan/green save pass');
+  assert(/@keyframes memorySaveGlint/.test(css));
 
-  assert(/case 'reply_ui':[\s\S]*mountUiPanels\(live\)[\s\S]*followGrowingPanel\(live, 900\)/.test(events),
-    'interactive controls must mount and grow-follow in the live SSE path');
+  assert(/case 'reply_ui':[\s\S]*pendingReplyUi\s*=\s*spec[\s\S]*flushPendingReplyUi\(ui\)/.test(events),
+    'reply controls must enter the pending lifecycle instead of overtaking typed text');
   const replies = extractFunction(js, 'showReplies');
   assert(/followGrowingPanel\(box, 520 \+ items\.length \* 60\)/.test(replies),
     'staggered next-request chips must use the same smooth growth-follow path');
@@ -950,10 +1010,10 @@ function testRussianImageAndHudFollowupContract() {
 
   assert(/\.composer-wrap\s*\{[^}]*linear-gradient\(180deg,rgba\(4,7,13,0\) 0%/s.test(css),
     'the composer boundary must fade gradually instead of covering text abruptly');
-  assert(/\.tool-card\.live::before\s*\{display:none\}/.test(css),
-    'tool animation must not tint the card background');
-  assert(/toolFrameFlow 1\.8s/.test(css) && /toolTextFlow 1\.8s/.test(css),
-    'tool border and text gradients must stay on one visible phase');
+  assert(/\.panel-card\.live::before\s*\{display:none\}/.test(css),
+    'working/reasoning animation must not tint the card background');
+  assert(/toolFrameFlow 1\.45s/.test(css) && !/toolTextFlow/.test(css),
+    'Working keeps the more colourful pass strictly on its contour');
 }
 
 function testThinkingGradientContract() {
@@ -963,24 +1023,26 @@ function testThinkingGradientContract() {
     'the rejected narrow tool-header beam must not return');
 
   const field = css.match(/\.panel-card\.live::before\s*\{([^}]*)\}/s);
-  assert(field, 'one full-card layer must tint the complete thinking/tool body');
-  assert(/inset\s*:\s*-2%/.test(field[1]) && !/width\s*:/.test(field[1]));
-  assert(/rgba\(0,200,240,\.018\)/.test(field[1]) && /rgba\(136,105,211,\.032\)/.test(field[1]),
-    'the background field must be almost imperceptible');
-  assert(/will-change\s*:\s*transform,opacity/.test(field[1]));
-  assert(/animation\s*:\s*wholeCardFlow\s+2s/.test(field[1]));
+  assert(field && /display\s*:\s*none/.test(field[1]),
+    'live cards must have no animated interior field');
 
   const frame = css.match(/\.panel-card\.live::after\s*\{([^}]*)\}/s);
   assert(frame && /inset\s*:\s*0/.test(frame[1]) && /padding\s*:\s*1px/.test(frame[1]),
-    'the animated gradient must cover the entire border ring');
+    'the animated gradient must cover only the complete border ring');
   assert(/mask-composite\s*:\s*exclude/.test(frame[1]));
-  assert(/animation\s*:\s*wholeFrameFlow\s+2s/.test(frame[1]));
-  assert(/\.panel-card\.live \.think-stream\s*\{animation:wholeTextFlow 2s/.test(css),
-    'text gets a separate, still delicate tint over the nearly invisible field');
-  assert(/@keyframes wholeCardFlow[\s\S]*0%,4%[\s\S]*16%[\s\S]*54%[\s\S]*72%,100%\{opacity:0/s.test(css),
-    'the pass must fade in, traverse quickly, fade out, then pause until the next cycle');
+  assert(/opacity\s*:\s*\.18/.test(frame[1]) && /wholeFrameFlow\s+1\.65s/.test(frame[1]),
+    'the contour is already visible on the first frame, including very fast actions');
+  assert(/@keyframes wholeFrameFlow\s*\{0%\{opacity:\.18\}/.test(css),
+    'reasoning contour must not begin at zero opacity');
+
+  const toolFrame = css.match(/\.tool-card\.live::after\s*\{([^}]*)\}/s);
+  assert(toolFrame && /rgba\(52,215,235,\.48\)/.test(toolFrame[1]) &&
+    /rgba\(142,105,218,\.46\)/.test(toolFrame[1]) && /rgba\(215,157,72,\.42\)/.test(toolFrame[1]),
+    'Working contour keeps a cyan/violet/amber palette at restrained brightness');
 
   const executableCss = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert(!/wholeTextFlow|toolTextFlow|wholeCardFlow/.test(executableCss),
+    'neither card text nor card interior may animate');
   assert(!/background-position\s*:/.test(executableCss),
     'no animated gradient may trigger background repaint frames');
   assert(!/stShimmer/.test(css), 'status text must not repaint a clipped gradient forever');
@@ -998,7 +1060,7 @@ function testThinkingGradientContract() {
   testPlanTypingCompletionAndDockRaces();
   testRepeatedPlanEventReplacesOwnership();
   await testCameraLifecycleOwnershipAndLateResults();
-  testLiveInteractivePanelMountsBeforeStreamSettlement();
+  testPendingInteractivePanelAndRouteLifecycle();
   testInteractiveFenceReachesFrontendPanel();
   testRussianImageAndHudFollowupContract();
   testThinkingGradientContract();

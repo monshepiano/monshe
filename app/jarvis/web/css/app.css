@@ -189,10 +189,16 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .nav-item[data-view="auto"].auto-running>*{position:relative;z-index:1}
 .nav-item[data-view="auto"].auto-running .nav-ico{filter:drop-shadow(0 0 6px rgba(87,179,159,.48))}
 @keyframes autoNavFlow{0%,100%{transform:translate3d(-34%,0,0);opacity:.48}50%{transform:translate3d(34%,0,0);opacity:1}}
-/* Одноразовый save-glint: Files почти незаметный, Memory чуть ярче. */
-.nav-item.save-glint{animation:fileSaveGlint 1s ease-out both}
-.nav-item.save-glint-strong{animation:memorySaveGlint 1s ease-out both}
-@keyframes fileSaveGlint{0%,100%{box-shadow:none}38%{background:linear-gradient(90deg,rgba(143,179,90,.13),rgba(87,179,159,.045));box-shadow:inset 0 0 14px rgba(143,179,90,.055)}}
+/* Один быстрый save-pass. Files намеренно отчётливый: короткая цветная волна
+   лучше читается, чем прежняя секундная почти прозрачная заливка. */
+.nav-item.save-glint{animation:fileSaveGlint .72s cubic-bezier(.2,.75,.25,1) both}
+.nav-item.save-glint-strong{animation:memorySaveGlint .86s ease-out both}
+@keyframes fileSaveGlint{
+  0%,100%{box-shadow:none;background-color:transparent;color:inherit}
+  18%{box-shadow:inset 3px 0 0 rgba(143,179,90,.85),inset 0 0 18px rgba(0,212,255,.1)}
+  42%{background:linear-gradient(90deg,rgba(143,179,90,.26),rgba(47,156,146,.18) 48%,rgba(0,212,255,.12));
+      box-shadow:inset 0 0 24px rgba(143,179,90,.18),0 0 12px rgba(47,156,146,.16);color:#dcffd0}
+  72%{box-shadow:inset -3px 0 0 rgba(0,212,255,.66),inset 0 0 12px rgba(0,212,255,.08)}}
 @keyframes memorySaveGlint{0%,100%{box-shadow:none}38%{background:linear-gradient(90deg,rgba(143,134,207,.19),rgba(0,212,255,.055));box-shadow:inset 0 0 18px rgba(143,134,207,.1)}}
 
 .chats-block{flex:1;min-height:0;display:flex;flex-direction:column;margin-top:6px}
@@ -388,6 +394,10 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .ai-name{font-size:10.5px;letter-spacing:2.2px;color:var(--cy);text-transform:uppercase;margin-bottom:7px;
   display:flex;align-items:center;gap:8px}
 .ai-model{color:var(--tx3);letter-spacing:.2px;text-transform:none;font-size:10px;font-family:var(--fm)}
+.ai-route{margin-left:auto;padding:2px 7px;border-radius:999px;border:1px solid rgba(0,200,240,.2);
+  color:rgba(154,202,219,.72);background:rgba(0,110,150,.055);letter-spacing:.15px;
+  text-transform:none;font:9.5px/1.25 var(--fm);white-space:nowrap;animation:routeIn .2s ease-out both}
+@keyframes routeIn{from{opacity:0;transform:translateY(-2px)}}
 /* Время — на самой иконке сообщения. У ответа это бейдж, приклеенный к низу
    реактора: тёмная подложка и светлый текст, чтобы читалось поверх свечения.
    У своей реплики — такая же метка слева от пузыря, на месте иконки. */
@@ -484,48 +494,29 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   max-height:150px;overflow:hidden;padding:12px 0;scroll-behavior:smooth;position:relative;
   -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 26%,#000 74%,transparent 100%);
   mask-image:linear-gradient(180deg,transparent 0,#000 26%,#000 74%,transparent 100%)}
-/* Живой thinking/tool pass охватывает ВСЮ карточку и ВСЮ рамку.
-   Прошлый 24–28% beam подсвечивал только узкую полоску и воспринимался как
-   дефект. Теперь полноразмерный слой едва тонирует фон, отдельное кольцо
-   проходит по всему контуру, а текст меняет оттенок чуть заметнее фона.
-   Transform/opacity остаются compositor-friendly; последние 28% цикла —
-   настоящая короткая пауза без зависшей подсветки. Полный проход занимает
-   чуть больше секунды, поэтому не тянется и не зависает на старте/финише. */
+/* Живой thinking/tool pass идёт только по контуру всей карточки.
+   Ни фон, ни текст больше не переливаются: так Working остаётся цветным, но
+   яркость не прыгает и Safari не перерисовывает содержимое. Кольцо видно с
+   первого кадра даже у очень короткого действия; конец цикла мягко затихает. */
 .panel-card.live{position:relative;isolation:isolate;border-color:rgba(0,200,240,.15);
   box-shadow:0 0 0 1px rgba(0,200,240,.025),0 6px 22px rgba(0,0,0,.3)}
 .panel-card.live > *{position:relative;z-index:1}
-.panel-card.live::before{content:'';position:absolute;z-index:0;inset:-2%;pointer-events:none;
-  border-radius:inherit;
-  background:linear-gradient(108deg,rgba(0,200,240,.018) 4%,rgba(55,208,227,.03) 29%,
-    rgba(136,105,211,.032) 55%,rgba(207,154,60,.025) 79%,rgba(0,200,240,.014) 100%);
-  opacity:0;transform:translate3d(-2.5%,0,0) scaleX(1.06);will-change:transform,opacity;
-  animation:wholeCardFlow 2s cubic-bezier(.35,.05,.35,1) infinite}
+.panel-card.live::before{display:none} /* working/reasoning: цвет идёт только по контуру */
 .panel-card.live::after{content:'';position:absolute;z-index:3;inset:0;padding:1px;
   pointer-events:none;border-radius:inherit;
-  background:linear-gradient(105deg,rgba(63,213,232,.28),rgba(131,106,205,.23) 49%,
-    rgba(204,157,77,.2) 76%,rgba(63,213,232,.24));
+  background:linear-gradient(105deg,rgba(47,210,232,.38),rgba(123,103,205,.34) 46%,
+    rgba(199,145,66,.3) 72%,rgba(66,194,151,.32) 88%,rgba(47,210,232,.36));
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude;
-  opacity:0;will-change:opacity;animation:wholeFrameFlow 2s ease-in-out infinite}
-.panel-card.live .card-head,.panel-card.live .card-inner,
-.panel-card.live .think-stream{animation:wholeTextFlow 2s ease-in-out infinite}
-@keyframes wholeCardFlow{
-  0%,4%{opacity:0;transform:translate3d(-2.5%,0,0) scaleX(1.06)}
-  16%{opacity:.48}
-  54%{opacity:.62;transform:translate3d(2.5%,0,0) scaleX(1.06)}
-  72%,100%{opacity:0;transform:translate3d(3%,0,0) scaleX(1.06)}}
-@keyframes wholeFrameFlow{0%,4%{opacity:0}16%{opacity:.46}54%{opacity:.58}72%,100%{opacity:0}}
-@keyframes wholeTextFlow{
-  0%,4%,72%,100%{color:var(--tx2)}
-  20%{color:#91acb4}43%{color:#a29caf}60%{color:#ad9f89}}
-/* У tool gradient синхронен ровно в двух местах: контур и текст. Фоновую
-   заливку отключаем, а общую фазу задаём обоим слоям одной длительностью. */
-.tool-card.live::before{display:none}
-.tool-card.live::after{background:linear-gradient(105deg,rgba(65,224,245,.64),rgba(159,124,239,.6) 48%,rgba(236,184,88,.55) 76%,rgba(65,224,245,.58));
-  animation:toolFrameFlow 1.8s ease-in-out infinite}
-.tool-card.live .card-head,.tool-card.live .card-inner{animation:toolTextFlow 1.8s ease-in-out infinite}
-@keyframes toolFrameFlow{0%,5%,78%,100%{opacity:.08}22%{opacity:.76}48%{opacity:.88}68%{opacity:.72}}
-@keyframes toolTextFlow{0%,5%,78%,100%{color:var(--tx2)}22%{color:#9debf2}48%{color:#c4b5ef}68%{color:#e4c888}}
+  opacity:.18;will-change:opacity;animation:wholeFrameFlow 1.65s ease-in-out infinite}
+/* Первый кадр уже цветной: даже действие короче одного цикла успевает показать
+   pass. Пики ниже прежних, поэтому долгий reasoning не слепит. */
+@keyframes wholeFrameFlow{0%{opacity:.18}18%{opacity:.38}52%{opacity:.5}76%,100%{opacity:.12}}
+/* Tool/Working использует тот же outline-only принцип, но чуть более цветную
+   cyan→violet→amber→teal волну при той же спокойной общей яркости. */
+.tool-card.live::after{background:linear-gradient(105deg,rgba(52,215,235,.48),rgba(142,105,218,.46) 42%,rgba(215,157,72,.42) 70%,rgba(58,190,146,.42) 88%,rgba(52,215,235,.44));
+  animation:toolFrameFlow 1.45s ease-in-out infinite}
+@keyframes toolFrameFlow{0%{opacity:.2}20%{opacity:.46}50%{opacity:.6}72%{opacity:.45}82%,100%{opacity:.12}}
 .think-card.live .card-head .k{animation:blink 1.1s infinite}
 /* Курсора в мыслях больше нет: это не печать, а прокрутка потока.
    Вместо него — живая точка в шапке (.live .card-head .k уже мигает). */
@@ -735,9 +726,9 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .att b{color:var(--cy);font-weight:500;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .att .x{cursor:pointer;color:var(--tx3);font-size:14px}
 .att .x:hover{color:var(--red)}
-.composer{max-width:900px;margin:0 auto;border:1px solid var(--line2);border-radius:20px;
+.composer{max-width:900px;margin:0 auto;border:1px solid var(--line2);border-radius:20px;position:relative;
   background:linear-gradient(180deg,rgba(11,22,38,.92),rgba(7,15,27,.92));backdrop-filter:blur(20px);
-  box-shadow:0 14px 44px rgba(0,0,0,.45),0 0 0 1px rgba(0,212,255,.05) inset;transition:.3s;overflow:hidden}
+  box-shadow:0 14px 44px rgba(0,0,0,.45),0 0 0 1px rgba(0,212,255,.05) inset;transition:.3s;overflow:visible}
 .composer.focus{border-color:rgba(0,212,255,.55);box-shadow:0 16px 50px rgba(0,120,190,.28),0 0 0 3px rgba(0,212,255,.09)}
 .composer.busy{border-color:rgba(217,164,65,.5)}
 .composer-inner{display:flex;align-items:flex-end;gap:9px;padding:9px 10px 9px 12px}
@@ -768,23 +759,14 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .send-btn:hover{transform:translateY(-2px) scale(1.05);box-shadow:0 9px 26px rgba(0,212,255,.45)}
 .send-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
 .send-btn.stop{background:linear-gradient(135deg,var(--red),#c0294a)}
-/* AGENT — отдельный горизонтальный switch строго под Send. Off почти чёрный;
-   on использует прежний фиолетовый оттенок активного Agent, без текста/точки. */
-.send-stack{width:42px;flex:0 0 42px;display:flex;flex-direction:column;align-items:center;gap:5px}
-.agent-switch{width:34px;height:15px;padding:0;border-radius:999px;position:relative;cursor:pointer;
-  border:1px solid rgba(116,132,151,.28);background:rgba(3,8,15,.96);
-  box-shadow:inset 0 1px 4px rgba(0,0,0,.75);transition:background .22s,border-color .22s,box-shadow .22s}
-.agent-switch span{position:absolute;width:9px;height:9px;left:2px;top:2px;border-radius:50%;
-  background:#52606e;box-shadow:0 1px 3px rgba(0,0,0,.8);transition:transform .22s,background .22s,box-shadow .22s}
-.agent-switch.on{background:rgba(143,134,207,.27);border-color:rgba(143,134,207,.72);
-  box-shadow:inset 0 0 9px rgba(143,134,207,.22),0 0 8px rgba(143,134,207,.12)}
-.agent-switch.on span{transform:translateX(19px);background:#b8afff;
-  box-shadow:0 0 8px rgba(143,134,207,.85)}
-.agent-switch:focus-visible{outline:2px solid rgba(184,175,255,.75);outline-offset:2px}
-.toggles{display:flex;align-items:center;gap:7px;padding:0 12px 10px;flex-wrap:wrap}
-.toggle{display:flex;align-items:center;gap:7px;padding:5px 12px;border-radius:20px;border:1px solid var(--line);
+/* AGENT живёт в том же ряду и в том же компоненте, что Camera/Computer.
+   Send остаётся самостоятельной кнопкой: переключение режима больше не может
+   менять высоту или ширину строки ввода. */
+.toggles{display:flex;align-items:center;gap:7px;padding:0 12px 10px;flex-wrap:wrap;position:relative}
+.toggle{display:flex;align-items:center;gap:7px;min-height:28px;padding:5px 12px;border-radius:20px;border:1px solid var(--line);
   background:transparent;color:var(--tx3);font-size:11.5px;cursor:pointer;transition:.24s;position:relative}
-.toggle:hover{border-color:var(--line2);color:var(--tx2)}
+.toggle:hover,.toggle:focus-visible{border-color:var(--line2);color:var(--tx2);z-index:50}
+.toggle:focus-visible{outline:2px solid rgba(0,212,255,.45);outline-offset:2px}
 .tg-dot{width:6px;height:6px;border-radius:50%;background:var(--tx3);transition:.24s}
 .toggle.on{background:rgba(0,212,255,.15);border-color:rgba(0,212,255,.5);color:#cdf3ff}
 .toggle.on .tg-dot{background:var(--cy);box-shadow:0 0 9px var(--cy)}
@@ -795,12 +777,16 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 #tgComputer.on .tg-dot{background:var(--amber);box-shadow:0 0 9px var(--amber)}
 .toggle#tgComputer.on{background:rgba(221,85,102,.14);border-color:rgba(221,85,102,.45);color:#ffc9d4}
 .toggle#tgComputer.on .tg-dot{background:var(--red);box-shadow:0 0 9px var(--red)}
-.toggle[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:130%;left:50%;transform:translateX(-50%);
-  background:rgba(6,14,24,.97);border:1px solid var(--line2);padding:6px 11px;border-radius:8px;font-size:11px;
-  white-space:nowrap;z-index:20;color:var(--tx2);box-shadow:var(--shadow);animation:popIn .18s both}
+#tgAgent.on{background:rgba(143,134,207,.17);border-color:rgba(143,134,207,.58);color:#e0dbff}
+#tgAgent.on .tg-dot{background:#a89ff2;box-shadow:0 0 9px rgba(168,159,242,.9)}
+/* Tooltip не участвует в геометрии composer и рисуется над его границей.
+   :focus-visible даёт тот же текст с клавиатуры; повышенный z-index на кнопке
+   не позволяет соседней рамке перекрыть плашку. */
+.toggle[data-tip]:is(:hover,:focus-visible)::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%);
+  background:rgba(6,14,24,.98);border:1px solid rgba(0,200,240,.42);padding:7px 11px;border-radius:8px;font-size:11px;
+  white-space:nowrap;z-index:60;color:var(--tx2);box-shadow:0 12px 30px rgba(0,0,0,.7),0 0 16px rgba(0,200,240,.1);animation:popIn .18s both;
+  pointer-events:none}
 .spacer{flex:1}
-.hint{font-size:10.5px;color:var(--tx3);font-family:var(--fm);opacity:0;transition:.3s}
-.hint.show{opacity:1}
 
 /* ---------- AUTO ---------- */
 .task-grid{flex:1 1 auto;min-height:0;overflow-y:auto;padding:6px 26px 26px;display:grid;
@@ -1776,9 +1762,9 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   opacity:.3;transform:translate3d(0,0,0) scale(.992);will-change:transform,opacity;
   animation:planAura 1.8s ease-in-out infinite}
 @keyframes planAura{50%{opacity:.82;transform:translate3d(0,0,0) scale(1.012)}}
-.plan-dock.done{animation:none;color:var(--green);border-color:rgba(63,191,149,.72);
-  background:linear-gradient(180deg,rgba(7,30,23,.97),rgba(5,19,17,.97));
-  box-shadow:0 14px 38px rgba(0,0,0,.55),0 0 30px rgba(63,191,149,.3);
+.plan-dock.done{animation:none;color:rgba(117,188,157,.72);border-color:rgba(63,191,149,.32);
+  background:linear-gradient(180deg,rgba(7,23,19,.96),rgba(5,15,14,.96));
+  box-shadow:0 14px 38px rgba(0,0,0,.55),0 0 17px rgba(63,191,149,.1);
   transition:transform .3s ease-in,opacity .3s ease-in,border-color .3s,box-shadow .3s,background .3s}
 .plan-dock.plan-gone{transform:translateY(-12px) scale(.96)!important;opacity:0!important}
 
@@ -1788,14 +1774,19 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   text-shadow:0 0 12px rgba(217,164,65,.4)}
 .pd-step{margin-left:auto;font-family:var(--fm);font-size:10px;
   color:rgba(217,164,65,.85);white-space:nowrap}
-.plan-dock.done .pd-t,.plan-dock.done .pd-ico,.plan-dock.done .pd-step{color:var(--green)}
+.plan-dock.done .pd-t,.plan-dock.done .pd-ico,.plan-dock.done .pd-step{color:rgba(117,188,157,.72);text-shadow:none}
 
-.pd-bar{height:3px;border-radius:2px;background:rgba(217,164,65,.16);overflow:hidden}
-.pd-fill{display:block;height:100%;width:0;border-radius:2px;
-  background:linear-gradient(90deg,var(--gold),#ffd98a);
-  box-shadow:0 0 12px var(--gold);transition:width .45s cubic-bezier(.33,1,.68,1)}
-.plan-dock.done .pd-fill{background:linear-gradient(90deg,var(--green),#7ce8b5);
-  box-shadow:0 0 12px var(--green)}
+.pd-bar{height:4px;display:flex;gap:4px;background:transparent;overflow:visible}
+.pd-seg{position:relative;display:block;flex:1 1 0;min-width:0;height:3px;border-radius:3px;
+  overflow:hidden;background:rgba(217,164,65,.14);transition:background .25s,box-shadow .25s}
+.pd-seg.done{background:rgba(217,164,65,.64);box-shadow:0 0 7px rgba(217,164,65,.24)}
+.pd-seg.now{background:rgba(217,164,65,.34);box-shadow:0 0 9px rgba(217,164,65,.34)}
+.pd-seg.now::after{content:'';position:absolute;inset:0;width:48%;border-radius:inherit;
+  background:linear-gradient(90deg,transparent,rgba(255,225,150,.94),transparent);
+  transform:translateX(-120%);will-change:transform;animation:segmentShimmer 1.05s ease-in-out infinite}
+@keyframes segmentShimmer{65%,100%{transform:translateX(240%)}}
+.plan-dock.done .pd-seg{background:rgba(63,191,149,.32);box-shadow:none}
+.plan-dock.done .pd-seg::after{display:none}
 
 /* ШАГИ ПОД ЛИНИЕЙ: кружки с номерами, равноудалённо, с подписями. */
 .pd-steps{display:flex;justify-content:space-between;align-items:flex-start;
@@ -1822,10 +1813,10 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   box-shadow:0 0 16px var(--gold);animation:dotBeat 1.05s ease-in-out infinite}
 .pd-s.now .pd-cap{color:#ffd98a}
 @keyframes dotBeat{50%{box-shadow:0 0 26px var(--gold);transform:scale(1.12)}}
-.plan-dock.done .pd-s::before{background:rgba(63,191,149,.58)}
-.plan-dock.done .pd-s .pd-dot{border-color:rgba(63,191,149,.7);
-  background:rgba(63,191,149,.9);color:#04150f;box-shadow:none;animation:none}
-.plan-dock.done .pd-s .pd-cap{color:#7ce8b5;text-decoration:none;text-shadow:0 0 8px rgba(63,191,149,.18)}
+.plan-dock.done .pd-s::before{background:rgba(63,191,149,.24)}
+.plan-dock.done .pd-s .pd-dot{border-color:rgba(63,191,149,.38);
+  background:rgba(63,191,149,.34);color:rgba(174,226,202,.82);box-shadow:none;animation:none}
+.plan-dock.done .pd-s .pd-cap{color:rgba(124,196,164,.66);text-decoration:none;text-shadow:none}
 /* Полные формулировки всегда остаются внутри dock и доступны мышью/клавиатурой,
    но в обычном состоянии не раздувают закреплённую панель. */
 .plan-dock{cursor:pointer}
@@ -1835,6 +1826,8 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .pd-full li{padding:2px 0 2px 3px}
 .plan-dock.expanded .pd-full{max-height:230px;opacity:1;overflow:auto;
   transform:none;margin-top:10px;padding-top:7px;border-top:1px solid rgba(217,164,65,.2)}
+.plan-dock.done .pd-full{color:rgba(124,196,164,.62)}
+.plan-dock.done.expanded .pd-full{border-top-color:rgba(63,191,149,.14)}
 .plan-dock:focus-visible{outline:2px solid rgba(255,217,122,.75);outline-offset:3px}
 
 /* пункты в самой карточке плана: текущий отличается только более ярким
@@ -1864,15 +1857,15 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   box-shadow:0 0 5px rgba(232,202,103,.26),0 0 12px rgba(210,154,39,.15),0 0 20px rgba(0,188,255,.035);
   transform:translate3d(0,0,0);will-change:transform,opacity;
   animation:cursorBreathe 1.05s ease-in-out infinite}
-.plan-card.plan-complete{border-color:rgba(63,191,149,.72);background:rgba(7,30,23,.95);
-  box-shadow:0 0 26px rgba(63,191,149,.24);
+.plan-card.plan-complete{border-color:rgba(63,191,149,.34);background:rgba(7,22,19,.92);
+  box-shadow:0 0 17px rgba(63,191,149,.09);
   transition:opacity .3s ease,transform .3s ease,border-color .25s,background .25s}
-.plan-card.plan-complete .card-head,.plan-card.plan-complete .card-head .k{color:var(--green)}
-.plan-card.plan-complete .plan-list li{color:#7ce8b5;text-decoration:none;text-shadow:none}
-.plan-card.plan-complete .plan-num{background:var(--green);border-color:#7ce8b5;color:#04150f;box-shadow:none;animation:none}
-.thumb.th-plan{border-color:rgba(63,191,149,.24);background:linear-gradient(90deg,rgba(63,191,149,.07),rgba(4,12,18,.42))}
-.thumb.th-plan .th-ico{background:rgba(63,191,149,.14);color:#7ce8b5}
-.thumb.th-plan .th-tag{color:rgba(124,232,181,.72)}
+.plan-card.plan-complete .card-head,.plan-card.plan-complete .card-head .k{color:rgba(112,190,155,.76)}
+.plan-card.plan-complete .plan-list li{color:rgba(124,196,164,.68);text-decoration:none;text-shadow:none}
+.plan-card.plan-complete .plan-num{background:rgba(63,191,149,.32);border-color:rgba(124,232,181,.4);color:rgba(183,231,209,.85);box-shadow:none;animation:none}
+.thumb.th-plan{border-color:rgba(63,191,149,.2);background:linear-gradient(90deg,rgba(63,191,149,.045),rgba(4,12,18,.42))}
+.thumb.th-plan .th-ico{background:rgba(63,191,149,.1);color:rgba(124,210,173,.76)}
+.thumb.th-plan .th-tag{color:rgba(124,210,173,.62)}
 .plan-card.plan-gone{opacity:0;transform:translateY(-8px) scale(.98)}
 @media(max-width:700px){
   .plan-dock{width:calc(100% - 20px);padding:8px 10px 10px}

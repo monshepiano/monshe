@@ -27,7 +27,7 @@ QUICKSTART = ROOT / "install" / "ЧИТАЙ-МЕНЯ.txt"
 KEYS_FILE = Path(__file__).resolve().parent / "keys.json"
 
 
-def _keys_from_previous_installer() -> tuple[str, str]:
+def _keys_from_previous_installer() -> tuple[str, str, str, str, str]:
     """Сохранить уже встроенные ключи при пересборке, не печатая их в лог.
 
     ``JARVIS.command`` одновременно является доставляемым updater-файлом. До
@@ -36,43 +36,69 @@ def _keys_from_previous_installer() -> tuple[str, str]:
     аргумента setup-блока ранее собранного файла и строго проверяем base64.
     """
     if not OUT.exists():
-        return "", ""
+        return "", "", "", "", ""
     try:
         old = OUT.read_text(encoding="utf-8")
         found = re.search(
             r'"\$PY"\s+-\s+"\$HOME_DIR"\s+"([A-Za-z0-9+/=]*)"\s+'
-            r'"([A-Za-z0-9+/=]*)"\s+<<\'PYSETUP\'', old)
+            r'"([A-Za-z0-9+/=]*)"(?:\s+"([A-Za-z0-9+/=]*)")?'
+            r'(?:\s+"([A-Za-z0-9+/=]*)")?(?:\s+"([A-Za-z0-9+/=]*)")?'
+            r'\s+<<\'PYSETUP\'', old)
         if not found:
-            return "", ""
+            return "", "", "", "", ""
         values = []
         for encoded in found.groups():
             raw = base64.b64decode(encoded, validate=True).decode("utf-8") if encoded else ""
             values.append(raw)
-        return values[0], values[1]
+        return tuple(values)  # type: ignore[return-value]
     except (OSError, UnicodeError, ValueError):
-        return "", ""
+        return "", "", "", "", ""
 
 
-def load_keys() -> tuple[str, str]:
+def load_keys() -> tuple[str, str, str, str, str]:
     """Ключи: environment/ignored keys.json, затем рабочий старый updater.
 
     Файл keys.json намеренно не хранится в репозитории. Формат:
-    {"cloudru": "...", "deepseek": "..."}.
+    {"cloudru": "...", "deepseek": "...", "gigachat": "...",
+     "image_gateway_url": "https://...", "image_gateway_token": "..."}.
+    Upstream GigaChat key в публичный ZIP не попадает: production release
+    получает только revocable gateway token. Поля gigachat сохранены для
+    персонального/dev fallback и совместимости старых updater-файлов.
     """
     data = {}
     if KEYS_FILE.exists():
         import json
         data = json.loads(KEYS_FILE.read_text(encoding="utf-8"))
-    previous_cloud, previous_deep = _keys_from_previous_installer()
+    (previous_cloud, previous_deep, previous_gigachat,
+     previous_gateway_url, previous_gateway_token) = _keys_from_previous_installer()
     cloud = (os.environ.get("CLOUDRU_API_KEY") or data.get("cloudru", "")
              or previous_cloud)
     deep = (os.environ.get("DEEPSEEK_API_KEY") or data.get("deepseek", "")
             or previous_deep)
-    if previous_cloud and not os.environ.get("CLOUDRU_API_KEY") and not data.get("cloudru"):
-        print("ключи: сохранены из предыдущего updater-файла")
+    gigachat = (os.environ.get("GIGACHAT_AUTH_KEY") or data.get("gigachat", "")
+                or previous_gigachat)
+    gateway_url = (os.environ.get("JARVIS_IMAGE_GATEWAY_URL") or
+                   data.get("image_gateway_url", "") or previous_gateway_url)
+    gateway_token = (os.environ.get("JARVIS_IMAGE_GATEWAY_TOKEN") or
+                     data.get("image_gateway_token", "") or previous_gateway_token)
+    if (any((previous_cloud, previous_deep, previous_gigachat,
+             previous_gateway_url, previous_gateway_token))
+            and not any((os.environ.get("CLOUDRU_API_KEY"),
+                         os.environ.get("DEEPSEEK_API_KEY"),
+                         os.environ.get("GIGACHAT_AUTH_KEY"),
+                         os.environ.get("JARVIS_IMAGE_GATEWAY_URL"),
+                         os.environ.get("JARVIS_IMAGE_GATEWAY_TOKEN")))
+            and not any(data.get(k) for k in (
+                "cloudru", "deepseek", "gigachat",
+                "image_gateway_url", "image_gateway_token"))):
+        print("ключи и release-конфигурация: сохранены из предыдущего updater-файла")
     if not cloud:
         print("ВНИМАНИЕ: ключ Cloud.ru не задан — пользователю придётся вписать его в интерфейсе")
-    return cloud, deep
+    if bool(gateway_url) != bool(gateway_token):
+        raise SystemExit("image gateway задан частично: нужны URL и token одновременно")
+    if not gateway_url:
+        print("ВНИМАНИЕ: production image gateway не задан — release не будет zero-setup для изображений")
+    return cloud, deep, gigachat, gateway_url, gateway_token
 
 
 SKIP_DIRS = {"__pycache__", ".git", ".DS_Store", "node_modules"}
@@ -143,12 +169,17 @@ def main() -> None:
     wrapped = "\n".join(b64[i:i + 76] for i in range(0, len(b64), 76))
 
     tpl = TEMPLATE.read_text(encoding="utf-8")
-    cloud_key, deep_key = load_keys()
-    # base64 здесь лишь формат передачи через shell-аргумент, а не защита:
-    # установщик расшифрует значения при первом запуске.
+    (cloud_key, deep_key, gigachat_key,
+     gateway_url, gateway_token) = load_keys()
+    # base64 здесь лишь формат передачи через shell-аргумент, а не защита.
+    # Поэтому настоящий provider key не встраивается: client получает только
+    # ограниченный, отзываемый gateway token.
     tpl = (tpl.replace("__VERSION__", ver)
               .replace("__CLOUDRU_KEY_B64__", base64.b64encode(cloud_key.encode()).decode())
-              .replace("__DEEPSEEK_KEY_B64__", base64.b64encode(deep_key.encode()).decode()))
+              .replace("__DEEPSEEK_KEY_B64__", base64.b64encode(deep_key.encode()).decode())
+              .replace("__GIGACHAT_KEY_B64__", base64.b64encode(gigachat_key.encode()).decode())
+              .replace("__IMAGE_GATEWAY_URL_B64__", base64.b64encode(gateway_url.encode()).decode())
+              .replace("__IMAGE_GATEWAY_TOKEN_B64__", base64.b64encode(gateway_token.encode()).decode()))
     if not tpl.endswith("\n"):
         tpl += "\n"
 

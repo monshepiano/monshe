@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import ssl
@@ -219,12 +220,103 @@ def _enhance_prompt(prompt: str, width: int, height: int) -> str:
         return prompt
 
 
+def _image_format(image: bytes, content_type: str = "") -> str:
+    if len(image) < 1000:
+        raise GigaChatError("сервис вернул пустое или повреждённое изображение")
+    if image.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if image.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if image.startswith(b"RIFF") and image[8:12] == b"WEBP":
+        return ".webp"
+    raise GigaChatError("сервис вернул не изображение (%s)" % (content_type or "unknown type"))
+
+
+def _save_gateway_image(image: bytes, content_type: str, prompt: str) -> Dict[str, Any]:
+    suffix = _image_format(image, content_type)
+    image_id = hashlib.sha256(image).hexdigest()[:16]
+    name = "jarvis_image_%s%s" % (image_id, suffix)
+    target = sandbox.safe_path(name)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_bytes(image)
+    tmp.replace(target)
+    return {
+        "ok": True,
+        "path": name,
+        "name": name,
+        "size": len(image),
+        "download_url": sandbox.dl(name),
+        "preview_url": sandbox.dl(name),
+        "prompt": prompt,
+        "model": "cloud image gateway",
+        "provider": "gateway",
+        "watermark": False,
+        "image_id": image_id,
+    }
+
+
+def _gateway_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
+    """Generate through the release gateway without exposing its provider key."""
+    base_url = str(CONFIG.get("media.image_gateway_url", "") or "").strip().rstrip("/")
+    client_token = str(CONFIG.get("media.image_gateway_token", "") or "").strip()
+    if not base_url or not client_token:
+        raise GigaChatError("облачная генерация не подключена в этой сборке")
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.scheme != "https" and parsed.hostname not in ("127.0.0.1", "localhost"):
+        raise GigaChatError("image gateway должен использовать HTTPS")
+
+    body = json.dumps({
+        "prompt": prompt,
+        "width": max(256, min(int(width or 1024), 2048)),
+        "height": max(256, min(int(height or 1024), 2048)),
+    }, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        base_url + "/v1/images/generations",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": "Bearer " + client_token,
+            "Content-Type": "application/json",
+            "Accept": "image/jpeg,image/png,image/webp",
+            "User-Agent": _UA,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=240, context=_ssl_context()) as response:
+            declared = int(response.headers.get("Content-Length") or 0)
+            if declared > _MAX_IMAGE_BYTES:
+                raise GigaChatError("облачный сервис вернул слишком большой файл")
+            image = response.read(_MAX_IMAGE_BYTES + 1)
+            if len(image) > _MAX_IMAGE_BYTES:
+                raise GigaChatError("облачный сервис вернул слишком большой файл")
+            return _save_gateway_image(
+                image, str(response.headers.get("Content-Type") or ""), prompt)
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read(4096).decode("utf-8", "replace"))
+            message = str(detail.get("error") or "")[:300]
+        except Exception:
+            message = ""
+        if exc.code == 401:
+            message = "доступ этой сборки к облачной генерации истёк"
+        elif exc.code in (400, 422):
+            message = "сервис отклонил этот сюжет — попробуй описать его иначе"
+        elif exc.code == 429:
+            message = "лимит изображений временно исчерпан — попробуй чуть позже"
+        raise GigaChatError(message or "image gateway вернул HTTP %s" % exc.code,
+                            int(exc.code or 0)) from None
+    except GigaChatError:
+        raise
+    except Exception as exc:
+        raise GigaChatError("не удалось связаться с облачной генерацией: %s" % exc) from None
+
+
 def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: str = "") -> Dict[str, Any]:
-    """Создать одно watermark-free изображение встроенной функцией GigaChat."""
-    provider = str(CONFIG.get("media.image_provider", "gigachat") or "gigachat")
+    """Создать ровно одно watermark-free изображение через gateway или GigaChat."""
+    provider = str(CONFIG.get("media.image_provider", "auto") or "auto")
     if provider == "off":
         return {"ok": False, "error": "генерация изображений выключена в настройках"}
-    if provider != "gigachat":
+    if provider not in ("auto", "gateway", "gigachat"):
         return {"ok": False, "error": "неподдерживаемый провайдер изображений: " + provider}
     clean = (str(prompt or "") + ((", " + str(style).strip()) if str(style or "").strip() else "")).strip()
     if not clean:
@@ -232,6 +324,13 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: st
 
     try:
         refined = _enhance_prompt(clean, int(width or 1024), int(height or 1024))
+        has_gateway = bool(CONFIG.get("media.image_gateway_url", "") and
+                           CONFIG.get("media.image_gateway_token", ""))
+        if provider == "gateway" or (provider == "auto" and has_gateway):
+            return _gateway_image(refined, int(width or 1024), int(height or 1024))
+        if provider == "auto" and not CONFIG.get("media.gigachat_auth_key", ""):
+            raise GigaChatError("облачная генерация не подключена в этой сборке")
+
         model = str(CONFIG.get("media.gigachat_model", "GigaChat") or "GigaChat").strip()
         payload = {
             "model": model,

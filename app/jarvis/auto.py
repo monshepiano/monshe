@@ -136,6 +136,48 @@ def has_similar_pending(text: str, chat_id: str = "") -> bool:
     return False
 
 
+def safe_delayed_message(prompt: str, schedule: str = "") -> Optional[str]:
+    """Вернуть текст безопасной отложенной реплики без запуска AGENT/tools.
+
+    «Напиши через 2 секунды: привет» — это таймер доставки текста, а не просьба
+    открыть терминал. Раньше AUTO повторно отдавал исходную фразу headless-
+    агенту; тот видел «напиши», строил проект и мог выбрать run_shell, после
+    чего простой таймер внезапно просил санкцию. Здесь закрытый direct-message
+    путь физически не имеет доступа к инструментам.
+    """
+    if not schedule or is_repeating(schedule):
+        return None
+    raw = re.sub(r"\s+", " ", str(prompt or "")).strip()
+    low = raw.lower()
+    intent = re.search(r"\b(напомни|напиши|скажи|сообщи)\b", low)
+    if not intent:
+        return None
+
+    body = re.sub(
+        r"\b(?:через|спустя)\s+\d+\s*[а-яёa-z.]+\b", " ", raw,
+        flags=re.IGNORECASE)
+    body = re.sub(r"^\s*(?:напомни|напиши|скажи|сообщи)(?:\s+мне)?\b[\s,:—–-]*", "", body,
+                  flags=re.IGNORECASE)
+    # Фраза может начинаться со срока: «через 2 секунды напиши привет».
+    body = re.sub(r"^\s*(?:напомни|напиши|скажи|сообщи)(?:\s+мне)?\b[\s,:—–-]*", "", body,
+                  flags=re.IGNORECASE)
+    body = body.strip(" \t\r\n,:;—–-")
+
+    if intent.group(1) == "напомни":
+        return "Напоминание: " + (body or "пора вернуться к запланированному делу")
+
+    # Direct-message — только короткий готовый текст. Создание артефакта,
+    # свежие данные или доставка во внешний сервис остаются обычной AUTO-
+    # задачей со всеми штатными санкциями.
+    if len(body) > 240 or re.search(
+            r"\b(?:игр\w*|сайт\w*|приложен\w*|код\w*|скрипт\w*|файл\w*|отч[её]т\w*|"
+            r"таблиц\w*|новост\w*|погод\w*|курс\w*|telegram|телеграм\w*|почт\w*|"
+            r"удал\w*|скача\w*|созда\w*|разработ\w*|проанализ\w*|проверь\w*)\b",
+            body, re.IGNORECASE):
+        return None
+    return body or "Я на связи — назначенное время пришло."
+
+
 def execute_task(task_id: str) -> None:
     task = db.get_task(task_id)
     if not task or _RUNNING.get(task_id):
@@ -144,8 +186,13 @@ def execute_task(task_id: str) -> None:
     db.update_task(task_id, status="running", progress=0.05)
     db.append_task_event(task_id, {"type": "status", "text": "Задача запущена"})
     try:
-        result = agent.run_headless(task["prompt"], task_id=task_id, agent_mode=True,
-                                    chat_id=task.get("chat_id") or "")
+        direct = safe_delayed_message(task.get("prompt", ""), task.get("schedule", ""))
+        if direct is not None:
+            # Никакого Agent и, следовательно, никакого terminal/tool sanction.
+            result = {"content": direct, "files": []}
+        else:
+            result = agent.run_headless(task["prompt"], task_id=task_id, agent_mode=True,
+                                        chat_id=task.get("chat_id") or "")
         content = result.get("content") or "Задача выполнена."
         files = result.get("files") or []
         db.update_task(task_id, status="done", progress=1.0, result=content)

@@ -106,7 +106,7 @@ ok "Программа распакована: $APP_DIR"
 
 # --------------------------------------------------- 4. Ключи и настройки
 info "Настраиваю ключи нейросетей…"
-"$PY" - "$HOME_DIR" "__CLOUDRU_KEY_B64__" "__DEEPSEEK_KEY_B64__" <<'PYSETUP'
+"$PY" - "$HOME_DIR" "__CLOUDRU_KEY_B64__" "__DEEPSEEK_KEY_B64__" "__GIGACHAT_KEY_B64__" "__IMAGE_GATEWAY_URL_B64__" "__IMAGE_GATEWAY_TOKEN_B64__" <<'PYSETUP'
 import base64, json, os, sys
 home = sys.argv[1]
 def _dec(v):
@@ -116,6 +116,9 @@ def _dec(v):
         return ""
 CLOUD_KEY = _dec(sys.argv[2] if len(sys.argv) > 2 else "")
 DEEP_KEY = _dec(sys.argv[3] if len(sys.argv) > 3 else "")
+GIGACHAT_KEY = _dec(sys.argv[4] if len(sys.argv) > 4 else "")
+IMAGE_GATEWAY_URL = _dec(sys.argv[5] if len(sys.argv) > 5 else "")
+IMAGE_GATEWAY_TOKEN = _dec(sys.argv[6] if len(sys.argv) > 6 else "")
 path = os.path.join(home, "config.json")
 cfg = {}
 if os.path.exists(path):
@@ -137,6 +140,19 @@ if not cloud.get("api_key") and CLOUD_KEY:
     cloud["api_key"] = CLOUD_KEY
 if not deep.get("api_key") and DEEP_KEY:
     deep["api_key"] = DEEP_KEY
+media = cfg.setdefault("media", {})
+media.setdefault("image_provider", "auto")
+media.setdefault("gigachat_scope", "GIGACHAT_API_PERS")
+media.setdefault("gigachat_model", "GigaChat")
+if not media.get("gigachat_auth_key") and GIGACHAT_KEY:
+    media["gigachat_auth_key"] = GIGACHAT_KEY
+# Gateway release token is revocable and deliberately replaces an older
+# release token on update. The upstream provider credential never reaches Mac.
+if IMAGE_GATEWAY_URL and IMAGE_GATEWAY_TOKEN:
+    media["image_gateway_url"] = IMAGE_GATEWAY_URL
+    media["image_gateway_token"] = IMAGE_GATEWAY_TOKEN
+    if media.get("image_provider") != "off":
+        media["image_provider"] = "gateway"
 srv = cfg.setdefault("server", {})
 srv.setdefault("host", "127.0.0.1")
 srv.setdefault("port", 8765)

@@ -8,6 +8,7 @@ import json
 import ssl
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -15,13 +16,19 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
 
-from jarvis import agent, auto, config, server  # noqa: E402
+from jarvis import agent, auto, config, llm, orchestrator, server  # noqa: E402
 from jarvis.tools import media  # noqa: E402
 
 _BUILD_SPEC = importlib.util.spec_from_file_location("jarvis_installer_build", ROOT / "install" / "build.py")
 assert _BUILD_SPEC and _BUILD_SPEC.loader
 installer_build = importlib.util.module_from_spec(_BUILD_SPEC)
 _BUILD_SPEC.loader.exec_module(installer_build)
+
+_GATEWAY_SPEC = importlib.util.spec_from_file_location(
+    "jarvis_image_gateway", ROOT / "gateway" / "image_gateway.py")
+assert _GATEWAY_SPEC and _GATEWAY_SPEC.loader
+image_gateway = importlib.util.module_from_spec(_GATEWAY_SPEC)
+_GATEWAY_SPEC.loader.exec_module(image_gateway)
 
 
 class BackgroundRoutingTests(unittest.TestCase):
@@ -109,6 +116,170 @@ class BackgroundRoutingTests(unittest.TestCase):
         self.assertIn("диалоге", done[-1]["content"])
 
 
+class RoutingAndPlanCostTests(unittest.TestCase):
+    def test_social_gate_beats_agent_mode_and_forced_tier(self) -> None:
+        original_get = orchestrator.CONFIG.get
+
+        def forced_smart(path: str, default=None):
+            if path == "orchestrator.force_tier":
+                return "smart"
+            return original_get(path, default)
+
+        with mock.patch.object(orchestrator.CONFIG, "get", side_effect=forced_smart):
+            route = orchestrator.choose_tier(
+                "Привет!", agent_mode=True, has_tools=True,
+            )
+        self.assertEqual(route["tier"], "nano")
+        self.assertFalse(route["offer_tools"])
+
+        stream = [
+            {"type": "delta", "text": "Привет! Рад тебя видеть."},
+            {"type": "done", "tool_calls": []},
+        ]
+        with mock.patch.object(agent.llm, "chat_stream", return_value=stream), \
+             mock.patch.object(agent.tools, "schemas", return_value=[]):
+            events = list(agent.Agent(agent_mode=True).run(
+                [{"role": "user", "content": "Привет!"}], user_text="Привет!",
+            ))
+        route_event = next(event for event in events if event.get("type") == "route")
+        self.assertEqual(route_event["tier"], "nano")
+        self.assertFalse(route_event["verbose"])
+        self.assertFalse(any(event.get("type") == "plan" for event in events))
+        self.assertFalse(any(event.get("type") in ("thinking", "reply_ui", "question")
+                             for event in events))
+        self.assertEqual([event for event in events if event.get("type") == "done"][-1]["content"],
+                         "Привет! Рад тебя видеть.")
+
+    def test_program_build_routes_directly_to_low_effort_coder(self) -> None:
+        build = orchestrator.choose_tier(
+            "Напиши игру ШАХМАТЫ", agent_mode=True, has_tools=True,
+        )
+        explanation = orchestrator.choose_tier(
+            "Объясни правила игры шахматы", agent_mode=True, has_tools=True,
+        )
+        self.assertEqual(build["tier"], "coder")
+        self.assertEqual(explanation["tier"], "base")
+        self.assertEqual(llm._REASONING_EFFORT["coder"], "low")
+
+    def test_plan_is_local_and_has_no_preflight_model_call(self) -> None:
+        runner = agent.Agent(agent_mode=True)
+        with mock.patch.object(agent.llm, "chat") as blocking_chat:
+            plan = runner.make_plan("Напиши игру шахматы")
+        blocking_chat.assert_not_called()
+        self.assertEqual(len(plan), 3)
+        self.assertIn("Реализовать", plan[1])
+        self.assertIn("Проверить", plan[2])
+
+    def test_plan_progress_uses_two_natural_model_turns_not_one_per_item(self) -> None:
+        route = {
+            "tier": "coder", "reason": "test build", "score": 0.1,
+            "verbose": True, "offer_tools": True,
+        }
+        schema = [{
+            "type": "function",
+            "function": {"name": "write_file", "parameters": {"type": "object"}},
+        }]
+        turns = iter((
+            [{
+                "type": "done",
+                "tool_calls": [{
+                    "id": "write-1", "type": "function",
+                    "function": {
+                        "name": "write_file",
+                        "arguments": json.dumps({"path": "chess.html", "content": "ready"}),
+                    },
+                }],
+            }],
+            [
+                {"type": "delta", "text": "Игра сохранена и проверена."},
+                {"type": "done", "tool_calls": []},
+            ],
+        ))
+        observed_plan_steps = []
+        runner = agent.Agent(agent_mode=True, chat_id="plan-cost")
+
+        def model_turn(*_args, **_kwargs):
+            observed_plan_steps.append(runner.plan_at)
+            return next(turns)
+
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=model_turn) as streamed, \
+             mock.patch.object(agent.llm, "chat") as blocking_chat, \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(agent.tools, "call", return_value={"ok": True}):
+            events = list(runner.run(
+                [{"role": "user", "content": "Напиши игру шахматы"}],
+                user_text="Напиши игру шахматы",
+            ))
+
+        self.assertEqual(streamed.call_count, 2)
+        blocking_chat.assert_not_called()
+        self.assertEqual(observed_plan_steps, [1, 3],
+                         "verification starts as the current third step, not a completed one")
+        progress = [event["step"] for event in events if event.get("type") == "plan_step"]
+        self.assertEqual(progress, [1, 2, 3])
+        third = next(i for i, event in enumerate(events)
+                     if event.get("type") == "plan_step" and event.get("step") == 3)
+        answer = next(i for i, event in enumerate(events)
+                      if event.get("type") == "delta" and "сохранена" in event.get("text", ""))
+        self.assertLess(third, answer, "verification segment must become current before its model turn")
+
+
+class AutomaticMemoryTests(unittest.TestCase):
+    def test_city_and_food_facts_are_extracted_without_an_llm(self) -> None:
+        text = "Я переехал из Москвы в Казань и люблю острую еду. У меня есть аллергия на арахис."
+        facts = agent.extract_obvious_memories(text)
+        keyed = {item["key"]: item["value"] for item in facts}
+        self.assertEqual(keyed["Город"], "Казань")
+        self.assertEqual(keyed["Питание: предпочтения"], "острую еду")
+        self.assertEqual(keyed["Питание: аллергия"], "арахис")
+        self.assertEqual(agent.extract_obvious_memories("Я переехал в новую квартиру."), [])
+
+        stored = []
+        with mock.patch.object(agent.db, "remember", side_effect=lambda *args: stored.append(args) or {"ok": True}), \
+             mock.patch.object(agent.llm, "chat") as model:
+            agent.remember_obvious_facts(text)
+        model.assert_not_called()
+        self.assertIn(("person", "Город", "Казань", 1.15), stored)
+        self.assertIn(("preference", "Питание: предпочтения", "острую еду", 1.15), stored)
+        self.assertIn(("preference", "Питание: аллергия", "арахис", 1.15), stored)
+
+
+class DirectDelayedDeliveryTests(unittest.TestCase):
+    def test_safe_one_shot_message_is_delivered_without_headless_agent(self) -> None:
+        self.assertEqual(auto.safe_delayed_message(
+            "Напиши через 2 секунды: привет", "in 2s"), "привет")
+        self.assertEqual(auto.safe_delayed_message(
+            "Через 2 секунды напомни выключить чайник", "in 2s"),
+            "Напоминание: выключить чайник")
+        self.assertIsNone(auto.safe_delayed_message(
+            "Напиши через 2 секунды игру шахматы", "in 2s"))
+        self.assertIsNone(auto.safe_delayed_message(
+            "Напиши каждый день привет", "every 1d"))
+
+        task = {
+            "id": "timer-1", "chat_id": "chat-1", "title": "Приветствие",
+            "prompt": "Напиши через 2 секунды: привет", "schedule": "in 2s",
+        }
+        with mock.patch.object(auto.db, "get_task", return_value=task), \
+             mock.patch.object(auto.db, "update_task") as update, \
+             mock.patch.object(auto.db, "append_task_event"), \
+             mock.patch.object(auto.db, "add_message") as add_message, \
+             mock.patch.object(auto.db, "notify") as notify, \
+             mock.patch.object(auto.agent, "run_headless") as headless, \
+             mock.patch.object(auto, "_telegram_report"):
+            auto.execute_task("timer-1")
+
+        headless.assert_not_called()
+        notify.assert_not_called()
+        update.assert_any_call("timer-1", status="done", progress=1.0, result="привет")
+        add_message.assert_called_once_with(
+            "chat-1", "assistant", "привет",
+            {"task_id": "timer-1", "from_auto": True, "files": [], "title": "Приветствие"},
+        )
+        self.assertNotIn("timer-1", auto._RUNNING)
+
+
 class VisionUiContractTests(unittest.TestCase):
     def test_contract_requires_contextual_tiles_without_duplicate_submit_ui(self) -> None:
         contract = agent.turn_ui_contract(has_image=True)
@@ -156,6 +327,7 @@ class VisionUiContractTests(unittest.TestCase):
                                return_value={"background": False, "schedule": "", "reason": ""}), \
              mock.patch.object(server.orchestrator, "summarize_history", side_effect=lambda items: items), \
              mock.patch.object(server.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(server.agent, "remember_obvious_facts") as remember_facts, \
              mock.patch.object(server.agent, "build_system_prompt", return_value="BASE SYSTEM"), \
              mock.patch.object(server.agent.tools, "schemas", return_value=[]):
             server.Handler._chat_stream(handler, {
@@ -166,6 +338,7 @@ class VisionUiContractTests(unittest.TestCase):
             })
 
         self.assertEqual(chat_stream.call_count, 1, "vision UI must not require a preflight model call")
+        remember_facts.assert_called_once_with("Сделай мем")
         blocking_chat.assert_not_called()
         messages = chat_stream.call_args.args[0]
         self.assertEqual(messages[0], {"role": "system", "content": "BASE SYSTEM"})
@@ -413,7 +586,26 @@ class InstallerBuildTests(unittest.TestCase):
         self.assertEqual(installer_build.version(), "1.1.0")
 
     def test_rebuild_preserves_previous_embedded_keys_without_a_keys_file(self) -> None:
-        cloud, deep = "cloud-fixture", "deep-fixture"
+        cloud, deep, gigachat = "cloud-fixture", "deep-fixture", "gigachat-fixture"
+        gateway_url, gateway_token = "https://images.example.ru", "release-token"
+        setup = ('"$PY" - "$HOME_DIR" "%s" "%s" "%s" "%s" "%s" <<\'PYSETUP\'\n' % (
+            base64.b64encode(cloud.encode()).decode(),
+            base64.b64encode(deep.encode()).decode(),
+            base64.b64encode(gigachat.encode()).decode(),
+            base64.b64encode(gateway_url.encode()).decode(),
+            base64.b64encode(gateway_token.encode()).decode(),
+        ))
+        with tempfile.TemporaryDirectory() as td:
+            old_out = Path(td) / "JARVIS.command"
+            old_out.write_text("#!/bin/bash\n" + setup, encoding="utf-8")
+            with mock.patch.object(installer_build, "OUT", old_out):
+                self.assertEqual(
+                    installer_build._keys_from_previous_installer(),
+                    (cloud, deep, gigachat, gateway_url, gateway_token),
+                )
+
+    def test_legacy_two_key_installer_migrates_with_empty_image_key(self) -> None:
+        cloud, deep = "old-cloud", "old-deep"
         setup = ('"$PY" - "$HOME_DIR" "%s" "%s" <<\'PYSETUP\'\n' % (
             base64.b64encode(cloud.encode()).decode(),
             base64.b64encode(deep.encode()).decode(),
@@ -422,7 +614,10 @@ class InstallerBuildTests(unittest.TestCase):
             old_out = Path(td) / "JARVIS.command"
             old_out.write_text("#!/bin/bash\n" + setup, encoding="utf-8")
             with mock.patch.object(installer_build, "OUT", old_out):
-                self.assertEqual(installer_build._keys_from_previous_installer(), (cloud, deep))
+                self.assertEqual(
+                    installer_build._keys_from_previous_installer(),
+                    (cloud, deep, "", "", ""),
+                )
 
     def test_payload_gzip_is_reproducible(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -434,6 +629,108 @@ class InstallerBuildTests(unittest.TestCase):
                 second = installer_build.build_payload()
         self.assertEqual(first, second)
         self.assertEqual(first[:2], b"\x1f\x8b")
+
+
+class ImageGatewayServiceTests(unittest.TestCase):
+    def test_release_token_comparison_is_exact(self) -> None:
+        choices = ("release-a", "release-b")
+        self.assertEqual(image_gateway._constant_match("release-b", choices), "release-b")
+        self.assertEqual(image_gateway._constant_match("release", choices), "")
+        self.assertEqual(image_gateway._constant_match("", choices), "")
+
+    def test_rate_gate_enforces_minute_and_daily_caps(self) -> None:
+        gate = image_gateway.RateGate()
+        with mock.patch.object(image_gateway, "PER_MINUTE", 2), \
+             mock.patch.object(image_gateway, "PER_DAY", 5), \
+             mock.patch.object(image_gateway, "GLOBAL_PER_DAY", 20):
+            self.assertTrue(gate.allow("release:127.0.0.1"))
+            self.assertTrue(gate.allow("release:127.0.0.1"))
+            self.assertFalse(gate.allow("release:127.0.0.1"))
+
+    def test_timeweb_key_stays_server_side_and_gateway_decodes_one_image(self) -> None:
+        image = b"\x89PNG\r\n\x1a\n" + b"p" * 1400
+        answer = json.dumps({
+            "created": 1,
+            "data": [{"b64_json": base64.b64encode(image).decode("ascii")}],
+        }).encode()
+        with mock.patch.object(image_gateway, "TIMEWEB_KEY", "server-only-timeweb-key"), \
+             mock.patch.object(image_gateway, "TIMEWEB_MODEL", "image-model"), \
+             mock.patch.object(image_gateway, "_http", return_value=(answer, "application/json")) as call:
+            actual, content_type, image_id = image_gateway._generate_timeweb(
+                "blue city", 1600, 900)
+        self.assertEqual(actual, image)
+        self.assertEqual(content_type, "image/png")
+        self.assertEqual(image_id, hashlib.sha256(image).hexdigest()[:16])
+        self.assertEqual(call.call_args.args[0],
+                         "https://api.timeweb.ai/v1/images/generations")
+        self.assertEqual(call.call_args.kwargs["headers"]["Authorization"],
+                         "Bearer server-only-timeweb-key")
+        payload = json.loads(call.call_args.kwargs["data"].decode("utf-8"))
+        self.assertEqual(payload["n"], 1)
+        self.assertEqual(payload["size"], "1536x1024")
+
+    def test_timeweb_accepts_only_trusted_https_asset_fallback(self) -> None:
+        image = b"\xff\xd8\xff" + b"j" * 1400
+        answer = json.dumps({
+            "data": [{"url": "https://images.timeweb.cloud/generated/one.jpg"}],
+        }).encode()
+        with mock.patch.object(image_gateway, "_http", side_effect=[
+            (answer, "application/json"), (image, "image/jpeg")]) as call:
+            actual, content_type, _ = image_gateway._generate_timeweb("lake", 800, 1200)
+        self.assertEqual(actual, image)
+        self.assertEqual(content_type, "image/jpeg")
+        self.assertEqual(call.call_count, 2)
+        self.assertEqual(json.loads(call.call_args_list[0].kwargs["data"])["size"],
+                         "1024x1536")
+
+        untrusted = json.dumps({
+            "data": [{"url": "https://127.0.0.1/private-image"}],
+        }).encode()
+        with mock.patch.object(image_gateway, "_http",
+                               return_value=(untrusted, "application/json")) as call:
+            with self.assertRaises(image_gateway.GatewayError):
+                image_gateway._generate_timeweb("lake", 1024, 1024)
+        call.assert_called_once()
+
+    def test_timeweb_rejects_malformed_and_oversized_base64_payloads(self) -> None:
+        malformed = json.dumps({"data": [{"b64_json": "not base64 ***"}]}).encode()
+        with mock.patch.object(image_gateway, "_http",
+                               return_value=(malformed, "application/json")):
+            with self.assertRaises(image_gateway.GatewayError):
+                image_gateway._generate_timeweb("lake", 1024, 1024)
+
+        image = b"\x89PNG\r\n\x1a\n" + b"p" * 1400
+        oversized = json.dumps({
+            "data": [{"b64_json": base64.b64encode(image).decode("ascii")}],
+        }).encode()
+        with mock.patch.object(image_gateway, "MAX_IMAGE_BYTES", 1200), \
+             mock.patch.object(image_gateway, "_http",
+                               return_value=(oversized, "application/json")):
+            with self.assertRaises(image_gateway.GatewayError):
+                image_gateway._generate_timeweb("lake", 1024, 1024)
+
+    def test_gateway_dispatches_only_to_selected_upstream(self) -> None:
+        sentinel = (b"image", "image/png", "id")
+        with mock.patch.object(image_gateway, "UPSTREAM", "timeweb"), \
+             mock.patch.object(image_gateway, "_generate_timeweb",
+                               return_value=sentinel) as timeweb, \
+             mock.patch.object(image_gateway, "_generate_gigachat") as gigachat:
+            self.assertEqual(image_gateway.generate("p", 1, 2), sentinel)
+        timeweb.assert_called_once_with("p", 1, 2)
+        gigachat.assert_not_called()
+
+    def test_provider_key_is_used_only_for_server_side_oauth(self) -> None:
+        expires = int((time.time() + 1200) * 1000)
+        oauth = json.dumps({"access_token": "short-lived", "expires_at": expires}).encode()
+        with mock.patch.object(image_gateway, "AUTH_KEY", "server-only-b2b-key"), \
+             mock.patch.object(image_gateway, "_ACCESS_TOKEN", ""), \
+             mock.patch.object(image_gateway, "_ACCESS_EXPIRES", 0), \
+             mock.patch.object(image_gateway, "_http", return_value=(oauth, "application/json")) as call:
+            token = image_gateway._access_token()
+        self.assertEqual(token, "short-lived")
+        self.assertEqual(call.call_args.kwargs["headers"]["Authorization"],
+                         "Basic server-only-b2b-key")
+        self.assertNotIn("server-only-b2b-key", json.dumps({"token": token}))
 
 
 class GigaChatImageTransportTests(unittest.TestCase):
@@ -527,13 +824,62 @@ class GigaChatImageTransportTests(unittest.TestCase):
         self.assertEqual(payload["function_call"], "auto")
         self.assertIn("точная сцена", payload["messages"][-1]["content"])
 
+    def test_gateway_sends_only_release_token_and_saves_returned_image(self) -> None:
+        image = b"\xff\xd8\xff" + b"g" * 1400
+        digest = hashlib.sha256(image).hexdigest()[:16]
+
+        class Response:
+            headers = {"Content-Length": str(len(image)), "Content-Type": "image/jpeg"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit):
+                return image
+
+        values = {
+            "media.image_provider": "gateway",
+            "media.image_gateway_url": "https://images.example.ru",
+            "media.image_gateway_token": "release-token-not-provider-key",
+            "media.gigachat_auth_key": "",
+            "media.enhance_prompt": True,
+        }
+
+        def get_config(path: str, default=None):
+            return values.get(path, default)
+
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / ("jarvis_image_%s.jpg" % digest)
+            with mock.patch.object(media.CONFIG, "get", side_effect=get_config), \
+                 mock.patch.object(media, "_enhance_prompt", return_value="точная сцена"), \
+                 mock.patch.object(media.urllib.request, "urlopen", return_value=Response()) as request, \
+                 mock.patch.object(media.sandbox, "safe_path", return_value=target), \
+                 mock.patch.object(media.sandbox, "dl", return_value="/api/download/image.jpg"):
+                result = media.generate_image("город", width=1536, height=1024)
+                saved_image = target.read_bytes()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["provider"], "gateway")
+        self.assertEqual(result["path"], target.name)
+        self.assertEqual(saved_image, image)
+        sent = request.call_args.args[0]
+        self.assertEqual(sent.full_url, "https://images.example.ru/v1/images/generations")
+        self.assertEqual(sent.get_header("Authorization"), "Bearer release-token-not-provider-key")
+        payload = json.loads(sent.data.decode("utf-8"))
+        self.assertEqual(payload["prompt"], "точная сцена")
+        self.assertEqual(payload["width"], 1536)
+        self.assertNotIn("gigachat", json.dumps(payload).lower())
+
     def test_config_migrates_legacy_providers_and_masks_authorization_key(self) -> None:
-        self.assertEqual(config.DEFAULTS["media"]["image_provider"], "gigachat")
+        self.assertEqual(config.DEFAULTS["media"]["image_provider"], "auto")
         migrated = config._migrate({"media": {
             "image_provider": "puter", "image_base": "legacy", "image_model": "sana",
             "puter": {"old": True},
         }})["media"]
-        self.assertEqual(migrated["image_provider"], "gigachat")
+        self.assertEqual(migrated["image_provider"], "auto")
         self.assertNotIn("image_base", migrated)
         self.assertNotIn("image_model", migrated)
         self.assertNotIn("puter", migrated)
@@ -544,10 +890,14 @@ class GigaChatImageTransportTests(unittest.TestCase):
              mock.patch.object(config, "CONFIG_PATH", Path(td) / "config.json"):
             cfg = config.Config()
             cfg.set("media.gigachat_auth_key", "1234567890-secret")
+            cfg.set("media.image_gateway_url", "https://images.example.ru")
+            cfg.set("media.image_gateway_token", "never-return-this-token")
             public = cfg.public()["media"]
         self.assertTrue(public["has_gigachat_key"])
         self.assertNotEqual(public["gigachat_auth_key"], "1234567890-secret")
         self.assertIn("…", public["gigachat_auth_key"])
+        self.assertTrue(public["has_image_gateway"])
+        self.assertEqual(public["image_gateway_token"], "…")
 
     def test_non_generation_media_api_remains_registered(self) -> None:
         for name in ("transcribe_audio", "analyze_image", "analyze_video",
