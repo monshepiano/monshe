@@ -125,10 +125,9 @@ DEFAULTS: Dict[str, Any] = {
         "refresh_minutes": 30,
     },
     "media": {
-        "image_provider": "pollinations",   # pollinations | off
-        "image_base": "https://image.pollinations.ai/prompt/",
-        # "" = взять лучшую из реально доступных (список спрашиваем у сервиса)
-        "image_model": "",
+        # GPT Image 2 запускается через Puter.js в браузере: developer key не
+        # нужен, пользователь один раз авторизует собственный user-pays аккаунт.
+        "image_provider": "puter",          # puter | off
         # короткую просьбу превращаем в подробный английский промпт дешёвой
         # моделью — именно от этого зависит, выглядит картинка «как из 2022-го»
         # или как современная генерация
@@ -179,11 +178,15 @@ def _migrate(raw: Dict[str, Any]) -> Dict[str, Any]:
     tiers = raw.get("model_tiers")
     if isinstance(tiers, dict) and isinstance(tiers.get("audio"), list):
         tiers["audio"] = [m for m in tiers["audio"] if isinstance(m, str) and "/" in m]
-    # media.image_provider = "fm" был обманкой: такой ветки в коде никогда не
-    # существовало, и сохранённое значение просто отключало бы генерацию.
+    # Legacy anonymous Pollinations теперь отдаёт только слабую sana и может
+    # ставить watermark. Любой прежний включённый provider мигрирует на
+    # browser-side Puter/GPT Image 2; только явное «off» сохраняем.
     media = raw.get("media")
-    if isinstance(media, dict) and media.get("image_provider") not in ("pollinations", "off", None):
-        media["image_provider"] = DEFAULTS["media"]["image_provider"]
+    if isinstance(media, dict):
+        media.pop("image_base", None)
+        media.pop("image_model", None)
+        if media.get("image_provider") != "off":
+            media["image_provider"] = DEFAULTS["media"]["image_provider"]
     return raw
 
 

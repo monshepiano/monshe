@@ -341,13 +341,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .view-chat{position:relative}
 .scroll-date{position:absolute;z-index:20;top:24px;left:50%;pointer-events:none;
   max-width:calc(100% - 40px);padding:5px 11px;border-radius:999px;
-  border:1px solid rgba(92,180,211,.3);background:rgba(7,18,29,.9);
-  color:#b9eaff;font-family:var(--fm);font-size:10px;letter-spacing:.35px;
+  border:1px solid rgba(92,180,211,.18);background:rgba(7,18,29,.66);
+  color:rgba(185,234,255,.68);font-family:var(--fm);font-size:10px;letter-spacing:.35px;
   white-space:nowrap;backdrop-filter:blur(9px);
-  box-shadow:0 7px 22px rgba(0,0,0,.35),0 0 14px rgba(0,200,240,.12);
+  box-shadow:0 6px 18px rgba(0,0,0,.22),0 0 11px rgba(0,200,240,.055);
   opacity:0;transform:translate(-50%,-7px) scale(.96);
   transition:opacity .18s ease,transform .22s cubic-bezier(.2,.8,.3,1)}
-.scroll-date.show{opacity:1;transform:translate(-50%,0) scale(1)}
+.scroll-date.show{opacity:.42;transform:translate(-50%,0) scale(1)}
 .day-separator{display:flex;align-items:center;justify-content:center;gap:10px;
   width:min(900px,100%);margin:5px auto 18px;color:#b9eaff;font-family:var(--fm);
   font-size:10px;letter-spacing:.35px;white-space:nowrap}
@@ -467,30 +467,40 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   max-height:150px;overflow:hidden;padding:12px 0;scroll-behavior:smooth;position:relative;
   -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 26%,#000 74%,transparent 100%);
   mask-image:linear-gradient(180deg,transparent 0,#000 26%,#000 74%,transparent 100%)}
-/* Узкий цветной луч проходит поверх БУКВ, а не только подсвечивает фон.
-   Он движется исключительно transform-ом: быстрее прежнего и без тяжёлого
-   background-position repaint в Safari. */
-.think-card.live{background:linear-gradient(118deg,rgba(7,15,26,.98),
-  rgba(0,197,242,.055) 48%,rgba(111,83,224,.065) 58%,rgba(7,15,26,.98) 82%)}
-.think-card.live .think-stream{color:#91adbb;isolation:isolate}
-.think-card.live .think-stream::after{content:'';position:absolute;left:0;top:-12%;bottom:-12%;
-  width:28%;pointer-events:none;opacity:.82;
-  background:linear-gradient(105deg,transparent 4%,rgba(35,222,255,.18) 23%,
-    rgba(92,229,255,.62) 44%,rgba(190,145,255,.68) 60%,rgba(89,103,255,.3) 78%,transparent 96%);
-  mix-blend-mode:screen;transform:translate3d(-125%,0,0);will-change:transform;
-  animation:thinkNeon 1.65s cubic-bezier(.38,.05,.62,.95) infinite}
-@keyframes thinkNeon{to{transform:translate3d(470%,0,0)}}
-/* У инструмента такой же узкий луч проходит по заголовку целиком: видна
-   окраска текста, но площадь перерисовки остаётся маленькой. */
-.panel-card.live{border-color:rgba(0,200,240,.3);box-shadow:0 0 0 1px rgba(0,200,240,.055),0 6px 22px rgba(0,0,0,.3)}
-.panel-card.live .card-head{position:relative;overflow:hidden;isolation:isolate}
-.panel-card.live .card-head::after{content:'';position:absolute;left:0;top:-15%;bottom:-15%;width:24%;
-  background:linear-gradient(100deg,transparent 3%,rgba(0,200,240,.24) 27%,
-    rgba(73,234,255,.7) 48%,rgba(217,164,65,.58) 65%,transparent 97%);
-  mix-blend-mode:screen;opacity:.84;pointer-events:none;
-  transform:translate3d(-125%,0,0);will-change:transform;
-  animation:liveBar 1.45s cubic-bezier(.38,.05,.62,.95) infinite}
-@keyframes liveBar{to{transform:translate3d(520%,0,0)}}
+/* Живой thinking/tool pass охватывает ВСЮ карточку и ВСЮ рамку.
+   Прошлый 24–28% beam подсвечивал только узкую полоску и воспринимался как
+   дефект. Теперь полноразмерный слой едва тонирует фон, отдельное кольцо
+   проходит по всему контуру, а текст меняет оттенок чуть заметнее фона.
+   Transform/opacity остаются compositor-friendly; последние 28% цикла —
+   настоящая короткая пауза без зависшей подсветки. Полный проход занимает
+   чуть больше секунды, поэтому не тянется и не зависает на старте/финише. */
+.panel-card.live{position:relative;isolation:isolate;border-color:rgba(0,200,240,.15);
+  box-shadow:0 0 0 1px rgba(0,200,240,.025),0 6px 22px rgba(0,0,0,.3)}
+.panel-card.live > *{position:relative;z-index:1}
+.panel-card.live::before{content:'';position:absolute;z-index:0;inset:-2%;pointer-events:none;
+  border-radius:inherit;
+  background:linear-gradient(108deg,rgba(0,200,240,.018) 4%,rgba(55,208,227,.03) 29%,
+    rgba(136,105,211,.032) 55%,rgba(207,154,60,.025) 79%,rgba(0,200,240,.014) 100%);
+  opacity:0;transform:translate3d(-2.5%,0,0) scaleX(1.06);will-change:transform,opacity;
+  animation:wholeCardFlow 2s cubic-bezier(.35,.05,.35,1) infinite}
+.panel-card.live::after{content:'';position:absolute;z-index:3;inset:0;padding:1px;
+  pointer-events:none;border-radius:inherit;
+  background:linear-gradient(105deg,rgba(63,213,232,.28),rgba(131,106,205,.23) 49%,
+    rgba(204,157,77,.2) 76%,rgba(63,213,232,.24));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  opacity:0;will-change:opacity;animation:wholeFrameFlow 2s ease-in-out infinite}
+.panel-card.live .card-head,.panel-card.live .card-inner,
+.panel-card.live .think-stream{animation:wholeTextFlow 2s ease-in-out infinite}
+@keyframes wholeCardFlow{
+  0%,4%{opacity:0;transform:translate3d(-2.5%,0,0) scaleX(1.06)}
+  16%{opacity:.48}
+  54%{opacity:.62;transform:translate3d(2.5%,0,0) scaleX(1.06)}
+  72%,100%{opacity:0;transform:translate3d(3%,0,0) scaleX(1.06)}}
+@keyframes wholeFrameFlow{0%,4%{opacity:0}16%{opacity:.46}54%{opacity:.58}72%,100%{opacity:0}}
+@keyframes wholeTextFlow{
+  0%,4%,72%,100%{color:var(--tx2)}
+  20%{color:#91acb4}43%{color:#a29caf}60%{color:#ad9f89}}
 .think-card.live .card-head .k{animation:blink 1.1s infinite}
 /* Курсора в мыслях больше нет: это не печать, а прокрутка потока.
    Вместо него — живая точка в шапке (.live .card-head .k уже мигает). */
@@ -1341,9 +1351,9 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   box-shadow:0 0 6px #69eaff,0 0 14px rgba(0,200,255,.84),0 0 24px rgba(0,123,255,.4);
   transform:translate3d(0,0,0);will-change:transform,opacity;
   animation:cursorBreathe 1.05s ease-in-out infinite}
-.caret.caret-important{background:linear-gradient(180deg,#fff,#fff4ad 42%,#ffc83d);opacity:1;
-  box-shadow:0 0 8px #ffe36c,0 0 18px rgba(255,190,37,.78),
-             0 0 29px rgba(0,188,255,.2)}
+.caret.caret-important{background:linear-gradient(180deg,#efe7c4,#cdb258 44%,#9f7420);opacity:.58;
+  box-shadow:0 0 5px rgba(232,202,103,.27),0 0 12px rgba(210,154,39,.16),
+             0 0 20px rgba(0,188,255,.04)}
 /* курсор живёт только пока идёт печать */
 .md:not(.typing) .caret{display:none}
 /* пока идёт печать, весь абзац еле заметно «подсвечен изнутри» — видно, что
@@ -1782,22 +1792,23 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 @keyframes nowBeat{50%{box-shadow:0 0 18px rgba(217,164,65,.88)}}
 .plan-copy{min-width:0}
 /* Один bounded span последних 12 букв: длинный мягкий хвост без россыпи
-   DOM-узлов. Обычный синий след заметен, но темнее самого яркого курсора. */
+   DOM-узлов. В Safari прежняя тёмно-синяя шкала почти сливалась с фоном;
+   новая остаётся деликатной, но имеет достаточную светлоту, чтобы читаться. */
 .typing-trail,.important-trail{-webkit-text-fill-color:transparent}
 .normal-trail{color:transparent;
-  background:linear-gradient(90deg,#7898aa 0%,#62a5bc 28%,#54b9d0 55%,#72cfe3 80%,#a9e6f1 100%);
+  background:linear-gradient(90deg,#9ab0ba 0%,#86b9c7 28%,#74c7d8 55%,#83d7e6 80%,#b6edf3 100%);
   -webkit-background-clip:text;background-clip:text;
-  text-shadow:0 0 6px rgba(48,202,255,.28),0 0 12px rgba(0,138,255,.12)}
-/* Золотой след начинается ровно с обычного цвета ответа, а не с синего.
-   Только ближе к каретке белый плавно нагревается до яркого золота. */
+  text-shadow:0 0 6px rgba(48,202,255,.2),0 0 11px rgba(0,138,255,.08)}
+/* Золотой режим намеренно тише синего: буквы лишь теплеют у каретки, без
+   белого пика и яркого золотого ореола. */
 .important-trail{color:transparent;
-  background:linear-gradient(90deg,var(--tx) 0%,#dff3ff 23%,#e7ede0 39%,
-    #ead68c 59%,#ffe477 79%,#fff6b8 94%,#fffde3 100%);
+  background:linear-gradient(90deg,var(--tx) 0%,#c6d2d1 30%,#c7c4ae 49%,
+    #c2b278 69%,#c6b163 87%,#c8ba7b 100%);
   -webkit-background-clip:text;background-clip:text;
-  text-shadow:0 0 8px rgba(255,218,80,.42),0 0 16px rgba(255,151,20,.18)}
+  text-shadow:0 0 6px rgba(220,190,78,.1),0 0 11px rgba(210,137,28,.035)}
 .important-caret{display:inline-block;width:6px;height:14px;margin-left:3px;vertical-align:-2px;border-radius:1px;
-  background:linear-gradient(180deg,#fff,#fff4ad 45%,#ffc83d);
-  box-shadow:0 0 8px #ffe36c,0 0 18px rgba(255,190,37,.68),0 0 27px rgba(0,188,255,.16);
+  background:linear-gradient(180deg,#efe7c4,#cdb258 45%,#9f7420);opacity:.58;
+  box-shadow:0 0 5px rgba(232,202,103,.26),0 0 12px rgba(210,154,39,.15),0 0 20px rgba(0,188,255,.035);
   transform:translate3d(0,0,0);will-change:transform,opacity;
   animation:cursorBreathe 1.05s ease-in-out infinite}
 .plan-card.plan-complete{border-color:rgba(63,191,149,.72);background:rgba(7,30,23,.95);

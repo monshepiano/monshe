@@ -303,6 +303,57 @@ class Handler(BaseHTTPRequestHandler):
                                                 body.get("chat_id") or ""))
         if path == "/api/upload":
             return self._json(self._upload(body))
+        if path == "/api/images/complete":
+            # Не доверяем chat_id из браузера: request registry знает диалог,
+            # который сейчас ждёт этот PNG. Так файл и ссылка всегда попадают
+            # в ту же песочницу, а повторный POST не создаёт второй результат.
+            request_id = str(body.get("id") or "")
+            chat_id = agent.claim_browser_image_request(request_id)
+            if chat_id is None:
+                return self._json({"ok": False, "error": "запрос уже закрыт или неизвестен"}, 404)
+            if body.get("error"):
+                accepted = agent.complete_browser_image_request(request_id, {
+                    "ok": False, "error": str(body.get("error"))[:500],
+                })
+                return self._json({"ok": accepted})
+            upload_body = dict(body)
+            upload_body["chat_id"] = chat_id
+            try:
+                uploaded = self._upload(upload_body)
+            except Exception as exc:
+                # Claim уже взят: обязательно будим Agent даже при полном диске
+                # или неожиданной ошибке записи, иначе UI будет ждать 5 минут.
+                result = {"ok": False, "error": "не удалось сохранить изображение: %s" % exc}
+                agent.complete_browser_image_request(request_id, result)
+                return self._json({"ok": False, "result": result}, 500)
+            if uploaded.get("ok"):
+                try:
+                    target = sandbox.safe_path(str(uploaded.get("name") or ""), chat_id)
+                    head = target.read_bytes()[:12]
+                    valid_image = (uploaded.get("size", 0) > 1000 and
+                                   (head.startswith(b"\x89PNG\r\n\x1a\n") or
+                                    head.startswith(b"\xff\xd8\xff") or
+                                    head.startswith(b"RIFF") and head[8:12] == b"WEBP"))
+                except Exception:
+                    valid_image = False
+                if not valid_image:
+                    sandbox.remove(str(uploaded.get("name") or ""), chat_id)
+                    uploaded = {"ok": False, "error": "браузер вернул не изображение"}
+            if uploaded.get("ok"):
+                result = {
+                    **uploaded,
+                    "path": uploaded.get("name"),
+                    "preview_url": uploaded.get("download_url"),
+                    "prompt": str(body.get("prompt") or "")[:1400],
+                    "model": str(body.get("model") or "gpt-image-2")[:80],
+                    "quality": str(body.get("quality") or "medium")[:30],
+                    "watermark": False,
+                }
+            else:
+                result = uploaded
+            accepted = agent.complete_browser_image_request(request_id, result)
+            ok = bool(accepted and uploaded.get("ok"))
+            return self._json({"ok": ok, "result": result}, 200 if ok else 400)
         if path == "/api/vision":
             return self._json(self._vision(body))
         if path == "/api/transcribe":

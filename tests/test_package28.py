@@ -1,8 +1,11 @@
 """Regression tests for package 28: AUTO has one server-side source of truth."""
 from __future__ import annotations
 
+import base64
+import importlib.util
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -10,7 +13,13 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
 
-from jarvis import agent, auto, server  # noqa: E402
+from jarvis import agent, auto, config, server  # noqa: E402
+from jarvis.tools import media  # noqa: E402
+
+_BUILD_SPEC = importlib.util.spec_from_file_location("jarvis_installer_build", ROOT / "install" / "build.py")
+assert _BUILD_SPEC and _BUILD_SPEC.loader
+installer_build = importlib.util.module_from_spec(_BUILD_SPEC)
+_BUILD_SPEC.loader.exec_module(installer_build)
 
 
 class BackgroundRoutingTests(unittest.TestCase):
@@ -395,6 +404,250 @@ class VisionUiContractTests(unittest.TestCase):
         analyze.assert_called_once_with("data:image/jpeg;base64,ZmFrZQ==", "Что видно?")
         chat.assert_not_called()
         chat_stream.assert_not_called()
+
+
+class InstallerBuildTests(unittest.TestCase):
+    def test_rebuild_preserves_previous_embedded_keys_without_a_keys_file(self) -> None:
+        cloud, deep = "cloud-fixture", "deep-fixture"
+        setup = ('"$PY" - "$HOME_DIR" "%s" "%s" <<\'PYSETUP\'\n' % (
+            base64.b64encode(cloud.encode()).decode(),
+            base64.b64encode(deep.encode()).decode(),
+        ))
+        with tempfile.TemporaryDirectory() as td:
+            old_out = Path(td) / "JARVIS.command"
+            old_out.write_text("#!/bin/bash\n" + setup, encoding="utf-8")
+            with mock.patch.object(installer_build, "OUT", old_out):
+                self.assertEqual(installer_build._keys_from_previous_installer(), (cloud, deep))
+
+    def test_payload_gzip_is_reproducible(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            app_root = Path(td)
+            (app_root / "jarvis").mkdir()
+            (app_root / "jarvis" / "server.py").write_text("VALUE = 1\n", encoding="utf-8")
+            with mock.patch.object(installer_build, "APP", app_root):
+                first = installer_build.build_payload()
+                second = installer_build.build_payload()
+        self.assertEqual(first, second)
+        self.assertEqual(first[:2], b"\x1f\x8b")
+
+
+class BrowserImageRegistryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        with agent._BROWSER_IMAGE_COND:
+            agent._BROWSER_IMAGE_PENDING.clear()
+
+    def tearDown(self) -> None:
+        with agent._BROWSER_IMAGE_COND:
+            agent._BROWSER_IMAGE_PENDING.clear()
+
+    def test_fast_completion_before_wait_is_lossless_and_single_use(self) -> None:
+        request_id = agent.begin_browser_image_request("chat-fast")
+        expected = {"ok": True, "path": "render.png"}
+        self.assertEqual(agent.browser_image_chat(request_id), "chat-fast")
+        self.assertTrue(agent.complete_browser_image_request(request_id, expected))
+        self.assertFalse(agent.complete_browser_image_request(request_id, expected),
+                         "a completed request must reject a second result")
+        self.assertEqual(agent.wait_browser_image_request(request_id, timeout=0), expected,
+                         "completion arriving before wait() must not be lost")
+        self.assertIsNone(agent.browser_image_chat(request_id),
+                          "wait() consumes and closes the pending request")
+
+    def test_completion_claim_is_atomic_before_any_upload(self) -> None:
+        request_id = agent.begin_browser_image_request("chat-race")
+        self.assertEqual(agent.claim_browser_image_request(request_id), "chat-race")
+        self.assertIsNone(agent.claim_browser_image_request(request_id),
+                          "a concurrent duplicate POST must lose before writing a file")
+        expected = {"ok": False, "error": "invalid image"}
+        self.assertTrue(agent.complete_browser_image_request(request_id, expected))
+        self.assertEqual(agent.wait_browser_image_request(request_id, timeout=0), expected)
+
+    def _handler(self, body: dict) -> mock.Mock:
+        handler = mock.Mock()
+        handler.path = "/api/images/complete"
+        handler._body.return_value = body
+        return handler
+
+    def test_server_binds_png_to_registry_chat_and_rejects_duplicate_post(self) -> None:
+        request_id = agent.begin_browser_image_request("trusted-chat")
+        handler = self._handler({
+            "id": request_id,
+            "chat_id": "forged-chat",
+            "name": "render.png",
+            "data": "unused-in-mocked-upload",
+            "prompt": "a precise scene",
+            "model": "gpt-image-2",
+            "quality": "medium",
+        })
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 1200
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "render.png"
+
+            def upload(body: dict) -> dict:
+                self.assertEqual(body["chat_id"], "trusted-chat",
+                                 "browser-provided chat_id must never own the file")
+                target.write_bytes(png)
+                return {"ok": True, "name": "render.png", "size": len(png),
+                        "kind": "image", "download_url": "/api/download/render.png"}
+
+            handler._upload.side_effect = upload
+            with mock.patch.object(server.sandbox, "safe_path", return_value=target):
+                server.Handler.do_POST(handler)
+                first = handler._json.call_args.args
+                self.assertEqual(first[1], 200)
+                self.assertTrue(first[0]["ok"])
+                self.assertEqual(first[0]["result"]["path"], "render.png")
+                self.assertFalse(first[0]["result"]["watermark"])
+
+                handler._json.reset_mock()
+                server.Handler.do_POST(handler)
+                second = handler._json.call_args.args
+                self.assertEqual(second[1], 404)
+                self.assertEqual(handler._upload.call_count, 1,
+                                 "duplicate completion must be rejected before upload")
+
+        result = agent.wait_browser_image_request(request_id, timeout=0)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["model"], "gpt-image-2")
+
+    def test_invalid_browser_payload_is_removed_and_wakes_waiter(self) -> None:
+        request_id = agent.begin_browser_image_request("chat-invalid")
+        handler = self._handler({"id": request_id, "name": "fake.png", "data": "unused"})
+        bad = b"not an image" * 100
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "fake.png"
+            target.write_bytes(bad)
+            handler._upload.return_value = {
+                "ok": True, "name": "fake.png", "size": len(bad),
+                "kind": "image", "download_url": "/api/download/fake.png",
+            }
+
+            def remove(_name: str, _chat_id: str) -> dict:
+                target.unlink(missing_ok=True)
+                return {"ok": True}
+
+            with mock.patch.object(server.sandbox, "safe_path", return_value=target), \
+                 mock.patch.object(server.sandbox, "remove", side_effect=remove) as removed:
+                server.Handler.do_POST(handler)
+            removed.assert_called_once_with("fake.png", "chat-invalid")
+            self.assertFalse(target.exists())
+
+        response, status = handler._json.call_args.args
+        self.assertEqual(status, 400)
+        self.assertFalse(response["ok"])
+        result = agent.wait_browser_image_request(request_id, timeout=0)
+        self.assertFalse(result["ok"])
+        self.assertIn("не изображение", result["error"])
+
+
+class ImageGenerationContractTests(unittest.TestCase):
+    ROUTE = {
+        "tier": "base", "reason": "image test", "score": 0,
+        "verbose": False, "offer_tools": True,
+    }
+    SCHEMA = [{
+        "type": "function",
+        "function": {"name": "generate_image", "parameters": {"type": "object"}},
+    }]
+
+    @staticmethod
+    def _tool_turn(call_id: str) -> list[dict]:
+        return [{
+            "type": "done",
+            "tool_calls": [{
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": "generate_image",
+                    "arguments": json.dumps({"prompt": "blue glass city", "width": 1024}),
+                },
+            }],
+        }]
+
+    def test_media_tool_selects_gpt_image_2_without_network_or_watermark(self) -> None:
+        with mock.patch.object(media.CONFIG, "get", return_value="puter"), \
+             mock.patch.object(media, "_art_prompt", return_value="enhanced scene"):
+            result = media.generate_image("город", width=99999, height=12)
+        self.assertEqual(result, {
+            "browser_image": True,
+            "prompt": "enhanced scene",
+            "width": 1536,
+            "height": 256,
+            "model": "gpt-image-2",
+            "quality": "medium",
+        })
+        self.assertEqual(config.DEFAULTS["media"]["image_provider"], "puter")
+        migrated = config._migrate({"media": {
+            "image_provider": "pollinations", "image_base": "legacy", "image_model": "sana",
+        }})["media"]
+        self.assertEqual(migrated["image_provider"], "puter")
+        self.assertNotIn("image_base", migrated)
+        self.assertNotIn("image_model", migrated)
+        self.assertEqual(config._migrate({"media": {"image_provider": "off"}})
+                         ["media"]["image_provider"], "off")
+
+    def test_agent_emits_handoff_then_waits_for_persisted_image(self) -> None:
+        streams = iter((
+            self._tool_turn("image-1"),
+            [{"type": "delta", "text": "Изображение готово."},
+             {"type": "done", "tool_calls": []}],
+        ))
+        saved = {
+            "ok": True, "path": "gpt.png", "name": "gpt.png", "size": 2048,
+            "download_url": "/api/download/gpt.png", "preview_url": "/api/download/gpt.png",
+        }
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=self.ROUTE), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=lambda *_a, **_k: next(streams)), \
+             mock.patch.object(agent.tools, "schemas", return_value=self.SCHEMA), \
+             mock.patch.object(agent.tools, "call", return_value={
+                 "browser_image": True, "prompt": "enhanced scene", "width": 1024,
+                 "height": 1024, "model": "gpt-image-2", "quality": "medium",
+             }), \
+             mock.patch.object(agent, "begin_browser_image_request", return_value="img-request") as begin, \
+             mock.patch.object(agent, "wait_browser_image_request", return_value=saved) as wait:
+            events = list(agent.Agent(chat_id="image-chat").run(
+                [{"role": "user", "content": "Нарисуй город"}],
+                user_text="Нарисуй город",
+            ))
+
+        begin.assert_called_once_with("image-chat")
+        wait.assert_called_once_with("img-request")
+        request = next(event for event in events if event.get("type") == "image_request")
+        self.assertEqual(request["id"], "img-request")
+        self.assertEqual(request["model"], "gpt-image-2")
+        self.assertEqual(request["quality"], "medium")
+        files = [event for event in events if event.get("type") == "file"]
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0]["name"], "gpt.png")
+        self.assertLess(events.index(request), events.index(files[0]),
+                        "file/done cannot overtake the browser generation request")
+
+    def test_repeated_exact_image_call_dispatches_and_emits_file_once(self) -> None:
+        streams = iter((
+            self._tool_turn("image-1"),
+            self._tool_turn("image-2"),
+            [{"type": "delta", "text": "Один результат готов."},
+             {"type": "done", "tool_calls": []}],
+        ))
+        saved = {
+            "ok": True, "path": "only.png", "size": 2048,
+            "download_url": "/api/download/only.png",
+        }
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=self.ROUTE), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=lambda *_a, **_k: next(streams)), \
+             mock.patch.object(agent.tools, "schemas", return_value=self.SCHEMA), \
+             mock.patch.object(agent.tools, "call", return_value=saved) as dispatch:
+            runner = agent.Agent(chat_id="dedupe-chat")
+            events = list(runner.run(
+                [{"role": "user", "content": "Нарисуй город"}],
+                user_text="Нарисуй город",
+            ))
+
+        dispatch.assert_called_once_with("generate_image", {"prompt": "blue glass city", "width": 1024})
+        self.assertEqual(runner.used_tools, ["generate_image"])
+        self.assertEqual(len([event for event in events if event.get("type") == "file"]), 1)
+        self.assertEqual(len(runner.created_files), 1)
+        done = [event for event in events if event.get("type") == "done"][-1]
+        self.assertEqual(len(done["files"]), 1)
 
 
 if __name__ == "__main__":

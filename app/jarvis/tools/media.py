@@ -28,62 +28,10 @@ def _dl(name: str) -> str:
 
 
 # ============================ ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ ============================
-# Качество картинки определяют три вещи, и раньше мы не управляли ни одной:
-#   1) какая модель рисует — мы молча брали умолчание сервиса (самое слабое);
-#   2) насколько подробен промпт — мы слали короткую русскую фразу как есть,
-#      а генераторы обучены на английских описаниях со светом, оптикой, стилем;
-#   3) что делать, если модель не ответила — мы просто сдавались.
-# Сервис к тому же выкинул параметр enhance, который раньше дорисовывал промпт
-# за нас. Поэтому промпт теперь пишет наша собственная модель, а рисует лучшая
-# из реально доступных — список берём у сервиса, а не из своей памяти.
-
-# Порядок предпочтения: от сильных к простым. Имена, которых сегодня нет в
-# каталоге, просто пропускаются — список не может «протухнуть» в худшую сторону.
-_IMAGE_PREFS = [
-    "nanobanana-pro", "nanobanana-2", "nanobanana",
-    "seedream5-pro", "seedream5",
-    "gptimage-large", "gpt-image-2", "gptimage",
-    "ideogram-v4-quality", "ideogram-v4-balanced",
-    "flux-2", "flux-pro", "flux", "krea", "zimage", "klein", "dreamshaper", "sana",
-]
-_IMAGE_MODELS: Any = None          # кэш каталога моделей рисования
-_IMAGE_MODELS_AT = 0.0
-
-
-def image_models() -> list:
-    """Что сервис реально умеет рисовать прямо сейчас (кэш на час)."""
-    global _IMAGE_MODELS, _IMAGE_MODELS_AT
-    if _IMAGE_MODELS is not None and time.time() - _IMAGE_MODELS_AT < 3600:
-        return _IMAGE_MODELS
-    models = []
-    try:
-        req = urllib.request.Request("https://image.pollinations.ai/models",
-                                     headers={"User-Agent": _UA})
-        with urllib.request.urlopen(req, timeout=25, context=_CTX) as resp:
-            body = json.loads(resp.read().decode("utf-8", "replace"))
-        if isinstance(body, list):
-            models = [m if isinstance(m, str) else str(m.get("name") or m.get("id") or "")
-                      for m in body]
-            models = [m for m in models if m]
-    except Exception:
-        models = []
-    _IMAGE_MODELS, _IMAGE_MODELS_AT = models, time.time()
-    return models
-
-
-def _image_order() -> list:
-    """Модели в порядке «сначала лучшая из доступных»."""
-    live = image_models()
-    forced = (CONFIG.get("media.image_model", "") or "").strip()
-    order = [forced] if forced else []
-    order += [m for m in _IMAGE_PREFS if not live or m in live]
-    order += [m for m in live if m not in order]
-    seen, out = set(), []
-    for m in order:
-        if m and m not in seen:
-            seen.add(m)
-            out.append(m)
-    return out[:4] or [""]
+# Короткую пользовательскую формулировку сначала уточняет дешёвая text-модель,
+# затем браузер вызывает один фиксированный качественный backend — GPT Image 2.
+# Здесь намеренно нет fallback к anonymous-каталогам: молчаливое падение на
+# слабую модель снова принесло бы watermark и непредсказуемое качество.
 
 
 def _art_prompt(prompt: str, style: str) -> str:
@@ -116,36 +64,31 @@ def _art_prompt(prompt: str, style: str) -> str:
 
 
 def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: str = "") -> Dict[str, Any]:
-    """Сгенерировать изображение по описанию (бесплатно, работает без VPN)."""
-    provider = CONFIG.get("media.image_provider", "pollinations")
+    """Подготовить качественную browser-side генерацию GPT Image 2.
+
+    Legacy anonymous Pollinations фактически оставил только ``sana`` и может
+    ставить watermark. Делать вид, что это современный backend, нельзя. Puter
+    даёт GPT Image 2 без developer API key: пользователь один раз подтверждает
+    свой аккаунт в браузере, после чего Agent получает и сохраняет настоящий
+    PNG через ``image_request`` handshake.
+    """
+    provider = CONFIG.get("media.image_provider", "puter")
     if provider == "off":
         return {"ok": False, "error": "генерация изображений выключена в настройках"}
-    width = max(256, min(int(width or 1024), 1536))
-    height = max(256, min(int(height or 1024), 1536))
+    try:
+        width = max(256, min(int(width or 1024), 1536))
+        height = max(256, min(int(height or 1024), 1536))
+    except (TypeError, ValueError):
+        width, height = 1024, 1024
     full_prompt = _art_prompt(prompt, style)
-    base = CONFIG.get("media.image_base", "https://image.pollinations.ai/prompt/")
-    name = "img_%d.jpg" % int(time.time())
-    dest = _ws() / name
-    seed = int(time.time()) % 100000
-    last = ""
-    for model in _image_order():
-        url = "%s%s?width=%d&height=%d&seed=%d&private=true%s" % (
-            base, urllib.parse.quote(full_prompt[:1400]), width, height, seed,
-            ("&model=" + urllib.parse.quote(model)) if model else "")
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": _UA})
-            with urllib.request.urlopen(req, timeout=180, context=_CTX) as resp:
-                data = resp.read(20_000_000)
-            if len(data) < 1000:
-                last = "сервис вернул пустое изображение"
-                continue
-            dest.write_bytes(data)
-            return {"ok": True, "path": name, "prompt": full_prompt, "model": model or "auto",
-                    "download_url": _dl(name), "preview_url": _dl(name), "size": len(data)}
-        except Exception as exc:
-            last = str(exc)[:160]
-            continue
-    return {"ok": False, "error": "не удалось сгенерировать: %s" % (last or "сервис недоступен")}
+    return {
+        "browser_image": True,
+        "prompt": full_prompt,
+        "width": width,
+        "height": height,
+        "model": "gpt-image-2",
+        "quality": "medium",
+    }
 
 
 def _ffmpeg() -> str | None:

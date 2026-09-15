@@ -71,6 +71,137 @@ function api(path, body, extra) {
   return fetch(path, opt).then((r) => r.json()).catch((e) => ({ ok: false, error: String(e) }));
 }
 
+/* Качественные изображения — GPT Image 2 через Puter.js. SDK грузится только
+   при первой реальной генерации: недоступность внешнего CDN никогда не мешает
+   открыть сам JARVIS. Единственный общий Promise исключает двойной <script>. */
+let puterLoadPromise = null;
+function loadPuter() {
+  if (window.puter && window.puter.ai) return Promise.resolve(window.puter);
+  if (puterLoadPromise) return puterLoadPromise;
+  puterLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!error && window.puter && window.puter.ai) resolve(window.puter);
+      else { puterLoadPromise = null; reject(error || new Error('Puter.js не загрузился')); }
+    };
+    const timer = setTimeout(() => finish(new Error('Puter.js не ответил за 20 секунд')), 20000);
+    script.src = 'https://js.puter.com/v2/';
+    script.async = true;
+    script.onload = () => finish(null);
+    script.onerror = () => finish(new Error('Не удалось подключить Puter.js'));
+    document.head.appendChild(script);
+  });
+  return puterLoadPromise;
+}
+
+function blobDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Не удалось прочитать готовое изображение'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function generatedImageData(image) {
+  if (image instanceof Blob) return blobDataUrl(image);
+  const src = typeof image === 'string' ? image : String((image && image.src) || '');
+  if (src.startsWith('data:image/')) return src;
+  if (src) {
+    try {
+      const response = await fetch(src);
+      if (response.ok) return await blobDataUrl(await response.blob());
+    } catch (_) { /* blob/data URL fallback below */ }
+  }
+  // Некоторые версии SDK возвращают уже загруженный <img>, но закрывают URL.
+  // Перекладываем пиксели в собственный PNG; для blob/data это не tainted.
+  if (image && image.tagName === 'IMG') {
+    if (image.decode) await image.decode().catch(() => {});
+    const w = image.naturalWidth || image.width;
+    const h = image.naturalHeight || image.height;
+    if (w && h) {
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(image, 0, 0, w, h);
+      return canvas.toDataURL('image/png');
+    }
+  }
+  throw new Error('Puter вернул изображение в неизвестном формате');
+}
+
+function waitForPuterSignIn(puter, ui) {
+  if (puter.auth && puter.auth.isSignedIn && puter.auth.isSignedIn()) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const card = el('div', 'panel-card approve-card image-auth-card');
+    card.innerHTML = '<div class="ah">◈ Подключить GPT Image 2</div>' +
+      '<div class="ab">Один раз войди в Puter. Ключ API не нужен; Puter использует ресурсы ' +
+      'твоего аккаунта и не добавляет watermark.</div>' +
+      '<div class="approve-actions"><button class="btn primary sm connect">Подключить и создать</button>' +
+      '<button class="btn ghost sm cancel">Отмена</button></div>';
+    if (ui && ui.statusEl && ui.statusEl.parentNode) ui.statusEl.parentNode.insertBefore(card, ui.statusEl);
+    else $('#chatFeed').appendChild(card);
+    scrollDown(true);
+    let busy = false;
+    card.querySelector('.connect').addEventListener('click', async () => {
+      if (busy) return;
+      busy = true;
+      const button = card.querySelector('.connect');
+      button.disabled = true; button.textContent = 'Подключаю…';
+      try {
+        // signIn обязан начаться именно внутри click: иначе Safari блокирует popup.
+        await puter.auth.signIn();
+        card.remove();
+        resolve();
+      } catch (error) {
+        busy = false; button.disabled = false; button.textContent = 'Попробовать снова';
+        toast(String((error && (error.msg || error.message)) || error), 'warn', 'Puter');
+      }
+    });
+    card.querySelector('.cancel').addEventListener('click', () => {
+      card.remove(); reject(new Error('Генерация отменена пользователем'));
+    });
+  });
+}
+
+async function handleBrowserImageRequest(ev, ui) {
+  S.imageRequests = S.imageRequests || new Set();
+  if (!ev.id || S.imageRequests.has(ev.id)) return;
+  S.imageRequests.add(ev.id);
+  let completed = false;
+  try {
+    busyMode(ui, ['Подключаю GPT Image 2', 'готовлю качественный рендер'], 1500);
+    const puter = await loadPuter();
+    await waitForPuterSignIn(puter, ui);
+    busyMode(ui, ['GPT Image 2 рисует', 'medium quality · без watermark'], 1700);
+    const image = await puter.ai.txt2img(String(ev.prompt || ''), {
+      model: String(ev.model || 'gpt-image-2'),
+      quality: String(ev.quality || 'medium'),
+      ratio: { w: Number(ev.width) || 1024, h: Number(ev.height) || 1024 },
+    });
+    const data = await generatedImageData(image);
+    const saved = await api('/api/images/complete', {
+      id: ev.id,
+      name: 'gpt_image_' + Date.now() + '.png',
+      data,
+      prompt: ev.prompt || '',
+      model: ev.model || 'gpt-image-2',
+      quality: ev.quality || 'medium',
+    });
+    completed = !!saved.ok;
+    if (!saved.ok) throw new Error(saved.error || 'Сервер не сохранил изображение');
+  } catch (error) {
+    const message = String((error && (error.msg || error.message)) || error || 'генерация не удалась');
+    if (!completed) await api('/api/images/complete', { id: ev.id, error: message });
+    toast(message, 'error', 'Изображение');
+  } finally {
+    S.imageRequests.delete(ev.id);
+  }
+}
+
 function fmtSize(n) {
   n = Number(n) || 0;
   if (n < 1024) return n + ' Б';
@@ -2918,11 +3049,11 @@ const TYPE_MS = 20;              // не чаще 50 DOM-render/с: кадры �
    Теперь скорость задаётся в знаках в секунду, накапливается дробно и
    сглаживается, поэтому переходы не видны, а темп ровный. */
 const CPS_TALK = 95;             // весь разговор, включая markdown-заголовки
-const CPS_CODE = 400;            // код и таблицы: ровная средняя, без выстрелов
-/* 400 зн/с вместо прежних 1180. Прежнее «быстро» осушало буфер быстрее, чем
-   модель успевала присылать, — печать выстреливала пачкой и замирала в
-   ожидании следующего куска. Пачка-пауза-пачка и читается как рывки. */
-const CPS_SMOOTH_MS = 240;       // одинаковое сглаживание при любом кадровом такте
+const CPS_CODE = 360;            // код и таблицы: быстро, но без пачечных выстрелов
+/* Скорость больше НЕ зависит от сетевого backlog. Один и тот же ответ не
+   должен печататься по-разному только потому, что провайдер прислал крупный
+   или мелкий SSE-chunk. Меняется лишь класс содержимого, переход сглажен. */
+const CPS_SMOOTH_MS = 220;
 
 function typeInto(ui, chunk) {
   ui.buffer += chunk;
@@ -2944,11 +3075,17 @@ function inCodeBlock(text) {
   return fences % 2 === 1;
 }
 
-/* Строка похожа на таблицу или очень длинный технический блок? */
-function fastLine(text) {
-  const nl = text.lastIndexOf('\n');
-  const line = text.slice(nl + 1);
-  return line.startsWith('|') || line.startsWith('    ');
+/* Строка похожа на таблицу или технический блок? Смотрим не только уже
+   показанный prefix, а полную текущую строку в buffer. Иначе каждый новый ряд
+   таблицы начинался на разговорной скорости, после первого `|` резко ускорялся
+   и снова тормозил на переводе строки. */
+function fastLine(text, at) {
+  const pos = at == null ? text.length : Math.max(0, Math.min(text.length, at));
+  const start = text.lastIndexOf('\n', Math.max(0, pos - 1)) + 1;
+  const foundEnd = text.indexOf('\n', pos);
+  const end = foundEnd < 0 ? text.length : foundEnd;
+  const line = text.slice(start, end);
+  return /^\s*\|/.test(line) || /^ {4}/.test(line);
 }
 
 /* У заголовков больше нет отдельного класса скорости: markdown влияет только
@@ -3049,8 +3186,11 @@ function placeCaret(mdEl, actionAccent) {
   // ссылками, кодом в строке и курсивом.
   // Правильный ориентир — ПОСЛЕДНИЙ УЗЕЛ (lastChild), а не последний элемент:
   // если строка кончается текстом, курсор place прямо здесь, в конце.
+  // PRE имеет собственную зелёную code-caret, IMG/UI не содержат текста.
+  // TABLE намеренно НЕ opaque: спускаемся table→tbody→tr→td→text и ставим
+  // живую каретку ровно в последнюю печатаемую ячейку.
   const OPAQUE = (n) => n && n.nodeType === 1 && (
-    n.tagName === 'PRE' || n.tagName === 'TABLE' || n.tagName === 'IMG' ||
+    n.tagName === 'PRE' || n.tagName === 'IMG' ||
     n.classList.contains('code-block') || n.classList.contains('ui-panel'));
 
   let host = mdEl;
@@ -3108,36 +3248,38 @@ function typerStart(ui) {
   let lastTick = performance.now();
   ui.typer = setInterval(() => {
     const now = performance.now();
-    // Не теряем время на обычном 100–200 ms stall: иначе визуальная каретка
-    // честно анимируется, но сам текст необъяснимо отстаёт. Ограничиваем только
-    // гигантский рывок после возвращения к давно скрытой вкладке.
-    const elapsed = Math.max(1, Math.min(250, now - lastTick));
+    // Пропущенный браузером кадр не превращаем в долг, который затем выдаётся
+    // пачкой. Реальное время всё равно прошло; после stall продолжаем тем же
+    // ровным темпом вместо визуального «выстрела» на 100–250 мс текста.
+    const elapsed = Math.max(1, Math.min(32, now - lastTick));
     lastTick = now;
     const left = ui.buffer.length - ui.shown.length;
     if (left <= 0) {
       clearInterval(ui.typer); ui.typer = null;
       if (ui.mdEl) ui.mdEl.classList.remove('typing');
+      // Поток мог временно осушиться до следующего SSE-chunk. Не переносим
+      // скорость предыдущей (например, табличной) строки в новый кусок.
+      ui.cps = 0;
+      ui.acc = 0;
       if (ui.onTyped) { const cb = ui.onTyped; ui.onTyped = null; cb(); }
       return;
     }
     if (now < (ui.holdUntil || 0)) return;
 
-    const code = inCodeBlock(ui.shown) || fastLine(ui.shown);
+    const code = inCodeBlock(ui.shown) || fastLine(ui.buffer, ui.shown.length);
     // Markdown-заголовок здесь намеренно не проверяется: у него тот же CPS,
-    // что у любого разговорного текста. Быстрая ветка остаётся только у кода.
+    // что у любого разговорного текста. Ни размер хвоста, ни размер сетевых
+    // chunk-ов скорость больше не меняют.
     let want = code ? CPS_CODE : CPS_TALK;
-    want *= 1 + Math.min(left / 1800, 1.2);
-    if (want > 620) want = 620;
-    // Сглаживание привязано ко времени, а не к количеству ticks: если браузер
-    // пропустил кадр, скорость не «залипает» и не прыгает.
-    if (ui.cps == null) ui.cps = want;
+    if (!ui.cps) ui.cps = want;
     const blend = 1 - Math.exp(-elapsed / CPS_SMOOTH_MS);
     ui.cps += (want - ui.cps) * blend;
 
     ui.acc = (ui.acc || 0) + (ui.cps * elapsed) / 1000;
     let step = Math.floor(ui.acc);
     if (step < 1) return;
-    step = Math.min(step, left);
+    // Дополнительный предел страхует от пачек и при нетипичном timer jitter.
+    step = Math.min(step, left, code ? 10 : 4);
 
     // Не перепрыгиваем через знак препинания пачкой: заканчиваем этот render
     // прямо на нём, а остаток времени переносим на следующий кадр.
@@ -3317,7 +3459,14 @@ function queueResponseFinish(ui, content, success) {
       }
       const panels = $$('.ui-panel', ui.mdEl);
       const scroller = ui.node.closest('.cam-chat') || stream();
-      const keepScroll = panels.length && scroller ? scroller.scrollTop : null;
+      // ПЕРВОПРИЧИНА «видно только после повторного открытия»: пустой ui-panel
+      // во время печати имеет display:none. После mount он вырастает вниз, а
+      // старый код насильно возвращал прежний scrollTop — то есть оставлял
+      // новые controls ровно за нижней кромкой. При повторном открытии pinToBottom
+      // уже показывал их. Сохраняем не координату, а намерение «я следую за
+      // ответом»: если человек был у низа, новый UI тоже обязан попасть в кадр.
+      const followPanel = !!(panels.length && scroller &&
+        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 220);
       foldCodeBlocks(ui.mdEl);
       mountUiPanels(ui.mdEl);
       $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click',
@@ -3345,14 +3494,13 @@ function queueResponseFinish(ui, content, success) {
       }
       if (S.streamRun === ui.runId) $('#routeHint').classList.remove('show');
 
-      // Раскрытие живой панели увеличивает высоту ровно в точке ```ui. Не
-      // тянем после этого камеру к самому низу: иначе текст над панелью уезжал
-      // из кадра и казалось, что интерактив его заменил. Обычный ответ без UI
-      // по-прежнему автоматически догоняем.
+      // Если человек сам ушёл вверх, не перетягиваем его. Если он следил за
+      // текущим ответом у нижней кромки, показываем смонтированные controls в
+      // том же жизненном цикле — не после закрытия/повторного открытия чата.
       if (ui.node.isConnected) {
-        if (keepScroll != null && scroller) {
-          requestAnimationFrame(() => { scroller.scrollTop = keepScroll; });
-        } else if (S.streamRun === ui.runId) {
+        if (followPanel && scroller) {
+          requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
+        } else if (!panels.length && S.streamRun === ui.runId) {
           scrollDown();
         }
       }
@@ -3593,6 +3741,12 @@ function handleEvent(ev, ui) {
       reactor('busy');
       S.streamApproval = false;
       refreshState(); break;
+
+    case 'image_request':
+      // Agent ждёт POST с настоящим PNG; Promise намеренно не await-им здесь,
+      // чтобы чтение SSE и интерфейс оставались живыми во время рендера.
+      handleBrowserImageRequest(ev, ui);
+      break;
 
     // Уточняющий вопрос с готовыми вариантами. Джарвис останавливается и ждёт,
     // пока нажмут кнопку: лучше один вопрос, чем неверная догадка.

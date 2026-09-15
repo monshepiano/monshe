@@ -202,6 +202,14 @@ class MiniNode {
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   addEventListener(name, fn) { this.listeners[name] = fn; }
   removeEventListener(name) { delete this.listeners[name]; }
+  closest(selector) {
+    let node = this;
+    while (node) {
+      if (selectorMatches(node, selector)) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   getAttribute(name) { return this.attributes[name] == null ? null : this.attributes[name]; }
   getBoundingClientRect() {
@@ -319,6 +327,9 @@ function testTelegramDateHudAndTimeOnlyMeta() {
   assert(/class="scroll-date"\s+id="scrollDate"/.test(html));
   assert(/\.scroll-date\s*\{[^}]*position\s*:\s*absolute[^}]*top\s*:\s*24px[^}]*opacity\s*:\s*0/s.test(css),
     'date stays fixed at the desktop transcript start while scrolling');
+  const shownDate = css.match(/\.scroll-date\.show\s*\{([^}]*)\}/s);
+  assert(shownDate && /opacity\s*:\s*\.42/.test(shownDate[1]),
+    'the transient scroll date must remain deliberately dim and transparent');
   assert(/@media[^}]*[\s\S]*\.scroll-date\s*\{\s*top\s*:\s*16px/s.test(css),
     'mobile date aligns with the mobile transcript start');
   assert(/\.day-separator\s*\{[^}]*display\s*:\s*flex[^}]*margin/s.test(css),
@@ -367,6 +378,19 @@ function testImportantHeadingCaretAndTrail() {
   assert(!/heading|important/i.test(typer), 'typer must not inspect markdown headings');
   assert(/performance\.now\(\)/.test(typer) && /CPS_SMOOTH_MS/.test(typer),
     'elapsed-time CPS must survive delayed timer frames');
+  assert(/Math\.min\(32,\s*now\s*-\s*lastTick\)/.test(typer),
+    'a delayed browser frame must not be paid back as a visible character burst');
+  assert(/step\s*=\s*Math\.min\(step,\s*left,\s*code\s*\?\s*10\s*:\s*4\)/.test(typer));
+  assert(!/left\s*>|backlog|boost|mult/i.test(typer),
+    'typing speed must depend on content, never SSE chunk/backlog size');
+  assert(/ui\.cps\s*=\s*0[\s\S]*ui\.acc\s*=\s*0/.test(typer),
+    'a temporarily drained stream must not leak its previous speed into the next chunk');
+
+  const fast = loadFunctions(['fastLine'], { Math });
+  const tableSource = 'Обычный текст\n| Ячейка | Значение |\nОбычный итог';
+  assert.strictEqual(fast.fastLine(tableSource, tableSource.indexOf('Ячейка')), true,
+    'the complete current row is classified before the first pipe is typed');
+  assert.strictEqual(fast.fastLine(tableSource, 3), false);
 
   const md = new MiniNode('div');
   const heading = new MiniNode('h2');
@@ -408,12 +432,30 @@ function testImportantHeadingCaretAndTrail() {
   assert(plain.querySelector('.caret').classList.contains('caret-important'),
     'a real action can enter important mode without changing typer speed');
   assert(plain.querySelector('.important-trail'));
+
+  const table = new MiniNode('table');
+  const tbody = new MiniNode('tbody');
+  const row = new MiniNode('tr');
+  const cell = new MiniNode('td');
+  cell.appendChild(miniDocument.createTextNode('Последняя ячейка'));
+  row.appendChild(cell); tbody.appendChild(row); table.appendChild(tbody);
+  const tableMd = new MiniNode('div'); tableMd.appendChild(table);
+  ctx.placeCaret(tableMd);
+  assert.strictEqual(tableMd.querySelectorAll('.caret').length, 1,
+    'a markdown table must retain the live caret while its last cell is typing');
+  assert.strictEqual(tableMd.querySelector('.caret').parentNode, cell,
+    'the caret belongs beside the last table-cell text, never below the table');
+  assert(!/tagName\s*===\s*['"]TABLE['"]/.test(extractFunction(js, 'placeCaret')),
+    'TABLE must not be treated as an opaque cursor owner');
+
   assert(/\.caret\s*\{[^}]*#00bff3[^}]*box-shadow/s.test(css), 'normal cursor is visibly bright blue');
-  assert(/\.caret\.caret-important\s*\{[^}]*#ffc83d[^}]*box-shadow/s.test(css));
-  assert(/\.normal-trail\s*\{[^}]*linear-gradient\(90deg,#7898aa[^}]*#54b9d0[^}]*#a9e6f1[^}]*text-shadow/s.test(css),
-    'ordinary cursor trail must use the subdued blue palette');
-  assert(/\.important-trail\s*\{[^}]*linear-gradient\(90deg,var\(--tx\)\s+0%[^}]*#ead68c[^}]*#ffe477[^}]*#fffde3[^}]*text-shadow/s.test(css),
-    'gold trail must begin at ordinary answer white and heat up only near the caret');
+  const goldCaret = css.match(/\.caret\.caret-important\s*\{([^}]*)\}/s);
+  assert(goldCaret && /opacity\s*:\s*\.58/.test(goldCaret[1]));
+  assert(!/#fff(?:fff)?\b/i.test(goldCaret[1]), 'gold caret must not flare to pure white');
+  assert(/\.normal-trail\s*\{[^}]*linear-gradient\(90deg,#9ab0ba[^}]*#74c7d8[^}]*#b6edf3[^}]*text-shadow/s.test(css),
+    'ordinary cursor trail must remain delicately but visibly blue');
+  assert(/\.important-trail\s*\{[^}]*linear-gradient\(90deg,var\(--tx\)\s+0%[^}]*#c2b278[^}]*#c6b163[^}]*#c8ba7b[^}]*text-shadow/s.test(css),
+    'gold trail must use the deliberately dimmed warm palette');
   assert(/\.caret\s*\{[^}]*animation\s*:\s*cursorBreathe[^}]*\}/s.test(css));
   assert(!/@keyframes (?:spark|twBlink)[^{]*\{[^}]*box-shadow/s.test(css),
     'cursor animation must stay on compositor opacity/transform');
@@ -791,6 +833,57 @@ async function testCameraLifecycleOwnershipAndLateResults() {
   assert.strictEqual(stoppedPlans, 1);
 }
 
+function testLiveInteractivePanelMountsBeforeStreamSettlement() {
+  const scroller = new MiniNode('div'); scroller.className = 'cam-chat';
+  scroller.scrollHeight = 1000; scroller.scrollTop = 500; scroller.clientHeight = 400;
+  const node = new MiniNode('article');
+  const body = new MiniNode('div'); node.body = body; node.appendChild(body); scroller.appendChild(node);
+  const md = new MiniNode('div'); md.className = 'md'; body.appendChild(md);
+  const panel = new MiniNode('div'); panel.className = 'ui-panel';
+  panel.dataset.ui = 'tiles Формат: PDF | Word | Markdown'; md.appendChild(panel);
+  const routeHint = new MiniNode('div'); routeHint.className = 'show';
+  const frames = [];
+  let settled = 0;
+  const ctx = loadFunctions(['queueResponseFinish'], {
+    String,
+    S: { streamRun: 'run-live' },
+    el: miniEl,
+    $$: (selector, root) => root.querySelectorAll(selector),
+    $: (selector) => selector === '#routeHint' ? routeHint : null,
+    clearTypingDecorations() {}, foldCodeBlocks() {},
+    mountUiPanels(root) {
+      const live = root.querySelector('.ui-panel');
+      live.dataset.live = '1';
+      live.appendChild(new MiniNode('button'));
+      scroller.scrollHeight = 1300;
+    },
+    addMsgActions() {}, speakReply() {}, sfx() {},
+    thinkFlush() {}, collapseSoon() {}, undockPlan() {}, scrollDown() {},
+    requestAnimationFrame(fn) { frames.push(fn); return frames.length; },
+    settleVisualDone(ui) { ui.visualDone = true; settled += 1; },
+    typerFlush(ui) { const done = ui.onTyped; ui.onTyped = null; done(); },
+  });
+  const ui = {
+    runId: 'run-live', node, mdEl: md, buffer: 'Выбери формат', shown: 'Выбери формат',
+    doneReceived: false, visualDone: false, replyUiSpec: '', thinkCard: null,
+    planItems: [],
+  };
+  ctx.queueResponseFinish(ui, 'Выбери формат', false);
+  assert.strictEqual(panel.dataset.live, '1',
+    'the live response lifecycle itself must mount controls without reopening the chat');
+  assert(panel.querySelector('button'), 'mounted controls must already exist before response settlement');
+  assert.strictEqual(settled, 1);
+  assert.strictEqual(frames.length, 1, 'panel growth must schedule one follow-to-bottom frame');
+  frames[0]();
+  assert.strictEqual(scroller.scrollTop, 1300,
+    'a user following the answer must see the newly grown controls immediately');
+
+  const finish = extractFunction(js, 'queueResponseFinish');
+  assert(/const followPanel[\s\S]*mountUiPanels[\s\S]*requestAnimationFrame/.test(finish));
+  assert(!/savedScroll|oldScroll|scrollTop\s*=\s*(?:before|old|saved)/i.test(finish),
+    'mounting must preserve follow-at-bottom intent, not restore a stale scrollTop coordinate');
+}
+
 function testInteractiveFenceReachesFrontendPanel() {
   const context = { window: {} };
   vm.createContext(context);
@@ -831,24 +924,60 @@ function testInteractiveFenceReachesFrontendPanel() {
   assert.strictEqual(question.parentNode, root, 'the actual question must stay visible');
 }
 
+function testBrowserImageHandoffContract() {
+  assert(!/js\.puter\.com\/v2\//.test(html),
+    'Puter.js must be lazy-loaded only when image generation is actually requested');
+  const loader = extractFunction(js, 'loadPuter');
+  assert(/script\.src\s*=\s*['"]https:\/\/js\.puter\.com\/v2\/['"]/.test(loader));
+  assert(/setTimeout\([\s\S]*20000/.test(loader), 'provider loading must have a finite timeout');
+  assert(/puterLoadPromise/.test(js), 'parallel image events must share one SDK load');
+
+  const handoff = extractFunction(js, 'handleBrowserImageRequest');
+  assert(/S\.imageRequests\.has\(ev\.id\)/.test(handoff) && /S\.imageRequests\.add\(ev\.id\)/.test(handoff),
+    'one in-flight browser request id must execute at most once');
+  assert(/await\s+waitForPuterSignIn\(puter,\s*ui\)/.test(handoff));
+  const signIn = extractFunction(js, 'waitForPuterSignIn');
+  const click = signIn.slice(signIn.indexOf("addEventListener('click'"));
+  assert(/await\s+puter\.auth\.signIn\(\)/.test(click),
+    'Puter authentication must execute directly in the explicit user click callback');
+  assert(/использует ресурсы[\s\S]{0,100}твоего аккаунта/.test(signIn),
+    'the authorization card must explain the user-pays boundary honestly');
+
+  assert(/puter\.ai\.txt2img/.test(handoff));
+  assert(/model\s*:\s*String\(ev\.model\s*\|\|\s*['"]gpt-image-2['"]\)/.test(handoff));
+  assert(/quality\s*:\s*String\(ev\.quality\s*\|\|\s*['"]medium['"]\)/.test(handoff));
+  assert(/ratio\s*:\s*\{\s*w:[^}]*h:/.test(handoff));
+  assert(/api\(['"]\/api\/images\/complete['"]/.test(handoff));
+  assert(/\bid\s*:\s*ev\.id/.test(handoff));
+  const events = extractFunction(js, 'handleEvent');
+  assert(/case 'image_request':[\s\S]*handleBrowserImageRequest\(ev,\s*ui\)/.test(events),
+    'SSE must dispatch browser generation immediately without blocking stream parsing');
+}
+
 function testThinkingGradientContract() {
-  const rule = css.match(/\.think-card\.live \.think-stream::after\s*\{([^}]*)\}/s);
-  assert(rule, 'live thinking must have one moving overlay');
-  const opacity = Number((rule[1].match(/opacity\s*:\s*([\d.]+)/) || [])[1]);
-  const width = Number((rule[1].match(/width\s*:\s*([\d.]+)%/) || [])[1]);
-  assert(opacity >= 0.75, 'narrow thinking beam must visibly colour the letters');
-  assert(width > 0 && width <= 30, 'thinking beam must stay narrow');
-  assert(/rgba\(92,229,255,\.62\)/.test(rule[1]));
-  assert(/rgba\(190,145,255,\.68\)/.test(rule[1]));
-  assert(/mix-blend-mode\s*:\s*screen/.test(rule[1]));
-  assert(/will-change\s*:\s*transform/.test(rule[1]));
-  assert(/animation\s*:\s*thinkNeon\s+1\.65s/.test(rule[1]));
-  assert(/@keyframes thinkNeon\s*\{to\s*\{transform\s*:\s*translate3d/s.test(css));
-  const liveBar = css.match(/\.panel-card\.live \.card-head::after\s*\{([^}]*)\}/s);
-  assert(liveBar && /width\s*:\s*24%/.test(liveBar[1]));
-  assert(/mix-blend-mode\s*:\s*screen/.test(liveBar[1]));
-  assert(/will-change\s*:\s*transform/.test(liveBar[1]));
-  assert(/animation\s*:\s*liveBar\s+1\.45s/.test(liveBar[1]));
+  assert(!/\.think-card\.live \.think-stream::after\s*\{/.test(css),
+    'the rejected narrow thinking beam must not return');
+  assert(!/\.panel-card\.live \.card-head::after\s*\{/.test(css),
+    'the rejected narrow tool-header beam must not return');
+
+  const field = css.match(/\.panel-card\.live::before\s*\{([^}]*)\}/s);
+  assert(field, 'one full-card layer must tint the complete thinking/tool body');
+  assert(/inset\s*:\s*-2%/.test(field[1]) && !/width\s*:/.test(field[1]));
+  assert(/rgba\(0,200,240,\.018\)/.test(field[1]) && /rgba\(136,105,211,\.032\)/.test(field[1]),
+    'the background field must be almost imperceptible');
+  assert(/will-change\s*:\s*transform,opacity/.test(field[1]));
+  assert(/animation\s*:\s*wholeCardFlow\s+2s/.test(field[1]));
+
+  const frame = css.match(/\.panel-card\.live::after\s*\{([^}]*)\}/s);
+  assert(frame && /inset\s*:\s*0/.test(frame[1]) && /padding\s*:\s*1px/.test(frame[1]),
+    'the animated gradient must cover the entire border ring');
+  assert(/mask-composite\s*:\s*exclude/.test(frame[1]));
+  assert(/animation\s*:\s*wholeFrameFlow\s+2s/.test(frame[1]));
+  assert(/\.panel-card\.live \.think-stream\s*\{animation:wholeTextFlow 2s/.test(css),
+    'text gets a separate, still delicate tint over the nearly invisible field');
+  assert(/@keyframes wholeCardFlow[\s\S]*0%,4%[\s\S]*16%[\s\S]*54%[\s\S]*72%,100%\{opacity:0/s.test(css),
+    'the pass must fade in, traverse quickly, fade out, then pause until the next cycle');
+
   const executableCss = css.replace(/\/\*[\s\S]*?\*\//g, '');
   assert(!/background-position\s*:/.test(executableCss),
     'no animated gradient may trigger background repaint frames');
@@ -867,9 +996,11 @@ function testThinkingGradientContract() {
   testPlanTypingCompletionAndDockRaces();
   testRepeatedPlanEventReplacesOwnership();
   await testCameraLifecycleOwnershipAndLateResults();
+  testLiveInteractivePanelMountsBeforeStreamSettlement();
   testInteractiveFenceReachesFrontendPanel();
+  testBrowserImageHandoffContract();
   testThinkingGradientContract();
-  console.log('package28_frontend_runtime: 9 regression groups passed');
+  console.log('package28_frontend_runtime: 11 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
