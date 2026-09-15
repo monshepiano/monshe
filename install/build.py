@@ -81,7 +81,7 @@ SKIP_SUFFIX = {".pyc", ".pyo"}
 
 def version() -> str:
     text = (APP / "jarvis" / "__init__.py").read_text(encoding="utf-8")
-    m = re.search(r'VERSION\s*=\s*["\']([^"\']+)', text)
+    m = re.search(r'(?:__version__|VERSION)\s*=\s*["\']([^"\']+)', text)
     return m.group(1) if m else "1.0.0"
 
 

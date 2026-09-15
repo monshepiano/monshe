@@ -175,8 +175,25 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .nav-item[data-view="settings"].active::before{background:var(--amber);box-shadow:0 0 12px var(--amber)}
 .badge{margin-left:auto;min-width:20px;height:19px;padding:0 6px;border-radius:10px;font-size:10.5px;
   display:grid;place-items:center;background:rgba(0,212,255,.16);color:var(--cy);border:1px solid var(--line2)}
-.badge.hot{background:rgba(217,164,65,.2);color:var(--gold);border-color:rgba(217,164,65,.4);animation:hotpulse 1.6s infinite}
-@keyframes hotpulse{50%{box-shadow:0 0 0 5px rgba(217,164,65,.09)}}
+.badge.hot{background:rgba(217,164,65,.2);color:var(--gold);border-color:rgba(217,164,65,.4)}
+/* Только status=running движется. scheduled/queued могут иметь badge, но
+   визуально неподвижны — ожидание не выдаётся за выполняющуюся работу.
+   Перелив едет transform-слоем: бесконечного background repaint здесь нет. */
+.nav-item[data-view="auto"].auto-running{overflow:hidden}
+.nav-item[data-view="auto"].auto-running::after{content:"";position:absolute;z-index:0;
+  inset:0 -48%;pointer-events:none;border-radius:inherit;
+  background:linear-gradient(100deg,transparent 24%,rgba(47,156,146,.035) 36%,
+    rgba(47,156,146,.16) 50%,rgba(0,212,255,.055) 64%,transparent 76%);
+  transform:translate3d(-34%,0,0);will-change:transform,opacity;
+  animation:autoNavFlow 2.8s ease-in-out infinite}
+.nav-item[data-view="auto"].auto-running>*{position:relative;z-index:1}
+.nav-item[data-view="auto"].auto-running .nav-ico{filter:drop-shadow(0 0 6px rgba(87,179,159,.48))}
+@keyframes autoNavFlow{0%,100%{transform:translate3d(-34%,0,0);opacity:.48}50%{transform:translate3d(34%,0,0);opacity:1}}
+/* Одноразовый save-glint: Files почти незаметный, Memory чуть ярче. */
+.nav-item.save-glint{animation:fileSaveGlint 1s ease-out both}
+.nav-item.save-glint-strong{animation:memorySaveGlint 1s ease-out both}
+@keyframes fileSaveGlint{0%,100%{box-shadow:none}38%{background:linear-gradient(90deg,rgba(143,179,90,.13),rgba(87,179,159,.045));box-shadow:inset 0 0 14px rgba(143,179,90,.055)}}
+@keyframes memorySaveGlint{0%,100%{box-shadow:none}38%{background:linear-gradient(90deg,rgba(143,134,207,.19),rgba(0,212,255,.055));box-shadow:inset 0 0 18px rgba(143,134,207,.1)}}
 
 .chats-block{flex:1;min-height:0;display:flex;flex-direction:column;margin-top:6px}
 .block-head{display:flex;align-items:center;justify-content:space-between;padding:8px 10px 6px;
@@ -501,6 +518,14 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 @keyframes wholeTextFlow{
   0%,4%,72%,100%{color:var(--tx2)}
   20%{color:#91acb4}43%{color:#a29caf}60%{color:#ad9f89}}
+/* У tool gradient синхронен ровно в двух местах: контур и текст. Фоновую
+   заливку отключаем, а общую фазу задаём обоим слоям одной длительностью. */
+.tool-card.live::before{display:none}
+.tool-card.live::after{background:linear-gradient(105deg,rgba(65,224,245,.64),rgba(159,124,239,.6) 48%,rgba(236,184,88,.55) 76%,rgba(65,224,245,.58));
+  animation:toolFrameFlow 1.8s ease-in-out infinite}
+.tool-card.live .card-head,.tool-card.live .card-inner{animation:toolTextFlow 1.8s ease-in-out infinite}
+@keyframes toolFrameFlow{0%,5%,78%,100%{opacity:.08}22%{opacity:.76}48%{opacity:.88}68%{opacity:.72}}
+@keyframes toolTextFlow{0%,5%,78%,100%{color:var(--tx2)}22%{color:#9debf2}48%{color:#c4b5ef}68%{color:#e4c888}}
 .think-card.live .card-head .k{animation:blink 1.1s infinite}
 /* Курсора в мыслях больше нет: это не печать, а прокрутка потока.
    Вместо него — живая точка в шапке (.live .card-head .k уже мигает). */
@@ -610,7 +635,9 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .msg-user .bubble-user.editing{outline:1px dashed rgba(207,154,60,.6)}
 
 /* ---------- composer ---------- */
-.composer-wrap{padding:8px 26px 20px;background:linear-gradient(180deg,transparent,rgba(4,7,13,.9) 32%)}
+.composer-wrap{padding:22px 26px 20px;margin-top:-14px;position:relative;z-index:8;
+  background:linear-gradient(180deg,rgba(4,7,13,0) 0%,rgba(4,7,13,.06) 16%,
+    rgba(4,7,13,.24) 40%,rgba(4,7,13,.62) 70%,rgba(4,7,13,.92) 100%)}
 /* ---------- док уведомлений ----------
    Свежие уведомления висят по центру полосы между лентой и полем ввода:
    не прилипают ни к последней карточке, ни к композеру. Свернувшись, они
@@ -741,6 +768,19 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .send-btn:hover{transform:translateY(-2px) scale(1.05);box-shadow:0 9px 26px rgba(0,212,255,.45)}
 .send-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
 .send-btn.stop{background:linear-gradient(135deg,var(--red),#c0294a)}
+/* AGENT — отдельный горизонтальный switch строго под Send. Off почти чёрный;
+   on использует прежний фиолетовый оттенок активного Agent, без текста/точки. */
+.send-stack{width:42px;flex:0 0 42px;display:flex;flex-direction:column;align-items:center;gap:5px}
+.agent-switch{width:34px;height:15px;padding:0;border-radius:999px;position:relative;cursor:pointer;
+  border:1px solid rgba(116,132,151,.28);background:rgba(3,8,15,.96);
+  box-shadow:inset 0 1px 4px rgba(0,0,0,.75);transition:background .22s,border-color .22s,box-shadow .22s}
+.agent-switch span{position:absolute;width:9px;height:9px;left:2px;top:2px;border-radius:50%;
+  background:#52606e;box-shadow:0 1px 3px rgba(0,0,0,.8);transition:transform .22s,background .22s,box-shadow .22s}
+.agent-switch.on{background:rgba(143,134,207,.27);border-color:rgba(143,134,207,.72);
+  box-shadow:inset 0 0 9px rgba(143,134,207,.22),0 0 8px rgba(143,134,207,.12)}
+.agent-switch.on span{transform:translateX(19px);background:#b8afff;
+  box-shadow:0 0 8px rgba(143,134,207,.85)}
+.agent-switch:focus-visible{outline:2px solid rgba(184,175,255,.75);outline-offset:2px}
 .toggles{display:flex;align-items:center;gap:7px;padding:0 12px 10px;flex-wrap:wrap}
 .toggle{display:flex;align-items:center;gap:7px;padding:5px 12px;border-radius:20px;border:1px solid var(--line);
   background:transparent;color:var(--tx3);font-size:11.5px;cursor:pointer;transition:.24s;position:relative}
@@ -749,8 +789,6 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .toggle.on{background:rgba(0,212,255,.15);border-color:rgba(0,212,255,.5);color:#cdf3ff}
 .toggle.on .tg-dot{background:var(--cy);box-shadow:0 0 9px var(--cy)}
 /* каждый переключатель светится своим цветом */
-#tgAgent.on{background:rgba(143,134,207,.17);border-color:rgba(143,134,207,.55);color:#ddd2ff}
-#tgAgent.on .tg-dot{background:var(--violet);box-shadow:0 0 9px var(--violet)}
 #tgCamera.on{background:rgba(47,156,146,.17);border-color:rgba(47,156,146,.55);color:#c4fff5}
 #tgCamera.on .tg-dot{background:var(--teal);box-shadow:0 0 9px var(--teal)}
 #tgComputer.on{background:rgba(207,154,60,.17);border-color:rgba(207,154,60,.55);color:#ffe6b0}
@@ -829,6 +867,9 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .sset{border:1px solid var(--line);border-radius:15px;background:var(--panel);padding:17px;animation:popIn .35s both}
 .sset h3{margin:0 0 4px;font-size:14px;color:var(--cy);font-weight:600}
 .sset .sd{font-size:11.5px;color:var(--tx3);margin-bottom:13px;line-height:1.5}
+.sset .giga-help{padding:10px 11px;border-radius:10px;border:1px solid rgba(47,156,146,.2);background:rgba(47,156,146,.055)}
+.sset .giga-help a{color:#8de2d6;text-decoration:none}
+.sset .giga-help a:hover{text-decoration:underline;color:#b8fff3}
 .field{margin-bottom:12px}
 .field label{display:block;font-size:11px;color:var(--tx2);margin-bottom:5px;letter-spacing:.3px}
 .field input,.field select,.field textarea{width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--line);
@@ -1436,6 +1477,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 /* ================= D. Живые элементы управления в ответе =================
    Джарвис отвечает не только текстом: слайдер, тумблер или плитки выбора
    приходят прямо в сообщении и работают вживую. */
+.reply-ui-live{width:100%;min-width:0;position:relative}
 .ui-panel{margin:14px 0;padding:14px 16px;border-radius:14px;
   border:1px solid rgba(0,200,240,.22);
   background:linear-gradient(180deg,rgba(0,40,60,.4),rgba(0,20,34,.4));
@@ -1723,9 +1765,10 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   box-shadow:0 14px 38px rgba(0,0,0,.55),0 0 26px rgba(217,164,65,.18);
   backdrop-filter:blur(10px);font-size:11px;color:var(--tx2);
   opacity:0}
-/* полёт «облачком»: длинный мягкий переход, панель приплывает из ленты */
-.plan-dock.fly{transition:transform .98s cubic-bezier(.22,.85,.3,1),
-  opacity .42s ease-out,box-shadow .3s,border-color .3s}
+/* Полёт короткий и совпадает с PLAN_FLY_MS: gate выпускает ответ только после
+   реально законченных 320 мс, а не посреди старого почти секундного transition. */
+.plan-dock.fly{transition:transform .32s cubic-bezier(.22,.85,.3,1),
+  opacity .24s ease-out,box-shadow .3s,border-color .3s}
 /* Пульс плана больше не пересчитывает большой box-shadow. Статичное свечение
    вынесено в слой, где анимируются только opacity/transform. */
 .plan-dock.live::after{content:'';position:absolute;inset:-2px;border-radius:16px;pointer-events:none;
@@ -1783,6 +1826,16 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .plan-dock.done .pd-s .pd-dot{border-color:rgba(63,191,149,.7);
   background:rgba(63,191,149,.9);color:#04150f;box-shadow:none;animation:none}
 .plan-dock.done .pd-s .pd-cap{color:#7ce8b5;text-decoration:none;text-shadow:0 0 8px rgba(63,191,149,.18)}
+/* Полные формулировки всегда остаются внутри dock и доступны мышью/клавиатурой,
+   но в обычном состоянии не раздувают закреплённую панель. */
+.plan-dock{cursor:pointer}
+.pd-full{list-style:decimal;margin:0;padding:0 5px 0 27px;max-height:0;opacity:0;
+  overflow:hidden;transform:translateY(-3px);transition:max-height .24s ease,opacity .18s,transform .24s;
+  color:#ddc783;font-size:10.5px;line-height:1.55}
+.pd-full li{padding:2px 0 2px 3px}
+.plan-dock.expanded .pd-full{max-height:230px;opacity:1;overflow:auto;
+  transform:none;margin-top:10px;padding-top:7px;border-top:1px solid rgba(217,164,65,.2)}
+.plan-dock:focus-visible{outline:2px solid rgba(255,217,122,.75);outline-offset:3px}
 
 /* пункты в самой карточке плана: текущий отличается только более ярким
    близким оттенком и мягким glow — никаких линий/подчёркиваний. */
@@ -1817,6 +1870,9 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .plan-card.plan-complete .card-head,.plan-card.plan-complete .card-head .k{color:var(--green)}
 .plan-card.plan-complete .plan-list li{color:#7ce8b5;text-decoration:none;text-shadow:none}
 .plan-card.plan-complete .plan-num{background:var(--green);border-color:#7ce8b5;color:#04150f;box-shadow:none;animation:none}
+.thumb.th-plan{border-color:rgba(63,191,149,.24);background:linear-gradient(90deg,rgba(63,191,149,.07),rgba(4,12,18,.42))}
+.thumb.th-plan .th-ico{background:rgba(63,191,149,.14);color:#7ce8b5}
+.thumb.th-plan .th-tag{color:rgba(124,232,181,.72)}
 .plan-card.plan-gone{opacity:0;transform:translateY(-8px) scale(.98)}
 @media(max-width:700px){
   .plan-dock{width:calc(100% - 20px);padding:8px 10px 10px}

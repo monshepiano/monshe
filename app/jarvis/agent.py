@@ -7,81 +7,11 @@ from __future__ import annotations
 
 import json
 import re
-import threading
 import time
-import uuid
 from typing import Any, Dict, Generator, Iterable, List, Optional
 
 from . import db, llm, orchestrator, sandbox, tools
 from .config import CONFIG
-
-
-# GPT Image выполняется в браузере через Puter.js: так секрет разработчика не
-# вшивается в установщик, а пользователь один раз авторизует собственный
-# user-pays аккаунт. SSE-поток и POST с готовым PNG приходят в разные HTTP-
-# потоки, поэтому их сводит короткий condition-registry. Запрос регистрируется
-# ДО события image_request — быстрый браузер не сможет прислать результат
-# раньше, чем waiter начнёт его ждать.
-_BROWSER_IMAGE_COND = threading.Condition()
-_BROWSER_IMAGE_PENDING: Dict[str, Dict[str, Any]] = {}
-
-
-def begin_browser_image_request(chat_id: str) -> str:
-    request_id = "img_" + uuid.uuid4().hex
-    with _BROWSER_IMAGE_COND:
-        _BROWSER_IMAGE_PENDING[request_id] = {"chat_id": chat_id, "result": None}
-    return request_id
-
-
-def claim_browser_image_request(request_id: str) -> Optional[str]:
-    """Атомарно закрепить completion POST и вернуть доверенный ``chat_id``.
-
-    Простая проверка наличия до upload оставляла race: два одновременных POST
-    оба видели pending request, оба сохраняли файл, и лишь второй позднее
-    проигрывал complete(). Claim совмещает проверку и резервирование под тем же
-    condition-lock, поэтому дорогую запись выполнит ровно один запрос.
-    """
-    with _BROWSER_IMAGE_COND:
-        pending = _BROWSER_IMAGE_PENDING.get(request_id)
-        if pending is None or pending.get("claimed") or pending.get("result") is not None:
-            return None
-        pending["claimed"] = True
-        return str(pending.get("chat_id") or "")
-
-
-def browser_image_chat(request_id: str) -> Optional[str]:
-    """Наблюдение для диагностики/тестов без права зарезервировать POST."""
-    with _BROWSER_IMAGE_COND:
-        pending = _BROWSER_IMAGE_PENDING.get(request_id)
-        return None if pending is None else str(pending.get("chat_id") or "")
-
-
-def complete_browser_image_request(request_id: str, result: Dict[str, Any]) -> bool:
-    with _BROWSER_IMAGE_COND:
-        pending = _BROWSER_IMAGE_PENDING.get(request_id)
-        if pending is None or pending.get("result") is not None:
-            return False
-        pending["result"] = dict(result or {})
-        _BROWSER_IMAGE_COND.notify_all()
-        return True
-
-
-def wait_browser_image_request(request_id: str, timeout: int = 300) -> Dict[str, Any]:
-    deadline = time.time() + timeout
-    with _BROWSER_IMAGE_COND:
-        while True:
-            pending = _BROWSER_IMAGE_PENDING.get(request_id)
-            if pending is None:
-                return {"ok": False, "error": "запрос изображения потерян"}
-            if pending.get("result") is not None:
-                result = dict(pending["result"])
-                _BROWSER_IMAGE_PENDING.pop(request_id, None)
-                return result
-            left = deadline - time.time()
-            if left <= 0:
-                _BROWSER_IMAGE_PENDING.pop(request_id, None)
-                return {"ok": False, "error": "истекло время ожидания генерации в браузере"}
-            _BROWSER_IMAGE_COND.wait(min(left, 1.0))
 
 
 # Лимиты шагов лежат в конфиге (agent.max_steps_chat / max_steps_agent).
@@ -1251,7 +1181,9 @@ class Agent:
                 # Модель может залипнуть, повторяя один и тот же вызов с теми же
                 # аргументами. Для генерации повтор нельзя даже dispatch-ить:
                 # это не только лишняя цена, но и второй файл в одном ответе.
-                sig = name + "|" + json.dumps(args, sort_keys=True, ensure_ascii=False)[:300]
+                # Полная canonical JSON-строка: обрезка до 300 знаков делала два
+                # разных длинных промпта «одним вызовом» и ошибочно съедала второй.
+                sig = name + "|" + json.dumps(args, sort_keys=True, ensure_ascii=False)
                 if name == "generate_image" and sig in completed_calls:
                     self._append_tool_result(convo, call, name, completed_calls[sig], from_text)
                     continue
@@ -1320,29 +1252,9 @@ class Agent:
                 started = time.time()
                 result = tools.call(name, args)
 
-                # Современная image-модель запускается в браузере: Puter.js
-                # открывает одноразовую авторизацию пользователя и возвращает
-                # GPT Image 2 без developer key и без watermark. Backend ждёт
-                # реальный PNG, поэтому tool_result/done не обгоняют генерацию.
-                if (isinstance(result, dict) and result.get("browser_image")):
-                    if self.task_id:
-                        result = {
-                            "ok": False,
-                            "error": "Качественная генерация требует открытого диалога: "
-                                     "Puter авторизует владельца в браузере.",
-                        }
-                    else:
-                        request_id = begin_browser_image_request(self.chat_id)
-                        yield {
-                            "type": "image_request", "id": request_id,
-                            "tool_id": call.get("id"),
-                            "prompt": result.get("prompt") or args.get("prompt") or "",
-                            "width": result.get("width") or args.get("width") or 1024,
-                            "height": result.get("height") or args.get("height") or 1024,
-                            "model": result.get("model") or "gpt-image-2",
-                            "quality": result.get("quality") or "medium",
-                        }
-                        result = wait_browser_image_request(request_id)
+                # Генерация изображения теперь целиком выполняется backend-инструментом
+                # через официальный GigaChat API. Поэтому file/tool_result не могут
+                # обогнать скачивание и сохранение JPG даже в AUTO-задаче.
                 elapsed = round(time.time() - started, 2)
 
                 if (name == "generate_image" and isinstance(result, dict) and result.get("ok")):

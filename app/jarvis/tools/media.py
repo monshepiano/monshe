@@ -1,4 +1,4 @@
-"""Медиа: генерация изображений, распознавание речи/видео/камеры, TTS."""
+"""Медиа-инструменты JARVIS: изображения через GigaChat и резервный ASR."""
 from __future__ import annotations
 
 import base64
@@ -6,17 +6,27 @@ import json
 import re
 import ssl
 import subprocess
+import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
 
-from ..config import CONFIG, WORKSPACE
-from .. import sandbox
+from .. import llm, sandbox
+from ..config import CONFIG
 
-_CTX = ssl.create_default_context()
+_GIGACHAT_OAUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+_GIGACHAT_API = "https://api.giga.chat/v1"
+_RUSSIAN_CA = Path(__file__).resolve().parent.parent / "certs" / "russian_trusted_root_ca.pem"
+_MAX_IMAGE_BYTES = 25 * 1024 * 1024
+_UUID_RE = re.compile(r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b")
+_TOKEN_LOCK = threading.RLock()
+_TOKEN_CACHE: Dict[Tuple[str, str], Tuple[str, float]] = {}
 _UA = "Mozilla/5.0 JARVIS/1.0"
+_CTX = ssl.create_default_context()
 
 
 def _ws() -> Path:
@@ -27,68 +37,255 @@ def _dl(name: str) -> str:
     return sandbox.dl(name)
 
 
-# ============================ ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ ============================
-# Короткую пользовательскую формулировку сначала уточняет дешёвая text-модель,
-# затем браузер вызывает один фиксированный качественный backend — GPT Image 2.
-# Здесь намеренно нет fallback к anonymous-каталогам: молчаливое падение на
-# слабую модель снова принесло бы watermark и непредсказуемое качество.
+class GigaChatError(RuntimeError):
+    """Ошибка transport/API без утечки Authorization Key или access token."""
+
+    def __init__(self, message: str, status: int = 0) -> None:
+        super().__init__(message)
+        self.status = status
 
 
-def _art_prompt(prompt: str, style: str) -> str:
-    """Превратить просьбу в подробное английское описание сцены.
+def _ssl_context() -> ssl.SSLContext:
+    """Обычная TLS-проверка плюс официальный Russian Trusted Root CA.
 
-    Это делает наша дешёвая модель — та же, что отвечает на короткие реплики.
-    Стоит доли копейки, а разница в результате принципиальная: генераторы
-    изображений понимают английский и «видят» свет, оптику, материалы.
+    Никаких ``CERT_NONE``/unverified contexts: встроенный CA только дополняет
+    системное хранилище macOS/Python и проверяет hostname как обычно.
     """
-    raw = (prompt + (", " + style if style else "")).strip()
-    if not CONFIG.get("media.enhance_prompt", True):
-        return raw
-    try:
-        from .. import llm
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=str(_RUSSIAN_CA))
+    return context
 
-        out = llm.chat([
-            {"role": "system", "content":
-                "You turn a short user request into ONE English prompt for a text-to-image model. "
-                "Describe subject, composition, lighting, lens, materials, mood and style in 35-60 words. "
-                "Keep every explicit detail the user asked for. No preamble, no quotes, no lists — "
-                "output only the prompt itself."},
-            {"role": "user", "content": raw[:600]},
-        ], tier="nano", max_tokens=220, temperature=0.7).get("content", "")
-        out = " ".join(out.split())
-        if 20 < len(out) < 1200:
-            return out
+
+def _http(url: str, *, method: str = "GET", headers: Optional[Dict[str, str]] = None,
+          data: Optional[bytes] = None, timeout: int = 120,
+          max_bytes: int = 2 * 1024 * 1024) -> Tuple[bytes, str]:
+    request = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout, context=_ssl_context()) as response:
+            declared = int(response.headers.get("Content-Length") or 0)
+            if declared > max_bytes:
+                raise GigaChatError("ответ GigaChat слишком большой")
+            body = response.read(max_bytes + 1)
+            if len(body) > max_bytes:
+                raise GigaChatError("ответ GigaChat слишком большой")
+            return body, str(response.headers.get("Content-Type") or "")
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read(4096).decode("utf-8", "replace")
+            parsed = json.loads(detail)
+            detail = str(parsed.get("message") or parsed.get("error_description") or
+                         parsed.get("error") or detail)
+        except Exception:
+            detail = ""
+        message = "GigaChat вернул HTTP %s" % exc.code
+        if detail:
+            message += ": " + detail[:300]
+        raise GigaChatError(message, int(exc.code or 0)) from None
+    except GigaChatError:
+        raise
+    except Exception as exc:
+        raise GigaChatError("не удалось связаться с GigaChat: %s" % exc) from None
+
+
+def _access_token(force: bool = False) -> str:
+    auth_key = str(CONFIG.get("media.gigachat_auth_key", "") or "").strip()
+    scope = str(CONFIG.get("media.gigachat_scope", "GIGACHAT_API_PERS") or
+                "GIGACHAT_API_PERS").strip()
+    if not auth_key:
+        raise GigaChatError(
+            "не задан Authorization Key GigaChat — открой Настройки → Генерация изображений")
+    cache_key = (auth_key, scope)
+    now = time.time()
+    with _TOKEN_LOCK:
+        cached = _TOKEN_CACHE.get(cache_key)
+        if cached and not force and cached[1] > now + 45:
+            return cached[0]
+
+        payload = urllib.parse.urlencode({"scope": scope}).encode("ascii")
+        body, _ = _http(
+            _GIGACHAT_OAUTH_URL,
+            method="POST",
+            headers={
+                "Authorization": "Basic " + auth_key,
+                "RqUID": str(uuid.uuid4()),
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            },
+            data=payload,
+            timeout=45,
+        )
+        try:
+            answer = json.loads(body.decode("utf-8"))
+            token = str(answer["access_token"])
+            expires_raw = float(answer.get("expires_at") or 0)
+        except Exception:
+            raise GigaChatError("GigaChat не вернул корректный access token") from None
+        # expires_at документирован в миллисекундах Unix. На случай ответа без
+        # срока используем консервативные 29 минут из официальных 30.
+        expires = expires_raw / 1000 if expires_raw > 10_000_000_000 else expires_raw
+        if expires <= now:
+            expires = now + 29 * 60
+        _TOKEN_CACHE.clear()  # секрет сменился — старые токены больше не нужны
+        _TOKEN_CACHE[cache_key] = (token, expires)
+        return token
+
+
+def _json_request(path: str, payload: Dict[str, Any], token: str) -> Dict[str, Any]:
+    body, _ = _http(
+        _GIGACHAT_API + path,
+        method="POST",
+        headers={
+            "Authorization": "Bearer " + token,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        timeout=180,
+        max_bytes=4 * 1024 * 1024,
+    )
+    try:
+        return json.loads(body.decode("utf-8"))
     except Exception:
-        pass
-    return raw
+        raise GigaChatError("GigaChat вернул некорректный JSON") from None
+
+
+def _image_id(answer: Dict[str, Any]) -> str:
+    """Найти UUID только в message content/attachments, не в request id."""
+    try:
+        message = answer["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        raise GigaChatError("GigaChat не вернул результат генерации") from None
+
+    content = str(message.get("content") or "")
+    # Официальный ответ: <img src="uuid" fuse="true"/>. Regex UUID не зависит
+    # от порядка HTML-атрибутов и не требует стороннего HTML-парсера.
+    img = re.search(r"(?is)<img\b[^>]*\bsrc\s*=\s*['\"]([^'\"]+)['\"]", content)
+    if img:
+        found = _UUID_RE.search(img.group(1))
+        if found:
+            return found.group(0).lower()
+
+    for attachment in message.get("attachments") or []:
+        if not isinstance(attachment, dict):
+            continue
+        for key in ("file_id", "id", "src"):
+            found = _UUID_RE.search(str(attachment.get(key) or ""))
+            if found:
+                return found.group(0).lower()
+
+    raise GigaChatError(
+        "GigaChat ответил без изображения. Попробуй точнее написать «нарисуй изображение…»")
+
+
+def _image_bytes(file_id: str, token: str) -> Tuple[bytes, str]:
+    body, content_type = _http(
+        "%s/files/%s/content" % (_GIGACHAT_API, urllib.parse.quote(file_id)),
+        headers={"Authorization": "Bearer " + token, "Accept": "application/jpg"},
+        timeout=180,
+        max_bytes=_MAX_IMAGE_BYTES,
+    )
+    if len(body) < 1000:
+        raise GigaChatError("GigaChat вернул пустое или повреждённое изображение")
+    if body.startswith(b"\xff\xd8\xff"):
+        return body, ".jpg"
+    if body.startswith(b"\x89PNG\r\n\x1a\n"):
+        return body, ".png"
+    if body.startswith(b"RIFF") and body[8:12] == b"WEBP":
+        return body, ".webp"
+    raise GigaChatError("GigaChat вернул не изображение (%s)" % (content_type or "unknown type"))
+
+
+def _enhance_prompt(prompt: str, width: int, height: int) -> str:
+    """Дешёвая модель уточняет сцену; при сбое исходная просьба не теряется."""
+    if not CONFIG.get("media.enhance_prompt", True):
+        return prompt
+    ratio = "квадратный кадр"
+    if width > height:
+        ratio = "горизонтальный кадр"
+    elif height > width:
+        ratio = "вертикальный кадр"
+    instruction = (
+        "Ты арт-директор. Перепиши запрос как один точный промпт для современной "
+        "генерации изображения. Сохрани сюжет, добавь композицию, свет, фактуру и "
+        "стиль. Не добавляй надписи, логотипы и watermark. Формат: %s. Ответь "
+        "только готовым промптом на русском, до 900 знаков.\n\nЗапрос: %s"
+    ) % (ratio, prompt)
+    try:
+        response = llm.chat([{"role": "user", "content": instruction}], tier="nano",
+                            max_tokens=450, temperature=0.45)
+        text = str(response.get("content") or "").strip()
+        return text[:1400] if text else prompt
+    except Exception:
+        return prompt
 
 
 def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: str = "") -> Dict[str, Any]:
-    """Подготовить качественную browser-side генерацию GPT Image 2.
-
-    Legacy anonymous Pollinations фактически оставил только ``sana`` и может
-    ставить watermark. Делать вид, что это современный backend, нельзя. Puter
-    даёт GPT Image 2 без developer API key: пользователь один раз подтверждает
-    свой аккаунт в браузере, после чего Agent получает и сохраняет настоящий
-    PNG через ``image_request`` handshake.
-    """
-    provider = CONFIG.get("media.image_provider", "puter")
+    """Создать одно watermark-free изображение встроенной функцией GigaChat."""
+    provider = str(CONFIG.get("media.image_provider", "gigachat") or "gigachat")
     if provider == "off":
         return {"ok": False, "error": "генерация изображений выключена в настройках"}
+    if provider != "gigachat":
+        return {"ok": False, "error": "неподдерживаемый провайдер изображений: " + provider}
+    clean = (str(prompt or "") + ((", " + str(style).strip()) if str(style or "").strip() else "")).strip()
+    if not clean:
+        return {"ok": False, "error": "нужен промпт для изображения"}
+
     try:
-        width = max(256, min(int(width or 1024), 1536))
-        height = max(256, min(int(height or 1024), 1536))
-    except (TypeError, ValueError):
-        width, height = 1024, 1024
-    full_prompt = _art_prompt(prompt, style)
-    return {
-        "browser_image": True,
-        "prompt": full_prompt,
-        "width": width,
-        "height": height,
-        "model": "gpt-image-2",
-        "quality": "medium",
-    }
+        refined = _enhance_prompt(clean, int(width or 1024), int(height or 1024))
+        model = str(CONFIG.get("media.gigachat_model", "GigaChat") or "GigaChat").strip()
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": (
+                    "Ты арт-директор. Для запроса пользователя обязательно вызови text2image. "
+                    "Создай качественное изображение без текста, логотипов, рамок и водяных знаков.")},
+                {"role": "user", "content": "Нарисуй изображение: " + refined},
+            ],
+            "function_call": "auto",
+        }
+
+        token = _access_token()
+        try:
+            answer = _json_request("/chat/completions", payload, token)
+        except GigaChatError as exc:
+            if exc.status != 401:
+                raise
+            token = _access_token(force=True)
+            answer = _json_request("/chat/completions", payload, token)
+
+        file_id = _image_id(answer)
+        try:
+            image, suffix = _image_bytes(file_id, token)
+        except GigaChatError as exc:
+            if exc.status != 401:
+                raise
+            token = _access_token(force=True)
+            image, suffix = _image_bytes(file_id, token)
+
+        name = "gigachat_image_%s%s" % (file_id[:8], suffix)
+        target = sandbox.safe_path(name)
+        # UUID делает имя idempotent для одного результата. replace не оставляет
+        # частичный JPG при аварии питания или полном диске.
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_bytes(image)
+        tmp.replace(target)
+        return {
+            "ok": True,
+            "path": name,
+            "name": name,
+            "size": len(image),
+            "download_url": sandbox.dl(name),
+            "preview_url": sandbox.dl(name),
+            "prompt": refined,
+            "model": model + " · text2image",
+            "provider": "gigachat",
+            "watermark": False,
+            "image_id": file_id,
+        }
+    except GigaChatError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "error": "не удалось сохранить изображение: %s" % exc}
 
 
 def _ffmpeg() -> str | None:

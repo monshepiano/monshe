@@ -71,137 +71,6 @@ function api(path, body, extra) {
   return fetch(path, opt).then((r) => r.json()).catch((e) => ({ ok: false, error: String(e) }));
 }
 
-/* Качественные изображения — GPT Image 2 через Puter.js. SDK грузится только
-   при первой реальной генерации: недоступность внешнего CDN никогда не мешает
-   открыть сам JARVIS. Единственный общий Promise исключает двойной <script>. */
-let puterLoadPromise = null;
-function loadPuter() {
-  if (window.puter && window.puter.ai) return Promise.resolve(window.puter);
-  if (puterLoadPromise) return puterLoadPromise;
-  puterLoadPromise = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    let settled = false;
-    const finish = (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (!error && window.puter && window.puter.ai) resolve(window.puter);
-      else { puterLoadPromise = null; reject(error || new Error('Puter.js не загрузился')); }
-    };
-    const timer = setTimeout(() => finish(new Error('Puter.js не ответил за 20 секунд')), 20000);
-    script.src = 'https://js.puter.com/v2/';
-    script.async = true;
-    script.onload = () => finish(null);
-    script.onerror = () => finish(new Error('Не удалось подключить Puter.js'));
-    document.head.appendChild(script);
-  });
-  return puterLoadPromise;
-}
-
-function blobDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('Не удалось прочитать готовое изображение'));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function generatedImageData(image) {
-  if (image instanceof Blob) return blobDataUrl(image);
-  const src = typeof image === 'string' ? image : String((image && image.src) || '');
-  if (src.startsWith('data:image/')) return src;
-  if (src) {
-    try {
-      const response = await fetch(src);
-      if (response.ok) return await blobDataUrl(await response.blob());
-    } catch (_) { /* blob/data URL fallback below */ }
-  }
-  // Некоторые версии SDK возвращают уже загруженный <img>, но закрывают URL.
-  // Перекладываем пиксели в собственный PNG; для blob/data это не tainted.
-  if (image && image.tagName === 'IMG') {
-    if (image.decode) await image.decode().catch(() => {});
-    const w = image.naturalWidth || image.width;
-    const h = image.naturalHeight || image.height;
-    if (w && h) {
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(image, 0, 0, w, h);
-      return canvas.toDataURL('image/png');
-    }
-  }
-  throw new Error('Puter вернул изображение в неизвестном формате');
-}
-
-function waitForPuterSignIn(puter, ui) {
-  if (puter.auth && puter.auth.isSignedIn && puter.auth.isSignedIn()) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const card = el('div', 'panel-card approve-card image-auth-card');
-    card.innerHTML = '<div class="ah">◈ Подключить GPT Image 2</div>' +
-      '<div class="ab">Один раз войди в Puter. Ключ API не нужен; Puter использует ресурсы ' +
-      'твоего аккаунта и не добавляет watermark.</div>' +
-      '<div class="approve-actions"><button class="btn primary sm connect">Подключить и создать</button>' +
-      '<button class="btn ghost sm cancel">Отмена</button></div>';
-    if (ui && ui.statusEl && ui.statusEl.parentNode) ui.statusEl.parentNode.insertBefore(card, ui.statusEl);
-    else $('#chatFeed').appendChild(card);
-    scrollDown(true);
-    let busy = false;
-    card.querySelector('.connect').addEventListener('click', async () => {
-      if (busy) return;
-      busy = true;
-      const button = card.querySelector('.connect');
-      button.disabled = true; button.textContent = 'Подключаю…';
-      try {
-        // signIn обязан начаться именно внутри click: иначе Safari блокирует popup.
-        await puter.auth.signIn();
-        card.remove();
-        resolve();
-      } catch (error) {
-        busy = false; button.disabled = false; button.textContent = 'Попробовать снова';
-        toast(String((error && (error.msg || error.message)) || error), 'warn', 'Puter');
-      }
-    });
-    card.querySelector('.cancel').addEventListener('click', () => {
-      card.remove(); reject(new Error('Генерация отменена пользователем'));
-    });
-  });
-}
-
-async function handleBrowserImageRequest(ev, ui) {
-  S.imageRequests = S.imageRequests || new Set();
-  if (!ev.id || S.imageRequests.has(ev.id)) return;
-  S.imageRequests.add(ev.id);
-  let completed = false;
-  try {
-    busyMode(ui, ['Подключаю GPT Image 2', 'готовлю качественный рендер'], 1500);
-    const puter = await loadPuter();
-    await waitForPuterSignIn(puter, ui);
-    busyMode(ui, ['GPT Image 2 рисует', 'medium quality · без watermark'], 1700);
-    const image = await puter.ai.txt2img(String(ev.prompt || ''), {
-      model: String(ev.model || 'gpt-image-2'),
-      quality: String(ev.quality || 'medium'),
-      ratio: { w: Number(ev.width) || 1024, h: Number(ev.height) || 1024 },
-    });
-    const data = await generatedImageData(image);
-    const saved = await api('/api/images/complete', {
-      id: ev.id,
-      name: 'gpt_image_' + Date.now() + '.png',
-      data,
-      prompt: ev.prompt || '',
-      model: ev.model || 'gpt-image-2',
-      quality: ev.quality || 'medium',
-    });
-    completed = !!saved.ok;
-    if (!saved.ok) throw new Error(saved.error || 'Сервер не сохранил изображение');
-  } catch (error) {
-    const message = String((error && (error.msg || error.message)) || error || 'генерация не удалась');
-    if (!completed) await api('/api/images/complete', { id: ev.id, error: message });
-    toast(message, 'error', 'Изображение');
-  } finally {
-    S.imageRequests.delete(ev.id);
-  }
-}
-
 function fmtSize(n) {
   n = Number(n) || 0;
   if (n < 1024) return n + ' Б';
@@ -591,6 +460,17 @@ function showView(name) {
   if (name === 'settings') renderSettings();
 }
 $$('.nav-item').forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)));
+
+/* Сохранение подсвечивает назначение, а не показывает ещё один toast. Класс
+   перезапускается на каждом фактическом успехе; Memory намеренно чуть ярче. */
+function pulseNav(view, strong) {
+  const item = $('.nav-item[data-view="' + view + '"]');
+  if (!item) return;
+  item.classList.remove('save-glint', 'save-glint-strong');
+  void item.offsetWidth;
+  item.classList.add(strong ? 'save-glint-strong' : 'save-glint');
+  setTimeout(() => item.classList.remove('save-glint', 'save-glint-strong'), 1050);
+}
 /* сворачивание бокового меню.
    На узком экране меню выезжает поверх (nav-open),
    на широком — схлопывается колонка сетки (collapsed). */
@@ -614,7 +494,9 @@ try {
 
 /* ============================ переключатели ============================ */
 $('#tgAgent').addEventListener('click', function () {
-  S.agentMode = !S.agentMode; this.classList.toggle('on', S.agentMode);
+  S.agentMode = !S.agentMode;
+  this.classList.toggle('on', S.agentMode);
+  this.setAttribute('aria-pressed', S.agentMode ? 'true' : 'false');
   beep(S.agentMode ? 760 : 420, 0.1);
   $('#input').placeholder = S.agentMode
     ? 'Поставь задачу — разобью на шаги и сделаю сам…'
@@ -646,10 +528,16 @@ async function refreshState() {
   S.unread = st.unread || 0;
 
   const active = st.active_tasks || 0;
+  const running = st.running_tasks != null
+    ? Number(st.running_tasks || 0)
+    : S.tasks.filter((task) => task.status === 'running').length;
   const badge = $('#autoBadge');
   badge.textContent = active;
   badge.classList.toggle('hot', active > 0);
-  setChip('#chipAuto', active > 0 ? 'warn live' : 'ok', active > 0 ? 'AUTO · ' + active : 'AUTO');
+  const autoNav = $('.nav-item[data-view="auto"]');
+  if (autoNav) autoNav.classList.toggle('auto-running', running > 0);
+  setChip('#chipAuto', running > 0 ? 'warn live' : (active > 0 ? 'warn' : 'ok'),
+    running > 0 ? 'AUTO · выполняю ' + running : (active > 0 ? 'AUTO · ' + active : 'AUTO'));
 
   setChip('#chipModel', st.providers_ready ? 'ok' : 'err',
     st.providers_ready ? 'модели готовы' : 'нет ключа');
@@ -991,6 +879,31 @@ function scrollDown(force) {
   const s = stream();
   const near = s.scrollHeight - s.scrollTop - s.clientHeight < 220;
   if (near || force) s.scrollTop = s.scrollHeight;
+}
+
+/* Controls входят строками с animation-delay. Один scrollDown в момент mount
+   знает только начальную высоту, поэтому нижние варианты росли уже за экраном.
+   Следуем за РЕАЛЬНЫМ scrollHeight каждый кадр, но сразу отпускаем ленту, если
+   человек сам начал колесом/касанием читать выше. */
+function followGrowingPanel(node, duration) {
+  if (!node || !node.isConnected) return;
+  const box = node.closest('.cam-chat') || stream();
+  if (!box || box.scrollHeight - box.scrollTop - box.clientHeight >= 220) return;
+  let cancelled = false;
+  const cancel = () => { cancelled = true; cleanup(); };
+  const cleanup = () => {
+    box.removeEventListener('wheel', cancel);
+    box.removeEventListener('touchstart', cancel);
+  };
+  box.addEventListener('wheel', cancel, { passive: true });
+  box.addEventListener('touchstart', cancel, { passive: true });
+  const until = performance.now() + (duration || 900);
+  const frame = (now) => {
+    if (cancelled || !node.isConnected || now >= until) { cleanup(); return; }
+    box.scrollTop = box.scrollHeight;
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
 }
 /* Приветствие с подсказками убирает ТОЛЬКО действие самого пользователя:
    отправленное сообщение или включённая камера. Раньше его сносили ещё и
@@ -1667,14 +1580,15 @@ function dropStrayDocks(keep) {
   $$('.plan-dock').forEach((d) => { if (d !== keep) d.remove(); });
 }
 
-/* Анимация первого показа плана живёт отдельно от печати ответа. Поэтому её
-   таймеры храним у конкретного ui-прогона: новый план, остановка или быстрый
-   ответ не должны оставлять старый setTimeout, который через секунду внезапно
-   поднимет уже неактуальную карточку наверх. */
-const PLAN_FRAME_MS = 20;       // лёгкий кадровый цикл; темп берётся из CPS_TALK
-const PLAN_ITEM_PAUSE = 760;    // пауза только МЕЖДУ пунктами, чтобы план прочитали
-const PLAN_LOOK_MS = 1200;      // время спокойно оценить готовый план
-const PLAN_FLY_MS = 980;        // совпадает с transition .plan-dock.fly в CSS
+/* Анимация плана — отдельная дорожка, но теперь она владеет event-gate ответа:
+   пока план не дописан и не долетел, последующие SSE-события ждут. Таймеры
+   храним у конкретного ui-прогона, чтобы Stop/смена плана не оставляли старый
+   callback, который позднее поднимет неактуальную карточку наверх. */
+const PLAN_FRAME_MS = 20;       // лёгкий кадровый цикл
+const PLAN_CPS = 220;           // вступительный план быстрее разговорного ответа
+const PLAN_ITEM_PAUSE = 300;    // короткая пауза между пунктами
+const PLAN_LOOK_MS = 300;       // коротко увидеть весь план перед перелётом
+const PLAN_FLY_MS = 320;        // совпадает с transition .plan-dock.fly в CSS
 const CURSOR_BREATHE_MS = 1050; // совпадает с cursorBreathe в CSS
 
 /* Markdown-рендер пересобирает caret вместе с HTML ответа. Без общей фазы его
@@ -1700,10 +1614,9 @@ function planLater(ui, fn, ms) {
   return t;
 }
 
-/* Пункт плана печатается с тем же разговорным CPS, что и ответ. Таймер может
-   опоздать под нагрузкой, поэтому считаем символы по ПРОШЕДШЕМУ времени, а не
-   «по одной букве за tick». На каждом кадре меняются только два существующих
-   text node/span; мягкий след ограничен 12 последними символами и не плодит DOM. */
+/* Пункт плана печатается быстрее разговорного ответа. Таймер может опоздать
+   под нагрузкой, поэтому считаем символы по ПРОШЕДШЕМУ времени, а не «по одной
+   букве за tick». На кадре меняются два узла; след ограничен 7 символами. */
 function typePlanItem(ui, li, done) {
   const host = li && li.querySelector('.plan-copy');
   const chars = Array.from((li && li._planText) || '');
@@ -1730,12 +1643,12 @@ function typePlanItem(ui, li, done) {
     // от огромного скачка после возврата к давно скрытой вкладке.
     const elapsed = Math.max(1, Math.min(250, now - last));
     last = now;
-    carry += CPS_TALK * elapsed / 1000;
+    carry += PLAN_CPS * elapsed / 1000;
     const step = Math.floor(carry);
     if (step < 1) return;
     carry -= step;
     at = Math.min(chars.length, at + step);
-    const cut = Math.max(0, at - 12);
+    const cut = Math.max(0, at - 7);
     lead.nodeValue = chars.slice(0, cut).join('');
     trail.textContent = chars.slice(cut, at).join('');
     if (at < chars.length) return;
@@ -1750,10 +1663,45 @@ function typePlanItem(ui, li, done) {
   (ui.planTimers || (ui.planTimers = [])).push(timer);
 }
 
+/* План — визуальный event-gate, а не независимая декорация. Пока он печатается
+   и летит в dock, все следующие SSE-события лежат в очереди. Только callback
+   завершённого перелёта выпускает текст/инструменты в исходном порядке. */
+function beginPlanGate(ui) {
+  if (ui.planGate) return;
+  ui.planGate = true;
+  ui.planDeferred = [];
+  ui.planIntroPromise = new Promise((resolve) => { ui.resolvePlanIntro = resolve; });
+}
+
+function releasePlanGate(ui) {
+  if (!ui.planGate) return;
+  ui.planGate = false;
+  const queued = (ui.planDeferred || []).splice(0);
+  const resolve = ui.resolvePlanIntro;
+  ui.resolvePlanIntro = null;
+  ui.planIntroPromise = null;
+  queued.forEach((event) => dispatchStreamEvent(event, ui));
+  if (resolve) resolve();
+}
+
+function cancelPlanGate(ui) {
+  if (!ui || !ui.planGate) return;
+  ui.planDeferred = [];
+  releasePlanGate(ui);
+}
+
+async function waitForPlanGate(ui) {
+  // Повторный план, выпущенный из первой очереди, может открыть новый gate.
+  while (ui && ui.planIntroPromise) await ui.planIntroPromise;
+}
+
 function revealPlanItems(ui, at) {
-  if (!ui.planCard || !ui.planCard.isConnected || ui.runId !== S.streamRun) return;
+  if (!ui.planCard || !ui.planCard.isConnected || ui.runId !== S.streamRun) {
+    releasePlanGate(ui);
+    return;
+  }
   if (at >= ui.planItems.length) {
-    planLater(ui, () => dockPlan(ui), PLAN_LOOK_MS);
+    planLater(ui, () => dockPlan(ui, () => releasePlanGate(ui)), PLAN_LOOK_MS);
     return;
   }
   const li = ui.planItems[at];
@@ -1798,10 +1746,13 @@ function paintDockStep(ui) {
   });
 }
 
-function dockPlan(ui) {
+function dockPlan(ui, arrived) {
   const card = ui.planCard;
   // Фоновый ответ из уже закрытого диалога не владеет общей верхней зоной.
-  if (!card || !card.isConnected || ui.planDock || ui.runId !== S.streamRun) return;
+  if (!card || !card.isConnected || ui.planDock || ui.runId !== S.streamRun) {
+    if (arrived) arrived();
+    return;
+  }
 
   // Верхняя панель — отдельный flying visual. Исходная карточка остаётся в
   // normal flow лишь на время полёта и одновременно мягко схлопывается: ни
@@ -1821,7 +1772,8 @@ function dockPlan(ui) {
       '<span class="pd-step">шаг 1 из ' + n + '</span>' +
     '</div>' +
     '<div class="pd-bar"><i class="pd-fill"></i></div>' +
-    '<div class="pd-steps"></div>';
+    '<div class="pd-steps"></div>' +
+    '<ol class="pd-full"></ol>';
 
   // Шаги — кружки с номерами, равноудалённо по горизонтали, с короткой
   // подписью под каждым. Так виден ВЕСЬ план целиком и место в нём.
@@ -1833,6 +1785,16 @@ function dockPlan(ui) {
                    '<span class="pd-cap">' + esc(shortStep(full)) + '</span>';
     st.title = full;                       // полная формулировка — по наведению
     row.appendChild(st);
+    dock.querySelector('.pd-full').appendChild(el('li', '', esc(full)));
+  });
+  const dockTop = dock.querySelector('.pd-top');
+  dockTop.title = 'Открыть полный план';
+  dockTop.setAttribute('role', 'button');
+  dockTop.setAttribute('tabindex', '0');
+  const toggleFull = () => dock.classList.toggle('expanded');
+  dockTop.addEventListener('click', toggleFull);
+  dockTop.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleFull(); }
   });
 
   const holder = $('#dockZone') || stream().parentNode;
@@ -1855,7 +1817,7 @@ function dockPlan(ui) {
   dock.style.opacity = '0';
   card.style.height = box.height + 'px';
   card.style.overflow = 'hidden';
-  card.style.transition = 'height .46s cubic-bezier(.33,1,.68,1),margin .46s ease,opacity .34s ease,border-width .46s ease';
+  card.style.transition = 'height .32s cubic-bezier(.33,1,.68,1),margin .32s ease,opacity .24s ease,border-width .32s ease';
   requestAnimationFrame(() => {
     dock.classList.add('fly');            // .fly задаёт длинный мягкий переход
     dock.style.transform = 'none';
@@ -1868,12 +1830,13 @@ function dockPlan(ui) {
   });
   planLater(ui, () => {
     if (card.isConnected && ui.planDock === dock) card.remove();
-  }, 500);
-  // Пульсацию включаем ПОСЛЕ прилёта. Оба таймера принадлежат ui, поэтому
-  // завершение во время полёта отменит их, а не спрячет уже возвращённую карту.
+  }, PLAN_FLY_MS + 20);
+  // Только фактическое окончание перелёта открывает gate для ответа. Таймер
+  // принадлежит ui и не может выпустить события после Stop/смены диалога.
   planLater(ui, () => {
     if (dock.isConnected && ui.planDock === dock) dock.classList.add('live');
-  }, PLAN_FLY_MS + 70);
+    if (arrived) arrived();
+  }, PLAN_FLY_MS + 30);
 }
 
 /* Короткая подпись под кружком: первые два-три слова шага. */
@@ -1884,58 +1847,69 @@ function shortStep(t) {
   return out || '—';
 }
 
-/* План выполнен: весь блок сразу зеленеет, остаётся читаемым ровно две
-   секунды и исчезает полностью. Никакой миниатюры и скрытой распорки. */
+/* Завершённый план не уничтожается: зелёный dock подтверждает результат,
+   затем в самом сообщении остаётся компактная открываемая вкладка со всеми
+   исходными формулировками. */
+function archiveCompletedPlan(ui) {
+  if (!ui || ui.planArchive || !ui.node || !ui.node.body) return;
+  const card = makeCard('☰', 'План выполнен', 'plan-card plan-complete', true);
+  const list = el('ul', 'plan-list');
+  (ui.planItems || []).forEach((item, index) => {
+    const text = item._planText || (item.textContent || '').replace(/^\d+/, '').trim();
+    list.appendChild(el('li', 'done', '<span class="plan-num">' + (index + 1) +
+      '</span><span class="plan-copy">' + esc(text) + '</span>'));
+  });
+  card.inner.appendChild(list);
+  const before = ui.mdEl && ui.mdEl.parentNode === ui.node.body ? ui.mdEl : ui.node.body.firstChild;
+  ui.node.body.insertBefore(card, before || null);
+  ui.planArchive = card;
+  collapseToThumb(card, {
+    cls: 'th-plan', icon: '☰', title: 'План выполнен',
+    sub: (ui.planItems || []).length + ' шаг(ов)', tag: 'открыть', instant: true,
+  });
+}
+
 function undockPlan(ui) {
   if (!ui || ui.planFinished) return;
   ui.planFinished = true;
-  // Если задача закончилась раньше вступительной анимации, отложенный таймер
-  // больше не имеет права поднять план после завершения. Недописанные пункты
-  // показываем целиком: зелёный финальный кадр обязан содержать весь план.
   clearPlanTimers(ui);
   finishPlanItems(ui);
+  releasePlanGate(ui);
+  archiveCompletedPlan(ui);
+
   const owned = $$('.plan-dock').filter((d) => d.dataset.runId === String(ui.runId));
   const dock = ui.planDock || owned[owned.length - 1] || null;
   const card = ui.planCard;
   ui.planDock = null;
-
   const docks = owned.length ? owned : (dock ? [dock] : []);
-  if (docks.length) {
-    // Original card могла ещё схлопываться во время быстрого завершения. Она
-    // больше не занимает flow: две секунды зелёного состояния показывает dock.
-    if (card && card.isConnected) card.remove();
-    docks.forEach((ownDock) => {
-      ownDock.classList.remove('live');
-      ownDock.classList.add('done');
-      const t = ownDock.querySelector('.pd-t');
-      if (t) t.textContent = 'План выполнен';
-      const step = ownDock.querySelector('.pd-step');
-      if (step) step.textContent = 'готово';
-      const fill = ownDock.querySelector('.pd-fill');
-      if (fill) fill.style.width = '100%';
-      $$('.pd-s', ownDock).forEach((st) => {
-        st.classList.remove('now');
-        st.classList.add('done');
-      });
-      setTimeout(() => {
-        if (ownDock.isConnected) ownDock.classList.add('plan-gone');
-      }, 1700);
-      setTimeout(() => ownDock.remove(), 2000);
-    });
-    return;
-  }
 
-  // Очень быстрая задача могла завершиться ещё до перелёта. Тогда зеленеет
-  // исходная карточка, но контракт тот же: fade начинается на 1.7 с, на 2.0 с
-  // узла уже нет и ответ занимает освободившееся место.
-  if (!card || !card.isConnected) return;
-  card.classList.remove('live');
-  card.classList.add('plan-complete');
-  if (card.setTitle) card.setTitle('План выполнен');
-  setTimeout(() => {
-    if (card.isConnected) card.classList.add('plan-gone');
-  }, 1700);
-  setTimeout(() => card.remove(), 2000);
+  if (card && card.isConnected) card.remove();
+  docks.forEach((ownDock) => {
+    ownDock.classList.remove('live', 'expanded');
+    ownDock.classList.add('done');
+    const title = ownDock.querySelector('.pd-t');
+    if (title) title.textContent = 'План выполнен';
+    const step = ownDock.querySelector('.pd-step');
+    if (step) step.textContent = 'готово';
+    const fill = ownDock.querySelector('.pd-fill');
+    if (fill) fill.style.width = '100%';
+    $$('.pd-s', ownDock).forEach((item) => {
+      item.classList.remove('now'); item.classList.add('done');
+    });
+    setTimeout(() => {
+      if (ownDock.isConnected) ownDock.classList.add('plan-gone');
+    }, 320);
+    setTimeout(() => ownDock.remove(), 620);
+  });
+}
+
+function discardPlan(ui) {
+  if (!ui) return;
+  clearPlanTimers(ui);
+  cancelPlanGate(ui);
+  if (ui.planCard && ui.planCard.isConnected) ui.planCard.remove();
+  $$('.plan-dock').filter((d) => d.dataset.runId === String(ui.runId)).forEach((d) => d.remove());
+  ui.planDock = null;
 }
 
 function markBorn(card) {
@@ -2678,11 +2652,13 @@ async function send(opts) {
     planTimers: [],
     planDock: null,
     planFinished: false,
+    planGate: false,
+    planDeferred: [],
+    planIntroPromise: null,
     verbose: true,
     mdEl: null,
     buffer: '',
     shown: '',
-    actionAccent: false, // закрытый yellow-mode: подтверждённое важное действие
     typer: null,
     onTyped: null,
     tools: {},
@@ -2736,7 +2712,7 @@ async function send(opts) {
       const line = part.split(/\r?\n/).find((l) => l.startsWith('data:'));
       if (!line) return;
       let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch (e) { return; }
-      handleEvent(ev, ui);
+      dispatchStreamEvent(ev, ui);
     };
     while (true) {
       const { done, value } = await reader.read();
@@ -2752,6 +2728,8 @@ async function send(opts) {
     buf += dec.decode();
     if (buf.trim()) buf.split(/\r?\n\r?\n/).forEach(dispatchSse);
   } catch (e) {
+    if (e.name === 'AbortError') cancelPlanGate(ui);
+    else await waitForPlanGate(ui);
     if (e.name !== 'AbortError') {
       // Если полный done уже пришёл, последующий сетевой EOF не отменяет факт:
       // спокойно даём локальной печати закончиться и не рисуем ложную ошибку.
@@ -2769,11 +2747,14 @@ async function send(opts) {
         ui.mdEl.innerHTML = MD.render(stripSteps(ui.shown || ui.buffer));
       }
       dropStatus(ui);
-      undockPlan(ui);
+      discardPlan(ui);
       node.body.appendChild(el('div', 'muted', 'Остановлено.'));
       settleVisualDone(ui);
     }
   } finally {
+    // SSE часто успевает закрыться, пока вступительный план ещё летит. Ждём gate,
+    // иначе fallback-finish сам начал бы ответ раньше завершения перелёта.
+    await waitForPlanGate(ui);
     // Сокет — не источник истины для кнопки Stop и звука. Если сервер закрылся
     // без end/done, всё равно сначала допечатываем уже полученный хвост.
     if (!ui.doneReceived && !ui.visualDone) queueResponseFinish(ui, ui.buffer, false);
@@ -3140,7 +3121,7 @@ function renderTyped(ui) {
   const measure = now - (ui.lastHeightCheck || 0) >= 100;
   const before = measure ? ui.mdEl.offsetHeight : 0;
   ui.mdEl.innerHTML = html + MD.render(stripSteps(text.slice(src.length)));
-  placeCaret(ui.mdEl, ui.actionAccent);
+  placeCaret(ui.mdEl);
   if (measure) {
     ui.lastHeightCheck = now;
     const after = ui.mdEl.offsetHeight;
@@ -3174,7 +3155,7 @@ function clearTypingDecorations(mdEl) {
   }
 }
 
-function placeCaret(mdEl, actionAccent) {
+function placeCaret(mdEl) {
   clearTypingDecorations(mdEl);
 
   // ПОЧЕМУ КУРСОР «ЗАДЕРЖИВАЛСЯ» ПОЗАДИ ТЕКСТА.
@@ -3206,19 +3187,21 @@ function placeCaret(mdEl, actionAccent) {
   const c = document.createElement('span');
   c.className = 'caret';
 
-  // Два закрытых визуальных режима. Обычный ответ получает яркую синюю искру
-  // и bounded span последних 12 букв. Золотой режим включают markdown-заголовок
-  // или факт реального действия. Цвет и heading НИКОГДА не влияют на скорость.
+  // Обычный Markdown, заголовки и таблицы всегда используют синий режим.
+  // Золото локально доступно только явному <mark>/.action-important фрагменту;
+  // факт вызова инструмента больше не перекрашивает весь последующий ответ.
   let p = host;
-  let important = !!actionAccent;
+  let important = false;
   while (p && p !== mdEl) {
-    if (/^H[1-4]$/.test(p.tagName || '')) { important = true; break; }
+    if (p.tagName === 'MARK' || (p.classList && p.classList.contains('action-important'))) {
+      important = true; break;
+    }
     p = p.parentNode;
   }
   const tail = host.lastChild;
   if (tail && tail.nodeType === 3 && tail.nodeValue) {
     const chars = Array.from(tail.nodeValue);
-    const cut = Math.max(0, chars.length - 12);
+    const cut = Math.max(0, chars.length - 7);
     tail.nodeValue = chars.slice(0, cut).join('');
     const trail = document.createElement('span');
     trail.className = 'typing-trail ' + (important ? 'important-trail' : 'normal-trail');
@@ -3449,15 +3432,21 @@ function queueResponseFinish(ui, content, success) {
       // Последний такт renderTyped уже построил полный markdown. Ничего не
       // пересобираем и не присваиваем повторно: callback достигается только при
       // ui.shown === ui.buffer, а buffer и есть канонический ответ.
-      // `reply_ui` идёт отдельным SSE-событием и служит реальным DOM-fallback:
-      // если fence потерялся/сломался в конкретном рендерере, controls всё равно
-      // создаются из чистой спецификации, а не остаются простым списком текста.
-      if (ui.replyUiSpec && !ui.mdEl.querySelector('.ui-panel')) {
+      // `reply_ui` уже владеет отдельной live-панелью рядом с Markdown. Если
+      // событие не пришло (старый сохранённый ответ), fence остаётся fallback.
+      const embeddedPanels = $$('.ui-panel', ui.mdEl);
+      if (ui.replyLive && ui.replyLive.isConnected) {
+        // Не показываем одну спецификацию второй раз из echoed markdown-fence.
+        embeddedPanels.forEach((panel) => panel.remove());
+      } else if (ui.replyUiSpec && embeddedPanels.length === 0) {
         const fallbackPanel = el('div', 'ui-panel');
         fallbackPanel.dataset.ui = ui.replyUiSpec;
         ui.mdEl.appendChild(fallbackPanel);
       }
-      const panels = $$('.ui-panel', ui.mdEl);
+      const panels = [
+        ...$$('.ui-panel', ui.mdEl),
+        ...(ui.replyLive && ui.replyLive.isConnected ? $$('.ui-panel', ui.replyLive) : []),
+      ];
       const scroller = ui.node.closest('.cam-chat') || stream();
       // ПЕРВОПРИЧИНА «видно только после повторного открытия»: пустой ui-panel
       // во время печати имеет display:none. После mount он вырастает вниз, а
@@ -3469,6 +3458,7 @@ function queueResponseFinish(ui, content, success) {
         scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 220);
       foldCodeBlocks(ui.mdEl);
       mountUiPanels(ui.mdEl);
+      if (ui.replyLive && ui.replyLive.isConnected) mountUiPanels(ui.replyLive);
       $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click',
         () => openPreview({ name: im.alt || 'изображение', url: im.src })));
 
@@ -3480,11 +3470,15 @@ function queueResponseFinish(ui, content, success) {
         });
       }
 
-      ui.planItems.forEach((li) => {
-        li.classList.remove('now');
-        li.classList.add('done');
-      });
-      undockPlan(ui);
+      if (success) {
+        ui.planItems.forEach((li) => {
+          li.classList.remove('now');
+          li.classList.add('done');
+        });
+        undockPlan(ui);
+      } else if (!ui.planFinished) {
+        discardPlan(ui);
+      }
       if (success) {
         addMsgActions(ui.node, content);
         if (S.streamRun === ui.runId && ui.node.isConnected) {
@@ -3512,6 +3506,14 @@ function queueResponseFinish(ui, content, success) {
 }
 
 const TIER_LABEL = { nano: 'экономный', base: 'базовый', smart: 'усиленный', coder: 'кодовый', vision: 'зрение' };
+
+function dispatchStreamEvent(ev, ui) {
+  if (ui.planGate) {
+    ui.planDeferred.push(ev);
+    return;
+  }
+  handleEvent(ev, ui);
+}
 
 function handleEvent(ev, ui) {
   const node = ui.node;
@@ -3594,7 +3596,7 @@ function handleEvent(ev, ui) {
     }
 
     case 'plan': {
-      ui.actionAccent = true;
+      beginPlanGate(ui);
       // Агент может составить план дважды за прогон (уточнил задачу — сделал
       // новый). Прежнюю панель и прежнюю карточку убираем, иначе первая так и
       // останется висеть наверху: undockPlan знает только про последнюю.
@@ -3617,8 +3619,8 @@ function handleEvent(ev, ui) {
         const li = el('li', 'plan-pending', '<span class="plan-num">' + (i + 1) + '</span><span class="plan-copy"></span>');
         li._planText = String(s || '');
         // Пункты уже существуют как состояние (plan_step может прийти сразу),
-        // но в DOM входят и спокойно печатаются по одному. Общий typer ответа
-        // работает независимо и никогда не ждёт эту вступительную анимацию.
+        // но в DOM входят и быстро печатаются по одному. Общий typer ответа
+        // начнётся только после releasePlanGate по завершении перелёта.
         ui.planItems.push(li);
       });
       ui.planCard.inner.appendChild(list);
@@ -3634,8 +3636,8 @@ function handleEvent(ev, ui) {
       // промахивалась. Держим низ несколько кадров — тем же приёмом, что и при
       // открытии диалога.
       pinToBottom(stream());
-      // Пункты идут строго последовательно: спокойная печать, затем заметная
-      // пауза для чтения. Это независимая дорожка — ответ и сеть не блокирует.
+      // Пункты идут строго последовательно: быстрая печать и короткие 300 мс.
+      // Сеть читается дальше, но события ответа лежат в gate-очереди.
       planLater(ui, () => revealPlanItems(ui, 0), 100);
       break;
     }
@@ -3647,9 +3649,8 @@ function handleEvent(ev, ui) {
       break;
 
     case 'tool_start': {
-      // Факт действия, а не догадка по теме, включает золотой cursor/glow.
-      // Скорость текста от этого не меняется — её задаёт только markdown mode.
-      ui.actionAccent = true;
+      // Вызов инструмента не перекрашивает обычный последующий ответ: gradient
+      // живёт только на самой tool-карточке, а Markdown сохраняет синюю каретку.
       // раз дошло до инструментов — задача не «простая», кухню открываем
       ui.verbose = true;
       // «Глаза» агента (снимок экрана, параметры экрана) — служебные шаги.
@@ -3701,7 +3702,6 @@ function handleEvent(ev, ui) {
     }
 
     case 'approval_wait': {
-      ui.actionAccent = true;
       reactor('wait');
       busyMode(ui, ['Жду твоего решения', 'нужно подтверждение', '· ' + (ev.label || ev.tool || '')], 1500);
       const critical = /delete|shell|payment|pay|computer|click|type_text/.test(ev.tool || '');
@@ -3742,16 +3742,9 @@ function handleEvent(ev, ui) {
       S.streamApproval = false;
       refreshState(); break;
 
-    case 'image_request':
-      // Agent ждёт POST с настоящим PNG; Promise намеренно не await-им здесь,
-      // чтобы чтение SSE и интерфейс оставались живыми во время рендера.
-      handleBrowserImageRequest(ev, ui);
-      break;
-
     // Уточняющий вопрос с готовыми вариантами. Джарвис останавливается и ждёт,
     // пока нажмут кнопку: лучше один вопрос, чем неверная догадка.
     case 'question': {
-      ui.actionAccent = true;
       reactor('wait');
       busyMode(ui, ['Жду твоего ответа', 'выбери вариант выше'], 1500);
       const card = questionCard(ev, (choice) => {
@@ -3805,6 +3798,7 @@ function handleEvent(ev, ui) {
       }
       termLine((ok ? '✓ ' : '✕ ') + ev.name + (ev.result && ev.result.error ? ' — ' + ev.result.error : ' — ok'),
         ok ? '' : 'err');
+      if (ok && ev.name === 'remember') pulseNav('memory', true);
       // инструмент отработал — строка состояния не должна остаться висеть на
       // прошлом действии: пока модель осмысляет результат, так и пишем
       busyMode(ui, [(ok ? 'Готово: ' : 'Не вышло: ') + (ev.label || ev.name),
@@ -3813,13 +3807,13 @@ function handleEvent(ev, ui) {
     }
 
     case 'file': {
-      ui.actionAccent = true;
       ui.files.push(ev);
       const wrap = ui.filesBox || (ui.filesBox = el('div', ''));
       if (!wrap.parentNode) node.body.insertBefore(wrap, ui.statusEl);
       attachFileChip(wrap, ev);
       busyMode(ui, ['Сохраняю файл', '· ' + (ev.name || '')], 1400);
       flyToFiles(wrap.lastElementChild, ev.name);
+      pulseNav('files', false);
       sfx('ok');
       break;
     }
@@ -3860,19 +3854,34 @@ function handleEvent(ev, ui) {
       break;
     }
 
-    case 'reply_ui':
-      // Чистая спецификация приходит отдельно от Markdown. Сейчас только
-      // запоминаем её: controls монтируются после последней напечатанной буквы,
-      // чтобы панель не прыгала и не исчезала при очередном renderTyped.
-      ui.replyUiSpec = String(ev.spec || '').trim();
-      ui.actionAccent = true;
+    case 'reply_ui': {
+      // SSE-событие владеет отдельной live-панелью, не DOM внутри Markdown:
+      // renderTyped пересобирает только ui.mdEl и больше не может стереть controls.
+      const spec = String(ev.spec || '').trim();
+      ui.replyUiSpec = spec;
+      if (!spec) break;
+      if (ui.replyLive && ui.replyLive.isConnected) ui.replyLive.remove();
+      const live = el('div', 'reply-ui-live');
+      const panel = el('div', 'ui-panel');
+      panel.dataset.ui = spec;
+      live.appendChild(panel);
+      if (ui.statusEl && ui.statusEl.parentNode === node.body) node.body.insertBefore(live, ui.statusEl);
+      else node.body.appendChild(live);
+      ui.replyLive = live;
+      mountUiPanels(live);
+      scrollDown(true);
+      followGrowingPanel(live, 900);
       break;
+    }
 
     case 'reset': {
       // сервер понял, что модель напечатала вызов инструмента текстом,
       // и просит стереть уже показанное — начинаем ответ заново
       typerStop(ui);
       ui.buffer = ''; ui.shown = ''; ui.frozen = null;
+      ui.replyUiSpec = '';
+      if (ui.replyLive && ui.replyLive.isConnected) ui.replyLive.remove();
+      ui.replyLive = null;
       if (ui.mdEl) { ui.mdEl.remove(); ui.mdEl = null; }
       if (!ui.statusEl) {
         ui.statusEl = el('div', 'thinking-line');
@@ -3884,10 +3893,9 @@ function handleEvent(ev, ui) {
 
     case 'done': {
       dropStatus(ui);
-      // Выполнение уже завершено на сервере. Локальная печать ответа может ещё
-      // догонять буфер, но план не должен притворяться работающим всё это время:
-      // зеленеет сейчас и исчезает ровно через две секунды. Повторный вызов из
-      // финала typer безопасен — undockPlan идемпотентен.
+      // Выполнение завершено на сервере: dock сразу зеленеет, а в сообщении
+      // остаётся открываемая вкладка с полным планом. Повторный вызов из финала
+      // typer безопасен — undockPlan идемпотентен.
       undockPlan(ui);
       queueResponseFinish(ui, ev.content || ui.buffer, true);
       break;
@@ -3933,6 +3941,7 @@ function uploadFile(file) {
     if (r.kind === 'image') r.data = fr.result;
     S.attachments.push(r);
     renderAttachments();
+    pulseNav('files', false);
     toast(file.name + ' прикреплён', 'success');
   };
   fr.readAsDataURL(file);
@@ -4528,6 +4537,10 @@ function showReplies(items) {
     box.appendChild(chip);
   });
   box.hidden = false;
+  // Chips входят по очереди и на каждом animation-delay отнимают немного
+  // высоты у ленты. Следуем за нижней границей всё время их роста, а не только
+  // один раз до первого chip; wheel/touch внутри helper сразу отменяет follow.
+  followGrowingPanel(box, 520 + items.length * 60);
 }
 
 function noteCard(n) {
@@ -4756,6 +4769,9 @@ async function loadTasks() {
 }
 function renderTasks() {
   const grid = $('#taskGrid');
+  const autoNav = $('.nav-item[data-view="auto"]');
+  if (autoNav) autoNav.classList.toggle('auto-running',
+    S.tasks.some((task) => task.status === 'running'));
   if (!S.tasks.length) {
     grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><span class="e-ico">◎</span>' +
       'Фоновых задач нет.<br>Напиши в чат «каждый день в 9:00 присылай сводку новостей» — ' +
@@ -5340,7 +5356,10 @@ async function uploadToSandbox(files, destDir) {
     if (target) await api('/api/sandbox/move', { path: r.name, dest: target, chat_id: S.chatId || '' });
     done++;
   }
-  if (done) toast('Загружено файлов: ' + done, 'success');
+  if (done) {
+    pulseNav('files', false);
+    toast('Загружено файлов: ' + done, 'success');
+  }
   loadFiles();
 }
 
@@ -5563,6 +5582,7 @@ function editMemory(m) {
         if (!key || !val) { toast('Заполни оба поля', 'warn'); return; }
         const r = await api('/api/memory/update', { id: m.id, key, value: val });
         if (!r.ok) { toast('Не получилось сохранить', 'error'); return; }
+        pulseNav('memory', true);
         closeModal(); loadMemory(); toast('Изменено', 'success');
       });
     });
@@ -5579,7 +5599,9 @@ $('#addMemBtn').addEventListener('click', () => {
       $('#mo', m).addEventListener('click', async () => {
         const k = $('#mk', m).value.trim(), v = $('#mv', m).value.trim();
         if (!k || !v) return;
-        await api('/api/memory/add', { kind: 'fact', key: k, value: v });
+        const r = await api('/api/memory/add', { kind: 'fact', key: k, value: v });
+        if (!r.ok) { toast(r.error || 'Не удалось запомнить', 'error'); return; }
+        pulseNav('memory', true);
         closeModal(); loadMemory(); toast('Запомнил', 'success');
       });
     });
@@ -5630,6 +5652,36 @@ function renderSettings() {
       k + ': ' + (v.ok ? '✓ ' + (v.models || 0) + ' моделей' : '✕ ' + (v.error || 'нет доступа'))).join('\n');
     modal('<h3>Состояние провайдеров</h3><pre class="out">' + esc(lines || 'нет данных') + '</pre>' +
       '<div class="modal-acts"><button class="btn primary" onclick="document.getElementById(\'modalBack\').classList.remove(\'open\')">Ок</button></div>');
+  });
+
+  // Изображения: официальный GigaChat/Kandinsky вместо Puter. Пользователю
+  // нужен один Authorization Key; access token JARVIS получает и обновляет сам.
+  const mediaCfg = c.media || {};
+  const mediaSet = el('div', 'sset');
+  mediaSet.innerHTML = '<h3>Генерация изображений</h3>' +
+    '<div class="sd">GigaChat создаёт изображения через Kandinsky без watermark и работает из России. ' +
+    'JARVIS сам получает временный токен — вставить нужно только Authorization Key.</div>' +
+    '<div class="prov-state"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:' +
+    (mediaCfg.has_gigachat_key ? 'var(--green)' : 'var(--red)') + '"></span> GigaChat: ' +
+    (mediaCfg.has_gigachat_key ? 'ключ установлен' : 'нужен ключ') + '</div>' +
+    '<div class="field"><label>Authorization Key GigaChat</label><input id="kGiga" type="password" autocomplete="off" placeholder="' +
+    esc(mediaCfg.gigachat_auth_key || 'вставь ключ без слова Basic') + '"></div>' +
+    '<div class="sd giga-help">1. Открой кабинет разработчика Сбера. 2. Создай проект GigaChat API для физлица. ' +
+    '3. В разделе авторизации скопируй Authorization Key и вставь выше. ' +
+    '<a href="https://developers.sber.ru/docs/ru/gigachat/quickstart/ind-using-api" target="_blank" rel="noopener">Пошаговая официальная инструкция ↗</a></div>' +
+    '<button class="btn primary" id="saveGiga">Сохранить ключ</button>';
+  grid.appendChild(mediaSet);
+  $('#saveGiga', mediaSet).addEventListener('click', async () => {
+    const key = $('#kGiga', mediaSet).value.trim().replace(/^Basic\s+/i, '');
+    if (!key) { toast('Вставь Authorization Key GigaChat', 'warn'); return; }
+    const r = await api('/api/config/update', {
+      patch: { media: { image_provider: 'gigachat', gigachat_auth_key: key,
+        gigachat_scope: 'GIGACHAT_API_PERS', gigachat_model: 'GigaChat' } },
+    });
+    if (!r.ok) { toast(r.error || 'Не удалось сохранить ключ', 'error'); return; }
+    S.config = r.config || S.config;
+    toast('GigaChat для изображений подключён', 'success');
+    renderSettings();
   });
 
   // Безопасность

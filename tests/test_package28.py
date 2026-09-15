@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import importlib.util
 import json
+import ssl
 import sys
 import tempfile
 import unittest
@@ -407,6 +409,9 @@ class VisionUiContractTests(unittest.TestCase):
 
 
 class InstallerBuildTests(unittest.TestCase):
+    def test_installer_uses_the_application_version(self) -> None:
+        self.assertEqual(installer_build.version(), "1.1.0")
+
     def test_rebuild_preserves_previous_embedded_keys_without_a_keys_file(self) -> None:
         cloud, deep = "cloud-fixture", "deep-fixture"
         setup = ('"$PY" - "$HOME_DIR" "%s" "%s" <<\'PYSETUP\'\n' % (
@@ -431,112 +436,124 @@ class InstallerBuildTests(unittest.TestCase):
         self.assertEqual(first[:2], b"\x1f\x8b")
 
 
-class BrowserImageRegistryTests(unittest.TestCase):
+class GigaChatImageTransportTests(unittest.TestCase):
+    def test_bundled_russian_root_ca_has_the_published_fingerprint(self) -> None:
+        ca_path = ROOT / "app" / "jarvis" / "certs" / "russian_trusted_root_ca.pem"
+        der = ssl.PEM_cert_to_DER_cert(ca_path.read_text(encoding="ascii"))
+        fingerprint = hashlib.sha256(der).hexdigest().upper()
+        self.assertEqual(
+            fingerprint,
+            "D26D2D0231B7C39F92CC738512BA54103519E4405D68B5BD703E9788CA8ECF31",
+        )
+        self.assertEqual(media._RUSSIAN_CA, ca_path)
+
     def setUp(self) -> None:
-        with agent._BROWSER_IMAGE_COND:
-            agent._BROWSER_IMAGE_PENDING.clear()
+        with media._TOKEN_LOCK:
+            media._TOKEN_CACHE.clear()
 
     def tearDown(self) -> None:
-        with agent._BROWSER_IMAGE_COND:
-            agent._BROWSER_IMAGE_PENDING.clear()
+        with media._TOKEN_LOCK:
+            media._TOKEN_CACHE.clear()
 
-    def test_fast_completion_before_wait_is_lossless_and_single_use(self) -> None:
-        request_id = agent.begin_browser_image_request("chat-fast")
-        expected = {"ok": True, "path": "render.png"}
-        self.assertEqual(agent.browser_image_chat(request_id), "chat-fast")
-        self.assertTrue(agent.complete_browser_image_request(request_id, expected))
-        self.assertFalse(agent.complete_browser_image_request(request_id, expected),
-                         "a completed request must reject a second result")
-        self.assertEqual(agent.wait_browser_image_request(request_id, timeout=0), expected,
-                         "completion arriving before wait() must not be lost")
-        self.assertIsNone(agent.browser_image_chat(request_id),
-                          "wait() consumes and closes the pending request")
+    @staticmethod
+    def _config(path: str, default=None):
+        values = {
+            "media.gigachat_auth_key": "fixture-authorization-key",
+            "media.gigachat_scope": "GIGACHAT_API_PERS",
+            "media.image_provider": "gigachat",
+            "media.gigachat_model": "GigaChat",
+            "media.enhance_prompt": True,
+        }
+        return values.get(path, default)
 
-    def test_completion_claim_is_atomic_before_any_upload(self) -> None:
-        request_id = agent.begin_browser_image_request("chat-race")
-        self.assertEqual(agent.claim_browser_image_request(request_id), "chat-race")
-        self.assertIsNone(agent.claim_browser_image_request(request_id),
-                          "a concurrent duplicate POST must lose before writing a file")
-        expected = {"ok": False, "error": "invalid image"}
-        self.assertTrue(agent.complete_browser_image_request(request_id, expected))
-        self.assertEqual(agent.wait_browser_image_request(request_id, timeout=0), expected)
+    def test_oauth_token_is_cached_and_secret_is_only_sent_as_basic_auth(self) -> None:
+        expires = int((media.time.time() + 1200) * 1000)
+        answer = json.dumps({"access_token": "temporary-token", "expires_at": expires}).encode()
+        with mock.patch.object(media.CONFIG, "get", side_effect=self._config), \
+             mock.patch.object(media, "_http", return_value=(answer, "application/json")) as request:
+            first = media._access_token()
+            second = media._access_token()
 
-    def _handler(self, body: dict) -> mock.Mock:
-        handler = mock.Mock()
-        handler.path = "/api/images/complete"
-        handler._body.return_value = body
-        return handler
+        self.assertEqual(first, "temporary-token")
+        self.assertEqual(second, first)
+        request.assert_called_once()
+        url = request.call_args.args[0]
+        kwargs = request.call_args.kwargs
+        self.assertEqual(url, media._GIGACHAT_OAUTH_URL)
+        self.assertEqual(kwargs["headers"]["Authorization"], "Basic fixture-authorization-key")
+        self.assertEqual(kwargs["data"], b"scope=GIGACHAT_API_PERS")
+        self.assertRegex(kwargs["headers"]["RqUID"], r"^[0-9a-f-]{36}$")
 
-    def test_server_binds_png_to_registry_chat_and_rejects_duplicate_post(self) -> None:
-        request_id = agent.begin_browser_image_request("trusted-chat")
-        handler = self._handler({
-            "id": request_id,
-            "chat_id": "forged-chat",
-            "name": "render.png",
-            "data": "unused-in-mocked-upload",
-            "prompt": "a precise scene",
-            "model": "gpt-image-2",
-            "quality": "medium",
-        })
-        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 1200
+    def test_image_id_reads_message_not_unrelated_response_uuid(self) -> None:
+        wanted = "123e4567-e89b-42d3-a456-426614174000"
+        response = {
+            "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "choices": [{"message": {"content": '<img fuse="true" src="%s"/>' % wanted}}],
+        }
+        self.assertEqual(media._image_id(response), wanted)
+        with self.assertRaises(media.GigaChatError):
+            media._image_id({
+                "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "choices": [{"message": {"content": "Изображение не создано"}}],
+            })
+
+    def test_generation_downloads_then_atomically_saves_one_watermark_free_image(self) -> None:
+        file_id = "123e4567-e89b-42d3-a456-426614174000"
+        image = b"\xff\xd8\xff" + b"x" * 1400
+        answer = {"choices": [{"message": {"content": '<img src="%s"/>' % file_id}}]}
         with tempfile.TemporaryDirectory() as td:
-            target = Path(td) / "render.png"
+            target = Path(td) / "gigachat_image_123e4567.jpg"
+            with mock.patch.object(media.CONFIG, "get", side_effect=self._config), \
+                 mock.patch.object(media, "_enhance_prompt", return_value="точная сцена"), \
+                 mock.patch.object(media, "_access_token", return_value="token") as token, \
+                 mock.patch.object(media, "_json_request", return_value=answer) as generate, \
+                 mock.patch.object(media, "_image_bytes", return_value=(image, ".jpg")) as download, \
+                 mock.patch.object(media.sandbox, "safe_path", return_value=target), \
+                 mock.patch.object(media.sandbox, "dl", return_value="/api/download/gigachat.jpg"):
+                result = media.generate_image("город", width=1536, height=1024, style="cinematic")
 
-            def upload(body: dict) -> dict:
-                self.assertEqual(body["chat_id"], "trusted-chat",
-                                 "browser-provided chat_id must never own the file")
-                target.write_bytes(png)
-                return {"ok": True, "name": "render.png", "size": len(png),
-                        "kind": "image", "download_url": "/api/download/render.png"}
+            self.assertEqual(target.read_bytes(), image)
+            self.assertFalse(target.with_suffix(".jpg.tmp").exists())
 
-            handler._upload.side_effect = upload
-            with mock.patch.object(server.sandbox, "safe_path", return_value=target):
-                server.Handler.do_POST(handler)
-                first = handler._json.call_args.args
-                self.assertEqual(first[1], 200)
-                self.assertTrue(first[0]["ok"])
-                self.assertEqual(first[0]["result"]["path"], "render.png")
-                self.assertFalse(first[0]["result"]["watermark"])
-
-                handler._json.reset_mock()
-                server.Handler.do_POST(handler)
-                second = handler._json.call_args.args
-                self.assertEqual(second[1], 404)
-                self.assertEqual(handler._upload.call_count, 1,
-                                 "duplicate completion must be rejected before upload")
-
-        result = agent.wait_browser_image_request(request_id, timeout=0)
         self.assertTrue(result["ok"])
-        self.assertEqual(result["model"], "gpt-image-2")
+        self.assertEqual(result["path"], "gigachat_image_123e4567.jpg")
+        self.assertEqual(result["prompt"], "точная сцена")
+        self.assertEqual(result["provider"], "gigachat")
+        self.assertFalse(result["watermark"])
+        token.assert_called_once_with()
+        download.assert_called_once_with(file_id, "token")
+        payload = generate.call_args.args[1]
+        self.assertEqual(payload["model"], "GigaChat")
+        self.assertEqual(payload["function_call"], "auto")
+        self.assertIn("точная сцена", payload["messages"][-1]["content"])
 
-    def test_invalid_browser_payload_is_removed_and_wakes_waiter(self) -> None:
-        request_id = agent.begin_browser_image_request("chat-invalid")
-        handler = self._handler({"id": request_id, "name": "fake.png", "data": "unused"})
-        bad = b"not an image" * 100
-        with tempfile.TemporaryDirectory() as td:
-            target = Path(td) / "fake.png"
-            target.write_bytes(bad)
-            handler._upload.return_value = {
-                "ok": True, "name": "fake.png", "size": len(bad),
-                "kind": "image", "download_url": "/api/download/fake.png",
-            }
+    def test_config_migrates_legacy_providers_and_masks_authorization_key(self) -> None:
+        self.assertEqual(config.DEFAULTS["media"]["image_provider"], "gigachat")
+        migrated = config._migrate({"media": {
+            "image_provider": "puter", "image_base": "legacy", "image_model": "sana",
+            "puter": {"old": True},
+        }})["media"]
+        self.assertEqual(migrated["image_provider"], "gigachat")
+        self.assertNotIn("image_base", migrated)
+        self.assertNotIn("image_model", migrated)
+        self.assertNotIn("puter", migrated)
+        self.assertEqual(config._migrate({"media": {"image_provider": "off"}})
+                         ["media"]["image_provider"], "off")
 
-            def remove(_name: str, _chat_id: str) -> dict:
-                target.unlink(missing_ok=True)
-                return {"ok": True}
+        with tempfile.TemporaryDirectory() as td, \
+             mock.patch.object(config, "CONFIG_PATH", Path(td) / "config.json"):
+            cfg = config.Config()
+            cfg.set("media.gigachat_auth_key", "1234567890-secret")
+            public = cfg.public()["media"]
+        self.assertTrue(public["has_gigachat_key"])
+        self.assertNotEqual(public["gigachat_auth_key"], "1234567890-secret")
+        self.assertIn("…", public["gigachat_auth_key"])
 
-            with mock.patch.object(server.sandbox, "safe_path", return_value=target), \
-                 mock.patch.object(server.sandbox, "remove", side_effect=remove) as removed:
-                server.Handler.do_POST(handler)
-            removed.assert_called_once_with("fake.png", "chat-invalid")
-            self.assertFalse(target.exists())
-
-        response, status = handler._json.call_args.args
-        self.assertEqual(status, 400)
-        self.assertFalse(response["ok"])
-        result = agent.wait_browser_image_request(request_id, timeout=0)
-        self.assertFalse(result["ok"])
-        self.assertIn("не изображение", result["error"])
+    def test_non_generation_media_api_remains_registered(self) -> None:
+        for name in ("transcribe_audio", "analyze_image", "analyze_video",
+                     "send_telegram", "telegram_send_file"):
+            self.assertTrue(callable(getattr(media, name, None)), name)
+            self.assertIn(name, agent.tools.TOOLS)
 
 
 class ImageGenerationContractTests(unittest.TestCase):
@@ -550,7 +567,7 @@ class ImageGenerationContractTests(unittest.TestCase):
     }]
 
     @staticmethod
-    def _tool_turn(call_id: str) -> list[dict]:
+    def _tool_turn(call_id: str, prompt: str = "blue glass city") -> list[dict]:
         return [{
             "type": "done",
             "tool_calls": [{
@@ -558,68 +575,47 @@ class ImageGenerationContractTests(unittest.TestCase):
                 "type": "function",
                 "function": {
                     "name": "generate_image",
-                    "arguments": json.dumps({"prompt": "blue glass city", "width": 1024}),
+                    "arguments": json.dumps({"prompt": prompt, "width": 1024}),
                 },
             }],
         }]
 
-    def test_media_tool_selects_gpt_image_2_without_network_or_watermark(self) -> None:
-        with mock.patch.object(media.CONFIG, "get", return_value="puter"), \
-             mock.patch.object(media, "_art_prompt", return_value="enhanced scene"):
-            result = media.generate_image("город", width=99999, height=12)
-        self.assertEqual(result, {
-            "browser_image": True,
-            "prompt": "enhanced scene",
-            "width": 1536,
-            "height": 256,
-            "model": "gpt-image-2",
-            "quality": "medium",
-        })
-        self.assertEqual(config.DEFAULTS["media"]["image_provider"], "puter")
-        migrated = config._migrate({"media": {
-            "image_provider": "pollinations", "image_base": "legacy", "image_model": "sana",
-        }})["media"]
-        self.assertEqual(migrated["image_provider"], "puter")
-        self.assertNotIn("image_base", migrated)
-        self.assertNotIn("image_model", migrated)
-        self.assertEqual(config._migrate({"media": {"image_provider": "off"}})
-                         ["media"]["image_provider"], "off")
-
-    def test_agent_emits_handoff_then_waits_for_persisted_image(self) -> None:
+    def test_agent_uses_backend_image_and_emits_file_after_tool_result_exists(self) -> None:
         streams = iter((
             self._tool_turn("image-1"),
             [{"type": "delta", "text": "Изображение готово."},
              {"type": "done", "tool_calls": []}],
         ))
         saved = {
-            "ok": True, "path": "gpt.png", "name": "gpt.png", "size": 2048,
-            "download_url": "/api/download/gpt.png", "preview_url": "/api/download/gpt.png",
+            "ok": True, "path": "gigachat.jpg", "name": "gigachat.jpg", "size": 2048,
+            "download_url": "/api/download/gigachat.jpg",
+            "preview_url": "/api/download/gigachat.jpg",
+            "model": "GigaChat · text2image", "provider": "gigachat", "watermark": False,
         }
         with mock.patch.object(agent.orchestrator, "choose_tier", return_value=self.ROUTE), \
              mock.patch.object(agent.llm, "chat_stream", side_effect=lambda *_a, **_k: next(streams)), \
              mock.patch.object(agent.tools, "schemas", return_value=self.SCHEMA), \
-             mock.patch.object(agent.tools, "call", return_value={
-                 "browser_image": True, "prompt": "enhanced scene", "width": 1024,
-                 "height": 1024, "model": "gpt-image-2", "quality": "medium",
-             }), \
-             mock.patch.object(agent, "begin_browser_image_request", return_value="img-request") as begin, \
-             mock.patch.object(agent, "wait_browser_image_request", return_value=saved) as wait:
-            events = list(agent.Agent(chat_id="image-chat").run(
-                [{"role": "user", "content": "Нарисуй город"}],
-                user_text="Нарисуй город",
+             mock.patch.object(agent.tools, "call", return_value=saved) as dispatch:
+            runner = agent.Agent(chat_id="image-chat")
+            events = list(runner.run(
+                [{"role": "user", "content": "Нарисуй город в синем стекле"}],
+                user_text="Нарисуй город в синем стекле",
             ))
 
-        begin.assert_called_once_with("image-chat")
-        wait.assert_called_once_with("img-request")
-        request = next(event for event in events if event.get("type") == "image_request")
-        self.assertEqual(request["id"], "img-request")
-        self.assertEqual(request["model"], "gpt-image-2")
-        self.assertEqual(request["quality"], "medium")
+        dispatch.assert_called_once_with(
+            "generate_image", {"prompt": "blue glass city", "width": 1024})
+        self.assertFalse(any(event.get("type") == "image_request" for event in events),
+                         "GigaChat generation must not depend on browser handoff")
         files = [event for event in events if event.get("type") == "file"]
         self.assertEqual(len(files), 1)
-        self.assertEqual(files[0]["name"], "gpt.png")
-        self.assertLess(events.index(request), events.index(files[0]),
-                        "file/done cannot overtake the browser generation request")
+        self.assertEqual(files[0]["name"], "gigachat.jpg")
+        tool_result = next(event for event in events if event.get("type") == "tool_result")
+        self.assertTrue(tool_result["result"]["ok"])
+        self.assertLess(events.index(files[0]), events.index(tool_result))
+        self.assertEqual(runner.created_files, [{
+            "name": "gigachat.jpg", "url": "/api/download/gigachat.jpg",
+            "size": 2048, "kind": "image",
+        }])
 
     def test_repeated_exact_image_call_dispatches_and_emits_file_once(self) -> None:
         streams = iter((
@@ -648,6 +644,48 @@ class ImageGenerationContractTests(unittest.TestCase):
         self.assertEqual(len(runner.created_files), 1)
         done = [event for event in events if event.get("type") == "done"][-1]
         self.assertEqual(len(done["files"]), 1)
+
+    def test_long_prompts_with_the_same_first_300_characters_stay_distinct(self) -> None:
+        prefix = "cinematic blue glass city, " * 14
+        self.assertGreater(len(prefix), 300)
+        first_prompt = prefix + "at sunrise"
+        second_prompt = prefix + "at midnight"
+        streams = iter((
+            self._tool_turn("image-1", first_prompt),
+            self._tool_turn("image-2", second_prompt),
+            self._tool_turn("image-3", second_prompt),  # exact repeat remains idempotent
+            [{"type": "delta", "text": "Два разных результата готовы."},
+             {"type": "done", "tool_calls": []}],
+        ))
+        serial = iter(("sunrise.jpg", "midnight.jpg"))
+
+        def save_image(_name: str, _args: dict) -> dict:
+            name = next(serial)
+            return {
+                "ok": True, "path": name, "size": 2048,
+                "download_url": "/api/download/" + name,
+            }
+
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=self.ROUTE), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=lambda *_a, **_k: next(streams)), \
+             mock.patch.object(agent.tools, "schemas", return_value=self.SCHEMA), \
+             mock.patch.object(agent.tools, "call", side_effect=save_image) as dispatch:
+            runner = agent.Agent(chat_id="long-prompts-chat")
+            events = list(runner.run(
+                [{"role": "user", "content": "Сделай две версии города"}],
+                user_text="Сделай две версии города",
+            ))
+
+        self.assertEqual(dispatch.call_count, 2)
+        self.assertEqual(dispatch.call_args_list, [
+            mock.call("generate_image", {"prompt": first_prompt, "width": 1024}),
+            mock.call("generate_image", {"prompt": second_prompt, "width": 1024}),
+        ])
+        self.assertEqual(
+            [event["name"] for event in events if event.get("type") == "file"],
+            ["sunrise.jpg", "midnight.jpg"],
+        )
+        self.assertEqual(len(runner.created_files), 2)
 
 
 if __name__ == "__main__":

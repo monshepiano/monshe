@@ -399,24 +399,25 @@ function testImportantHeadingCaretAndTrail() {
   md.appendChild(heading);
   ctx.placeCaret(md);
   assert.strictEqual(md.querySelectorAll('.caret').length, 1);
-  assert(md.querySelector('.caret').classList.contains('caret-important'));
+  assert(!md.querySelector('.caret').classList.contains('caret-important'),
+    'ordinary headings use the same blue caret as conversational text');
   const firstCursorPhase = md.querySelector('.caret').style.animationDelay;
   assert(/^-[\d.]+ms$/.test(firstCursorPhase),
     'a recreated markdown caret must rejoin the global animation phase');
-  assert.strictEqual(md.querySelectorAll('.important-trail').length, 1);
-  assert.strictEqual(Array.from(md.querySelector('.important-trail').textContent).length, 12,
-    'trail must be bounded by twelve Unicode characters');
+  assert.strictEqual(md.querySelector('.important-trail'), null);
+  assert.strictEqual(Array.from(md.querySelector('.normal-trail').textContent).length, 7,
+    'ordinary heading trail must be bounded by seven Unicode characters');
   assert.strictEqual(heading.textContent, original, 'decorations must not change visible heading text');
 
   ctx.placeCaret(md);
   assert.strictEqual(md.querySelectorAll('.caret').length, 1, 'each tick owns exactly one caret');
   assert.notStrictEqual(md.querySelector('.caret').style.animationDelay, firstCursorPhase,
     'DOM replacement must advance rather than restart the cursor breath');
-  assert.strictEqual(md.querySelectorAll('.important-trail').length, 1, 'trail nodes must not accumulate');
+  assert.strictEqual(md.querySelectorAll('.normal-trail').length, 1, 'trail nodes must not accumulate');
   assert.strictEqual(heading.textContent, original);
   ctx.clearTypingDecorations(md);
   assert.strictEqual(md.querySelector('.caret'), null);
-  assert.strictEqual(md.querySelector('.important-trail'), null);
+  assert.strictEqual(md.querySelector('.normal-trail'), null);
   assert.strictEqual(heading.textContent, original, 'completion must restore a plain text node');
 
   const plain = new MiniNode('div');
@@ -426,11 +427,14 @@ function testImportantHeadingCaretAndTrail() {
   ctx.placeCaret(plain);
   assert(!plain.querySelector('.caret').classList.contains('caret-important'));
   assert.strictEqual(plain.querySelector('.important-trail'), null);
-  assert.strictEqual(Array.from(plain.querySelector('.normal-trail').textContent).length, 12,
-    'ordinary typing has the same bounded twelve-character blue trail');
-  ctx.placeCaret(plain, true);
+  assert.strictEqual(Array.from(plain.querySelector('.normal-trail').textContent).length, 7,
+    'ordinary typing has the shorter bounded blue trail');
+  const marked = new MiniNode('mark');
+  marked.appendChild(miniDocument.createTextNode('Подтвердить действие'));
+  plain.appendChild(marked);
+  ctx.placeCaret(plain);
   assert(plain.querySelector('.caret').classList.contains('caret-important'),
-    'a real action can enter important mode without changing typer speed');
+    'only an explicitly marked action enters important mode');
   assert(plain.querySelector('.important-trail'));
 
   const table = new MiniNode('table');
@@ -460,11 +464,11 @@ function testImportantHeadingCaretAndTrail() {
   assert(!/@keyframes (?:spark|twBlink)[^{]*\{[^}]*box-shadow/s.test(css),
     'cursor animation must stay on compositor opacity/transform');
   const events = extractFunction(js, 'handleEvent');
-  ['plan', 'tool_start', 'approval_wait', 'question', 'file'].forEach((type) => {
-    const at = events.indexOf("case '" + type + "'");
-    assert(at >= 0 && /ui\.actionAccent\s*=\s*true/.test(events.slice(at, at + 700)),
-      type + ' must enable the closed important-action visual mode');
-  });
+  assert(!/actionAccent/.test(js),
+    'tool and plan events must not recolor the whole following markdown answer');
+  assert(/tagName\s*===\s*['"]MARK['"]/.test(extractFunction(js, 'placeCaret')) &&
+    /action-important/.test(extractFunction(js, 'placeCaret')),
+  'gold mode is reserved for explicitly marked action fragments');
   const question = extractFunction(js, 'questionCard');
   assert(/ask-own/.test(question) && /Свой вариант/.test(question),
     'blocking ask_user controls must offer the same custom answer escape hatch');
@@ -485,113 +489,90 @@ function makePlanItem(text) {
 }
 
 function testPlanTypingCompletionAndDockRaces() {
-  let nextTimer = 1;
-  const intervals = new Map();
-  const timeouts = [];
-  const cancelled = new Set();
-  const setIntervalFake = (fn, ms) => {
-    const id = nextTimer++; intervals.set(id, { fn, ms }); return id;
-  };
-  const clearFake = (id) => { intervals.delete(id); cancelled.add(id); };
-  const setTimeoutFake = (fn, ms) => { const id = nextTimer++; timeouts.push({ id, fn, ms }); return id; };
-  const S = { streamRun: 28 };
-  let clock = 0;
-  const ctx = loadFunctions(
-    ['clearPlanTimers', 'finishPlanItems', 'syncCursorPhase', 'typePlanItem', 'undockPlan'],
-    {
-      S, PLAN_FRAME_MS: 20, CPS_TALK: 95, CURSOR_BREATHE_MS: 1050,
-      performance: { now() { clock += 20; return clock; } },
-      document: miniDocument, el: miniEl,
-      setInterval: setIntervalFake, clearInterval: clearFake,
-      setTimeout: setTimeoutFake, clearTimeout: clearFake,
-      $$: (selector, node) => node ? node.querySelectorAll(selector) : [],
-    },
+  assert(/const PLAN_CPS\s*=\s*220/.test(js),
+    'plan intro must use its own fast typing lane');
+  assert(/const PLAN_ITEM_PAUSE\s*=\s*300/.test(js) && /const PLAN_LOOK_MS\s*=\s*300/.test(js),
+    'plan pauses must stay short and deterministic');
+  assert(/const PLAN_FLY_MS\s*=\s*320/.test(js),
+    'the event gate must match the short dock transition');
+  const typer = extractFunction(js, 'typePlanItem');
+  assert(/PLAN_CPS \* elapsed/.test(typer) && /Math\.min\(250, now - last\)/.test(typer),
+    'plan typing must be elapsed-time based and recover from ordinary Safari stalls');
+  assert(/at - 7/.test(typer), 'plan action trail must stay short');
+
+  // Structural root cause regression: incoming SSE events are not allowed to
+  // race the visual plan intro. They remain in source order until the flight
+  // callback releases the gate.
+  const handled = [];
+  const gateCtx = loadFunctions(
+    ['beginPlanGate', 'dispatchStreamEvent', 'releasePlanGate', 'cancelPlanGate'],
+    { Promise, handleEvent(ev) { handled.push(ev.type); } },
   );
+  const gated = {};
+  gateCtx.beginPlanGate(gated);
+  gateCtx.dispatchStreamEvent({ type: 'delta' }, gated);
+  gateCtx.dispatchStreamEvent({ type: 'tool_start' }, gated);
+  assert.deepStrictEqual(handled, [], 'no answer/tool content may appear while the plan is writing or flying');
+  gateCtx.releasePlanGate(gated);
+  assert.deepStrictEqual(handled, ['delta', 'tool_start'], 'the original SSE order must resume after arrival');
+  assert.strictEqual(gated.planGate, false);
+  assert.strictEqual(gated.planIntroPromise, null);
 
-  // Completion while an item is still typing: interval is cancelled, all
-  // text is restored, the plan turns green immediately, then disappears at 2s.
-  const list = new MiniNode('ul');
-  const { li, copy } = makePlanItem('Проверить жизненный цикл');
-  list.appendChild(li);
+  const reveal = extractFunction(js, 'revealPlanItems');
+  assert(/dockPlan\(ui, \(\) => releasePlanGate\(ui\)\)/.test(reveal),
+    'only the completed dock flight may release answer events');
+  assert(/PLAN_ITEM_PAUSE/.test(reveal) && /PLAN_LOOK_MS/.test(reveal));
+  assert(/await waitForPlanGate\(ui\)/.test(extractFunction(js, 'send')),
+    'stream completion must also wait for the visual plan gate');
+
+  // Completion first turns the real dock wholly green, then leaves an
+  // accessible archive in the message. It never restores the old card.
+  const timers = [];
+  const trace = [];
+  const dock = new MiniNode('div'); dock.className = 'plan-dock live expanded'; dock.dataset.runId = '7';
+  const title = new MiniNode('span'); title.className = 'pd-t'; dock.appendChild(title);
+  const step = new MiniNode('span'); step.className = 'pd-step'; dock.appendChild(step);
+  const fill = new MiniNode('span'); fill.className = 'pd-fill'; dock.appendChild(fill);
+  const dot = new MiniNode('span'); dot.className = 'pd-s now'; dock.appendChild(dot);
   const card = new MiniNode('div');
-  card.className = 'plan-card live';
-  card.appendChild(list);
-  card.setTitle = (text) => { card.titleText = text; };
-  const ui = {
-    runId: 28, planTimers: [], planFinished: false, planItems: [li],
-    planList: list, planCard: card, planDock: null,
-  };
-  ctx.typePlanItem(ui, li, () => { throw new Error('cancelled typer must not finish later'); });
-  const typingTimer = ui.planTimers[0];
-  intervals.get(typingTimer).fn();
-  intervals.get(typingTimer).fn();
-  assert.strictEqual(copy.childNodes.length, 3, 'typing uses a bounded lead/trail/caret trio');
-  ctx.undockPlan(ui);
-  assert(cancelled.has(typingTimer), 'completion must cancel the in-flight item typer');
-  assert.strictEqual(copy.textContent, li._planText);
-  assert(card.classList.contains('plan-complete'), 'pre-dock completion turns the card green immediately');
-  assert.strictEqual(card.titleText, 'План выполнен');
-  assert(timeouts.some((timer) => timer.ms === 1700));
-  const removeCard = timeouts.find((timer) => timer.ms === 2000);
-  assert(removeCard, 'completed pre-dock plan must be removed at exactly 2 seconds');
-  removeCard.fn();
-  assert.strictEqual(card.isConnected, false);
-
-  // Completion during the dock flight owns the flying clone. The source card
-  // leaves normal flow immediately; no thumbnail/collapse placeholder returns.
-  const dock = new MiniNode('div');
-  dock.className = 'plan-dock fly live';
-  dock.dataset.runId = '29';
-  const title = new MiniNode('span'); title.className = 'pd-t';
-  const step = new MiniNode('span'); step.className = 'pd-step';
-  const fill = new MiniNode('i'); fill.className = 'pd-fill';
-  const dockStep = new MiniNode('div'); dockStep.className = 'pd-s now';
-  dock.appendChild(title); dock.appendChild(step); dock.appendChild(fill); dock.appendChild(dockStep);
-  const card2 = new MiniNode('div');
-  const plan2 = makePlanItem('Завершить полёт');
-  const list2 = new MiniNode('ul'); list2.appendChild(plan2.li); card2.appendChild(list2);
-  const ui2 = {
-    runId: 29, planTimers: [], planFinished: false, planItems: [plan2.li],
-    planList: list2, planCard: card2, planDock: dock,
-  };
-  const ctx2 = loadFunctions(['clearPlanTimers', 'finishPlanItems', 'undockPlan'], {
-    setTimeout: setTimeoutFake, clearTimeout: clearFake,
-    $$: (selector, node) => node ? node.querySelectorAll(selector) : (selector === '.plan-dock' ? [dock] : []),
+  const finishCtx = loadFunctions(['undockPlan'], {
+    clearPlanTimers() { trace.push('clear'); },
+    finishPlanItems() { trace.push('finish'); },
+    releasePlanGate() { trace.push('release'); },
+    archiveCompletedPlan() { trace.push('archive'); },
+    $$(selector, rootNode) {
+      if (rootNode) return rootNode.querySelectorAll(selector);
+      return selector === '.plan-dock' ? [dock] : [];
+    },
+    setTimeout(fn, ms) { timers.push({ fn, ms }); return timers.length; },
   });
-  ctx2.undockPlan(ui2);
-  assert.strictEqual(card2.isConnected, false, 'flying plan source must not reserve response space');
-  assert(dock.classList.contains('done'));
-  assert(!dock.classList.contains('live'));
+  const ui = { runId: 7, planFinished: false, planDock: dock, planCard: card };
+  finishCtx.undockPlan(ui);
+  assert.deepStrictEqual(trace, ['clear', 'finish', 'release', 'archive']);
+  assert(ui.planFinished && !card.isConnected, 'completion removes the obsolete flying source card');
+  assert(dock.classList.contains('done') && !dock.classList.contains('live'));
   assert.strictEqual(title.textContent, 'План выполнен');
   assert.strictEqual(step.textContent, 'готово');
   assert.strictEqual(fill.style.width, '100%');
-  assert(dockStep.classList.contains('done'));
-  assert(!dockStep.classList.contains('now'));
-  const dockRemove = timeouts.filter((timer) => timer.ms === 2000).pop();
-  dockRemove.fn();
-  assert.strictEqual(dock.isConnected, false, 'flying plan must disappear completely after 2 seconds');
+  assert(dot.classList.contains('done') && !dot.classList.contains('now'));
+  assert.deepStrictEqual(timers.map((timer) => timer.ms), [320, 620],
+    'green completion acknowledgement stays short before the dock disappears');
+  timers.forEach((timer) => timer.fn());
+  assert(dock.classList.contains('plan-gone') && !dock.isConnected);
 
-  assert(/const PLAN_FRAME_MS\s*=\s*20/.test(js));
-  assert(/carry\s*\+=\s*CPS_TALK\s*\*\s*elapsed\s*\/\s*1000/.test(extractFunction(js, 'typePlanItem')),
-    'plan items must use the exact conversational CPS');
-  assert(/at\s*-\s*12/.test(extractFunction(js, 'typePlanItem')));
-  assert(/const PLAN_ITEM_PAUSE\s*=\s*760/.test(js));
-  assert(/const PLAN_LOOK_MS\s*=\s*1200/.test(js));
+  const archive = extractFunction(js, 'archiveCompletedPlan');
+  assert(/collapseToThumb\(card/.test(archive) && /th-plan/.test(archive) && /instant: true/.test(archive),
+    'the full completed plan must persist as an immediately readable collapsed tab');
+  assert(!/archiveCompletedPlan/.test(extractFunction(js, 'discardPlan')),
+    'stopped or failed plans must not be misrepresented as completed archives');
   assert(!/\.pd-s\.now::after\s*\{/.test(css), 'current dock step must have no underline pseudo-element');
-  const current = css.match(/\.pd-s\.now \.pd-cap\s*\{([^}]*)\}/s);
-  assert(current && /color\s*:\s*#ffd98a/.test(current[1]), 'current step uses a nearby brighter gold');
   assert(/\.plan-card\.plan-complete/.test(css) && /\.plan-dock\.done/.test(css));
-  const doneRule = css.match(/\.plan-dock\.done\s*\{([^}]*)\}/s);
-  assert(doneRule && /background\s*:\s*linear-gradient\([^}]*rgba\(7,30,23/.test(doneRule[1]),
-    'the complete dock itself, not just its labels, turns green immediately');
-  assert(!/collapseSoon\s*\(\s*(?:ui\.)?planCard/.test(extractFunction(js, 'undockPlan')),
-    'completion must never return a plan thumbnail');
+
   const finish = extractFunction(js, 'queueResponseFinish');
   assert(/if\s*\(!ui\.buffer\)\s*ui\.buffer\s*=\s*doneContent/.test(finish));
   assert(/content\s*=\s*ui\.buffer/.test(finish));
   assert(!/ui\.shown\s*=\s*['"]{2}/.test(finish),
     'done must never erase a fully streamed multi-step answer and retype the last step');
-  assert(!/ui\.mdEl\.innerHTML\s*=\s*['"]{2}/.test(finish));
 }
 
 function testRepeatedPlanEventReplacesOwnership() {
@@ -613,6 +594,7 @@ function testRepeatedPlanEventReplacesOwnership() {
   };
   const ctx = loadFunctions(['handleEvent'], {
     S: {},
+    beginPlanGate(ui) { ui.planGate = true; },
     clearPlanTimers() { clears += 1; },
     dropStrayDocks(keep) { removedDocks.push(keep); oldDock.remove(); },
     makeCard, markBorn() {}, el: miniEl,
@@ -811,7 +793,10 @@ async function testCameraLifecycleOwnershipAndLateResults() {
     addAiMsg() { return { root: aiRoot, body: aiBody, modelEl: new MiniNode('span') }; },
     setStreaming(value) { requestState.streaming = value; }, sfx() {}, thinkMode() {},
     camFrame() { return 'data:image/jpeg;base64,frame'; },
-    typerStop() {}, dropStatus() {}, undockPlan() { stoppedPlans += 1; },
+    typerStop() {}, dropStatus() {},
+    cancelPlanGate() { stoppedPlans += 1; },
+    async waitForPlanGate() {},
+    discardPlan() {},
     el: miniEl,
     settleVisualDone(ui) {
       ui.visualDone = true;
@@ -858,7 +843,7 @@ function testLiveInteractivePanelMountsBeforeStreamSettlement() {
       scroller.scrollHeight = 1300;
     },
     addMsgActions() {}, speakReply() {}, sfx() {},
-    thinkFlush() {}, collapseSoon() {}, undockPlan() {}, scrollDown() {},
+    thinkFlush() {}, collapseSoon() {}, undockPlan() {}, discardPlan() {}, scrollDown() {},
     requestAnimationFrame(fn) { frames.push(fn); return frames.length; },
     settleVisualDone(ui) { ui.visualDone = true; settled += 1; },
     typerFlush(ui) { const done = ui.onTyped; ui.onTyped = null; done(); },
@@ -901,7 +886,7 @@ function testInteractiveFenceReachesFrontendPanel() {
   assert(/case 'reply_ui':[\s\S]*ui\.replyUiSpec\s*=/.test(events),
     'frontend must consume the parser-independent reply_ui SSE event');
   const finish = extractFunction(js, 'queueResponseFinish');
-  assert(/ui\.replyUiSpec\s*&&\s*!ui\.mdEl\.querySelector\('\.ui-panel'\)/.test(finish));
+  assert(/ui\.replyUiSpec\s*&&\s*embeddedPanels\.length\s*===\s*0/.test(finish));
   assert(/fallbackPanel\.dataset\.ui\s*=\s*ui\.replyUiSpec/.test(finish),
     'a missing markdown panel must be reconstructed directly in the final DOM');
 
@@ -924,34 +909,51 @@ function testInteractiveFenceReachesFrontendPanel() {
   assert.strictEqual(question.parentNode, root, 'the actual question must stay visible');
 }
 
-function testBrowserImageHandoffContract() {
-  assert(!/js\.puter\.com\/v2\//.test(html),
-    'Puter.js must be lazy-loaded only when image generation is actually requested');
-  const loader = extractFunction(js, 'loadPuter');
-  assert(/script\.src\s*=\s*['"]https:\/\/js\.puter\.com\/v2\/['"]/.test(loader));
-  assert(/setTimeout\([\s\S]*20000/.test(loader), 'provider loading must have a finite timeout');
-  assert(/puterLoadPromise/.test(js), 'parallel image events must share one SDK load');
+function testRussianImageAndHudFollowupContract() {
+  assert(!/js\.puter\.com|puter\.ai|loadPuter|handleBrowserImageRequest|case 'image_request'/.test(js + html),
+    'the rejected Puter browser handoff must not remain in production UI');
+  assert(/gigachat/.test(js) && /Authorization Key/.test(js),
+    'settings must expose the Russia-accessible backend GigaChat setup');
 
-  const handoff = extractFunction(js, 'handleBrowserImageRequest');
-  assert(/S\.imageRequests\.has\(ev\.id\)/.test(handoff) && /S\.imageRequests\.add\(ev\.id\)/.test(handoff),
-    'one in-flight browser request id must execute at most once');
-  assert(/await\s+waitForPuterSignIn\(puter,\s*ui\)/.test(handoff));
-  const signIn = extractFunction(js, 'waitForPuterSignIn');
-  const click = signIn.slice(signIn.indexOf("addEventListener('click'"));
-  assert(/await\s+puter\.auth\.signIn\(\)/.test(click),
-    'Puter authentication must execute directly in the explicit user click callback');
-  assert(/использует ресурсы[\s\S]{0,100}твоего аккаунта/.test(signIn),
-    'the authorization card must explain the user-pays boundary honestly');
+  const stackAt = html.indexOf('<div class="send-stack">');
+  const sendAt = html.indexOf('id="sendBtn"', stackAt);
+  const agentAt = html.indexOf('id="tgAgent"', stackAt);
+  assert(stackAt >= 0 && sendAt > stackAt && agentAt > sendAt,
+    'the horizontal AGENT switch must sit directly below Send');
+  assert(/\.agent-switch\s*\{[^}]*background:rgba\(3,8,15,\.96\)/s.test(css));
+  assert(/\.agent-switch\.on\s*\{[^}]*rgba\(143,134,207,\.27\)/s.test(css),
+    'AGENT is dark off and keeps the previous violet accent on');
 
-  assert(/puter\.ai\.txt2img/.test(handoff));
-  assert(/model\s*:\s*String\(ev\.model\s*\|\|\s*['"]gpt-image-2['"]\)/.test(handoff));
-  assert(/quality\s*:\s*String\(ev\.quality\s*\|\|\s*['"]medium['"]\)/.test(handoff));
-  assert(/ratio\s*:\s*\{\s*w:[^}]*h:/.test(handoff));
-  assert(/api\(['"]\/api\/images\/complete['"]/.test(handoff));
-  assert(/\bid\s*:\s*ev\.id/.test(handoff));
+  const refresh = extractFunction(js, 'refreshState');
+  assert(/st\.running_tasks/.test(refresh) && /auto-running', running > 0/.test(refresh),
+    'AUTO shimmer is derived only from tasks actually running now');
+  assert(!/auto-running', active > 0/.test(refresh),
+    'queued or scheduled tasks must not animate AUTO');
+  assert(/\.nav-item\[data-view="auto"\]\.auto-running::after/.test(css) &&
+    /animation:autoNavFlow/.test(css));
+
   const events = extractFunction(js, 'handleEvent');
-  assert(/case 'image_request':[\s\S]*handleBrowserImageRequest\(ev,\s*ui\)/.test(events),
-    'SSE must dispatch browser generation immediately without blocking stream parsing');
+  assert(/ev\.name === 'remember'\) pulseNav\('memory', true\)/.test(events),
+    'successful memory writes get the stronger one-shot pulse');
+  assert(/case 'file':[\s\S]*pulseNav\('files', false\)/.test(events),
+    'actual file saves get the subtle one-shot pulse');
+  assert(/@keyframes fileSaveGlint/.test(css) && /@keyframes memorySaveGlint/.test(css));
+
+  assert(/case 'reply_ui':[\s\S]*mountUiPanels\(live\)[\s\S]*followGrowingPanel\(live, 900\)/.test(events),
+    'interactive controls must mount and grow-follow in the live SSE path');
+  const replies = extractFunction(js, 'showReplies');
+  assert(/followGrowingPanel\(box, 520 \+ items\.length \* 60\)/.test(replies),
+    'staggered next-request chips must use the same smooth growth-follow path');
+  const follow = extractFunction(js, 'followGrowingPanel');
+  assert(/wheel/.test(follow) && /touchstart/.test(follow),
+    'manual wheel or touch must cancel automatic follow immediately');
+
+  assert(/\.composer-wrap\s*\{[^}]*linear-gradient\(180deg,rgba\(4,7,13,0\) 0%/s.test(css),
+    'the composer boundary must fade gradually instead of covering text abruptly');
+  assert(/\.tool-card\.live::before\s*\{display:none\}/.test(css),
+    'tool animation must not tint the card background');
+  assert(/toolFrameFlow 1\.8s/.test(css) && /toolTextFlow 1\.8s/.test(css),
+    'tool border and text gradients must stay on one visible phase');
 }
 
 function testThinkingGradientContract() {
@@ -998,7 +1000,7 @@ function testThinkingGradientContract() {
   await testCameraLifecycleOwnershipAndLateResults();
   testLiveInteractivePanelMountsBeforeStreamSettlement();
   testInteractiveFenceReachesFrontendPanel();
-  testBrowserImageHandoffContract();
+  testRussianImageAndHudFollowupContract();
   testThinkingGradientContract();
   console.log('package28_frontend_runtime: 11 regression groups passed');
 })().catch((error) => {

@@ -125,12 +125,14 @@ DEFAULTS: Dict[str, Any] = {
         "refresh_minutes": 30,
     },
     "media": {
-        # GPT Image 2 запускается через Puter.js в браузере: developer key не
-        # нужен, пользователь один раз авторизует собственный user-pays аккаунт.
-        "image_provider": "puter",          # puter | off
-        # короткую просьбу превращаем в подробный английский промпт дешёвой
-        # моделью — именно от этого зависит, выглядит картинка «как из 2022-го»
-        # или как современная генерация
+        # Картинки создаёт официальный GigaChat API встроенной text2image
+        # (Kandinsky). Работает из России; в UI хранится единый Authorization Key.
+        "image_provider": "gigachat",       # gigachat | off
+        "gigachat_auth_key": "",
+        "gigachat_scope": "GIGACHAT_API_PERS",
+        "gigachat_model": "GigaChat",
+        # Короткую просьбу превращаем в точный художественный промпт дешёвой
+        # моделью; если она недоступна, генерация продолжится с исходным текстом.
         "enhance_prompt": True,
         # распознавание речи, когда у основного провайдера нет audio-модели
         "asr_base": "https://gen.pollinations.ai/v1/audio/transcriptions",
@@ -178,13 +180,14 @@ def _migrate(raw: Dict[str, Any]) -> Dict[str, Any]:
     tiers = raw.get("model_tiers")
     if isinstance(tiers, dict) and isinstance(tiers.get("audio"), list):
         tiers["audio"] = [m for m in tiers["audio"] if isinstance(m, str) and "/" in m]
-    # Legacy anonymous Pollinations теперь отдаёт только слабую sana и может
-    # ставить watermark. Любой прежний включённый provider мигрирует на
-    # browser-side Puter/GPT Image 2; только явное «off» сохраняем.
+    # Старые Pollinations/Puter больше не используются: anonymous image API
+    # деградировал, а Puter не принимает российский номер. Любой включённый
+    # legacy provider мигрирует на официальный GigaChat; явное «off» уважаем.
     media = raw.get("media")
     if isinstance(media, dict):
         media.pop("image_base", None)
         media.pop("image_model", None)
+        media.pop("puter", None)
         if media.get("image_provider") != "off":
             media["image_provider"] = DEFAULTS["media"]["image_provider"]
     return raw
@@ -212,10 +215,13 @@ class Config:
             # переменные окружения имеют приоритет (удобно для сервера)
             env_cloud = os.environ.get("CLOUDRU_API_KEY")
             env_ds = os.environ.get("DEEPSEEK_API_KEY")
+            env_gigachat = os.environ.get("GIGACHAT_AUTH_KEY")
             if env_cloud:
                 self._data["providers"]["cloudru"]["api_key"] = env_cloud
             if env_ds:
                 self._data["providers"]["deepseek"]["api_key"] = env_ds
+            if env_gigachat:
+                self._data["media"]["gigachat_auth_key"] = env_gigachat
             if os.environ.get("JARVIS_PORT"):
                 try:
                     self._data["server"]["port"] = int(os.environ["JARVIS_PORT"])
@@ -266,6 +272,13 @@ class Config:
             key = provider.get("api_key") or ""
             provider["api_key"] = (key[:6] + "…" + key[-4:]) if len(key) > 12 else ("" if not key else "…")
             provider["has_key"] = bool(self._data["providers"][name].get("api_key"))
+        media = data.get("media") or {}
+        image_key = str(media.get("gigachat_auth_key") or "")
+        media["gigachat_auth_key"] = (
+            image_key[:6] + "…" + image_key[-4:] if len(image_key) > 12
+            else ("…" if image_key else ""))
+        media["has_gigachat_key"] = bool(
+            self._data.get("media", {}).get("gigachat_auth_key"))
         token = data.get("telegram", {}).get("bot_token") or ""
         if token:
             data["telegram"]["bot_token"] = token[:8] + "…"
