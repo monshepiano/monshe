@@ -222,14 +222,15 @@ function miniEl(tag, cls, markup) {
 function testLiveStatusHasNoSpinner() {
   const timers = [];
   const q = { textContent: '', offsetWidth: 10, classList: { remove() {}, add() {} } };
+  const statusCaret = { style: {} };
   const box = {
     className: '', markup: '',
     set innerHTML(value) { this.markup = value; },
     get innerHTML() { return this.markup; },
-    querySelector(selector) { return selector === '.tw-quip' ? q : null; },
+    querySelector(selector) { return selector === '.tw-quip' ? q : statusCaret; },
   };
-  const ctx = loadFunctions(['runStatus'], {
-    Math,
+  const ctx = loadFunctions(['syncCursorPhase', 'runStatus'], {
+    Math, CURSOR_BREATHE_MS: 1050, performance: { now: () => 200 },
     stopQuips(ui) { ui.quipTimer = null; },
     setInterval(fn, ms) { timers.push({ fn, ms }); return timers.length; },
   });
@@ -297,7 +298,10 @@ function testTelegramDateHudAndTimeOnlyMeta() {
   assert.strictEqual(msg.dataset.day, ctx.dayKey(Number(visible.dataset.ts)));
 
   assert(/class="scroll-date"\s+id="scrollDate"/.test(html));
-  assert(/\.scroll-date\s*\{[^}]*position\s*:\s*absolute[^}]*opacity\s*:\s*0/s.test(css));
+  assert(/\.scroll-date\s*\{[^}]*position\s*:\s*absolute[^}]*top\s*:\s*24px[^}]*opacity\s*:\s*0/s.test(css),
+    'date stays fixed at the desktop transcript start while scrolling');
+  assert(/@media[^}]*[\s\S]*\.scroll-date\s*\{\s*top\s*:\s*16px/s.test(css),
+    'mobile date aligns with the mobile transcript start');
   assert(!/\.day-separator\s*\{/.test(css), 'per-message static calendar rows must be gone');
   assert(/\.msg-time\.two\.in-bubble\s*\{[^}]*display\s*:\s*flex/s.test(css),
     'legacy saved two-line stamps must remain readable');
@@ -325,18 +329,24 @@ function testFileViewportAndCloseButton() {
 }
 
 function testImportantHeadingCaretAndTrail() {
+  let cursorClock = 100;
   const ctx = loadFunctions(
-    ['importantLine', 'headingEndedSince', 'clearTypingDecorations', 'placeCaret'],
-    { document: miniDocument },
+    ['clearTypingDecorations', 'syncCursorPhase', 'placeCaret'],
+    {
+      document: miniDocument, CURSOR_BREATHE_MS: 1050,
+      performance: { now: () => (cursorClock += 20) },
+    },
   );
-  assert.strictEqual(ctx.importantLine('текст\n### Важное действие'), true);
-  assert.strictEqual(ctx.importantLine('текст\n- обычный пункт'), false);
-  assert.strictEqual(ctx.headingEndedSince('вступление\n## Заголовок\nтекст', 10), true);
-  assert.strictEqual(ctx.headingEndedSince('обычный текст\nпродолжение', 0), false);
-  assert(/const CPS_IMPORTANT\s*=\s*82/.test(js));
-  assert(/importantLine\(ui\.shown\)/.test(js), 'typer must select the heading-only rate');
-  assert(/headingEndedSince\(ui\.shown,\s*beforeLen\)/.test(js),
-    'only a completed markdown heading adds the deliberate pause');
+  assert(/const TYPE_MS\s*=\s*20/.test(js), 'DOM typing is capped at 50 renders per second');
+  assert(/const CPS_TALK\s*=\s*95/.test(js));
+  assert(!/CPS_IMPORTANT/.test(js), 'headings must not have a separate speed');
+  assert(!/function importantLine|function headingEndedSince/.test(js),
+    'headings must not add a hidden rate or pause branch');
+  const typer = extractFunction(js, 'typerStart');
+  assert(/let want\s*=\s*code\s*\?\s*CPS_CODE\s*:\s*CPS_TALK/.test(typer));
+  assert(!/heading|important/i.test(typer), 'typer must not inspect markdown headings');
+  assert(/performance\.now\(\)/.test(typer) && /CPS_SMOOTH_MS/.test(typer),
+    'elapsed-time CPS must survive delayed timer frames');
 
   const md = new MiniNode('div');
   const heading = new MiniNode('h2');
@@ -346,13 +356,18 @@ function testImportantHeadingCaretAndTrail() {
   ctx.placeCaret(md);
   assert.strictEqual(md.querySelectorAll('.caret').length, 1);
   assert(md.querySelector('.caret').classList.contains('caret-important'));
+  const firstCursorPhase = md.querySelector('.caret').style.animationDelay;
+  assert(/^-[\d.]+ms$/.test(firstCursorPhase),
+    'a recreated markdown caret must rejoin the global animation phase');
   assert.strictEqual(md.querySelectorAll('.important-trail').length, 1);
-  assert.strictEqual(Array.from(md.querySelector('.important-trail').textContent).length, 6,
-    'trail must be bounded by six Unicode characters');
+  assert.strictEqual(Array.from(md.querySelector('.important-trail').textContent).length, 12,
+    'trail must be bounded by twelve Unicode characters');
   assert.strictEqual(heading.textContent, original, 'decorations must not change visible heading text');
 
   ctx.placeCaret(md);
   assert.strictEqual(md.querySelectorAll('.caret').length, 1, 'each tick owns exactly one caret');
+  assert.notStrictEqual(md.querySelector('.caret').style.animationDelay, firstCursorPhase,
+    'DOM replacement must advance rather than restart the cursor breath');
   assert.strictEqual(md.querySelectorAll('.important-trail').length, 1, 'trail nodes must not accumulate');
   assert.strictEqual(heading.textContent, original);
   ctx.clearTypingDecorations(md);
@@ -367,16 +382,20 @@ function testImportantHeadingCaretAndTrail() {
   ctx.placeCaret(plain);
   assert(!plain.querySelector('.caret').classList.contains('caret-important'));
   assert.strictEqual(plain.querySelector('.important-trail'), null);
-  assert.strictEqual(Array.from(plain.querySelector('.normal-trail').textContent).length, 6,
-    'ordinary typing has the same bounded six-character blue trail');
+  assert.strictEqual(Array.from(plain.querySelector('.normal-trail').textContent).length, 12,
+    'ordinary typing has the same bounded twelve-character blue trail');
   ctx.placeCaret(plain, true);
   assert(plain.querySelector('.caret').classList.contains('caret-important'),
     'a real action can enter important mode without changing typer speed');
   assert(plain.querySelector('.important-trail'));
   assert(/\.caret\s*\{[^}]*#00bff3[^}]*box-shadow/s.test(css), 'normal cursor is visibly bright blue');
   assert(/\.caret\.caret-important\s*\{[^}]*#ffc83d[^}]*box-shadow/s.test(css));
-  assert(/\.normal-trail\s*\{[^}]*linear-gradient[^}]*text-shadow/s.test(css));
-  assert(/\.important-trail\s*\{[^}]*linear-gradient[^}]*text-shadow/s.test(css));
+  assert(/\.normal-trail\s*\{[^}]*linear-gradient\(90deg,#8fbbcf[^}]*#65e7ff[^}]*#f2feff[^}]*text-shadow/s.test(css));
+  assert(/\.important-trail\s*\{[^}]*linear-gradient\(90deg,#8fbbcf[^}]*#82e7f4[^}]*#ffe477[^}]*#fffde3[^}]*text-shadow/s.test(css),
+    'gold trail must progress from ordinary blue through cyan to near-cursor gold');
+  assert(/\.caret\s*\{[^}]*animation\s*:\s*cursorBreathe[^}]*\}/s.test(css));
+  assert(!/@keyframes (?:spark|twBlink)[^{]*\{[^}]*box-shadow/s.test(css),
+    'cursor animation must stay on compositor opacity/transform');
   const events = extractFunction(js, 'handleEvent');
   ['plan', 'tool_start', 'approval_wait', 'question', 'file'].forEach((type) => {
     const at = events.indexOf("case '" + type + "'");
@@ -386,6 +405,11 @@ function testImportantHeadingCaretAndTrail() {
   const question = extractFunction(js, 'questionCard');
   assert(/ask-own/.test(question) && /Свой вариант/.test(question),
     'blocking ask_user controls must offer the same custom answer escape hatch');
+  const panels = extractFunction(js, 'mountUiPanels');
+  assert(/hasFreeEntry/.test(panels) && /askable\s*&&\s*!hasFreeEntry/.test(panels),
+    'a free-text fallback control must not render a duplicate custom-answer field');
+  assert(/go\.disabled\s*=\s*!ready\(\)/.test(panels),
+    'empty fallback text cannot be submitted accidentally');
 }
 
 function makePlanItem(text) {
@@ -408,10 +432,13 @@ function testPlanTypingCompletionAndDockRaces() {
   const clearFake = (id) => { intervals.delete(id); cancelled.add(id); };
   const setTimeoutFake = (fn, ms) => { const id = nextTimer++; timeouts.push({ id, fn, ms }); return id; };
   const S = { streamRun: 28 };
+  let clock = 0;
   const ctx = loadFunctions(
-    ['clearPlanTimers', 'finishPlanItems', 'typePlanItem', 'undockPlan'],
+    ['clearPlanTimers', 'finishPlanItems', 'syncCursorPhase', 'typePlanItem', 'undockPlan'],
     {
-      S, PLAN_CHAR_MS: 26, document: miniDocument, el: miniEl,
+      S, PLAN_FRAME_MS: 20, CPS_TALK: 95, CURSOR_BREATHE_MS: 1050,
+      performance: { now() { clock += 20; return clock; } },
+      document: miniDocument, el: miniEl,
       setInterval: setIntervalFake, clearInterval: clearFake,
       setTimeout: setTimeoutFake, clearTimeout: clearFake,
       $$: (selector, node) => node ? node.querySelectorAll(selector) : [],
@@ -481,6 +508,10 @@ function testPlanTypingCompletionAndDockRaces() {
   dockRemove.fn();
   assert.strictEqual(dock.isConnected, false, 'flying plan must disappear completely after 2 seconds');
 
+  assert(/const PLAN_FRAME_MS\s*=\s*20/.test(js));
+  assert(/carry\s*\+=\s*CPS_TALK\s*\*\s*elapsed\s*\/\s*1000/.test(extractFunction(js, 'typePlanItem')),
+    'plan items must use the exact conversational CPS');
+  assert(/at\s*-\s*12/.test(extractFunction(js, 'typePlanItem')));
   assert(/const PLAN_ITEM_PAUSE\s*=\s*760/.test(js));
   assert(/const PLAN_LOOK_MS\s*=\s*1200/.test(js));
   assert(!/\.pd-s\.now::after\s*\{/.test(css), 'current dock step must have no underline pseudo-element');
@@ -743,11 +774,21 @@ function testThinkingGradientContract() {
   const rule = css.match(/\.think-card\.live \.think-stream::after\s*\{([^}]*)\}/s);
   assert(rule, 'live thinking must have one moving overlay');
   const opacity = Number((rule[1].match(/opacity\s*:\s*([\d.]+)/) || [])[1]);
-  assert(opacity >= 0.6, 'thinking gradient must be visibly brighter than the former .14 haze');
-  assert(/rgba\(92,245,255,\.6\)/.test(rule[1]));
-  assert(/rgba\(190,146,255,\.72\)/.test(rule[1]));
-  assert(/animation\s*:\s*thinkNeon/.test(rule[1]));
-  assert(/@keyframes thinkNeon/.test(css));
+  assert(opacity >= 0.3 && opacity <= 0.5,
+    'thinking gradient stays visible but dimmer than the previous .68 haze');
+  assert(/rgba\(92,229,255,\.34\)/.test(rule[1]));
+  assert(/rgba\(177,139,255,\.38\)/.test(rule[1]));
+  assert(/will-change\s*:\s*transform,opacity/.test(rule[1]));
+  assert(/animation\s*:\s*thinkNeon\s+4\.8s/.test(rule[1]));
+  assert(/@keyframes thinkNeon\s*\{to\s*\{transform\s*:\s*translate3d/s.test(css));
+  const liveBar = css.match(/\.panel-card\.live \.card-head::after\s*\{([^}]*)\}/s);
+  assert(liveBar && /will-change\s*:\s*transform/.test(liveBar[1]));
+  const executableCss = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert(!/background-position\s*:/.test(executableCss),
+    'no animated gradient may trigger background repaint frames');
+  assert(!/stShimmer/.test(css), 'status text must not repaint a clipped gradient forever');
+  assert(/function runStatus[\s\S]*q\.animate\(\[/.test(js),
+    'status phrase transition uses compositor Web Animations instead of forced layout');
   assert(!/\.think-stream::(?:before|after)[^{]*\{[^}]*caret/s.test(css),
     'thinking stays a masked scrolling stream, not a cursor animation');
 }

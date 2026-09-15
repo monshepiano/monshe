@@ -50,7 +50,10 @@ PROACTIVE_UI_CONTRACT = """КОНТРАКТ ЭТОГО ХОДА — ЖИВОЙ �
 tiles Стиль: вариант 1 | вариант 2 | вариант 3
 ```
 
-Интерфейс сам добавит «Свой вариант» и отправку. Не добавляй button
+Если честные конечные варианты перечислить нельзя, но тебе нужен ответ человека,
+используй `text Твой ответ = Напиши свой вариант` или `area Детали = Можно
+подробно`. НЕЛЬЗЯ заканчивать ход одним текстовым вопросом. Интерфейс сам
+добавит «Свой вариант» к конечному списку и отправку. Не добавляй button
 «Сгенерировать», «Отправить» или «Поехали». Если пользователь уже задал все
 существенные параметры — сразу выполняй просьбу без панели. НЕ показывай ui для
 фактического вопроса, сводки новостей/погоды, отчёта о уже выполненном действии
@@ -109,6 +112,90 @@ def has_choice_ui(text: str) -> bool:
     тексте после пустого ```ui блока не должна случайно открыть gate.
     """
     return any("|" in match.group(1) for match in _UI_FENCE.finditer(str(text or "")))
+
+
+_UI_CONTROL = re.compile(
+    r"^\s*(?:tiles|multi|rank|slider|number|rate|toggle|text|area|date|color|button)\s+\S",
+    re.IGNORECASE | re.MULTILINE,
+)
+_REPLY_IMPERATIVE = re.compile(
+    r"(?:^|\n)\s*(?:уточни(?:те)?|выбери(?:те)?|подскажи(?:те)?|ответь(?:те)?|"
+    r"напиши(?:те)?|укажи(?:те)?)\b",
+    re.IGNORECASE,
+)
+
+
+def has_interactive_ui(text: str) -> bool:
+    """Есть ли внутри ui-fence хотя бы один реально поддерживаемый control."""
+    return any(_UI_CONTROL.search(match.group(1))
+               for match in _UI_FENCE.finditer(str(text or "")))
+
+
+def needs_reply_ui(text: str) -> bool:
+    """Короткий ответ модели на самом деле просит реплику пользователя.
+
+    Это закрытый structural gate, а не список тематик: короткая реплика
+    заканчивается вопросом/прямой просьбой уточнить. Длинный готовый ответ с
+    риторическим «хочешь ещё?» не превращаем в навязчивую панель — особенно у
+    сводок, где выбора для выполнения исходной задачи уже не требовалось.
+    """
+    raw = str(text or "").strip()
+    if not raw or len(raw) > 700:
+        return False
+    prose = _UI_FENCE.sub("", raw).strip()
+    if not prose:
+        # Модель уже вернула только controls — это и есть ожидание ответа.
+        return has_interactive_ui(raw)
+    lines = [line.strip() for line in prose.splitlines() if line.strip()]
+    if not lines:
+        return False
+    tail = lines[-6:]
+    is_option = lambda line: bool(re.match(r"^(?:[-*•]|\d+[.)])\s+", line))
+    # Вопрос считается обращённым к пользователю, только если после него нет
+    # готового ответа — допустимы лишь перечисленные варианты. Так список
+    # «10 вопросов для собеседования» не превратится в ложное уточнение.
+    for index, line in enumerate(tail):
+        direct_question = line.rstrip().endswith("?") and not is_option(line)
+        direct_request = bool(_REPLY_IMPERATIVE.search(line)) and not is_option(line)
+        if (direct_question or direct_request) and all(is_option(x) for x in tail[index + 1:]):
+            return True
+    return False
+
+
+def reply_ui_fallback(text: str = "") -> str:
+    """Превратить забытый моделью текстовый вопрос в рабочий control.
+
+    Если модель уже перечислила варианты списком, сохраняем их как плитки.
+    Иначе показываем одно поле ввода: выдумывать варианты за пользователя хуже,
+    чем дать честный свободный ответ. Это не второй LLM-вызов и не задержка.
+    """
+    options: List[str] = []
+    question = ""
+    lines = str(text or "").splitlines()
+    anchor = -1
+    for index, raw in enumerate(lines):
+        line = re.sub(r"[*_`]", "", raw).strip()
+        if ((line.endswith("?") or _REPLY_IMPERATIVE.search(line))
+                and len(line) <= 120):
+            anchor = index
+            question = line.rstrip("?:").replace(":", " —")
+    # Вариантами считаем только список ПОСЛЕ последнего прямого вопроса. Иначе
+    # пункты уже готового объяснения перед «какой дедлайн?» стали бы ложными
+    # плитками дедлайна.
+    for raw in lines[anchor + 1:]:
+        match = re.match(r"^\s*(?:[-*•]|\d+[.)])\s+(.+?)\s*$", raw)
+        if not match:
+            continue
+        item = re.sub(r"[*_`]", "", match.group(1)).strip().rstrip(".;")
+        item = item.replace("|", "/")
+        if 2 <= len(item) <= 64 and item not in options:
+            options.append(item)
+        if len(options) == 4:
+            break
+    if len(options) >= 2:
+        label = question or "Выбери вариант"
+        return "```ui\ntiles %s: %s\n```" % (label, " | ".join(options))
+    return "```ui\ntext Твой ответ = Напиши свой вариант\n```"
 
 
 def contextual_choice_fallback(text: str = "") -> str:
@@ -228,7 +315,9 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) ->
    сейчас выбрать за пользователя что-то, что он мог бы выбрать сам?
    Любая просьба «сделай/напиши/собери X» часто имеет несколько
    равноправных решений — размер, сложность, стиль, оформление, набор
-   возможностей. Не выбирай молча и не спрашивай словами: покажи блок ui.
+   возможностей. Не выбирай молча и не спрашивай только словами: покажи блок
+   ui. Если вариантов нет, но ответ человека всё равно нужен, используй text
+   или area. Обычный текстовый вопрос без control не завершает такой ход.
    Если без выбора получится существенно другой результат, сначала дождись
    ответа пользователя и только потом создавай; не запускай генератор заранее.
    Пример: просят игру — дай выбрать размер поля, скорость, оформление.
@@ -951,6 +1040,28 @@ class Agent:
                         "реальные детали кадра. Затем остановись и дождись выбора."),
                 })
                 continue
+
+            # ОБЩИЙ HARD GATE ДЛЯ УТОЧНЕНИЙ. Prompt помогает модели выбрать
+            # хороший control, но больше не является единственной защитой. Если
+            # короткий ответ фактически просит реплику пользователя, обычный
+            # текстовый вопрос дополняется рабочим ui-fence детерминированно.
+            # В AGENT это также немедленно завершает run: нельзя продолжать план,
+            # сделав вид, будто вопрос уже получил ответ.
+            if needs_reply_ui(text_piece):
+                if not has_interactive_ui(text_piece):
+                    panel = reply_ui_fallback(text_piece)
+                    addition = ("\n\n" if text_piece.strip() else "") + panel
+                    text_piece += addition
+                    if gate_open:
+                        yield {"type": "delta", "text": addition}
+                    else:
+                        yield {"type": "delta", "text": text_piece}
+                        gate_open = True
+                elif not gate_open:
+                    yield {"type": "delta", "text": text_piece}
+                    gate_open = True
+                final_text = text_piece
+                break
 
             # шлюз так и не открылся, а вызовов нет — показываем придержанный текст
             if not gate_open and text_piece and not tool_calls:

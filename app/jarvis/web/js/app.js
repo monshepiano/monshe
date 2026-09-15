@@ -1520,10 +1520,20 @@ function dropStrayDocks(keep) {
    таймеры храним у конкретного ui-прогона: новый план, остановка или быстрый
    ответ не должны оставлять старый setTimeout, который через секунду внезапно
    поднимет уже неактуальную карточку наверх. */
-const PLAN_CHAR_MS = 26;        // важные действия печатаются чуть медленнее ответа
-const PLAN_ITEM_PAUSE = 760;    // заметная пауза: пункт успевают прочитать
+const PLAN_FRAME_MS = 20;       // лёгкий кадровый цикл; темп берётся из CPS_TALK
+const PLAN_ITEM_PAUSE = 760;    // пауза только МЕЖДУ пунктами, чтобы план прочитали
 const PLAN_LOOK_MS = 1200;      // время спокойно оценить готовый план
 const PLAN_FLY_MS = 980;        // совпадает с transition .plan-dock.fly в CSS
+const CURSOR_BREATHE_MS = 1050; // совпадает с cursorBreathe в CSS
+
+/* Markdown-рендер пересобирает caret вместе с HTML ответа. Без общей фазы его
+   CSS animation начиналась заново каждые 20 ms и фактически всегда стояла на
+   первом кадре — именно поэтому «анимация курсора» визуально не работала.
+   Отрицательная задержка возвращает новый DOM-узел в непрерывную фазу часов. */
+function syncCursorPhase(node) {
+  if (!node) return;
+  node.style.animationDelay = '-' + (performance.now() % CURSOR_BREATHE_MS) + 'ms';
+}
 
 function clearPlanTimers(ui) {
   (ui.planTimers || []).forEach((t) => clearTimeout(t));
@@ -1539,9 +1549,10 @@ function planLater(ui, fn, ms) {
   return t;
 }
 
-/* Важный пункт плана набирается отдельным спокойным темпом. На каждом такте
-   меняются только два уже существующих text node/span: след всегда ограничен
-   шестью последними символами и не плодит DOM-узлы по мере роста строки. */
+/* Пункт плана печатается с тем же разговорным CPS, что и ответ. Таймер может
+   опоздать под нагрузкой, поэтому считаем символы по ПРОШЕДШЕМУ времени, а не
+   «по одной букве за tick». На каждом кадре меняются только два существующих
+   text node/span; мягкий след ограничен 12 последними символами и не плодит DOM. */
 function typePlanItem(ui, li, done) {
   const host = li && li.querySelector('.plan-copy');
   const chars = Array.from((li && li._planText) || '');
@@ -1550,18 +1561,30 @@ function typePlanItem(ui, li, done) {
   const lead = document.createTextNode('');
   const trail = el('span', 'important-trail');
   const caret = el('i', 'important-caret');
+  syncCursorPhase(caret);
   host.appendChild(lead);
   host.appendChild(trail);
   host.appendChild(caret);
   let at = 0;
+  let carry = 0;
+  let last = performance.now();
   const timer = setInterval(() => {
     if (!li.isConnected || ui.runId !== S.streamRun) {
       clearInterval(timer);
       ui.planTimers = (ui.planTimers || []).filter((x) => x !== timer);
       return;
     }
-    at = Math.min(chars.length, at + 1);
-    const cut = Math.max(0, at - 6);
+    const now = performance.now();
+    // Покрываем обычные Safari stalls целиком; верхняя граница защищает лишь
+    // от огромного скачка после возврата к давно скрытой вкладке.
+    const elapsed = Math.max(1, Math.min(250, now - last));
+    last = now;
+    carry += CPS_TALK * elapsed / 1000;
+    const step = Math.floor(carry);
+    if (step < 1) return;
+    carry -= step;
+    at = Math.min(chars.length, at + step);
+    const cut = Math.max(0, at - 12);
     lead.nodeValue = chars.slice(0, cut).join('');
     trail.textContent = chars.slice(cut, at).join('');
     if (at < chars.length) return;
@@ -1572,7 +1595,7 @@ function typePlanItem(ui, li, done) {
     lead.nodeValue = chars.join('');
     trail.textContent = '';
     if (done) done();
-  }, PLAN_CHAR_MS);
+  }, PLAN_FRAME_MS);
   (ui.planTimers || (ui.planTimers = [])).push(timer);
 }
 
@@ -2011,6 +2034,7 @@ function mountUiPanels(root) {
     const hasAnalog = items.some((x) => ANALOG[x.t]);
     let touched = false;
     let sendTimer = null;
+    let go = null;
 
     let ownVal = '';                       // «свой вариант» — вне списка items
     const summary = () => items.filter((x) => x.t !== 'button').map((x) => {
@@ -2023,7 +2047,7 @@ function mountUiPanels(root) {
     }).concat(ownVal.trim() ? ['Свой вариант: ' + ownVal.trim()] : []);
 
     const fire = () => {
-      if (box.dataset.sent === '1') return;
+      if (box.dataset.sent === '1' || (!ready() && !ownVal.trim())) return;
       box.dataset.sent = '1';
       clearTimeout(sendTimer);
       box.classList.remove('ui-arm');
@@ -2033,7 +2057,11 @@ function mountUiPanels(root) {
       sfx('send');
     };
 
-    const ready = () => items.every((x) => x.t !== 'tiles' || x.val != null);
+    const ready = () => items.every((x) => {
+      if (x.t === 'tiles') return x.val != null;
+      if (x.t === 'text' || x.t === 'area') return String(x.val || '').trim().length > 0;
+      return true;
+    });
     // Без аналоговых органов выбор уходит сам — подтверждать нечего.
     const armSend = () => {
       if (hasAnalog || !touched || box.dataset.sent === '1') return;
@@ -2094,7 +2122,10 @@ function mountUiPanels(root) {
         const inp = el('input', 'ui-text');
         inp.type = 'text'; inp.value = it.val || '';
         inp.placeholder = it.hint || 'впиши ответ…';
-        inp.addEventListener('input', () => { it.val = inp.value; touched = true; });
+        inp.addEventListener('input', () => {
+          it.val = inp.value; touched = true;
+          if (go) go.disabled = !ready();
+        });
         inp.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') { e.preventDefault(); if (touched) fire(); }
         });
@@ -2106,7 +2137,10 @@ function mountUiPanels(root) {
         const ta = el('textarea', 'ui-area');
         ta.rows = 3;
         ta.placeholder = it.hint || 'можно подробно…';
-        ta.addEventListener('input', () => { it.val = ta.value; touched = true; });
+        ta.addEventListener('input', () => {
+          it.val = ta.value; touched = true;
+          if (go) go.disabled = !ready();
+        });
         row.appendChild(ta);
 
       } else if (it.t === 'date') {
@@ -2239,8 +2273,11 @@ function mountUiPanels(root) {
     // Поэтому в конце всегда есть строка, куда можно вписать своё.
     // Панелям из одних кнопок-действий она не нужна — там нечего отвечать.
     const askable = items.some((x) => x.t !== 'button');
+    // text/area уже И ЕСТЬ свободный «свой вариант»; второе одинаковое поле
+    // только путало бы человека в deterministic fallback-вопросах.
+    const hasFreeEntry = items.some((x) => x.t === 'text' || x.t === 'area');
     let own = null;
-    if (askable) {
+    if (askable && !hasFreeEntry) {
       const row = el('div', 'ui-row ui-own');
       row.style.animationDelay = (items.length * 55) + 'ms';
       row.innerHTML = '<div class="ui-lab"><span>Свой вариант</span></div>';
@@ -2253,9 +2290,9 @@ function mountUiPanels(root) {
 
     // Кнопка нужна ТОЛЬКО когда есть что докручивать. Выглядит и ведёт себя
     // как кнопка отправки под полем ввода — та же стрелка, тот же смысл.
-    let go = null;
     if (askable) {
       go = el('button', 'ui-go', ICO.send + '<span>Отправить</span>');
+      go.disabled = !ready();
       go.addEventListener('click', fire);
       // Плиткам кнопка не нужна: выбор уходит сам. Но как только человек начал
       // писать свой вариант, автоотправку надо отменить и дать ему кнопку —
@@ -2269,7 +2306,10 @@ function mountUiPanels(root) {
         touched = true;
         clearTimeout(sendTimer);
         box.classList.remove('ui-arm');
-        if (go) go.classList.toggle('ui-go-off', hasAnalog ? false : !ownVal.trim());
+        if (go) {
+          go.disabled = !ready() && !ownVal.trim();
+          go.classList.toggle('ui-go-off', hasAnalog ? false : !ownVal.trim());
+        }
       });
       own.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); if (touched) fire(); }
@@ -2633,10 +2673,19 @@ function runStatus(ui, lines, opts) {
   stopQuips(ui);
   box.className = 'thinking-line ' + (o.caret ? 'think-wait' : 'work-wait');
   box.innerHTML = '<span class="tw-caret"></span><span class="tw-quip"></span>';
+  syncCursorPhase(box.querySelector('.tw-caret'));
   const q = box.querySelector('.tw-quip');
   const swap = (txt) => {
-    q.classList.remove('in'); void q.offsetWidth;
-    q.textContent = txt; q.classList.add('in');
+    q.textContent = txt;
+    // Не трогаем offsetWidth для перезапуска CSS: это синхронный layout в
+    // момент «Готово». Web Animations двигает только opacity/transform.
+    if (q.animate) {
+      q.getAnimations().forEach((a) => a.cancel());
+      q.animate([
+        { opacity: .5, transform: 'translate3d(-5px,0,0)' },
+        { opacity: 1, transform: 'translate3d(0,0,0)' },
+      ], { duration: 260, easing: 'cubic-bezier(.2,.8,.3,1)' });
+    }
   };
   swap(list[0]);
   if (list.length < 2) return;   // одна строка — крутить нечего, но блик бежит
@@ -2809,7 +2858,7 @@ function showError(ui, msg) {
    технические простыни читать «на лету» никто не будет: их выдаём быстро,
    чтобы не заставлять ждать. Раньше единственным критерием было отставание,
    поэтому длинный ответ всегда «улетал» — вместе с ним пропадал и курсор. */
-const TYPE_MS = 11;              // такт печати
+const TYPE_MS = 20;              // не чаще 50 DOM-render/с: кадры остаются анимациям
 /* ПОЧЕМУ ЗДЕСЬ СКОРОСТИ В ЗНАКАХ/СЕК, А НЕ «ЗНАКОВ ЗА ТАКТ».
    Раньше шаг был целым числом за такт: 1 в разговоре, 2 после 900 знаков,
    4 после 2000, 13 в коде. Целый шаг — это лестница: минимальная добавка
@@ -2819,13 +2868,12 @@ const TYPE_MS = 11;              // такт печати
    то невероятно быстро» — не два неверных числа, а сама лестница.
    Теперь скорость задаётся в знаках в секунду, накапливается дробно и
    сглаживается, поэтому переходы не видны, а темп ровный. */
-const CPS_TALK = 95;             // разговор: его читают на ходу
-const CPS_IMPORTANT = 82;        // только заголовок — слегка медленнее, без вязкости
+const CPS_TALK = 95;             // весь разговор, включая markdown-заголовки
 const CPS_CODE = 400;            // код и таблицы: ровная средняя, без выстрелов
 /* 400 зн/с вместо прежних 1180. Прежнее «быстро» осушало буфер быстрее, чем
    модель успевала присылать, — печать выстреливала пачкой и замирала в
    ожидании следующего куска. Пачка-пауза-пачка и читается как рывки. */
-const CPS_SMOOTH = 0.10;         // доля сближения с целью за такт (~250 мс на переход)
+const CPS_SMOOTH_MS = 240;       // одинаковое сглаживание при любом кадровом такте
 
 function typeInto(ui, chunk) {
   ui.buffer += chunk;
@@ -2833,11 +2881,11 @@ function typeInto(ui, chunk) {
   typerStart(ui);
 }
 
-/* B. Печать с характером: на знаках препинания печать на миг замирает, как
-   будто собеседник переводит дыхание. Паузы стали отчётливее — это те самые
-   микроостановки, которые делают печать живой (в отличие от подвисания
-   анимации, которое просто раздражает). */
-const PAUSE_AFTER = { '.': 9, '!': 9, '?': 9, ',': 4, ';': 5, ':': 5, '\n': 6, '—': 4 };
+/* B. Печать с характером: паузы заданы в миллисекундах, а не в ticks.
+   Поэтому облегчение кадрового цикла не меняет темп и не создаёт новую
+   «медленную» ветку. Заголовки получают ровно те же паузы, что обычный текст. */
+const PAUSE_AFTER = { '.': 100, '!': 100, '?': 100, ',': 45, ';': 55,
+                      ':': 55, '\n': 65, '—': 45 };
 
 /* Внутри блока кода? Считаем незакрытые ``` в уже показанном тексте.
    Источник истины — сам текст, а не догадка по длине. */
@@ -2854,23 +2902,8 @@ function fastLine(text) {
   return line.startsWith('|') || line.startsWith('    ');
 }
 
-/* Закрытый класс «важного текста»: markdown-заголовки. Действия плана идут
-   своим typePlanItem, а обычные списки не замедляем — иначе длинный ответ
-   снова проваливался бы в медленный режим. */
-function importantLine(text) {
-  const nl = text.lastIndexOf('\n');
-  return /^#{1,4}\s/.test(text.slice(nl + 1));
-}
-
-function headingEndedSince(text, from) {
-  let end = text.indexOf('\n', Math.max(0, Number(from) || 0));
-  while (end >= 0) {
-    const start = text.lastIndexOf('\n', end - 1) + 1;
-    if (/^#{1,4}\s+\S/.test(text.slice(start, end))) return true;
-    end = text.indexOf('\n', end + 1);
-  }
-  return false;
-}
+/* У заголовков больше нет отдельного класса скорости: markdown влияет только
+   на оформление. Для печати это тот же разговорный текст с тем же CPS. */
 
 /* Инкрементальный рендер печати. Раньше каждый такт (70 раз в секунду)
    перестраивался markdown ВСЕГО ответа: на длинном тексте это O(n²) работы
@@ -2914,17 +2947,25 @@ function renderTyped(ui) {
   // автопрокрутка возвращает её обратно. Отсюда качели.
   // Лечение: во время печати ответ не имеет права становиться ниже, чем
   // только что был. Растёт — пожалуйста, это естественно.
-  const before = ui.mdEl.offsetHeight;
+  // Высоту читаем редко. offsetHeight сразу после innerHTML принудительно
+  // запускает layout; два таких чтения на каждом кадре и отнимали кадры у
+  // cursor/gradient. Раз в 100 мс достаточно, чтобы пресечь markdown-качели.
+  const now = performance.now();
+  const measure = now - (ui.lastHeightCheck || 0) >= 100;
+  const before = measure ? ui.mdEl.offsetHeight : 0;
   ui.mdEl.innerHTML = html + MD.render(stripSteps(text.slice(src.length)));
   placeCaret(ui.mdEl, ui.actionAccent);
-  const after = ui.mdEl.offsetHeight;
-  if (after < before) {
-    ui.floor = Math.max(ui.floor || 0, before);
-    ui.mdEl.style.minHeight = ui.floor + 'px';
-  } else if (ui.floor && after > ui.floor) {
-    // ответ перерос прежний пол — подпорка больше не нужна
-    ui.floor = 0;
-    ui.mdEl.style.minHeight = '';
+  if (measure) {
+    ui.lastHeightCheck = now;
+    const after = ui.mdEl.offsetHeight;
+    if (after < before) {
+      ui.floor = Math.max(ui.floor || 0, before);
+      ui.mdEl.style.minHeight = ui.floor + 'px';
+    } else if (ui.floor && after > ui.floor) {
+      // ответ перерос прежний пол — подпорка больше не нужна
+      ui.floor = 0;
+      ui.mdEl.style.minHeight = '';
+    }
   }
 }
 
@@ -2976,10 +3017,9 @@ function placeCaret(mdEl, actionAccent) {
   const c = document.createElement('span');
   c.className = 'caret';
 
-  // Два закрытых визуальных режима. Обычный ответ всегда получает яркую синюю
-  // искру и один bounded span последних шести букв. Золотой режим включают
-  // markdown-заголовок ИЛИ факт реального действия (tool_start) — не список
-  // фраз/тем. Цвет не влияет на скорость: typer замедляет только heading line.
+  // Два закрытых визуальных режима. Обычный ответ получает яркую синюю искру
+  // и bounded span последних 12 букв. Золотой режим включают markdown-заголовок
+  // или факт реального действия. Цвет и heading НИКОГДА не влияют на скорость.
   let p = host;
   let important = !!actionAccent;
   while (p && p !== mdEl) {
@@ -2989,7 +3029,7 @@ function placeCaret(mdEl, actionAccent) {
   const tail = host.lastChild;
   if (tail && tail.nodeType === 3 && tail.nodeValue) {
     const chars = Array.from(tail.nodeValue);
-    const cut = Math.max(0, chars.length - 6);
+    const cut = Math.max(0, chars.length - 12);
     tail.nodeValue = chars.slice(0, cut).join('');
     const trail = document.createElement('span');
     trail.className = 'typing-trail ' + (important ? 'important-trail' : 'normal-trail');
@@ -2997,6 +3037,7 @@ function placeCaret(mdEl, actionAccent) {
     host.appendChild(trail);
   }
   if (important) c.classList.add('caret-important');
+  syncCursorPhase(c);
   host.appendChild(c);
 }
 
@@ -3013,9 +3054,16 @@ function scrollSoon(ui) {
 
 function typerStart(ui) {
   if (ui.typer) return;
-  ui.hold = 0;
+  ui.holdUntil = 0;
   ui.acc = ui.acc || 0;
+  let lastTick = performance.now();
   ui.typer = setInterval(() => {
+    const now = performance.now();
+    // Не теряем время на обычном 100–200 ms stall: иначе визуальная каретка
+    // честно анимируется, но сам текст необъяснимо отстаёт. Ограничиваем только
+    // гигантский рывок после возвращения к давно скрытой вкладке.
+    const elapsed = Math.max(1, Math.min(250, now - lastTick));
+    lastTick = now;
     const left = ui.buffer.length - ui.shown.length;
     if (left <= 0) {
       clearInterval(ui.typer); ui.typer = null;
@@ -3023,42 +3071,42 @@ function typerStart(ui) {
       if (ui.onTyped) { const cb = ui.onTyped; ui.onTyped = null; cb(); }
       return;
     }
-    if (ui.hold > 0) { ui.hold--; return; }
+    if (now < (ui.holdUntil || 0)) return;
 
     const code = inCodeBlock(ui.shown) || fastLine(ui.shown);
-    const important = !code && importantLine(ui.shown);
-    // Цель по темпу. Отставание подмешивается плавной добавкой, а не
-    // ступенькой по порогу: чем больше не показано, тем быстрее идём, но без
-    // единого скачка. Потолок не даёт обогнать автопрокрутку.
-    let want = code ? CPS_CODE : (important ? CPS_IMPORTANT : CPS_TALK);
+    // Markdown-заголовок здесь намеренно не проверяется: у него тот же CPS,
+    // что у любого разговорного текста. Быстрая ветка остаётся только у кода.
+    let want = code ? CPS_CODE : CPS_TALK;
     want *= 1 + Math.min(left / 1800, 1.2);
     if (want > 620) want = 620;
-    // Сглаживание: к новой цели подходим за ~четверть секунды. Именно оно
-    // убирает мгновенное переключение режима на границе блока кода.
+    // Сглаживание привязано ко времени, а не к количеству ticks: если браузер
+    // пропустил кадр, скорость не «залипает» и не прыгает.
     if (ui.cps == null) ui.cps = want;
-    ui.cps += (want - ui.cps) * CPS_SMOOTH;
+    const blend = 1 - Math.exp(-elapsed / CPS_SMOOTH_MS);
+    ui.cps += (want - ui.cps) * blend;
 
-    // Дробное накопление: при 95 зн/с честный шаг — 1.05 знака за такт.
-    // Округлять его каждый раз до целого значит либо ползти, либо частить,
-    // поэтому остаток переносим на следующий такт.
-    ui.acc = (ui.acc || 0) + (ui.cps * TYPE_MS) / 1000;
+    ui.acc = (ui.acc || 0) + (ui.cps * elapsed) / 1000;
     let step = Math.floor(ui.acc);
-    ui.acc -= step;
     if (step < 1) return;
+    step = Math.min(step, left);
 
-    const beforeLen = ui.shown.length;
+    // Не перепрыгиваем через знак препинания пачкой: заканчиваем этот render
+    // прямо на нём, а остаток времени переносим на следующий кадр.
+    if (!code) {
+      const piece = ui.buffer.slice(ui.shown.length, ui.shown.length + step);
+      for (let i = 0; i < piece.length; i++) {
+        if (PAUSE_AFTER[piece[i]]) { step = i + 1; break; }
+      }
+    }
+    ui.acc = Math.max(0, ui.acc - step);
     ui.shown = ui.buffer.slice(0, ui.shown.length + step);
     if (ui.mdEl) {
       ui.mdEl.classList.add('typing');
       renderTyped(ui);
     }
-    // Жёлтый action-текст идёт с обычной скоростью. Чуть более долгая
-    // читаемая пауза допустима только после фактически допечатанного heading;
-    // код по-прежнему движется ровно, без «дыхания».
     if (!code) {
-      const last = ui.shown[ui.shown.length - 1];
-      const p = headingEndedSince(ui.shown, beforeLen) ? 12 : (PAUSE_AFTER[last] || 0);
-      ui.hold = p ? Math.max(1, Math.round(p * (CPS_TALK / ui.cps))) : 0;
+      const pause = PAUSE_AFTER[ui.shown[ui.shown.length - 1]] || 0;
+      if (pause) ui.holdUntil = now + pause * (CPS_TALK / Math.max(CPS_TALK, ui.cps));
     }
     scrollSoon(ui);
   }, TYPE_MS);

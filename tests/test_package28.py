@@ -283,6 +283,67 @@ class VisionUiContractTests(unittest.TestCase):
         self.assertFalse(agent.has_choice_ui("```ui\ntext Тема\n```\nобычный A | B"))
         self.assertTrue(agent.has_choice_ui("```ui\ntiles Тема: A | B\n```"))
 
+    def test_plain_clarification_gets_deterministic_interactive_control(self) -> None:
+        """Interactive questions do not depend on images or prompt obedience."""
+        question = "Какой формат результата тебе нужен?"
+
+        def fake_stream(*_args, **_kwargs):
+            yield {"type": "delta", "text": question}
+            yield {"type": "done", "tool_calls": [{
+                "id": "premature-file",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": json.dumps({"path": "result.txt", "content": "guess"}),
+                },
+            }]}
+
+        route = {
+            "tier": "base", "reason": "clarification", "score": 0,
+            "verbose": False, "offer_tools": True,
+        }
+        schema = [{
+            "type": "function",
+            "function": {"name": "write_file", "parameters": {"type": "object"}},
+        }]
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=fake_stream) as stream, \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(agent.tools, "call") as dispatch:
+            events = list(agent.Agent().run(
+                [{"role": "user", "content": "Сделай документ"}],
+                user_text="Сделай документ", has_image=False,
+            ))
+
+        stream.assert_called_once()
+        dispatch.assert_not_called()
+        done = [event for event in events if event.get("type") == "done"][-1]
+        self.assertIn(question, done["content"])
+        self.assertIn("```ui\ntext Твой ответ = Напиши свой вариант\n```", done["content"])
+        self.assertTrue(agent.has_interactive_ui(done["content"]))
+        self.assertEqual(done["tools"], [])
+
+    def test_clarification_fallback_preserves_listed_options_as_tiles(self) -> None:
+        text = "Какой формат выбрать?\n- PDF\n- Word\n- Markdown"
+        panel = agent.reply_ui_fallback(text)
+        self.assertIn("tiles Какой формат выбрать: PDF | Word | Markdown", panel)
+        self.assertTrue(agent.needs_reply_ui(text))
+        self.assertTrue(agent.has_interactive_ui(panel))
+        unrelated = agent.reply_ui_fallback(
+            "Могу подготовить:\n- отчёт\n- таблицу\nНо какой дедлайн?"
+        )
+        self.assertIn("text Твой ответ", unrelated)
+        self.assertNotIn("tiles", unrelated)
+        self.assertFalse(agent.needs_reply_ui(
+            "Готовая сводка с фактами и источниками. Без встречного вопроса."
+        ))
+        self.assertFalse(agent.needs_reply_ui(
+            "Пять вопросов для собеседования:\n"
+            "1. Почему вы выбрали эту профессию?\n"
+            "2. Каким достижением вы гордитесь?\n"
+            "3. Как вы решаете конфликты?"
+        ), "a delivered list of questions is content, not a clarification")
+
     def test_streamed_text_is_the_only_canonical_final_answer(self) -> None:
         streamed = ["Шаг один завершён.\n\n", "Шаг два завершён.\n\n", "Полный итог."]
         self.assertEqual(
