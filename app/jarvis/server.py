@@ -540,6 +540,7 @@ class Handler(BaseHTTPRequestHandler):
         final_text = ""
         files: List[Dict[str, Any]] = []
         used_tools: List[str] = []
+        selected_tier = ""
         alive = True
         partial: List[str] = []
         thinking: List[str] = []
@@ -549,7 +550,9 @@ class Handler(BaseHTTPRequestHandler):
                     messages, user_text=text, has_image=has_image,
                     require_ui_choice=require_ui_choice):
                 etype = event.get("type")
-                if etype == "delta":
+                if etype == "route":
+                    selected_tier = str(event.get("tier") or "")
+                elif etype == "delta":
                     partial.append(event.get("text", ""))
                 elif etype == "reset":
                     partial = []
@@ -578,6 +581,7 @@ class Handler(BaseHTTPRequestHandler):
                     event["content"] = final_text
                     files = event.get("files", [])
                     used_tools = event.get("tools", [])
+                    selected_tier = str(event.get("tier") or selected_tier)
                 if alive:
                     alive = self._sse(event)
                 # Если пользователь ушёл из диалога, соединение рвётся. Раньше мы
@@ -594,6 +598,7 @@ class Handler(BaseHTTPRequestHandler):
                 # они жили только в браузере и пропадали, стоило выйти из диалога.
                 db.add_message(chat_id, "assistant", final_text,
                                {"files": files, "tools": used_tools, "model": runner.model_used,
+                                "tier": selected_tier,
                                 "thinking": "".join(thinking)[:20000], "trace": trace[:60]})
             if alive:
                 self._sse({"type": "end"})

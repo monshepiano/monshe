@@ -373,9 +373,10 @@ def delete_task(task_id: str) -> None:
 
 # --------------------------------------------------------------- memory
 # Модель и локальный extractor могут назвать один факт по-разному: «Город»,
-# «city», «location». Сравнивать сырые строки нельзя — это и породило две
-# карточки Санкт-Петербурга. Здесь, на единственной границе записи, русские и
-# английские алиасы получают одну identity и одно каноническое название.
+# «city», «location». Сравнивать сырые строки нельзя — это и порождало две
+# карточки одного факта. На единственной границе записи алиасы получают одну
+# identity и одно название ключа. Значение пользователя при этом не переводим,
+# не склоняем и не «исправляем»: дедупликация не должна подменять смысл.
 _MEMORY_KEY_ALIASES = {
     "city": ("person", "Город", "person:city"),
     "current city": ("person", "Город", "person:city"),
@@ -389,11 +390,6 @@ _MEMORY_KEY_ALIASES = {
     "food preference": ("preference", "Питание: предпочтения", "preference:food"),
     "любимая еда": ("preference", "Питание: предпочтения", "preference:food"),
     "питание предпочтения": ("preference", "Питание: предпочтения", "preference:food"),
-}
-_CITY_ALIASES = {
-    "мск": "Москва", "москва": "Москва", "москве": "Москва",
-    "питер": "Санкт-Петербург", "спб": "Санкт-Петербург",
-    "санкт петербург": "Санкт-Петербург", "санкт петербурге": "Санкт-Петербург",
 }
 
 
@@ -411,8 +407,6 @@ def canonical_memory(kind: str, key: str, value: str) -> tuple[str, str, str, st
     alias = _MEMORY_KEY_ALIASES.get(token)
     if alias:
         clean_kind, clean_key, identity = alias
-        if identity == "person:city":
-            clean_value = _CITY_ALIASES.get(_memory_token(clean_value), clean_value)
         return clean_kind, clean_key, clean_value, identity
     return clean_kind, clean_key, clean_value, clean_kind + ":" + token
 

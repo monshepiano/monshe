@@ -34,14 +34,14 @@ def _fact_value(value: str, limit: int = 120) -> str:
 
 
 def _city_value(value: str) -> str:
-    city = _fact_value(value, 48)
-    token = re.sub(r"[^a-zа-яё0-9]+", " ", city.casefold()).replace("ё", "е").strip()
-    aliases = {
-        "мск": "Москва", "москва": "Москва", "москве": "Москва",
-        "питер": "Санкт-Петербург", "спб": "Санкт-Петербург",
-        "санкт петербург": "Санкт-Петербург", "санкт петербурге": "Санкт-Петербург",
-    }
-    return aliases.get(token, city)
+    """Очистить явно названный город, не переписывая слова пользователя.
+
+    Память должна устранять дубли ключей (``Город``/``city``), а не угадывать,
+    что человек «на самом деле» имел в виду. Поэтому Питер остаётся Питером,
+    МСК — МСК; новое значение всё равно заменит прежний city-факт через единый
+    identity в db.remember.
+    """
+    return _fact_value(value, 48)
 
 
 def extract_obvious_memories(text: str) -> List[Dict[str, str]]:
@@ -78,24 +78,6 @@ def extract_obvious_memories(text: str) -> List[Dict[str, str]]:
             facts.append({"kind": "person", "key": "Город", "value": city})
         break
 
-    # Исправление старого факта важнее первоначальной реплики: «пошутил, я всё
-    # же до сих пор в мск» обязано заменить Петербург, даже если глагол «живу»
-    # опущен. Закрытый cue не даёт принять обычное «я в магазине» за город.
-    correction_cue = re.search(
-        r"\b(?:пошутил(?:а)?|на\s+самом\s+деле|вс[её]\s+же|вс[её]\s+ещ[её]|до\s+сих\s+пор)\b",
-        raw, re.I)
-    if correction_cue:
-        corrected = re.search(
-            r"\b(?:я\s+)?(?:вс[её]\s+же\s+)?(?:вс[её]\s+ещ[её]\s+)?"
-            r"(?:до\s+сих\s+пор\s+)?(?:живу\s+|остаюсь\s+|нахожусь\s+)?в\s+"
-            r"([A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\- ]{1,45}?)"
-            r"(?=\s+(?:и|но|а)\s+|[,.;!?]|$)", raw, re.I)
-        if corrected:
-            city = _city_value(corrected.group(1))
-            if city and not re.search(r"\b(?:квартир|дом|офис|комнат|магазин)\w*\b", city, re.I):
-                facts = [item for item in facts if item["key"] != "Город"]
-                facts.insert(0, {"kind": "person", "key": "Город", "value": city})
-
     favourite = re.search(
         r"\b(?:моя\s+)?любим(?:ая|ое)\s+(?:еда|блюдо|кухня)\s*(?:—|–|-|:|это)?\s*"
         r"([^,.!?]{2,80})", raw, re.I)
@@ -117,18 +99,15 @@ def extract_obvious_memories(text: str) -> List[Dict[str, str]]:
         if value:
             facts.append({"kind": "preference", "key": "Питание: аллергия", "value": value})
 
-    # Окончание «-лю» уже однозначно первое лицо, поэтому местоимение не
-    # обязательно: «я переехал в Казань и люблю острую еду» — один говорящий.
+    # Общее правило первого лица, без словарей частных блюд и иных догадок.
+    # Оно сохраняет «люблю стейки» не потому, что знает слово «стейки», а потому
+    # что пользователь явно назвал предпочтение. Классификацию при желании
+    # уточнит штатный remember-инструмент модели.
     preference = re.search(r"\b(?:я\s+)?(?:люблю|обожаю|предпочитаю)\s+([^,.!?]{2,80})", raw, re.I)
     if preference:
         value = _fact_value(preference.group(1))
-        food = bool(re.search(
-            r"\b(?:ед\w*|блюд\w*|кухн\w*|пицц\w*|суши|ролл\w*|мяс\w*|рыб\w*|"
-            r"овощ\w*|фрукт\w*|кофе|чай|сыр\w*|стейк\w*|сладк\w*|остр\w*|"
-            r"веган\w*|вегетариан\w*)\b", value, re.I))
-        key = "Питание: предпочтения" if food else "Предпочтение"
-        if value and not any(item["key"] == key for item in facts):
-            facts.append({"kind": "preference", "key": key, "value": value})
+        if value and not any(item["key"] == "Предпочтение" for item in facts):
+            facts.append({"kind": "preference", "key": "Предпочтение", "value": value})
 
     return facts
 
@@ -522,10 +501,12 @@ JSON-описание вызова прямо в тексте. Любые их �
     if agent_mode:
         base += """
 АГЕНТСКИЙ РЕЖИМ:
-Пользователь не участвует в процессе. Сначала составь план из 3-7 шагов (коротко, списком),
-затем выполняй шаги инструментами один за другим, не останавливаясь на уточняющие вопросы.
-Если данных не хватает — прими разумное допущение и укажи его в финале.
-Заверши развёрнутым итогом: что сделано, что найдено, какие файлы созданы.
+Если без критически недостающего выбора получится другая задача, задай ОДИН короткий
+уточняющий вопрос и остановись — это ещё не начало выполнения и план тут не нужен.
+Когда данных достаточно, пользователь больше не участвует: выполни работу инструментами
+по шагам, не останавливаясь на промежуточные вопросы. Некритичные пробелы закрой разумным
+допущением и укажи его в финале. Заверши развёрнутым итогом: что сделано, что найдено,
+какие файлы созданы.
 """
     if mem_lines:
         base += "\nЧТО ТЫ ЗНАЕШЬ О ПОЛЬЗОВАТЕЛЕ:\n" + mem_lines + "\n"
@@ -543,8 +524,47 @@ def _tool_groups(computer_use: bool) -> List[str]:
     return groups
 
 
-def needs_approval(tool_name: str) -> Optional[str]:
+def opens_terminal(tool_name: str, args: Optional[Dict[str, Any]] = None) -> bool:
+    """Распознать все штатные пути, способные открыть видимое окно Terminal.
+
+    Проверка стоит перед dispatch, поэтому приложение не успеет мелькнуть до
+    вопроса. Это не классификация «опасности»: пользователю просто принадлежит
+    решение, появится ли поверх ответа отдельное окно.
+    """
+    args = args or {}
+    if tool_name == "open_app":
+        # Нормализация принадлежит только имени приложения и не связана с
+        # memory writer: пользовательские значения памяти храним дословно.
+        target = re.sub(r"[\s._-]+", "", str(args.get("name") or "").strip().casefold())
+        if target.endswith("app"):
+            target = target[:-3]
+        return target in {"terminal", "терминал", "iterm", "iterm2", "warp"}
+    if tool_name not in {"run_shell", "run_python"}:
+        return False
+    payload = str(args.get("command") or args.get("code") or "").casefold()
+    terminal_name = r"(?:terminal|терминал|iterm2?|warp)"
+    patterns = (
+        rf"\bopen\s+(?:[^\n;&|]*\s)?-a\s+['\"]?{terminal_name}\b",
+        rf"tell\s+application\s+['\"]{terminal_name}['\"]",
+        rf"application\s*\(\s*['\"]{terminal_name}['\"]\s*\)",
+        rf"\b(?:xdg-open|start)\b[^\n;&|]*\b{terminal_name}\b",
+    )
+    return any(re.search(pattern, payload, re.IGNORECASE) for pattern in patterns)
+
+
+def approval_style(tool_name: str, args: Optional[Dict[str, Any]] = None) -> str:
+    """Визуальный тон вопроса: permission не маскируется под угрозу."""
+    if opens_terminal(tool_name, args) and tool_name != "run_shell":
+        return "permission"
+    return "danger"
+
+
+def needs_approval(tool_name: str, args: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """Возвращает причину, если нужно подтверждение пользователя."""
+    # Открытие Terminal спрашиваем всегда, даже если общую автосанкцию на
+    # computer-use пользователь когда-то отключил в настройках.
+    if opens_terminal(tool_name, args):
+        return "открытие приложения «Терминал»"
     risk = tools.risk_of(tool_name)
     safety = CONFIG.get("safety", {}) or {}
     if risk == "safe":
@@ -843,8 +863,11 @@ class Agent:
 
     # ------------------------------------------------------------ approvals
     def _wait_approval(self, tool_name: str, args: Dict[str, Any], reason: str,
-                       timeout: int = 300) -> Dict[str, Any]:
-        risk = "critical" if detect_payment_intent(args) or tool_name == "delete_file" else "high"
+                       timeout: int = 300, style: str = "danger") -> Dict[str, Any]:
+        if style == "permission":
+            risk = "notice"
+        else:
+            risk = "critical" if detect_payment_intent(args) or tool_name == "delete_file" else "high"
         approval = db.create_approval(tool_name, args, risk, reason, self.chat_id, self.task_id)
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -983,34 +1006,43 @@ class Agent:
         }
         max_steps = _max_steps(self.agent_mode)
 
+        # План готовим локально, но пока НЕ показываем. Первый model turn —
+        # единственная достоверная граница между «начинаю автономную работу» и
+        # «мне не хватает данных, выбери вариант». Прежний порядок показывал и
+        # тут же завершал план даже у простого уточнения. Теперь первый turn
+        # удерживается сервером: реальное выполнение получает plan перед любым
+        # текстом/tool, а уточняющий вопрос выходит без plan. Второго LLM-вызова
+        # и дополнительных токенов для этого не нужно.
         plan: List[str] = []
+        plan_announced = False
+        deferred_work_events: List[Dict[str, Any]] = []
         if self.agent_mode and user_text and not social_only:
-            yield {"type": "status", "text": "Составляю план"}
             plan = self.make_plan(user_text)
-            if plan:
-                yield {"type": "plan", "steps": plan}
-                self.plan_len = len(plan)
-                self.plan_steps = plan
-                # Прогресс раньше зависел от маркеров модели, а затем его
-                # «починили» отдельным обязательным LLM-вызовом на КАЖДЫЙ пункт.
-                # Так план стал последовательным, но даже создание небольшого
-                # файла платило за три облачных хода вместо естественной пары
-                # «создать → проверить/ответить». План — состояние оркестратора,
-                # а не повод искусственно вызывать модель. Поэтому дальше шаги
-                # двигаются на реальных границах: начало результата/инструмента,
-                # возврат результата инструмента и финальный ответ.
-                self.plan_at = 1
-                yield {"type": "plan_step", "step": 1}
-                messages = messages + [{
-                    "role": "system",
-                    "content": (
-                        "План выполнения (%d шаг(ов)):\n" % len(plan)
-                        + "\n".join("%d. %s" % (i + 1, s) for i, s in enumerate(plan))
-                        + "\n\nВыполни пункты по порядку, используя необходимые "
-                          "инструменты. Не делай отдельный текстовый отчёт после "
-                          "каждого пункта: это один рабочий цикл. Общий итог дай "
-                          "только после проверки результата."),
-                }]
+
+        def announce_plan() -> List[Dict[str, Any]]:
+            nonlocal plan_announced
+            if plan_announced or not plan:
+                return []
+            plan_announced = True
+            self.plan_len = len(plan)
+            self.plan_steps = list(plan)
+            self.plan_at = 1
+            return [
+                {"type": "plan", "steps": list(plan)},
+                {"type": "plan_step", "step": 1},
+            ]
+
+        def abandon_unstarted_plan() -> None:
+            """Уточнение не является первым выполненным пунктом задачи."""
+            nonlocal plan, plan_announced
+            if plan_announced:
+                return
+            plan = []
+            plan_announced = False
+            self.plan_len = 0
+            self.plan_at = 0
+            self.plan_steps = []
+            deferred_work_events.clear()
 
         # Сложность задачи не угадываем по теме: берём измеримые признаки.
         # Остальным включателем служит сам ход работы — см. ниже, шаг >= 2.
@@ -1055,8 +1087,11 @@ class Agent:
             stream_failed = None
             # «шлюз»: пока начало ответа похоже на текстовый вызов инструмента,
             # ничего не показываем пользователю — иначе в чат попадёт мусор
-            # вида function schedule_task({...}).
+            # вида function schedule_task({...}). Пока plan ещё не объявлен,
+            # также удерживаем первый результат целиком: сначала нужно понять,
+            # не является ли он уточняющим вопросом.
             gate_open = False
+            defer_plan_decision = bool(plan and not plan_announced)
 
             for event in llm.chat_stream(convo, tier=tier, tools=available):
                 etype = event.get("type")
@@ -1070,12 +1105,20 @@ class Agent:
                         piece = str(event.get("text") or "")
                         if thinking_visible:
                             if piece:
-                                yield {"type": "thinking", "text": piece}
+                                out = {"type": "thinking", "text": piece}
+                                if defer_plan_decision:
+                                    deferred_work_events.append(out)
+                                else:
+                                    yield out
                         elif piece:
                             thinking_pending.append(piece)
                             if len("".join(thinking_pending).strip()) >= thinking_min_chars:
                                 thinking_visible = True
-                                yield {"type": "thinking", "text": "".join(thinking_pending)}
+                                out = {"type": "thinking", "text": "".join(thinking_pending)}
+                                if defer_plan_decision:
+                                    deferred_work_events.append(out)
+                                else:
+                                    yield out
                                 thinking_pending = []
                 elif etype == "delta":
                     acc_text.append(event["text"])
@@ -1091,15 +1134,26 @@ class Agent:
                                 for progress in self._advance_plan(n):
                                     yield progress
                     if gate_open:
-                        yield {"type": "delta", "text": event["text"]}
+                        if not defer_plan_decision:
+                            yield {"type": "delta", "text": event["text"]}
                     else:
                         joined = "".join(acc_text)
                         if not tools.looks_like_call_prefix(joined):
                             gate_open = True
-                            yield {"type": "delta", "text": joined}
+                            if not defer_plan_decision:
+                                yield {"type": "delta", "text": joined}
                 elif etype == "tool_partial":
-                    yield {"type": "tool_hint", "name": event.get("name", ""),
+                    out = {"type": "tool_hint", "name": event.get("name", ""),
                            "group": tools.group_of(event.get("name", ""))}
+                    if defer_plan_decision:
+                        # Provider присылает partial много раз. До появления
+                        # плана достаточно последней подсказки — так status не
+                        # перезапускает один и тот же жёлтый курсор десятки раз.
+                        deferred_work_events[:] = [e for e in deferred_work_events
+                                                   if e.get("type") != "tool_hint"]
+                        deferred_work_events.append(out)
+                    else:
+                        yield out
                 elif etype == "done":
                     tool_calls = event.get("tool_calls") or []
                     if event.get("reasoning") and not acc_text:
@@ -1125,13 +1179,16 @@ class Agent:
                 if text_calls:
                     from_text = True
                     if gate_open:
-                        # уже что-то показали — стираем и перерисовываем
-                        yield {"type": "reset"}
+                        # уже что-то показали — стираем и перерисовываем. Пока
+                        # решается судьба plan, сырой текст вообще не выходил.
+                        if not defer_plan_decision:
+                            yield {"type": "reset"}
                         gate_open = False
                     text_piece = cleaned
                     if cleaned:
                         gate_open = True
-                        yield {"type": "delta", "text": cleaned}
+                        if not defer_plan_decision:
+                            yield {"type": "delta", "text": cleaned}
                     for i, tc in enumerate(text_calls):
                         tool_calls.append({
                             "id": "txt_%d_%d" % (step, i),
@@ -1157,8 +1214,13 @@ class Agent:
                     and not retried_claim):
                 retried_claim = True
                 if gate_open:
-                    yield {"type": "reset"}
+                    if not defer_plan_decision:
+                        yield {"type": "reset"}
                     gate_open = False
+                if defer_plan_decision:
+                    deferred_work_events.clear()
+                    thinking_pending = []
+                    thinking_visible = False
                 yield {"type": "status", "text": "Проверяю, что действие выполнено"}
                 convo.append({"role": "assistant", "content": text_piece})
                 convo.append({"role": "user", "content":
@@ -1192,6 +1254,9 @@ class Agent:
             # изображение с явно выбранной концепцией. Это физическая граница,
             # а не надежда, что модель послушается слова «дождись».
             if require_ui_choice and choice_present:
+                if defer_plan_decision:
+                    abandon_unstarted_plan()
+                    gate_open = False
                 final_text = text_piece
                 if not gate_open and text_piece:
                     yield {"type": "delta", "text": text_piece}
@@ -1207,9 +1272,16 @@ class Agent:
             if missing_required_choice:
                 choice_failures += 1
                 if gate_open:
-                    yield {"type": "reset"}
+                    if not defer_plan_decision:
+                        yield {"type": "reset"}
                     gate_open = False
+                if defer_plan_decision:
+                    deferred_work_events.clear()
+                    thinking_pending = []
+                    thinking_visible = False
                 if choice_failures >= 2:
+                    if defer_plan_decision:
+                        abandon_unstarted_plan()
                     final_text = contextual_choice_fallback(text_piece)
                     yield {"type": "delta", "text": final_text}
                     panels = list(_UI_FENCE.finditer(final_text))
@@ -1237,6 +1309,9 @@ class Agent:
             # В AGENT это также немедленно завершает run: нельзя продолжать план,
             # сделав вид, будто вопрос уже получил ответ.
             if not social_only and needs_reply_ui(text_piece, user_text):
+                if defer_plan_decision:
+                    abandon_unstarted_plan()
+                    gate_open = False
                 if not has_interactive_ui(text_piece):
                     panel = reply_ui_fallback(text_piece)
                     if panel:
@@ -1263,6 +1338,39 @@ class Agent:
                     yield {"type": "reply_ui", "spec": panels[-1].group(1).strip()}
                 final_text = text_piece
                 break
+
+            # ask_user — не выполнение первого пункта, а запрос недостающих
+            # данных. Если в первом ходе есть только такой tool, plan пока не
+            # показываем. После ответа человека новый run уже построит настоящий
+            # план автономной работы.
+            call_names = {
+                (call.get("function") or {}).get("name", "") for call in tool_calls
+            }
+            asks_only = bool(tool_calls and call_names <= {"ask_user"})
+            if defer_plan_decision and asks_only:
+                # ask_user сам поставит generator на паузу. План остаётся лишь
+                # подготовленным: если после ответа начнётся исполнение в этом
+                # же run, следующий model turn объявит его в нужный момент.
+                deferred_work_events.clear()
+                thinking_pending = []
+                thinking_visible = False
+                gate_open = False
+                if text_piece:
+                    yield {"type": "delta", "text": text_piece}
+                    gate_open = True
+
+            # Это не уточнение: только теперь plan становится частью потока.
+            # Он всегда выходит раньше накопленного текста/tool_hint; frontend
+            # дополнительно держит event-gate до завершения перелёта наверх.
+            elif defer_plan_decision and plan:
+                for plan_event in announce_plan():
+                    yield plan_event
+                for work_event in deferred_work_events:
+                    yield work_event
+                deferred_work_events.clear()
+                if text_piece:
+                    yield {"type": "delta", "text": text_piece}
+                    gate_open = True
 
             # шлюз так и не открылся, а вызовов нет — показываем придержанный текст
             if not gate_open and text_piece and not tool_calls:
@@ -1374,12 +1482,14 @@ class Agent:
                        "group": tools.group_of(name),
                        "risk": tools.risk_of(name)}
 
-                reason = needs_approval(name)
+                reason = needs_approval(name, args)
                 if reason and not self.approvals_auto:
-                    yield {"type": "status", "text": "Жду твоего подтверждения"}
+                    style = approval_style(name, args)
+                    yield {"type": "status", "text": "Жду твоего разрешения"
+                           if style == "permission" else "Жду твоего подтверждения"}
                     yield {"type": "approval_wait", "tool": name, "label": tools.label_of(name),
-                           "args": args, "reason": reason}
-                    decision = self._wait_approval(name, args, reason)
+                           "args": args, "reason": reason, "style": style}
+                    decision = self._wait_approval(name, args, reason, style=style)
                     yield {"type": "approval_done", "status": decision.get("status")}
                     if decision.get("status") != "approved":
                         result: Dict[str, Any] = {
@@ -1420,6 +1530,12 @@ class Agent:
             # инструментов и переведёт UI к фазе проверки в начале цикла.
 
         if not final_text:
+            if plan and not plan_announced:
+                for plan_event in announce_plan():
+                    yield plan_event
+                for work_event in deferred_work_events:
+                    yield work_event
+                deferred_work_events.clear()
             if self.plan_at and self.plan_at < self.plan_len:
                 for progress in self._advance_plan(self.plan_len):
                     yield progress

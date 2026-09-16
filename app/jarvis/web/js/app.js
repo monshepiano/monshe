@@ -755,6 +755,13 @@ function renderMessages(host, messages) {
       const node = addAiMsg(m.created_at);
       node.root.dataset.msgId = m.id;
       const meta = m.meta || {};
+      updateResponseMeta({
+        node,
+        routeTier: meta.tier || '',
+        modelName: meta.model || '',
+        routeReason: '',
+        routeEl: null,
+      });
       // ход мыслей и действия из прошлого ответа — свёрнутыми строчками
       restoreTrace(node, meta);
       node.body.appendChild(el('div', 'md', MD.render(m.content)));
@@ -1160,6 +1167,29 @@ function addAiMsg(ts, hostOverride) {
     body: m.querySelector('.ai-content'),
     modelEl: m.querySelector('.ai-model'),
   };
+}
+
+/* Сценарий и точная модель принадлежат конкретному ответу и остаются над ним
+   после завершения и после повторного открытия диалога. Оба значения живут в
+   одной спокойной строке, а не конкурируют за место вокруг имени JARVIS. */
+function updateResponseMeta(ui) {
+  if (!ui || !ui.node || !ui.node.root) return;
+  const scenario = ui.routeTier ? (TIER_LABEL[ui.routeTier] || ui.routeTier) : '';
+  const model = String(ui.modelName || '').trim();
+  if (!scenario && !model) return;
+  if (!ui.routeEl || !ui.routeEl.isConnected) {
+    ui.routeEl = el('span', 'ai-route');
+    const head = ui.node.root.querySelector('.ai-name');
+    if (head) head.appendChild(ui.routeEl);
+  }
+  const parts = [];
+  if (scenario) parts.push('сценарий: ' + scenario);
+  if (model) parts.push('модель: ' + model);
+  ui.routeEl.textContent = parts.join(' · ');
+  ui.routeEl.title = ui.routeReason || parts.join(' · ');
+  // Старый отдельный model span сохраняется в разметке для совместимости с
+  // историей beta, но новый контракт имеет один недублирующийся meta-узел.
+  if (ui.node.modelEl) ui.node.modelEl.textContent = '';
 }
 
 function addMsgActions(node, text) {
@@ -1608,8 +1638,10 @@ function dropStrayDocks(keep) {
 const PLAN_FRAME_MS = 20;       // лёгкий кадровый цикл
 const PLAN_CPS = 220;           // вступительный план быстрее разговорного ответа
 const PLAN_ITEM_PAUSE = 300;    // короткая пауза между пунктами
-const PLAN_LOOK_MS = 300;       // коротко увидеть весь план перед перелётом
-const PLAN_FLY_MS = 320;        // совпадает с transition .plan-dock.fly в CSS
+const PLAN_LOOK_MS = 520;       // успеть охватить план перед красивым перелётом
+const PLAN_FLY_MS = 640;        // совпадает с transition .plan-dock.fly в CSS
+const PLAN_DONE_HOLD_MS = 2100; // зелёный итог не исчезает через треть секунды
+const PLAN_FOLD_MS = 680;       // dock визуально превращается в архивную строку
 const CURSOR_BREATHE_MS = 1050; // совпадает с cursorBreathe в CSS
 
 /* Markdown-рендер пересобирает caret вместе с HTML ответа. Без общей фазы его
@@ -1691,12 +1723,24 @@ function beginPlanGate(ui) {
   if (ui.planGate) return;
   ui.planGate = true;
   ui.planDeferred = [];
+  // Во время вступления на экране пишется только сам план. Старый статус
+  // «Думаю» не удаляем (после перелёта тот же стабильный caret продолжит
+  // работу), а временно исключаем из layout. Так нет ни второй надписи, ни
+  // пересоздания/рывка status-узла.
+  if (ui.statusEl && ui.statusEl.isConnected) {
+    ui.planStatusDisplay = ui.statusEl.style.display || '';
+    ui.statusEl.style.display = 'none';
+  }
   ui.planIntroPromise = new Promise((resolve) => { ui.resolvePlanIntro = resolve; });
 }
 
 function releasePlanGate(ui) {
   if (!ui.planGate) return;
   ui.planGate = false;
+  if (ui.statusEl && ui.statusEl.isConnected) {
+    ui.statusEl.style.display = ui.planStatusDisplay || '';
+  }
+  ui.planStatusDisplay = '';
   const queued = (ui.planDeferred || []).splice(0);
   const resolve = ui.resolvePlanIntro;
   ui.resolvePlanIntro = null;
@@ -1835,7 +1879,7 @@ function dockPlan(ui, arrived) {
   dock.style.opacity = '0';
   card.style.height = box.height + 'px';
   card.style.overflow = 'hidden';
-  card.style.transition = 'height .32s cubic-bezier(.33,1,.68,1),margin .32s ease,opacity .24s ease,border-width .32s ease';
+  card.style.transition = 'height .54s cubic-bezier(.16,1,.3,1),margin .54s ease,opacity .38s ease,border-width .54s ease';
   requestAnimationFrame(() => {
     dock.classList.add('fly');            // .fly задаёт длинный мягкий переход
     dock.style.transform = 'none';
@@ -1871,8 +1915,8 @@ function shortStep(t) {
 function archiveCompletedPlan(ui) {
   // Обычный ответ приходит сюда через общий done, но не имеет plan event.
   // Пустая «План выполнен · 0 шагов» была следствием отсутствия этого guard.
-  if (!ui || !ui.agentMode || !(ui.planItems || []).length ||
-      ui.planArchive || !ui.node || !ui.node.body) return;
+  if (!ui || !ui.agentMode || !(ui.planItems || []).length || !ui.node || !ui.node.body) return null;
+  if (ui.planArchive) return ui.planArchiveThumb || null;
   const card = makeCard('☰', 'План выполнен', 'plan-card plan-complete', true);
   const list = el('ul', 'plan-list');
   (ui.planItems || []).forEach((item, index) => {
@@ -1884,10 +1928,12 @@ function archiveCompletedPlan(ui) {
   const before = ui.mdEl && ui.mdEl.parentNode === ui.node.body ? ui.mdEl : ui.node.body.firstChild;
   ui.node.body.insertBefore(card, before || null);
   ui.planArchive = card;
-  collapseToThumb(card, {
-    cls: 'th-plan', icon: '☰', title: 'План выполнен',
+  const thumb = collapseToThumb(card, {
+    cls: 'th-plan plan-archive-target', icon: '☰', title: 'План выполнен',
     sub: (ui.planItems || []).length + ' шаг(ов)', tag: 'открыть', instant: true,
   });
+  ui.planArchiveThumb = thumb;
+  return thumb;
 }
 
 function undockPlan(ui) {
@@ -1902,13 +1948,13 @@ function undockPlan(ui) {
   clearPlanTimers(ui);
   finishPlanItems(ui);
   releasePlanGate(ui);
-  archiveCompletedPlan(ui);
 
   const owned = $$('.plan-dock').filter((d) => d.dataset.runId === String(ui.runId));
   const dock = ui.planDock || owned[owned.length - 1] || null;
   const card = ui.planCard;
   ui.planDock = null;
   const docks = owned.length ? owned : (dock ? [dock] : []);
+  const primary = dock || docks[docks.length - 1] || null;
 
   if (card && card.isConnected) card.remove();
   docks.forEach((ownDock) => {
@@ -1921,11 +1967,41 @@ function undockPlan(ui) {
     [...$$('.pd-seg', ownDock), ...$$('.pd-s', ownDock)].forEach((item) => {
       item.classList.remove('now'); item.classList.add('done');
     });
-    setTimeout(() => {
-      if (ownDock.isConnected) ownDock.classList.add('plan-gone');
-    }, 320);
-    setTimeout(() => ownDock.remove(), 620);
   });
+
+  // Если dock по технической причине уже потерян, архив всё равно не пропадает.
+  if (!primary) {
+    const instantThumb = archiveCompletedPlan(ui);
+    if (instantThumb) instantThumb.classList.add('plan-archive-reveal');
+    return;
+  }
+  docks.filter((item) => item !== primary).forEach((item) => item.remove());
+
+  // Сначала зелёный результат спокойно остаётся наверху. Затем создаём
+  // конечную архивную строку, измеряем её фактическое положение и FLIP-полётом
+  // превращаем dock именно в неё — не в произвольную точку экрана.
+  setTimeout(() => {
+    if (!primary.isConnected) {
+      const fallbackThumb = archiveCompletedPlan(ui);
+      if (fallbackThumb) fallbackThumb.classList.add('plan-archive-reveal');
+      return;
+    }
+    const thumb = archiveCompletedPlan(ui);
+    if (!thumb || !thumb.isConnected) { primary.remove(); return; }
+    const from = primary.getBoundingClientRect();
+    const to = thumb.getBoundingClientRect();
+    const dx = (to.left + to.width / 2) - (from.left + from.width / 2);
+    const dy = (to.top + to.height / 2) - (from.top + from.height / 2);
+    const sx = Math.max(.12, Math.min(1, to.width / Math.max(1, from.width)));
+    const sy = Math.max(.12, Math.min(1, to.height / Math.max(1, from.height)));
+    primary.classList.add('plan-folding');
+    requestAnimationFrame(() => {
+      primary.style.transform = 'translate3d(' + dx + 'px,' + dy + 'px,0) scale(' + sx + ',' + sy + ')';
+      primary.style.opacity = '0';
+      thumb.classList.add('plan-archive-reveal');
+    });
+    setTimeout(() => primary.remove(), PLAN_FOLD_MS + 80);
+  }, PLAN_DONE_HOLD_MS);
 }
 
 function discardPlan(ui) {
@@ -2702,6 +2778,9 @@ async function send(opts) {
     doneReceived: false,
     visualDone: false,
     routeEl: null,
+    routeTier: '',
+    routeReason: '',
+    modelName: '',
     pendingReplyUi: '',
     agentMode: requestAgentMode,
   };
@@ -2869,33 +2948,47 @@ function runStatus(ui, lines, opts) {
   const o = opts || {};
   const list = (Array.isArray(lines) ? lines : [lines]).filter(Boolean);
   if (!list.length) return;
+  const mode = o.caret ? 'think-wait' : 'work-wait';
+  const every = o.every || 2100;
+  const signature = mode + '|' + every + '|' + list.join('\u241f');
+
+  // tool_partial может прислать одну и ту же подсказку десятки раз. Раньше
+  // каждый chunk заново создавал caret, сбрасывал его animation и толкал
+  // строку — отсюда дёрганье «Готовлю инструмент». Одинаковое состояние
+  // теперь идемпотентно, а сам caret живёт одним DOM-узлом до конца фазы.
+  if (box._statusSignature === signature &&
+      (list.length < 2 || ui.quipTimer)) return;
+  box._statusSignature = signature;
   stopQuips(ui);
-  box.className = 'thinking-line ' + (o.caret ? 'think-wait' : 'work-wait');
-  box.innerHTML = '<span class="tw-caret"></span><span class="tw-quip"></span>';
-  syncCursorPhase(box.querySelector('.tw-caret'));
-  const q = box.querySelector('.tw-quip');
+  box.className = 'thinking-line ' + mode;
+  let caret = box.querySelector('.tw-caret');
+  let q = box.querySelector('.tw-quip');
+  if (!caret || !q) {
+    box.innerHTML = '<span class="tw-caret"></span><span class="tw-quip"></span>';
+    caret = box.querySelector('.tw-caret');
+    q = box.querySelector('.tw-quip');
+    syncCursorPhase(caret);
+  }
   const swap = (txt) => {
+    if (q.textContent === txt) return;
     q.textContent = txt;
-    // Не трогаем offsetWidth для перезапуска CSS: это синхронный layout в
-    // момент «Готово». Web Animations двигает только opacity/transform.
+    // Только мягкий compositor fade; геометрия caret не меняется.
     if (q.animate) {
       q.getAnimations().forEach((a) => a.cancel());
       q.animate([
-        { opacity: .5, transform: 'translate3d(-5px,0,0)' },
+        { opacity: .62, transform: 'translate3d(-2px,0,0)' },
         { opacity: 1, transform: 'translate3d(0,0,0)' },
-      ], { duration: 260, easing: 'cubic-bezier(.2,.8,.3,1)' });
+      ], { duration: 360, easing: 'cubic-bezier(.16,1,.3,1)' });
     }
   };
   swap(list[0]);
-  if (list.length < 2) return;   // одна строка — крутить нечего, но блик бежит
+  if (list.length < 2) return;
   let i = 0;
   ui.quipTimer = setInterval(() => {
-    // случайный порядок только у «думаю»: там строки равноправны. У реального
-    // действия порядок осмысленный — идём по кругу, ничего не пропуская.
     i = o.shuffle ? (i + 1 + Math.floor(Math.random() * (list.length - 1))) % list.length
                   : (i + 1) % list.length;
     swap(list[i]);
-  }, o.every || 1600);
+  }, every);
 }
 
 /* Фразы по ТЕМЕ инструмента. Ключ — группа из реестра (web, sandbox,
@@ -3011,7 +3104,7 @@ function stopQuips(ui) {
 /* Обычный статус: тот же мигающий курсор + текст. Принимает и одну строку,
    и набор — тогда строки сменяют друг друга, как у «думаю». */
 function busyMode(ui, text, every) {
-  runStatus(ui, text, { caret: false, every: every || 1500 });
+  runStatus(ui, text, { caret: false, every: every || 2100 });
 }
 
 function setStreaming(on) {
@@ -3231,18 +3324,30 @@ function clearTypingDecorations(mdEl) {
   }
 }
 
-/* Жёлтая искра включается без подсказок модели и дополнительных токенов.
-   Закрытый семантический сигнал редкий: явное «Важно/Критично» либо измеримый
-   риск (необратимость, потеря, подтверждение). Обычный ответ и таблицы синие. */
+/* Жёлтая искра включается локально, без подсказок модели и токенов. Важность
+   определяется структурой ответа: заголовки, явное выделение, рекомендации,
+   выводы и риски. У любого достаточно длинного ответа есть ещё один стабильный
+   смысловой акцент — текущий блок в момент пересечения порога. Индекс хранится
+   на md-контейнере, поэтому он не скачет при каждом markdown-render. */
 function markImportantThought(mdEl) {
   if (!mdEl) return;
-  const parts = $$('p,li,blockquote', mdEl);
+  const parts = $$('h1,h2,h3,h4,h5,h6,p,li,blockquote', mdEl);
   const last = parts[parts.length - 1];
   if (!last) return;
   const text = (last.textContent || '').trim();
-  const important = /^(?:⚠\ufe0f?\s*)?(?:важно|главное|критично|обязательно|внимание|осторожно|не забудьте|обратите внимание|ключевой момент|рекомендация|совет|important|critical)\s*[:—.!]/i.test(text) ||
-    /\b(?:необратим\w*|нельзя отменить|без резервной копии|риск\s+(?:потери|утечки|блокировки)|потребуется подтверждение|перед тем как продолжить|обязательно (?:сохран|провер|включ|отключ))\b/i.test(text);
-  last.classList.toggle('action-important', important);
+  const index = parts.indexOf(last);
+  const fullLength = (mdEl.textContent || '').trim().length;
+  const heading = /^H[1-6]$/.test(last.tagName || '');
+  const emphasized = !!(last.querySelector && (last.querySelector('strong') || last.querySelector('mark')));
+  const semantic = /^(?:⚠\ufe0f?\s*)?(?:важно|главное|критично|обязательно|внимание|осторожно|итог|вывод|результат|рекомендация|совет|что делать|следующий шаг|important|critical)\s*[:—.!]/i.test(text) ||
+    /\b(?:необратим\w*|нельзя отменить|без резервной копии|риск\s+(?:потери|утечки|блокировки)|потребуется подтверждение|обратите внимание|не забудьте|лучше всего|рекомендую|стоит\s+(?:сделать|проверить|сохранить)|нужно\s+(?:сделать|проверить|сохранить)|следует\s+(?:сделать|проверить))\b/i.test(text);
+
+  if (!heading && !emphasized && !semantic && fullLength >= 280 && text.length >= 28 &&
+      mdEl.dataset.importantBlock == null) {
+    mdEl.dataset.importantBlock = String(index);
+  }
+  const longAnswerAccent = Number(mdEl.dataset.importantBlock) === index;
+  last.classList.toggle('action-important', heading || emphasized || semantic || longAnswerAccent);
 }
 
 function placeCaret(mdEl) {
@@ -3500,12 +3605,10 @@ if ($('#bellBtn')) {
    actions и кнопка Stop ждут, пока ui.buffer действительно дойдёт до ui.shown.
    Так сетевой EOF не выдаёт недопечатанный ответ за визуально готовый. */
 function clearRunRoute(ui) {
-  if (!ui) return;
-  if (ui.routeEl) ui.routeEl.remove();
-  ui.routeEl = null;
-  // Пользователь выбрал вариант «в шапке ответа только во время генерации»:
-  // сценарий и точная модель исчезают на visual-done одной границей.
-  if (ui.node && ui.node.modelEl) ui.node.modelEl.textContent = '';
+  // Имя оставлено для совместимости жизненного цикла: теперь visual-done не
+  // очищает meta. Сценарий и модель — паспорт ответа и должны переживать как
+  // окончание печати, так и повторное открытие диалога.
+  updateResponseMeta(ui);
 }
 
 function settleVisualDone(ui) {
@@ -3671,18 +3774,9 @@ function handleEvent(ev, ui) {
     }
 
     case 'route': {
-      // Route — состояние конкретного прогона, поэтому живёт в заголовке его
-      // ответа, а не в composer. Там он не занимает место AGENT и не остаётся
-      // после окончания визуальной печати.
-      if (!ui.routeEl) {
-        ui.routeEl = el('span', 'ai-route');
-        const head = node.root.querySelector('.ai-name');
-        if (head) head.appendChild(ui.routeEl);
-      }
-      if (ui.routeEl) {
-        ui.routeEl.textContent = 'сценарий: ' + (TIER_LABEL[ev.tier] || ev.tier);
-        ui.routeEl.title = ev.reason || '';
-      }
+      ui.routeTier = ev.tier || '';
+      ui.routeReason = ev.reason || '';
+      updateResponseMeta(ui);
       // Кухню показываем только на сложных задачах: на «привет» и короткий
       // вопрос пользователь ждёт ответ, а не ход мыслей и терминал.
       ui.verbose = ev.verbose !== false;
@@ -3690,7 +3784,8 @@ function handleEvent(ev, ui) {
     }
 
     case 'model':
-      node.modelEl.textContent = ev.model ? 'модель: ' + ev.model : '';
+      ui.modelName = ev.model || '';
+      updateResponseMeta(ui);
       $('#footModel').textContent = ev.model || '—';
       break;
 
@@ -3773,7 +3868,7 @@ function handleEvent(ev, ui) {
 
     case 'tool_hint':
       if (ui.statusEl) {
-        busyMode(ui, [ev.label || 'Готовлю инструмент'].concat(groupQuips(ev.group)), 1300);
+        busyMode(ui, [ev.label || 'Готовлю инструмент'].concat(groupQuips(ev.group)), 2300);
       }
       break;
 
@@ -3794,7 +3889,7 @@ function handleEvent(ev, ui) {
         break;
       }
       // строка состояния рассказывает, чем агент занят прямо сейчас
-      busyMode(ui, toolTicker(ev), 1400);
+      busyMode(ui, toolTicker(ev), 2200);
       const card = makeCard('⚙', ev.label || ev.name, 'tool-card live', true);
       markBorn(card);
       card.querySelector('.card-head').insertBefore(el('span', 'tool-run'), card.querySelector('.chev'));
@@ -3833,14 +3928,16 @@ function handleEvent(ev, ui) {
     case 'approval_wait': {
       reactor('wait');
       busyMode(ui, ['Жду твоего решения', 'нужно подтверждение', '· ' + (ev.label || ev.tool || '')], 1500);
-      const critical = /delete|shell|payment|pay|computer|click|type_text/.test(ev.tool || '');
-      const card = el('div', 'panel-card approve-card' + (critical ? ' critical' : ''));
+      const permission = ev.style === 'permission';
+      const critical = !permission && /delete|shell|payment|pay|computer|click|type_text/.test(ev.tool || '');
+      const card = el('div', 'panel-card approve-card' +
+        (permission ? ' permission' : (critical ? ' critical' : '')));
       card.innerHTML =
-        '<div class="ah">⛨ Требуется подтверждение</div>' +
+        '<div class="ah">' + (permission ? '◇ Можно открыть приложение?' : '⛨ Требуется подтверждение') + '</div>' +
         '<div class="ab"><b>' + esc(ev.label || ev.tool) + '</b><br>' + esc(ev.reason || '') +
         '<div class="s-args" style="margin-top:8px">' + esc(JSON.stringify(ev.args || {}, null, 1)) + '</div></div>' +
         '<div class="approve-actions"><button class="btn primary sm ok">Разрешить</button>' +
-        '<button class="btn danger sm no">Отклонить</button>' +
+        '<button class="btn ' + (permission ? '' : 'danger ') + 'sm no">Не открывать</button>' +
         '<span class="muted" style="align-self:center;font-size:11px">или реши в панели «Санкции»</span></div>';
       node.body.insertBefore(card, ui.statusEl);
       const decide = (d) => {
@@ -3860,8 +3957,9 @@ function handleEvent(ev, ui) {
       // карточка уже нарисована прямо в ответе — дубль из renderSanctions не нужен
       S.streamApproval = true;
       refreshState();
-      sfx('error');
-      toast((ev.label || ev.tool) + ' — нужно твоё разрешение', 'warn', 'Санкция');
+      sfx(permission ? 'pop' : 'error');
+      toast((ev.label || ev.tool) + ' — нужно твоё разрешение', permission ? 'info' : 'warn',
+        permission ? 'Разрешение' : 'Санкция');
       scrollDown(true);
       break;
     }
@@ -4023,6 +4121,9 @@ function handleEvent(ev, ui) {
 
     case 'done': {
       dropStatus(ui);
+      if (ev.tier) ui.routeTier = ev.tier;
+      if (ev.model) ui.modelName = ev.model;
+      updateResponseMeta(ui);
       // Выполнение завершено на сервере: dock сразу зеленеет, а в сообщении
       // остаётся открываемая вкладка с полным планом. Повторный вызов из финала
       // typer безопасен — undockPlan идемпотентен.

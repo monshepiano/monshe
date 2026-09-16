@@ -88,6 +88,9 @@ function simpleSelector(selector) {
 
 function selectorMatches(node, selector) {
   if (!node || node.nodeType !== 1) return false;
+  if (selector.includes(',')) {
+    return selector.split(',').some((part) => selectorMatches(node, part.trim()));
+  }
   const clean = simpleSelector(selector);
   if (!clean) return false;
   if (clean.startsWith('.')) {
@@ -232,11 +235,16 @@ function testLiveStatusHasNoSpinner() {
   const timers = [];
   const q = { textContent: '', offsetWidth: 10, classList: { remove() {}, add() {} } };
   const statusCaret = { style: {} };
+  let mounted = false;
+  let mounts = 0;
   const box = {
-    className: '', markup: '',
-    set innerHTML(value) { this.markup = value; },
+    className: '', markup: '', _statusSignature: '',
+    set innerHTML(value) { this.markup = value; mounted = true; mounts += 1; },
     get innerHTML() { return this.markup; },
-    querySelector(selector) { return selector === '.tw-quip' ? q : statusCaret; },
+    querySelector(selector) {
+      if (!mounted) return null;
+      return selector === '.tw-quip' ? q : statusCaret;
+    },
   };
   const ctx = loadFunctions(['syncCursorPhase', 'runStatus'], {
     Math, CURSOR_BREATHE_MS: 1050, performance: { now: () => 200 },
@@ -249,6 +257,9 @@ function testLiveStatusHasNoSpinner() {
   assert(!box.innerHTML.includes('spinner'), 'response lifecycle must not render a round spinner');
   assert(box.className.includes('work-wait'));
   assert.strictEqual(q.textContent, 'работаю');
+  ctx.runStatus(ui, ['работаю', 'проверяю'], { caret: false, every: 900 });
+  assert.strictEqual(mounts, 1, 'repeated tool_partial must not recreate the status caret');
+  assert.strictEqual(timers.length, 1, 'identical status must not restart its ticker');
   timers[0].fn();
   assert.strictEqual(q.textContent, 'проверяю', 'work labels must stay alive');
 }
@@ -398,23 +409,24 @@ function testImportantHeadingCaretAndTrail() {
   const original = 'Пуск 🚀 системы';
   heading.appendChild(miniDocument.createTextNode(original));
   md.appendChild(heading);
+  ctx.markImportantThought(md);
   ctx.placeCaret(md);
   assert.strictEqual(md.querySelectorAll('.caret').length, 1);
-  assert(!md.querySelector('.caret').classList.contains('caret-important'),
-    'ordinary headings use the same blue caret as conversational text');
+  assert(md.querySelector('.caret').classList.contains('caret-important'),
+    'markdown headings deterministically use the yellow important caret');
   const firstCursorPhase = md.querySelector('.caret').style.animationDelay;
   assert(/^-[\d.]+ms$/.test(firstCursorPhase),
     'a recreated markdown caret must rejoin the global animation phase');
-  assert.strictEqual(md.querySelector('.important-trail'), null);
-  assert.strictEqual(Array.from(md.querySelector('.normal-trail').textContent).length, 7,
-    'ordinary heading trail must be bounded by seven Unicode characters');
+  assert.strictEqual(md.querySelector('.normal-trail'), null);
+  assert.strictEqual(Array.from(md.querySelector('.important-trail').textContent).length, 7,
+    'heading accent must remain bounded to the seven-character typing trail');
   assert.strictEqual(heading.textContent, original, 'decorations must not change visible heading text');
 
   ctx.placeCaret(md);
   assert.strictEqual(md.querySelectorAll('.caret').length, 1, 'each tick owns exactly one caret');
   assert.notStrictEqual(md.querySelector('.caret').style.animationDelay, firstCursorPhase,
     'DOM replacement must advance rather than restart the cursor breath');
-  assert.strictEqual(md.querySelectorAll('.normal-trail').length, 1, 'trail nodes must not accumulate');
+  assert.strictEqual(md.querySelectorAll('.important-trail').length, 1, 'heading trails must not accumulate');
   assert.strictEqual(heading.textContent, original);
   ctx.clearTypingDecorations(md);
   assert.strictEqual(md.querySelector('.caret'), null);
@@ -449,6 +461,16 @@ function testImportantHeadingCaretAndTrail() {
   ctx.markImportantThought(plain);
   assert(!p.classList.contains('action-important'),
     'semantic highlighting must clear when the current thought is ordinary');
+
+  const longMd = new MiniNode('div');
+  const longP = new MiniNode('p');
+  longP.textContent = 'Подробное объяснение без служебной разметки. '.repeat(9);
+  longMd.appendChild(longP);
+  ctx.markImportantThought(longMd);
+  ctx.placeCaret(longMd);
+  assert(longMd.querySelector('.caret').classList.contains('caret-important'),
+    'every sufficiently long response receives a deterministic important moment');
+
   const marked = new MiniNode('mark');
   marked.appendChild(miniDocument.createTextNode('Подтвердить действие'));
   plain.appendChild(marked);
@@ -474,12 +496,12 @@ function testImportantHeadingCaretAndTrail() {
 
   assert(/\.caret\s*\{[^}]*#00bff3[^}]*box-shadow/s.test(css), 'normal cursor is visibly bright blue');
   const goldCaret = css.match(/\.caret\.caret-important\s*\{([^}]*)\}/s);
-  assert(goldCaret && /opacity\s*:\s*\.84/.test(goldCaret[1]),
-    'important caret must be clearly visible rather than a rare dim flicker');
+  assert(goldCaret && /opacity\s*:\s*1/.test(goldCaret[1]) && /#ffd34f/.test(goldCaret[1]),
+    'important caret must be a clearly visible saturated yellow marker');
   assert(!/#fff(?:fff)?\b/i.test(goldCaret[1]), 'gold caret must not flare to pure white');
   assert(/\.normal-trail\s*\{[^}]*linear-gradient\(90deg,#9ab0ba[^}]*#74c7d8[^}]*#b6edf3[^}]*text-shadow/s.test(css),
     'ordinary cursor trail must remain delicately but visibly blue');
-  assert(/\.important-trail\s*\{[^}]*linear-gradient\(90deg,var\(--tx\)\s+0%[^}]*#dfbb53[^}]*#e6c15d[^}]*#f0d88d[^}]*text-shadow/s.test(css),
+  assert(/\.important-trail\s*\{[^}]*linear-gradient\(90deg,var\(--tx\)\s+0%[^}]*#ffd34f[^}]*#ffc83f[^}]*#ffe88f[^}]*text-shadow/s.test(css),
     'gold trail must visibly mark important thought without changing typing speed');
   assert(/\.caret\s*\{[^}]*animation\s*:\s*cursorBreathe[^}]*\}/s.test(css));
   assert(!/@keyframes (?:spark|twBlink)[^{]*\{[^}]*box-shadow/s.test(css),
@@ -489,7 +511,7 @@ function testImportantHeadingCaretAndTrail() {
     'tool and plan events must not recolor the whole following markdown answer');
   assert(/tagName\s*===\s*['"]MARK['"]/.test(extractFunction(js, 'placeCaret')) &&
     /action-important/.test(extractFunction(js, 'placeCaret')),
-  'gold mode is reserved for explicitly marked action fragments');
+  'gold mode follows deterministic locally marked important fragments');
   const question = extractFunction(js, 'questionCard');
   assert(/ask-own/.test(question) && /Свой вариант/.test(question),
     'blocking ask_user controls must offer the same custom answer escape hatch');
@@ -512,10 +534,10 @@ function makePlanItem(text) {
 function testPlanTypingCompletionAndDockRaces() {
   assert(/const PLAN_CPS\s*=\s*220/.test(js),
     'plan intro must use its own fast typing lane');
-  assert(/const PLAN_ITEM_PAUSE\s*=\s*300/.test(js) && /const PLAN_LOOK_MS\s*=\s*300/.test(js),
-    'plan pauses must stay short and deterministic');
-  assert(/const PLAN_FLY_MS\s*=\s*320/.test(js),
-    'the event gate must match the short dock transition');
+  assert(/const PLAN_ITEM_PAUSE\s*=\s*300/.test(js) && /const PLAN_LOOK_MS\s*=\s*520/.test(js),
+    'plan items stay quick while the completed intro remains readable before ascent');
+  assert(/const PLAN_FLY_MS\s*=\s*640/.test(js),
+    'the event gate must match the expressive dock flight transition');
   const typer = extractFunction(js, 'typePlanItem');
   assert(/PLAN_CPS \* elapsed/.test(typer) && /Math\.min\(250, now - last\)/.test(typer),
     'plan typing must be elapsed-time based and recover from ordinary Safari stalls');
@@ -529,13 +551,17 @@ function testPlanTypingCompletionAndDockRaces() {
     ['beginPlanGate', 'dispatchStreamEvent', 'releasePlanGate', 'cancelPlanGate'],
     { Promise, handleEvent(ev) { handled.push(ev.type); } },
   );
-  const gated = {};
+  const planStatus = new MiniNode('div');
+  const gated = { statusEl: planStatus };
   gateCtx.beginPlanGate(gated);
+  assert.strictEqual(planStatus.style.display, 'none',
+    'only the plan is visible during its typing and flight; the stable status node is held, not rebuilt');
   gateCtx.dispatchStreamEvent({ type: 'delta' }, gated);
   gateCtx.dispatchStreamEvent({ type: 'tool_start' }, gated);
   assert.deepStrictEqual(handled, [], 'no answer/tool content may appear while the plan is writing or flying');
   gateCtx.releasePlanGate(gated);
   assert.deepStrictEqual(handled, ['delta', 'tool_start'], 'the original SSE order must resume after arrival');
+  assert.strictEqual(planStatus.style.display, '', 'the same status node returns only after the plan arrives');
   assert.strictEqual(gated.planGate, false);
   assert.strictEqual(gated.planIntroPromise, null);
 
@@ -553,16 +579,22 @@ function testPlanTypingCompletionAndDockRaces() {
   const timers = [];
   const trace = [];
   const dock = new MiniNode('div'); dock.className = 'plan-dock live expanded'; dock.dataset.runId = '7';
+  dock._rect = { top: 10, left: 20, width: 600, height: 90, bottom: 100 };
   const title = new MiniNode('span'); title.className = 'pd-t'; dock.appendChild(title);
   const step = new MiniNode('span'); step.className = 'pd-step'; dock.appendChild(step);
   const segment = new MiniNode('span'); segment.className = 'pd-seg now'; dock.appendChild(segment);
   const dot = new MiniNode('span'); dot.className = 'pd-s now'; dock.appendChild(dot);
   const card = new MiniNode('div');
+  const archiveThumb = new MiniNode('button');
+  archiveThumb._rect = { top: 420, left: 60, width: 420, height: 44, bottom: 464 };
   const finishCtx = loadFunctions(['undockPlan'], {
+    PLAN_DONE_HOLD_MS: 2100,
+    PLAN_FOLD_MS: 680,
     clearPlanTimers() { trace.push('clear'); },
     finishPlanItems() { trace.push('finish'); },
     releasePlanGate() { trace.push('release'); },
-    archiveCompletedPlan() { trace.push('archive'); },
+    archiveCompletedPlan() { trace.push('archive'); return archiveThumb; },
+    requestAnimationFrame(fn) { fn(); },
     $$(selector, rootNode) {
       if (rootNode) return rootNode.querySelectorAll(selector);
       return selector === '.plan-dock' ? [dock] : [];
@@ -574,17 +606,24 @@ function testPlanTypingCompletionAndDockRaces() {
     agentMode: true, planItems: [makePlanItem('Шаг').li],
   };
   finishCtx.undockPlan(ui);
-  assert.deepStrictEqual(trace, ['clear', 'finish', 'release', 'archive']);
+  assert.deepStrictEqual(trace, ['clear', 'finish', 'release']);
   assert(ui.planFinished && !card.isConnected, 'completion removes the obsolete flying source card');
   assert(dock.classList.contains('done') && !dock.classList.contains('live'));
   assert.strictEqual(title.textContent, 'План выполнен');
   assert.strictEqual(step.textContent, 'готово');
   assert(segment.classList.contains('done') && !segment.classList.contains('now'));
   assert(dot.classList.contains('done') && !dot.classList.contains('now'));
-  assert.deepStrictEqual(timers.map((timer) => timer.ms), [320, 620],
-    'green completion acknowledgement stays short before the dock disappears');
-  timers.forEach((timer) => timer.fn());
-  assert(dock.classList.contains('plan-gone') && !dock.isConnected);
+  assert.deepStrictEqual(timers.map((timer) => timer.ms), [2100],
+    'the completed green dock remains readable before it starts folding');
+  timers[0].fn();
+  assert.deepStrictEqual(trace, ['clear', 'finish', 'release', 'archive']);
+  assert(dock.classList.contains('plan-folding') && dock.isConnected,
+    'the dock must animate toward the real archive row instead of vanishing');
+  assert(archiveThumb.classList.contains('plan-archive-reveal'));
+  assert(/translate3d\(/.test(dock.style.transform) && /scale\(/.test(dock.style.transform));
+  assert.strictEqual(timers[1].ms, 760, 'the source dock survives for the full fold transition');
+  timers[1].fn();
+  assert(!dock.isConnected);
 
   const archive = extractFunction(js, 'archiveCompletedPlan');
   assert(/!ui\.agentMode/.test(archive) && /!\(ui\.planItems \|\| \[\]\)\.length/.test(archive),
@@ -604,6 +643,14 @@ function testPlanTypingCompletionAndDockRaces() {
     /@keyframes segmentBeat\s*\{50%\{[^}]*box-shadow:0 0 17px/s.test(css),
     'the whole current segment must pulse in sync with the current plan dot');
   assert(/\.plan-card\.plan-complete/.test(css) && /\.plan-dock\.done/.test(css));
+  assert(/const PLAN_FLY_MS\s*=\s*640/.test(js) &&
+    /const PLAN_DONE_HOLD_MS\s*=\s*2100/.test(js) &&
+    /const PLAN_FOLD_MS\s*=\s*680/.test(js),
+    'plan ascent, completion hold, and archive morph must remain deliberately expressive');
+  assert(/\.plan-card\.plan-complete\s*\{[^}]*background:var\(--panel2\)/s.test(css) &&
+    /\.plan-card\.plan-complete \.card-head\s*\{[^}]*background:rgba\(63,191,149,\.09\)/s.test(css) &&
+    /\.plan-card\.plan-complete \.plan-list li\s*\{[^}]*color:var\(--tx2\)/s.test(css),
+    'completed archive keeps only its frame and header green while its interior remains neutral');
 
   const finish = extractFunction(js, 'queueResponseFinish');
   assert(/if\s*\(!ui\.buffer\)\s*ui\.buffer\s*=\s*doneContent/.test(finish));
@@ -639,6 +686,7 @@ function testRepeatedPlanEventReplacesOwnership() {
     planLater(_ui, fn, ms) { scheduled.push({ fn, ms }); },
     revealPlanItems() {}, sfx() {},
     dropStatus() { completionOrder.push('status'); },
+    updateResponseMeta() {},
     undockPlan() { completionOrder.push('plan'); },
     queueResponseFinish() { completionOrder.push('typing'); },
   });
@@ -866,6 +914,7 @@ function testPendingInteractivePanelAndRouteLifecycle() {
   let mounted = 0;
   let followed = 0;
   let typerStarts = 0;
+  let metaRefreshes = 0;
   const ctx = loadFunctions(
     ['deferMountedReplyUi', 'flushPendingReplyUi', 'typeInto', 'clearRunRoute', 'settleVisualDone'],
     {
@@ -881,6 +930,7 @@ function testPendingInteractivePanelAndRouteLifecycle() {
       scrollDown() {},
       followGrowingPanel() { followed += 1; },
       typerStart() { typerStarts += 1; },
+      updateResponseMeta() { metaRefreshes += 1; },
     },
   );
   const spec = 'tiles Формат: PDF | Word | Markdown';
@@ -920,11 +970,12 @@ function testPendingInteractivePanelAndRouteLifecycle() {
   ui.routeEl = route;
   ui.resolveVisualDone = () => { resolved += 1; };
   ctx.settleVisualDone(ui);
-  assert.strictEqual(route.isConnected, false);
-  assert.strictEqual(ui.routeEl, null);
+  assert.strictEqual(route.isConnected, true);
+  assert.strictEqual(ui.routeEl, route, 'visual completion keeps response metadata attached');
+  assert.strictEqual(metaRefreshes, 1);
   assert.strictEqual(resolved, 1);
   ctx.settleVisualDone(ui);
-  assert.strictEqual(resolved, 1, 'visual settlement and route cleanup are idempotent');
+  assert.strictEqual(resolved, 1, 'visual settlement and persistent metadata refresh are idempotent');
 
   const events = extractFunction(js, 'handleEvent');
   assert(/case 'reply_ui':[\s\S]*pendingReplyUi\s*=\s*spec[\s\S]*flushPendingReplyUi\(ui\)/.test(events));
@@ -998,8 +1049,9 @@ function testRussianImageAndHudFollowupContract() {
     'AGENT must be a real labelled checkbox switch, not a button with a dot');
   assert(!/<button[^>]+id="tgAgent"/.test(html));
   assert(/\.toggle\s*\{[^}]*height:28px[^}]*padding:0 12px/s.test(css));
-  assert(/\.agent-switch\s*\{[^}]*height:28px[^}]*display:flex/s.test(css) &&
-    /\.agent-switch-track\s*\{[^}]*width:29px[^}]*height:16px/s.test(css));
+  assert(/\.agent-switch\s*\{[^}]*height:28px[^}]*display:flex[^}]*border:0[^}]*background:transparent/s.test(css) &&
+    /\.agent-switch-track\s*\{[^}]*width:48px[^}]*height:28px/s.test(css),
+    'AGENT uses a full-height switch track without an outer framed capsule');
   assert(/#tgAgent'\)\.addEventListener\('change'[\s\S]*S\.agentMode\s*=\s*this\.checked/.test(js));
   const tipRule = css.match(/\.agent-switch\[data-tip\][^{]*::after\s*\{([^}]*)\}/s);
   assert(/\.composer\s*\{[^}]*overflow:visible/s.test(css) && tipRule &&
@@ -1044,11 +1096,36 @@ function testRussianImageAndHudFollowupContract() {
   assert(/wheel/.test(follow) && /touchstart/.test(follow));
 
   assert(/\.composer-wrap\s*\{[^}]*linear-gradient\(180deg,rgba\(4,7,13,0\) 0%/s.test(css));
-  assert(/сценарий:/.test(events) && /модель:/.test(events),
-    'the selected scenario and model live in the response header');
+  assert(/ui\.routeTier\s*=\s*ev\.tier[\s\S]*updateResponseMeta\(ui\)[\s\S]*ui\.modelName\s*=\s*ev\.model[\s\S]*updateResponseMeta\(ui\)/.test(events),
+    'scenario and model update one response-owned metadata line');
   const clearMeta = extractFunction(js, 'clearRunRoute');
-  assert(/modelEl\.textContent\s*=\s*''/.test(clearMeta),
-    'scenario and model disappear at visual completion as selected by the user');
+  assert(/updateResponseMeta\(ui\)/.test(clearMeta) && !/\.remove\(\)/.test(clearMeta),
+    'scenario and model persist above their response after visual completion');
+  assert(/routeTier:\s*meta\.tier \|\| ''/.test(extractFunction(js, 'renderMessages')),
+    'history restores the persisted scenario together with the model');
+
+  const metaRoot = new MiniNode('div');
+  const metaHead = new MiniNode('div'); metaHead.className = 'ai-name'; metaRoot.appendChild(metaHead);
+  const legacyModel = new MiniNode('span'); legacyModel.textContent = 'old';
+  const metaCtx = loadFunctions(['updateResponseMeta'], {
+    TIER_LABEL: { quality: 'качество' },
+    el: miniEl,
+  });
+  const metaUi = {
+    node: { root: metaRoot, modelEl: legacyModel }, routeTier: 'quality',
+    modelName: 'gpt-test', routeReason: 'reason', routeEl: null,
+  };
+  metaCtx.updateResponseMeta(metaUi);
+  assert.strictEqual(metaUi.routeEl.textContent, 'сценарий: качество · модель: gpt-test');
+  assert.strictEqual(metaUi.routeEl.parentNode, metaHead);
+  assert.strictEqual(legacyModel.textContent, '', 'legacy model badge must not duplicate persistent metadata');
+
+  assert(/const permission = ev\.style === 'permission'/.test(events) &&
+    /permission \? '◇ Можно открыть приложение\?'/.test(events) &&
+    /permission \? '' : 'danger '/.test(events) && /sfx\(permission \? 'pop' : 'error'\)/.test(events),
+    'Terminal window permission uses softer copy, buttons, and sound than a dangerous sanction');
+  assert(/\.approve-card\.permission\s*\{[^}]*rgba\(112,151,255,\.4\)[^}]*rgba\(164,119,255,\.065\)/s.test(css),
+    'permission cards use the calm blue-violet sanction variant');
 }
 
 function testThinkingGradientContract() {
@@ -1069,11 +1146,34 @@ function testThinkingGradientContract() {
   assert(toolFrame && /#42e0f2/.test(toolFrame[1]) && /#a878ed/.test(toolFrame[1]) &&
     /#efa953/.test(toolFrame[1]) && /toolFrameFlow 1\.08s/.test(toolFrame[1]),
   'Working contour must be brighter and more colourful without filling the card');
-  assert(/\.think-card\.live \.card-head,\.think-card\.live \.think-stream,[\s\S]*\.tool-card\.live \.kv span\s*\{[^}]*background-clip:text[^}]*liveTextFlow 1\.25s/s.test(css),
-    'thinking and tool text must receive the same immediate restrained colour pass');
+  const textBand = css.match(/\.think-card\.live \.card-head,\.think-card\.live \.think-stream,[\s\S]*?\.tool-card\.live \.kv span\s*\{([^}]*)\}/s);
+  assert(textBand && /color:transparent/.test(textBand[1]) && /background-clip:text/.test(textBand[1]) &&
+    /#61e7ff 45\.2%/.test(textBand[1]) && /#718fff 46\.8%/.test(textBand[1]) &&
+    /#ef72d0 50%/.test(textBand[1]) && /#65edc4 54\.8%/.test(textBand[1]) &&
+    /liveTextFlow 2\.35s/.test(textBand[1]),
+    'thinking and tool text receive a narrow saturated multicolour band on the glyphs themselves');
   assert(/@keyframes liveTextFlow/.test(css));
   assert(!/\.think-stream::(?:before|after)[^{]*\{[^}]*caret/s.test(css),
     'thinking stays a masked scrolling stream, not a cursor animation');
+
+  const autoOutline = css.match(/\.nav-item\[data-view="auto"\]\.auto-running \.nav-outline\s*\{([^}]*)\}/s);
+  assert(autoOutline && /background-size:320% 100%/.test(autoOutline[1]) &&
+    /autoOutlineFlow 3\.4s cubic-bezier\(\.45,0,\.55,1\) infinite alternate/.test(autoOutline[1]),
+    'running AUTO uses a soft slow border-only gradient');
+  const memoryOutline = css.match(/\.nav-item\.save-glint-strong \.nav-outline\s*\{([^}]*)\}/s);
+  assert(memoryOutline && /#b477ff/.test(memoryOutline[1]) && /#ef79cf/.test(memoryOutline[1]) &&
+    /memorySaveOutline 1\.35s/.test(memoryOutline[1]),
+    'Memory save gets one conspicuous Apple-Intelligence-style border pass');
+
+  const agentSwitch = css.match(/\.agent-switch\s*\{([^}]*)\}/s);
+  const agentTrack = css.match(/\.agent-switch-track\s*\{([^}]*)\}/s);
+  assert(agentSwitch && /border:0/.test(agentSwitch[1]) && /background:transparent/.test(agentSwitch[1]),
+    'AGENT remains a real switch without an outer capsule');
+  assert(agentTrack && /width:48px/.test(agentTrack[1]) && /height:28px/.test(agentTrack[1]) &&
+    /border:1px solid var\(--line\)/.test(agentTrack[1]) && /background:transparent/.test(agentTrack[1]),
+    'the off AGENT track matches the neutral neighbouring controls at 28px high');
+  assert(/\.agent-switch input:checked \+ \.agent-switch-track\s*\{[^}]*rgba\(143,134,207,\.18\)/s.test(css),
+    'the AGENT tint appears only after the switch is enabled');
 }
 
 (async () => {
