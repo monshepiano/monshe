@@ -1,5 +1,9 @@
 # JARVIS Image Gateway
 
+> **Beta status:** deployment is intentionally deferred. Do not claim image
+> generation is enabled in an installer until the live checks in
+> [`CONTINUE-RU.md`](CONTINUE-RU.md) pass.
+
 Production transport for zero-setup image generation. It is intentionally a
 small standard-library Python service, suitable for Timeweb App Platform or a
 1 vCPU / 1 GB Russian VPS. The Mac installer contains a revocable client token;
