@@ -34,7 +34,7 @@ headers.
 Timeweb is the simplest production path because one Russian account provides
 both an OpenAI-compatible image API and App Platform hosting with a technical
 HTTPS domain. Create an AI Gateway key, enable an image-capable model (the
-recommended starting point is `gemini-3.1-flash-image-preview`), and deploy this
+recommended starting point is `black_forest_labs/flux-2-pro`), and deploy this
 public repository as a Docker Backend in App Platform:
 
 - repository: `https://github.com/monshepiano/monshe.git`;

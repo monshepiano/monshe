@@ -58,7 +58,7 @@ SCOPE = os.environ.get("GIGACHAT_SCOPE", "GIGACHAT_API_B2B").strip()
 MODEL = os.environ.get("GIGACHAT_MODEL", "GigaChat").strip()
 TIMEWEB_KEY = os.environ.get("TIMEWEB_AI_GATEWAY_KEY", "").strip()
 TIMEWEB_MODEL = os.environ.get(
-    "TIMEWEB_IMAGE_MODEL", "gemini-3.1-flash-image-preview").strip()
+    "TIMEWEB_IMAGE_MODEL", "black_forest_labs/flux-2-pro").strip()
 TIMEWEB_API = os.environ.get(
     "TIMEWEB_AI_GATEWAY_URL", "https://api.timeweb.ai/v1").strip().rstrip("/")
 TIMEWEB_IMAGE_HOSTS = tuple(
