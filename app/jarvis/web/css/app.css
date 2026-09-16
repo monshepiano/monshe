@@ -186,16 +186,19 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   -webkit-mask-composite:xor;mask-composite:exclude}
 .nav-item[data-view="auto"].auto-running .nav-outline{
   background:linear-gradient(105deg,
-    rgba(78,224,204,.34) 0%,rgba(92,218,235,.46) 18%,rgba(108,188,255,.58) 34%,
-    rgba(151,132,255,.58) 51%,rgba(225,132,218,.46) 67%,rgba(255,179,118,.38) 82%,
-    rgba(78,224,204,.34) 100%);
+    rgba(78,224,204,.36) 0%,rgba(84,222,216,.4) 9%,rgba(92,218,235,.48) 18%,
+    rgba(100,206,247,.54) 27%,rgba(108,188,255,.6) 35%,rgba(130,159,255,.61) 43%,
+    rgba(151,132,255,.6) 51%,rgba(190,130,240,.54) 59%,rgba(225,132,218,.48) 67%,
+    rgba(245,153,170,.44) 75%,rgba(255,179,118,.4) 83%,rgba(166,205,153,.38) 92%,
+    rgba(78,224,204,.36) 100%);
   background-size:320% 100%!important;
+  filter:drop-shadow(0 0 4px rgba(105,213,211,.32)) drop-shadow(0 0 8px rgba(151,132,255,.16));
   animation:autoOutlineFlow 3.4s cubic-bezier(.45,0,.55,1) infinite alternate}
-.nav-item[data-view="auto"].auto-running .nav-ico{filter:drop-shadow(0 0 6px rgba(105,213,211,.42))}
+.nav-item[data-view="auto"].auto-running .nav-ico{filter:drop-shadow(0 0 7px rgba(105,213,211,.5))}
 @keyframes autoOutlineFlow{
-  0%{opacity:.48;background-position:100% 0;filter:drop-shadow(0 0 2px rgba(113,196,255,.12))}
-  50%{opacity:.78;filter:drop-shadow(0 0 5px rgba(163,137,255,.3))}
-  100%{opacity:.54;background-position:-135% 0;filter:drop-shadow(0 0 3px rgba(235,145,211,.16))}}
+  0%{opacity:.54;background-position:100% 0;filter:drop-shadow(0 0 4px rgba(113,196,255,.28)) drop-shadow(0 0 8px rgba(105,213,211,.12))}
+  50%{opacity:.82;filter:drop-shadow(0 0 7px rgba(163,137,255,.42)) drop-shadow(0 0 11px rgba(92,218,235,.18))}
+  100%{opacity:.58;background-position:-135% 0;filter:drop-shadow(0 0 5px rgba(235,145,211,.3)) drop-shadow(0 0 9px rgba(151,132,255,.14))}}
 .nav-item.save-glint .nav-outline{
   background:linear-gradient(100deg,transparent 2%,#8fb35a 18%,#43dec6 44%,#42d9ff 68%,#9d7aed 86%,transparent 98%);
   animation:fileSaveOutline .72s cubic-bezier(.16,.78,.25,1) both}
@@ -413,8 +416,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   display:flex;align-items:center;gap:8px}
 .ai-model{color:var(--tx3);letter-spacing:.2px;text-transform:none;font-size:10px;font-family:var(--fm);
   max-width:48%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ai-route{margin-left:auto;max-width:72%;padding:2px 7px;border-radius:999px;border:1px solid rgba(0,200,240,.2);
-  color:rgba(154,202,219,.72);background:rgba(0,110,150,.055);letter-spacing:.15px;
+.ai-route{max-width:72%;color:rgba(154,202,219,.68);letter-spacing:.15px;
   overflow:hidden;text-overflow:ellipsis;text-transform:none;font:9.5px/1.25 var(--fm);
   white-space:nowrap;animation:routeIn .2s ease-out both}
 @keyframes routeIn{from{opacity:0;transform:translateY(-2px)}}
@@ -554,7 +556,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   background-size:360% 100%;background-position:118% 0;
   -webkit-background-clip:text;background-clip:text;
   will-change:background-position;
-  animation:liveTextFlow 2.35s cubic-bezier(.42,0,.58,1) infinite}
+  animation:liveTextFlow 8.4s cubic-bezier(.45,0,.55,1) infinite}
 .tool-card.live .card-head,.tool-card.live .kv span{
   background-image:linear-gradient(100deg,
     #adc2c9 0%,#adc2c9 43%,#54edff 45%,#698aff 46.5%,#b56fff 48%,
@@ -649,6 +651,9 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .md pre{margin:11px 0;padding:13px 15px;border-radius:11px;background:rgba(0,0,0,.5);border:1px solid var(--line);
   overflow:auto;position:relative}
 .md pre code{background:none;padding:0;font-size:12px;line-height:1.65;color:#b8ecff}
+/* Незаконченный code fence не растягивает весь чат: окно следует за новыми
+   строками само, а после visual done обычный foldCodeBlocks сворачивает код. */
+.md pre.live-code{max-height:min(42vh,360px);overflow:auto;overscroll-behavior:contain}
 .md blockquote{margin:10px 0;padding:8px 14px;border-left:2.5px solid var(--cy);background:rgba(0,212,255,.06);
   border-radius:0 9px 9px 0;color:var(--tx2)}
 .md table{width:100%;border-collapse:collapse;margin:11px 0;font-size:12.5px;display:block;overflow-x:auto}
@@ -803,7 +808,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .comp-btn.rec{background:rgba(221,85,102,.22);border-color:var(--red);color:#fff;animation:recPulse 1.2s infinite}
 .comp-btn.rec .mic-wave{display:flex}
 @keyframes recPulse{50%{box-shadow:0 0 0 8px rgba(221,85,102,.14)}}
-.send-btn{width:38px;height:38px;border-radius:12px;border:0;flex-shrink:0;cursor:pointer;display:grid;place-items:center;
+.send-btn{width:48px;height:38px;border-radius:12px;border:0;flex-shrink:0;cursor:pointer;display:grid;place-items:center;
   background:linear-gradient(135deg,var(--cy),#0a8fc4);transition:.25s;box-shadow:0 5px 18px rgba(0,212,255,.3)}
 .send-btn svg{width:18px;height:18px;fill:#03151f}
 .send-btn:hover{transform:translateY(-2px) scale(1.05);box-shadow:0 9px 26px rgba(0,212,255,.45)}
@@ -827,28 +832,27 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .toggle#tgComputer.on .tg-dot{background:var(--red);box-shadow:0 0 9px var(--red)}
 .agent-switch{height:28px;display:flex;align-items:center;gap:7px;padding:0;
   border:0;border-radius:0;background:transparent;color:var(--tx3);
-  font:11.5px/1 var(--f);letter-spacing:0;cursor:pointer;position:relative;
+  font:11.5px/1 var(--f);letter-spacing:0;cursor:default;position:relative;
   transition:color .22s;flex:0 0 auto}
-.agent-switch input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
-/* Именно track является тумблером высотой с Camera/Computer. Внешней pill-
-   рамки вокруг надписи больше нет. В выключенном состоянии он использует ту
-   же нейтральную палитру, что соседние controls. */
-.agent-switch-track{box-sizing:border-box;width:48px;height:28px;border-radius:15px;
+/* Именно внутренний label-track кликабелен; AGENT рядом — обычная подпись. */
+.agent-switch-track{box-sizing:border-box;width:48px;height:28px;border-radius:15px;cursor:pointer;
   border:1px solid var(--line);background:transparent;position:relative;
   box-shadow:inset 0 1px 5px rgba(0,0,0,.42);transition:.24s}
+.agent-switch-track input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .agent-switch-track i{position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;
   background:var(--tx3);transition:transform .24s cubic-bezier(.2,.8,.3,1),background .22s,box-shadow .22s}
 .agent-switch:hover{color:var(--tx2)}
-.agent-switch:hover .agent-switch-track{border-color:var(--line2)}
+.agent-switch-track:hover{border-color:var(--line2)}
 .agent-switch:has(input:checked){color:#e0dbff}
-.agent-switch input:checked + .agent-switch-track{background:rgba(143,134,207,.18);border-color:rgba(168,159,242,.62)}
-.agent-switch input:checked + .agent-switch-track i{transform:translateX(20px);background:#b8afff;
+.agent-switch-track:has(input:checked){background:rgba(143,134,207,.18);border-color:rgba(168,159,242,.62)}
+.agent-switch-track input:checked + i{transform:translateX(20px);background:#b8afff;
   box-shadow:0 0 9px rgba(168,159,242,.9)}
-.agent-switch:focus-within .agent-switch-track{outline:2px solid rgba(168,159,242,.48);outline-offset:2px}
+.agent-switch-track:has(input:focus-visible){outline:2px solid rgba(168,159,242,.48);outline-offset:2px}
 .agent-switch:focus-within{z-index:50}
-/* Tooltip не участвует в геометрии composer и рисуется над его границей. */
+/* Tooltip не участвует в геометрии composer. После выбора tip-dismissed гасит
+   его до mouseleave, а не оставляет висеть из-за фокуса checkbox. */
 .toggle[data-tip]:is(:hover,:focus-visible)::after,
-.agent-switch[data-tip]:is(:hover,:focus-within)::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%);
+.agent-switch[data-tip]:not(.tip-dismissed):hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%);
   background:rgba(6,14,24,.98);border:1px solid rgba(0,200,240,.42);padding:7px 11px;border-radius:8px;font-size:11px;
   white-space:nowrap;z-index:60;color:var(--tx2);box-shadow:0 12px 30px rgba(0,0,0,.7),0 0 16px rgba(0,200,240,.1);animation:popIn .18s both;
   pointer-events:none;letter-spacing:0;font-family:var(--f)}

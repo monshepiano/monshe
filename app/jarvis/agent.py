@@ -119,6 +119,133 @@ def remember_obvious_facts(text: str) -> List[Dict[str, Any]]:
     return saved
 
 
+# Дешёвый semantic writer запускается только для реплик с личным сигналом. Это
+# не перечень городов/блюд: закрытый признак — человек говорит о себе, своих
+# ограничениях, предпочтениях, планах или просит учитывать факт в будущем.
+_PERSONAL_MEMORY_SIGNAL = re.compile(
+    r"\b(?:я|мне|меня|мой|моя|мо[её]|мои|мы|нам|наш|наша|у\s+меня|"
+    r"живу|работаю|учусь|планирую|предпоч\w*|любим\w*|люблю|переехал\w*|"
+    r"не\s+(?:ем|пью|переношу)|аллерги\w*|вегетариан\w*|цель\w*|macbook|"
+    r"ноутбук\w*|устройств\w*|запомни|учти|называй|зовут|"
+    r"i|i'm|im|my|mine|we|our|prefer\w*|allerg\w*|work|live)\b",
+    re.IGNORECASE,
+)
+_MEMORY_SECRET = re.compile(
+    r"\b(?:парол\w*|password|api[ _-]?key|secret|token|cvv|номер\s+карт\w*|"
+    r"паспорт\w*)\b", re.IGNORECASE,
+)
+
+
+def has_personal_memory_signal(text: str) -> bool:
+    """Нужен ли отдельный semantic scan, не отправляя в него каждую реплику."""
+    raw = str(text or "").strip()
+    return bool(raw and _PERSONAL_MEMORY_SIGNAL.search(raw)
+                and not _MEMORY_SECRET.search(raw))
+
+
+def _memory_json_items(text: str) -> List[Dict[str, Any]]:
+    """Достать первый JSON-массив кандидатов без жадного ``[.*]``."""
+    raw = str(text or "").strip()
+    fence = re.search(r"```(?:json)?\s*(.+?)```", raw, re.I | re.S)
+    if fence:
+        raw = fence.group(1).strip()
+    candidates = [raw]
+    for start in (m.start() for m in re.finditer(r"\[", raw)):
+        depth, quoted, escaped = 0, False, False
+        for at in range(start, len(raw)):
+            ch = raw[at]
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\" and quoted:
+                escaped = True
+                continue
+            if ch == '"':
+                quoted = not quoted
+                continue
+            if quoted:
+                continue
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    candidates.append(raw[start:at + 1])
+                    break
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)][:8]
+    return []
+
+
+def _verbatim_memory_value(source: str, candidate: Any) -> str:
+    """Вернуть ровно исходный фрагмент пользователя, а не пересказ модели."""
+    wanted = str(candidate or "").strip()
+    if not wanted or len(wanted) > 180:
+        return ""
+    at = source.casefold().find(wanted.casefold())
+    if at < 0:
+        return ""
+    return source[at:at + len(wanted)].strip()
+
+
+def remember_semantic_facts(text: str) -> List[Dict[str, Any]]:
+    """Проактивно сохранить явно названные долговременные личные факты.
+
+    Модель только выбирает ``kind/key`` и указывает цитату. Writer принимает
+    value лишь когда это буквальный substring исходного prompt, поэтому
+    «Питер» не превратится в «Санкт-Петербург». Alias/dedupe по-прежнему
+    выполняются единственной границей ``db.remember``. Ошибка — тихое отсутствие
+    новых фактов, без generic/hardcoded fallback.
+    """
+    source = str(text or "").strip()
+    if not has_personal_memory_signal(source):
+        return []
+    try:
+        result = llm.chat([
+            {"role": "system", "content":
+             "Ты безопасный экстрактор долговременной персональной памяти. "
+             "Извлеки до 5 только ЯВНО сказанных пользователем фактов, которые "
+             "помогут в следующих задачах: имя/обращение, работа/учёба, семья, "
+             "устойчивые предпочтения и ограничения, устройство/среда, долгий "
+             "проект или цель. Не сохраняй текущую команду, одноразовое желание, "
+             "догадку, шутку, пароль, ключ, токен, платёжные или паспортные данные. "
+             "Для value скопируй минимальный значимый фрагмент ИЗ ТЕКСТА БУКВА В "
+             "БУКВУ — не переводи, не исправляй и не нормализуй. Ответь только JSON: "
+             "[{\"kind\":\"person|preference|project|fact\",\"key\":\"короткое "
+             "стабильное название по-русски\",\"value\":\"дословная цитата\"}]. "
+             "Если полезных фактов нет, ответь []."},
+            {"role": "user", "content": source},
+        ], tier="nano", max_tokens=500, temperature=0.0, timeout=25)
+    except Exception:
+        return []
+
+    obvious_ids = {
+        db.canonical_memory(item["kind"], item["key"], item["value"])[3]
+        for item in extract_obvious_memories(source)
+    }
+    seen = set(obvious_ids)
+    saved: List[Dict[str, Any]] = []
+    for item in _memory_json_items(result.get("content", "")):
+        kind = str(item.get("kind") or "fact").strip().casefold()
+        if kind not in {"person", "preference", "project", "fact"}:
+            kind = "fact"
+        key = " ".join(str(item.get("key") or "").split()).strip()[:64]
+        value = _verbatim_memory_value(source, item.get("value"))
+        if not key or not value or _MEMORY_SECRET.search(key + " " + value):
+            continue
+        identity = db.canonical_memory(kind, key, value)[3]
+        if identity in seen:
+            continue
+        seen.add(identity)
+        saved.append(db.remember(kind, key, value, 1.1))
+    return saved
+
+
 # Длинный общий prompt — плохое место для протокола интерфейса: после истории,
 # изображения и результатов инструментов даже сильная модель иногда забывает
 # правило, а на следующем текстовом ходе vision-напоминания уже вовсе не было.
@@ -924,41 +1051,36 @@ class Agent:
 
 
     # ------------------------------------------------------------- planning
-    def make_plan(self, task: str) -> List[str]:
-        """Мгновенный локальный план без отдельного LLM-запроса.
+    def make_plan(self, task: str, starting_tools: Optional[List[str]] = None) -> List[str]:
+        """Построить семантический план уже доказанной автономной работы.
 
-        План нужен интерфейсу как карта выполнения, но прежняя реализация до
-        старта работы делала полноценный base-вызов ради трёх коротких строк.
-        Для «напиши игру шахматы» это была лишняя цена и несколько секунд
-        пустого ожидания. Три фазы исполнения известны детерминированно; тема
-        лишь выбирает узкий шаблон и не влияет на безопасность/инструменты.
+        Это намеренно НЕ preflight: ``run`` вызывает планировщик только после
+        того, как основная модель вернула первый разрешённый non-ask_user tool
+        call. Поэтому обычный ответ и уточнение не платят за второй запрос и не
+        получают фиктивный план. Локальные три шаблона удалены: именно они
+        превращали почти любую задачу в один и тот же fallback. Ошибка/пустой
+        ответ означает отсутствие карточки, а не подстановку общих фраз.
         """
         text = re.sub(r"\s+", " ", str(task or "")).strip()
         if not text:
             return []
-        if orchestrator.is_coding_build(text):
-            return [
-                "Продумать структуру и критерии готовности",
-                "Реализовать интерфейс и основную логику",
-                "Проверить сценарии и сохранить готовые файлы",
-            ]
-        if self.computer_use:
-            return [
-                "Осмотреть текущее состояние экрана",
-                "Выполнить действие в нужном приложении",
-                "Проверить результат на экране",
-            ]
-        if re.search(r"\b(?:найди|исследуй|сравни|проверь|проанализируй)\w*\b", text, re.I):
-            return [
-                "Уточнить критерии и собрать данные",
-                "Сопоставить факты и выполнить задачу",
-                "Проверить выводы и оформить результат",
-            ]
-        return [
-            "Разобрать задачу и подготовить решение",
-            "Выполнить необходимые действия",
-            "Проверить результат и представить итог",
-        ]
+        tools_hint = ", ".join(str(x) for x in (starting_tools or []) if x) or "не указан"
+        try:
+            result = llm.chat([
+                {"role": "system", "content":
+                 "Ты лаконичный планировщик автономного AI-агента. Разбей именно "
+                 "эту задачу на 3–6 конкретных, различимых и проверяемых шагов на "
+                 "русском. Называй предмет и результат задачи, не используй общие "
+                 "заглушки вроде «разобрать задачу», «выполнить действия», "
+                 "«представить итог». Не выдумывай уже полученные результаты. "
+                 "Ответь ТОЛЬКО JSON-массивом строк без markdown и пояснений."},
+                {"role": "user", "content":
+                 "Задача: %s\nПервый выбранный агентом инструмент: %s" % (text, tools_hint)},
+            ], tier="nano", max_tokens=450, temperature=0.2, timeout=25)
+            steps = parse_plan_steps(result.get("content", ""))
+            return steps if 3 <= len(steps) <= 6 else []
+        except Exception:
+            return []
 
     # ------------------------------------------------------------------ run
     def run(self, messages: List[Dict[str, Any]], user_text: str = "",
@@ -1006,18 +1128,16 @@ class Agent:
         }
         max_steps = _max_steps(self.agent_mode)
 
-        # План готовим локально, но пока НЕ показываем. Первый model turn —
-        # единственная достоверная граница между «начинаю автономную работу» и
-        # «мне не хватает данных, выбери вариант». Прежний порядок показывал и
-        # тут же завершал план даже у простого уточнения. Теперь первый turn
-        # удерживается сервером: реальное выполнение получает plan перед любым
-        # текстом/tool, а уточняющий вопрос выходит без plan. Второго LLM-вызова
-        # и дополнительных токенов для этого не нужно.
+        # Первый model turn — единственная достоверная граница между «начинаю
+        # автономную работу» и «мне не хватает данных». До разрешённого
+        # non-ask_user tool call существует только pending-decision: самого плана
+        # и отдельного LLM-запроса ещё нет. События работы придерживаются, затем
+        # semantic plan выходит перед ними. Обычный текст/уточнение просто снимают
+        # pending и никогда не получают фиктивную карточку.
         plan: List[str] = []
+        plan_pending = bool(self.agent_mode and user_text and not social_only)
         plan_announced = False
         deferred_work_events: List[Dict[str, Any]] = []
-        if self.agent_mode and user_text and not social_only:
-            plan = self.make_plan(user_text)
 
         def announce_plan() -> List[Dict[str, Any]]:
             nonlocal plan_announced
@@ -1033,11 +1153,12 @@ class Agent:
             ]
 
         def abandon_unstarted_plan() -> None:
-            """Уточнение не является первым выполненным пунктом задачи."""
-            nonlocal plan, plan_announced
+            """Уточнение/обычный текст не являются автономным выполнением."""
+            nonlocal plan, plan_pending, plan_announced
             if plan_announced:
                 return
             plan = []
+            plan_pending = False
             plan_announced = False
             self.plan_len = 0
             self.plan_at = 0
@@ -1091,7 +1212,7 @@ class Agent:
             # также удерживаем первый результат целиком: сначала нужно понять,
             # не является ли он уточняющим вопросом.
             gate_open = False
-            defer_plan_decision = bool(plan and not plan_announced)
+            defer_plan_decision = bool(plan_pending and not plan_announced)
 
             for event in llm.chat_stream(convo, tier=tier, tools=available):
                 etype = event.get("type")
@@ -1340,17 +1461,18 @@ class Agent:
                 break
 
             # ask_user — не выполнение первого пункта, а запрос недостающих
-            # данных. Если в первом ходе есть только такой tool, plan пока не
-            # показываем. После ответа человека новый run уже построит настоящий
-            # план автономной работы.
+            # данных. Если в ходе есть только такой tool, планировщик не
+            # вызывается. После ответа реальный tool ещё должен доказать автономность.
             call_names = {
                 (call.get("function") or {}).get("name", "") for call in tool_calls
             }
-            asks_only = bool(tool_calls and call_names <= {"ask_user"})
+            authorized_names = call_names & allowed_tool_names
+            autonomous_names = sorted(authorized_names - {"ask_user"})
+            asks_only = bool("ask_user" in authorized_names and not autonomous_names)
             if defer_plan_decision and asks_only:
-                # ask_user сам поставит generator на паузу. План остаётся лишь
-                # подготовленным: если после ответа начнётся исполнение в этом
-                # же run, следующий model turn объявит его в нужный момент.
+                # ask_user ставит работу на паузу. Никакого semantic-planner
+                # вызова и никакой карточки пока нет; pending сохраняется, чтобы
+                # после ответа первый реальный tool в ЭТОМ run доказал автономность.
                 deferred_work_events.clear()
                 thinking_pending = []
                 thinking_visible = False
@@ -1359,18 +1481,30 @@ class Agent:
                     yield {"type": "delta", "text": text_piece}
                     gate_open = True
 
-            # Это не уточнение: только теперь plan становится частью потока.
-            # Он всегда выходит раньше накопленного текста/tool_hint; frontend
-            # дополнительно держит event-gate до завершения перелёта наверх.
-            elif defer_plan_decision and plan:
-                for plan_event in announce_plan():
-                    yield plan_event
+            # Доказательство автономности: основная модель выбрала хотя бы один
+            # разрешённый non-question tool. Только здесь платим за semantic plan
+            # и выпускаем его раньше накопленного reasoning/text/tool_hint.
+            elif defer_plan_decision and autonomous_names:
+                plan_pending = False
+                plan = self.make_plan(user_text, autonomous_names)
+                if plan:
+                    for plan_event in announce_plan():
+                        yield plan_event
                 for work_event in deferred_work_events:
                     yield work_event
                 deferred_work_events.clear()
                 if text_piece:
                     yield {"type": "delta", "text": text_piece}
                     gate_open = True
+
+            elif defer_plan_decision and not tool_calls:
+                # Обычный ответ: planner не нужен, фиктивной карточки нет. При
+                # этом длинное reasoning относится к самому ответу и не должно
+                # исчезать вместе с pending-решением о плане.
+                held_reasoning = list(deferred_work_events)
+                abandon_unstarted_plan()
+                for held_event in held_reasoning:
+                    yield held_event
 
             # шлюз так и не открылся, а вызовов нет — показываем придержанный текст
             if not gate_open and text_piece and not tool_calls:

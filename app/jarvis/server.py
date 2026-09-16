@@ -456,6 +456,19 @@ class Handler(BaseHTTPRequestHandler):
             self._sse({"type": "memory_saved", "count": len(saved_facts),
                        "keys": [item.get("key", "") for item in saved_facts]})
 
+        # Более широкие факты (имя, работа, устройство, долгий проект) требуют
+        # семантики. Запускаем дешёвый writer параллельно основному ответу: он не
+        # задерживает первый токен, но обычно уже готов к следующей задаче.
+        # Writer принимает value только как дословный substring этого prompt.
+        if agent.has_personal_memory_signal(text):
+            def _memory_scan(txt: str = text) -> None:
+                try:
+                    agent.remember_semantic_facts(txt)
+                except Exception:
+                    pass
+
+            threading.Thread(target=_memory_scan, name="jarvis-memory", daemon=True).start()
+
         # Название диалога придумывает модель — но это отдельный запрос к сети.
         # Раньше он выполнялся ДО первого токена ответа, и пользователь ждал
         # молча несколько секунд. Теперь заголовок уезжает в фон.

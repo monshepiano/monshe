@@ -878,6 +878,7 @@ async function testCameraLifecycleOwnershipAndLateResults() {
     autoGrow() {}, addUserMsg() { return new MiniNode('div'); },
     addAiMsg() { return { root: aiRoot, body: aiBody, modelEl: new MiniNode('span') }; },
     setStreaming(value) { requestState.streaming = value; }, sfx() {}, thinkMode() {},
+    watchRunFollow() {},
     camFrame() { return 'data:image/jpeg;base64,frame'; },
     typerStop() {}, dropStatus() {},
     cancelPlanGate() { stoppedPlans += 1; },
@@ -918,7 +919,7 @@ function testPendingInteractivePanelAndRouteLifecycle() {
   const ctx = loadFunctions(
     ['deferMountedReplyUi', 'flushPendingReplyUi', 'typeInto', 'clearRunRoute', 'settleVisualDone'],
     {
-      String, el: miniEl,
+      String, el: miniEl, S: { followUi: null },
       parseUiSpec() { return [{ t: 'tiles' }]; },
       hasMeaningfulUiItems(items) { return items.some((item) => item.t !== 'text' && item.t !== 'area'); },
       mountUiPanels(root) {
@@ -1045,18 +1046,20 @@ function testRussianImageAndHudFollowupContract() {
   assert(togglesAt >= 0 && cameraAt < computerAt && computerAt < spacerAt &&
     spacerAt < agentAt && agentAt < togglesEnd,
   'AGENT must occupy the right edge of the footer directly below Send');
-  assert(/<label class="agent-switch"[\s\S]{0,220}<span class="agent-switch-label">AGENT<\/span>[\s\S]{0,120}<input id="tgAgent" type="checkbox" role="switch"/.test(html),
-    'AGENT must be a real labelled checkbox switch, not a button with a dot');
+  assert(/<div class="agent-switch"[^>]*>[\s\S]{0,120}<span class="agent-switch-label">AGENT<\/span>\s*<label class="agent-switch-track">\s*<input id="tgAgent" type="checkbox" role="switch"/.test(html),
+    'AGENT caption must sit outside the only clickable checkbox track');
   assert(!/<button[^>]+id="tgAgent"/.test(html));
   assert(/\.toggle\s*\{[^}]*height:28px[^}]*padding:0 12px/s.test(css));
   assert(/\.agent-switch\s*\{[^}]*height:28px[^}]*display:flex[^}]*border:0[^}]*background:transparent/s.test(css) &&
-    /\.agent-switch-track\s*\{[^}]*width:48px[^}]*height:28px/s.test(css),
-    'AGENT uses a full-height switch track without an outer framed capsule');
-  assert(/#tgAgent'\)\.addEventListener\('change'[\s\S]*S\.agentMode\s*=\s*this\.checked/.test(js));
-  const tipRule = css.match(/\.agent-switch\[data-tip\][^{]*::after\s*\{([^}]*)\}/s);
+    /\.agent-switch-track\s*\{[^}]*width:48px[^}]*height:28px/s.test(css) &&
+    /\.send-btn\s*\{[^}]*width:48px[^}]*height:38px/s.test(css),
+    'AGENT track stays 28px high and its 48px width aligns with the widened Send control');
+  assert(/#tgAgent'\)\.addEventListener\('change'[\s\S]*S\.agentMode\s*=\s*this\.checked[\s\S]*tip-dismissed/.test(js));
+  assert(/\.agent-switch'\)\.addEventListener\('mouseleave'[\s\S]*tip-dismissed/.test(js));
+  const tipRule = css.match(/\.agent-switch\[data-tip\]:not\(\.tip-dismissed\):hover::after\s*\{([^}]*)\}/s);
   assert(/\.composer\s*\{[^}]*overflow:visible/s.test(css) && tipRule &&
     /z-index:60/.test(tipRule[1]) && /white-space:nowrap/.test(tipRule[1]),
-  'switch tooltip must render whole above the composer and adjacent borders');
+  'switch tooltip must render above the composer, then stay hidden until mouseleave');
 
   const refresh = extractFunction(js, 'refreshState');
   assert(/st\.running_tasks/.test(refresh) && /auto-running', running > 0/.test(refresh),
@@ -1116,9 +1119,13 @@ function testRussianImageAndHudFollowupContract() {
     modelName: 'gpt-test', routeReason: 'reason', routeEl: null,
   };
   metaCtx.updateResponseMeta(metaUi);
-  assert.strictEqual(metaUi.routeEl.textContent, 'сценарий: качество · модель: gpt-test');
+  assert.strictEqual(metaUi.routeEl.textContent, 'Качество · gpt-test');
   assert.strictEqual(metaUi.routeEl.parentNode, metaHead);
   assert.strictEqual(legacyModel.textContent, '', 'legacy model badge must not duplicate persistent metadata');
+  const metaStyle = css.match(/\.ai-route\s*\{([^}]*)\}/s);
+  assert(metaStyle && !/border|background|border-radius/.test(metaStyle[1]) &&
+    /font:9\.5px/.test(metaStyle[1]) && /rgba\(154,202,219,\.68\)/.test(metaStyle[1]),
+    'response metadata is small readable low-contrast text, never a framed pill');
 
   assert(/const permission = ev\.style === 'permission'/.test(events) &&
     /permission \? '◇ Можно открыть приложение\?'/.test(events) &&
@@ -1126,6 +1133,62 @@ function testRussianImageAndHudFollowupContract() {
     'Terminal window permission uses softer copy, buttons, and sound than a dangerous sanction');
   assert(/\.approve-card\.permission\s*\{[^}]*rgba\(112,151,255,\.4\)[^}]*rgba\(164,119,255,\.065\)/s.test(css),
     'permission cards use the calm blue-violet sanction variant');
+}
+
+function testReadinessFollowHistoryAndLiveCodeContracts() {
+  const panels = extractFunction(js, 'mountUiPanels');
+  assert(/const ready = \(\) => items\.every/.test(panels) &&
+    /if \(x\.t === 'tiles'\) return x\.val != null/.test(panels) &&
+    /const syncSendState = \(\) =>/.test(panels) && /go\.disabled = !valid/.test(panels),
+    'one readiness synchronizer must own Send state for every required control');
+  assert(/it\.t === 'slider'[\s\S]*controlChanged\(\)/.test(panels) &&
+    /it\.t === 'tiles'[\s\S]*controlChanged\(\)/.test(panels) &&
+    /ownVal = own\.value[\s\S]*syncSendState\(\)/.test(panels),
+    'slider, selected tile, and custom answer all re-evaluate the same Send state');
+
+  const scrollBox = new MiniNode('div'); scrollBox.className = 'cam-chat';
+  scrollBox.scrollHeight = 1200; scrollBox.scrollTop = 800; scrollBox.clientHeight = 400;
+  const root = new MiniNode('article'); scrollBox.appendChild(root);
+  const followUi = { node: { root }, followOutput: true };
+  const followCtx = loadFunctions(['runScrollBox', 'watchRunFollow'], {
+    Number, S: { followUi }, stream() { return scrollBox; },
+  });
+  followCtx.watchRunFollow(followUi);
+  scrollBox.listeners.wheel({ deltaY: -20 });
+  assert.strictEqual(followUi.followOutput, false,
+    'an explicit upward wheel gesture releases output follow immediately');
+  scrollBox.scrollTop = 500;
+  scrollBox.listeners.scroll();
+  assert.strictEqual(followUi.followOutput, false,
+    'layout growth cannot silently re-enable follow while far from the bottom');
+  scrollBox.scrollTop = 1190;
+  scrollBox.listeners.scroll();
+  assert.strictEqual(followUi.followOutput, true,
+    'returning to the transcript tail explicitly resumes follow');
+
+  const history = new MiniNode('div'); history.scrollHeight = 1700; history.scrollTop = 0;
+  history.clientHeight = 500;
+  const historyCtx = loadFunctions(['pinToBottom'], {
+    $$: (selector, node) => node.querySelectorAll(selector),
+  });
+  historyCtx.pinToBottom(history);
+  assert.strictEqual(history.scrollTop, 1700,
+    'history is pinned to the final position synchronously on opening');
+  const open = extractFunction(js, 'openChat');
+  assert(open.includes('renderMessages(stream, r.messages || [])') &&
+    open.indexOf('pinToBottom(stream)') > open.indexOf('renderMessages(stream, r.messages || [])') &&
+    !/requestAnimationFrame|setTimeout/.test(open),
+    'history opening must not visibly walk through staged scroll corrections');
+
+  const typer = extractFunction(js, 'renderTyped');
+  assert(/livePre\.classList\.add\('live-code'\)/.test(typer) &&
+    /livePre\.scrollTop = livePre\.scrollHeight/.test(typer));
+  const finish = extractFunction(js, 'queueResponseFinish');
+  assert(/pre\.live-code/.test(finish) && /classList\.remove\('live-code'\)/.test(finish) &&
+    /foldCodeBlocks\(ui\.mdEl\)/.test(finish),
+    'completed code leaves live mode and enters the existing fold/large-tab lifecycle');
+  assert(/\.md pre\.live-code\s*\{[^}]*max-height:min\(42vh,360px\)[^}]*overflow:auto/s.test(css),
+    'typing code remains in a bounded internally scrolling viewport');
 }
 
 function testThinkingGradientContract() {
@@ -1150,16 +1213,18 @@ function testThinkingGradientContract() {
   assert(textBand && /color:transparent/.test(textBand[1]) && /background-clip:text/.test(textBand[1]) &&
     /#61e7ff 45\.2%/.test(textBand[1]) && /#718fff 46\.8%/.test(textBand[1]) &&
     /#ef72d0 50%/.test(textBand[1]) && /#65edc4 54\.8%/.test(textBand[1]) &&
-    /liveTextFlow 2\.35s/.test(textBand[1]),
-    'thinking and tool text receive a narrow saturated multicolour band on the glyphs themselves');
+    /liveTextFlow 8\.4s/.test(textBand[1]),
+    'thinking and tool text receive a narrow, calm Apple-style colour band on the glyphs');
   assert(/@keyframes liveTextFlow/.test(css));
   assert(!/\.think-stream::(?:before|after)[^{]*\{[^}]*caret/s.test(css),
     'thinking stays a masked scrolling stream, not a cursor animation');
 
   const autoOutline = css.match(/\.nav-item\[data-view="auto"\]\.auto-running \.nav-outline\s*\{([^}]*)\}/s);
   assert(autoOutline && /background-size:320% 100%/.test(autoOutline[1]) &&
-    /autoOutlineFlow 3\.4s cubic-bezier\(\.45,0,\.55,1\) infinite alternate/.test(autoOutline[1]),
-    'running AUTO uses a soft slow border-only gradient');
+    /autoOutlineFlow 3\.4s cubic-bezier\(\.45,0,\.55,1\) infinite alternate/.test(autoOutline[1]) &&
+    /drop-shadow\(0 0 4px/.test(autoOutline[1]) && /drop-shadow\(0 0 8px/.test(autoOutline[1]) &&
+    (autoOutline[1].match(/rgba\(/g) || []).length >= 12,
+    'running AUTO keeps a bright feathered border gradient with a layered glow');
   const memoryOutline = css.match(/\.nav-item\.save-glint-strong \.nav-outline\s*\{([^}]*)\}/s);
   assert(memoryOutline && /#b477ff/.test(memoryOutline[1]) && /#ef79cf/.test(memoryOutline[1]) &&
     /memorySaveOutline 1\.35s/.test(memoryOutline[1]),
@@ -1172,8 +1237,8 @@ function testThinkingGradientContract() {
   assert(agentTrack && /width:48px/.test(agentTrack[1]) && /height:28px/.test(agentTrack[1]) &&
     /border:1px solid var\(--line\)/.test(agentTrack[1]) && /background:transparent/.test(agentTrack[1]),
     'the off AGENT track matches the neutral neighbouring controls at 28px high');
-  assert(/\.agent-switch input:checked \+ \.agent-switch-track\s*\{[^}]*rgba\(143,134,207,\.18\)/s.test(css),
-    'the AGENT tint appears only after the switch is enabled');
+  assert(/\.agent-switch-track:has\(input:checked\)\s*\{[^}]*rgba\(143,134,207,\.18\)/s.test(css),
+    'the AGENT tint appears only on its inner track after the switch is enabled');
 }
 
 (async () => {
@@ -1187,8 +1252,9 @@ function testThinkingGradientContract() {
   testPendingInteractivePanelAndRouteLifecycle();
   testInteractiveFenceReachesFrontendPanel();
   testRussianImageAndHudFollowupContract();
+  testReadinessFollowHistoryAndLiveCodeContracts();
   testThinkingGradientContract();
-  console.log('package28_frontend_runtime: 11 regression groups passed');
+  console.log('package28_frontend_runtime: 12 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

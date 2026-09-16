@@ -23,6 +23,7 @@ const S = {
   streaming: false,
   abort: null,
   streamRun: 0,
+  followUi: null,       // текущий run и явное намерение следовать за его ростом
   attachments: [],
   config: {},
   tasks: [],
@@ -495,13 +496,19 @@ try {
 /* ============================ переключатели ============================ */
 $('#tgAgent').addEventListener('change', function () {
   // Настоящий checkbox-switch: состояние принадлежит самому control, а не
-  // декоративному классу кнопки.
+  // декоративному классу кнопки. Подпись лежит вне <label>, поэтому она не
+  // переключает режим. После клика tooltip гаснет, даже пока указатель на track.
   S.agentMode = this.checked;
+  const shell = this.closest('.agent-switch');
+  if (shell) shell.classList.add('tip-dismissed');
   beep(S.agentMode ? 760 : 420, 0.1);
   $('#input').placeholder = S.agentMode
     ? 'Поставь задачу — разобью на шаги и сделаю сам…'
     : 'Сообщение для JARVIS…';
   if (S.agentMode) toast('Агентский режим включён: планирую и выполняю сам.', 'info', 'AGENT');
+});
+$('.agent-switch').addEventListener('mouseleave', function () {
+  this.classList.remove('tip-dismissed');
 });
 $('#tgCamera').addEventListener('click', function () {
   S.cameraOn = !S.cameraOn; this.classList.toggle('on', S.cameraOn);
@@ -564,12 +571,16 @@ function typeAutoReply(node, content, done) {
   const ui = {
     node, runId: S.streamRun, mdEl: md, buffer: '', shown: '', typer: null,
     pendingReplyUi: '', replyUiSpec: '', replyLive: null, cps: 0, acc: 0,
-    lastScroll: 0, floor: 0,
+    lastScroll: 0, floor: 0, followOutput: true,
   };
+  S.followUi = ui;
+  watchRunFollow(ui);
   ui.onTyped = () => {
     md.classList.remove('typing');
     clearTypingDecorations(md);
-    if (done) done();
+    if (S.followUi === ui) S.followUi = null;
+    if (ui.stopFollowWatch) ui.stopFollowWatch();
+    if (done) done(ui);
   };
   typeInto(ui, text);
 }
@@ -587,12 +598,12 @@ async function syncChatTail() {
     if (!meta.from_auto) return;          // свои ответы рисует сам стрим
     const node = addAiMsg(m.created_at);
     node.root.dataset.msgId = m.id;
-    typeAutoReply(node, m.content, () => {
+    typeAutoReply(node, m.content, (ui) => {
       foldCodeBlocks(node.body);
       mountUiPanels(node.body);
       (meta.files || []).forEach((f) => attachFileChip(node.body, f));
       addMsgActions(node, m.content);
-      scrollDown();
+      scrollDown(false, ui);
     });
     added = true;
   });
@@ -725,11 +736,9 @@ async function openChat(id) {
   const r = await api('/api/messages?chat_id=' + encodeURIComponent(id));
   const stream = $('#stream'); stream.innerHTML = '';
   renderMessages(stream, r.messages || []);
-  // Показываем ПОСЛЕДНИЙ момент разговора. Одной установки scrollTop мало:
-  // картинки, блоки кода и свёрнутые карточки досчитывают свою высоту уже
-  // после вставки, лента становится выше — и позиция, «низ» на момент
-  // присвоения, оказывается серединой. Поэтому доводим прокрутку до низа
-  // ещё и после отрисовки кадра и после загрузки картинок.
+  // Сразу показываем ПОСЛЕДНИЙ момент разговора — без заметной серии rAF/timer
+  // прокруток. Единственная последующая коррекция привязана к реальной загрузке
+  // ещё не готовой картинки, которая действительно меняет высоту ленты.
   pinToBottom(stream);
   loadChats();
   // диалог, который дописывался в фоне: тихо перечитываем, пока не появится ответ
@@ -896,29 +905,70 @@ function msgHost() {
   if (S.forceHost && S.forceHost.isConnected) return S.forceHost;
   return camPart('.cam-chat') || stream();
 }
-function scrollDown(force) {
-  // в карточке камеры прокручивается только колонка переписки: видео слева и
-  // комментарий «что вижу» справа сверху закреплены и никуда не уезжают
-  const cl = S.camNode && S.camNode.isConnected ? S.camNode.querySelector('.cam-chat') : null;
-  if (cl) {
-    const nearC = cl.scrollHeight - cl.scrollTop - cl.clientHeight < 220;
-    if (nearC || force) cl.scrollTop = cl.scrollHeight;
-  }
-  const s = stream();
-  const near = s.scrollHeight - s.scrollTop - s.clientHeight < 220;
-  if (near || force) s.scrollTop = s.scrollHeight;
+function runScrollBox(ui) {
+  if (!ui || !ui.node || !ui.node.root) return null;
+  return ui.node.root.closest('.cam-chat') || stream();
 }
 
-/* Controls входят строками с animation-delay. Один scrollDown в момент mount
-   знает только начальную высоту, поэтому нижние варианты росли уже за экраном.
-   Следуем за РЕАЛЬНЫМ scrollHeight каждый кадр, но сразу отпускаем ленту, если
-   человек сам начал колесом/касанием читать выше. */
-function followGrowingPanel(node, duration) {
+/* Геометрия после роста ответа не говорит, хотел ли человек оставаться внизу:
+   один высокий panel уже сам делает `near=false`. Поэтому каждый run хранит
+   явное follow-intent. Оно снимается только реальным scroll-away жестом и не
+   может случайно потеряться из-за печати кода или появления reply_ui. */
+function watchRunFollow(ui) {
+  const box = runScrollBox(ui);
+  if (!box || !box.addEventListener || box.__jarvisFollowRuns) return;
+  box.__jarvisFollowRuns = true;
+  let touchY = null;
+  const active = () => {
+    const run = S.followUi;
+    return run && runScrollBox(run) === box ? run : null;
+  };
+  box.addEventListener('wheel', (e) => {
+    const run = active();
+    if (run && Number(e.deltaY || 0) < 0) run.followOutput = false;
+  }, { passive: true });
+  box.addEventListener('touchstart', (e) => {
+    touchY = e.touches && e.touches[0] ? e.touches[0].clientY : null;
+  }, { passive: true });
+  box.addEventListener('touchmove', (e) => {
+    const y = e.touches && e.touches[0] ? e.touches[0].clientY : null;
+    const run = active();
+    if (run && touchY != null && y != null && y > touchY + 4) run.followOutput = false;
+    if (y != null) touchY = y;
+  }, { passive: true });
+  box.addEventListener('scroll', () => {
+    const run = active();
+    if (!run) return;
+    const distance = box.scrollHeight - box.scrollTop - box.clientHeight;
+    if (distance < 64) run.followOutput = true;
+    else if (distance > 150) run.followOutput = false; // scrollbar/keyboard scroll-away
+  }, { passive: true });
+}
+
+function scrollDown(force, owner) {
+  // Явный owner нужен typer-у AUTO, который не является основным SSE-run.
+  const boxes = [];
+  const cl = S.camNode && S.camNode.isConnected ? S.camNode.querySelector('.cam-chat') : null;
+  if (cl) boxes.push(cl);
+  const main = stream();
+  if (main && !boxes.includes(main)) boxes.push(main);
+  boxes.forEach((box) => {
+    const run = owner || (S.followUi && runScrollBox(S.followUi) === box ? S.followUi : null);
+    const near = box.scrollHeight - box.scrollTop - box.clientHeight < 220;
+    if (force || (run ? run.followOutput !== false : near)) box.scrollTop = box.scrollHeight;
+  });
+}
+
+/* Controls входят строками с animation-delay. Если они принадлежат текущему
+   ответу, следуем его явному intent; для остальных небольших UI сохраняем
+   локальное wheel/touch cancellation. */
+function followGrowingPanel(node, duration, owner) {
   if (!node || !node.isConnected) return;
   const box = node.closest('.cam-chat') || stream();
-  if (!box || box.scrollHeight - box.scrollTop - box.clientHeight >= 220) return;
+  const run = owner || (S.followUi && runScrollBox(S.followUi) === box ? S.followUi : null);
+  if (!run && (!box || box.scrollHeight - box.scrollTop - box.clientHeight >= 220)) return;
   let cancelled = false;
-  const cancel = () => { cancelled = true; cleanup(); };
+  const cancel = () => { if (run) run.followOutput = false; else cancelled = true; cleanup(); };
   const cleanup = () => {
     box.removeEventListener('wheel', cancel);
     box.removeEventListener('touchstart', cancel);
@@ -927,10 +977,13 @@ function followGrowingPanel(node, duration) {
   box.addEventListener('touchstart', cancel, { passive: true });
   const until = performance.now() + (duration || 900);
   const frame = (now) => {
-    if (cancelled || !node.isConnected || now >= until) { cleanup(); return; }
+    if (cancelled || (run && run.followOutput === false) || !node.isConnected || now >= until) {
+      cleanup(); return;
+    }
     box.scrollTop = box.scrollHeight;
     requestAnimationFrame(frame);
   };
+  if (!run || run.followOutput !== false) box.scrollTop = box.scrollHeight;
   requestAnimationFrame(frame);
 }
 /* Приветствие с подсказками убирает ТОЛЬКО действие самого пользователя:
@@ -939,17 +992,13 @@ function followGrowingPanel(node, duration) {
    и подсказки исчезали из пустого диалога, хотя человек ничего не сделал. */
 function killWelcome() { const w = $('.welcome'); if (w) w.remove(); }
 
-/* Удержать ленту внизу, пока её высота ещё меняется.
-   Открывая диалог, мы вставляем разметку целиком, но её итоговая высота
-   известна не сразу: шрифты, картинки и свёрнутые карточки досчитываются
-   позже. Один scrollTop = scrollHeight в этот момент промахивается — лента
-   «улетает вверх». Держим низ несколько кадров и после загрузки картинок. */
+/* История открывается сразу в конечной позиции. Здесь намеренно нет каскада
+   rAF/таймеров: он и был видимой поэтапной прокруткой. Поздняя картинка делает
+   один мгновенный pin только в момент, когда получает реальную высоту. */
 function pinToBottom(box) {
   if (!box) return;
   const put = () => { box.scrollTop = box.scrollHeight; };
   put();
-  requestAnimationFrame(put);
-  [60, 180, 400].forEach((ms) => setTimeout(put, ms));
   $$('img', box).forEach((img) => {
     if (img.complete) return;
     img.addEventListener('load', put, { once: true });
@@ -1183,8 +1232,8 @@ function updateResponseMeta(ui) {
     if (head) head.appendChild(ui.routeEl);
   }
   const parts = [];
-  if (scenario) parts.push('сценарий: ' + scenario);
-  if (model) parts.push('модель: ' + model);
+  if (scenario) parts.push(scenario.charAt(0).toUpperCase() + scenario.slice(1));
+  if (model) parts.push(model);
   ui.routeEl.textContent = parts.join(' · ');
   ui.routeEl.title = ui.routeReason || parts.join(' · ');
   // Старый отдельный model span сохраняется в разметке для совместимости с
@@ -2307,8 +2356,40 @@ function mountUiPanels(root) {
       return x.label + ': ' + (x.val == null || x.val === '' ? '—' : x.val);
     }).concat(ownVal.trim() ? ['Свой вариант: ' + ownVal.trim()] : []);
 
+    /* Один источник истины для готовности всей панели.
+       Раньше каждый control сам пытался включить Send. В mixed-панели плитка
+       звала armSend(), та видела slider и выходила раньше обновления disabled —
+       выбранный обязательный вариант оставлял кнопку серой. Date/rate/multi
+       вдобавок считались заполненными ещё до ответа. Теперь обязательны все
+       controls без начального осмысленного значения, а непустой «Свой вариант»
+       является полноценной альтернативой всей форме. */
+    const ready = () => items.every((x) => {
+      if (x.t === 'tiles') return x.val != null;
+      if (x.t === 'text' || x.t === 'area' || x.t === 'date') {
+        return String(x.val || '').trim().length > 0;
+      }
+      if (x.t === 'rate') return Number(x.val) > 0;
+      if (x.t === 'multi') return Array.isArray(x.val) && x.val.length > 0;
+      return true;
+    });
+    const canSend = () => ready() || Boolean(ownVal.trim());
+    const syncSendState = () => {
+      const valid = canSend();
+      if (!valid) {
+        clearTimeout(sendTimer);
+        box.classList.remove('ui-arm');
+      }
+      if (go) {
+        go.disabled = !valid;
+        // Pure one-tap panels auto-send. Their button appears only while a
+        // custom answer is being typed; mixed/analog forms always show it.
+        go.classList.toggle('ui-go-off', !hasAnalog && !ownVal.trim());
+      }
+      return valid;
+    };
+
     const fire = () => {
-      if (box.dataset.sent === '1' || (!ready() && !ownVal.trim())) return;
+      if (box.dataset.sent === '1' || !syncSendState()) return;
       box.dataset.sent = '1';
       clearTimeout(sendTimer);
       box.classList.remove('ui-arm');
@@ -2318,20 +2399,21 @@ function mountUiPanels(root) {
       sfx('send');
     };
 
-    const ready = () => items.every((x) => {
-      if (x.t === 'tiles') return x.val != null;
-      if (x.t === 'text' || x.t === 'area') return String(x.val || '').trim().length > 0;
-      return true;
-    });
     // Без аналоговых органов выбор уходит сам — подтверждать нечего.
     const armSend = () => {
+      const valid = syncSendState();
       if (hasAnalog || !touched || box.dataset.sent === '1') return;
       // человек пишет своё — отправлять по таймеру нельзя, ждём кнопку
       if (ownVal.trim()) { box.classList.remove('ui-arm'); return; }
       clearTimeout(sendTimer);
-      if (!ready()) { box.classList.remove('ui-arm'); return; }
+      if (!valid) { box.classList.remove('ui-arm'); return; }
       box.classList.add('ui-arm');
       sendTimer = setTimeout(fire, 900);
+    };
+    const controlChanged = () => {
+      touched = true;
+      syncSendState();
+      armSend();
     };
 
     items.forEach((it, idx) => {
@@ -2353,7 +2435,7 @@ function mountUiPanels(root) {
           it.val = parseFloat(inp.value);
           out.textContent = inp.value + (it.unit ? ' ' + it.unit : ''); paint();
           out.classList.remove('bump'); void out.offsetWidth; out.classList.add('bump');
-          touched = true;
+          controlChanged();
         });
         paint();
         row.appendChild(inp);
@@ -2370,7 +2452,7 @@ function mountUiPanels(root) {
           it.val = parseFloat(it.val.toFixed(4));
           val.textContent = it.val + (it.unit ? ' ' + it.unit : '');
           val.classList.remove('bump'); void val.offsetWidth; val.classList.add('bump');
-          touched = true; sfx('select');
+          controlChanged(); sfx('select');
         };
         minus.addEventListener('click', () => setv(it.val - it.step));
         plus.addEventListener('click', () => setv(it.val + it.step));
@@ -2384,8 +2466,7 @@ function mountUiPanels(root) {
         inp.type = 'text'; inp.value = it.val || '';
         inp.placeholder = it.hint || 'впиши ответ…';
         inp.addEventListener('input', () => {
-          it.val = inp.value; touched = true;
-          if (go) go.disabled = !ready();
+          it.val = inp.value; controlChanged();
         });
         inp.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') { e.preventDefault(); if (touched) fire(); }
@@ -2399,8 +2480,7 @@ function mountUiPanels(root) {
         ta.rows = 3;
         ta.placeholder = it.hint || 'можно подробно…';
         ta.addEventListener('input', () => {
-          it.val = ta.value; touched = true;
-          if (go) go.disabled = !ready();
+          it.val = ta.value; controlChanged();
         });
         row.appendChild(ta);
 
@@ -2408,7 +2488,7 @@ function mountUiPanels(root) {
         row.innerHTML = '<div class="ui-lab"><span>' + esc(it.label) + '</span></div>';
         const inp = el('input', 'ui-text ui-date');
         inp.type = 'date'; inp.value = it.val || '';
-        inp.addEventListener('input', () => { it.val = inp.value; touched = true; sfx('select'); });
+        inp.addEventListener('input', () => { it.val = inp.value; controlChanged(); sfx('select'); });
         row.appendChild(inp);
 
       } else if (it.t === 'color') {
@@ -2418,7 +2498,7 @@ function mountUiPanels(root) {
         inp.type = 'color'; inp.value = it.val;
         const out = row.querySelector('.ui-val');
         inp.addEventListener('input', () => {
-          it.val = inp.value; out.textContent = inp.value; touched = true;
+          it.val = inp.value; out.textContent = inp.value; controlChanged();
         });
         row.appendChild(inp);
 
@@ -2434,7 +2514,7 @@ function mountUiPanels(root) {
         };
         for (let n = 1; n <= it.max; n++) {
           const b = el('button', 'ui-star', '★');
-          b.addEventListener('click', () => { it.val = n; paint(); touched = true; sfx('select'); });
+          b.addEventListener('click', () => { it.val = n; paint(); controlChanged(); sfx('select'); });
           st.appendChild(b);
         }
         paint();
@@ -2450,7 +2530,7 @@ function mountUiPanels(root) {
             const at = it.val.indexOf(o);
             if (at >= 0) it.val.splice(at, 1); else it.val.push(o);
             t.classList.toggle('on', at < 0);
-            touched = true; sfx('select');
+            controlChanged(); sfx('select');
           });
           grid.appendChild(t);
         });
@@ -2474,7 +2554,7 @@ function mountUiPanels(root) {
           it.opts.splice(to, 0, it.opts.splice(from, 1)[0]);
           const rows = $$('.ui-rk', list);
           list.insertBefore(rows[from], to < from ? rows[to] : rows[to].nextSibling);
-          paint(); touched = true; sfx('select');
+          paint(); controlChanged(); sfx('select');
         };
         it.opts.forEach((o) => {
           const r = el('div', 'ui-rk');
@@ -2495,7 +2575,7 @@ function mountUiPanels(root) {
         sw.innerHTML = '<i></i>';
         sw.addEventListener('click', () => {
           it.val = !it.val; sw.classList.toggle('on', it.val); blip(it.val);
-          touched = true; armSend();
+          controlChanged();
         });
         row.appendChild(sw);
 
@@ -2508,7 +2588,7 @@ function mountUiPanels(root) {
             it.val = o;
             $$('.ui-tile', grid).forEach((x) => x.classList.remove('on'));
             t.classList.add('on'); sfx('select');
-            touched = true; armSend();
+            controlChanged();
           });
           grid.appendChild(t);
         });
@@ -2553,13 +2633,12 @@ function mountUiPanels(root) {
     // как кнопка отправки под полем ввода — та же стрелка, тот же смысл.
     if (askable) {
       go = el('button', 'ui-go', ICO.send + '<span>Отправить</span>');
-      go.disabled = !ready();
       go.addEventListener('click', fire);
       // Плиткам кнопка не нужна: выбор уходит сам. Но как только человек начал
       // писать свой вариант, автоотправку надо отменить и дать ему кнопку —
       // иначе панель улетит на полуслове.
-      if (!hasAnalog) go.classList.add('ui-go-off');
       box.appendChild(go);
+      syncSendState();
     }
     if (own) {
       own.addEventListener('input', () => {
@@ -2567,10 +2646,7 @@ function mountUiPanels(root) {
         touched = true;
         clearTimeout(sendTimer);
         box.classList.remove('ui-arm');
-        if (go) {
-          go.disabled = !ready() && !ownVal.trim();
-          go.classList.toggle('ui-go-off', hasAnalog ? false : !ownVal.trim());
-        }
+        syncSendState();
       });
       own.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); if (touched) fire(); }
@@ -2783,7 +2859,10 @@ async function send(opts) {
     modelName: '',
     pendingReplyUi: '',
     agentMode: requestAgentMode,
+    followOutput: true,
   };
+  S.followUi = ui;
+  watchRunFollow(ui);
   // Сетевой SSE может закрыться раньше, чем локальный typer покажет последний
   // символ. finally ждёт именно эту границу, а не состояние сокета.
   ui.visualDonePromise = new Promise((resolve) => { ui.resolveVisualDone = resolve; });
@@ -3196,8 +3275,8 @@ function flushPendingReplyUi(ui) {
   ui.replyLive = live;
   ui.pendingReplyUi = '';
   mountUiPanels(live);
-  scrollDown(true);
-  followGrowingPanel(live, 900);
+  scrollDown(false, ui);
+  followGrowingPanel(live, 900, ui);
   return true;
 }
 
@@ -3291,6 +3370,15 @@ function renderTyped(ui) {
   ui.mdEl.innerHTML = html + MD.render(stripSteps(text.slice(src.length)));
   markImportantThought(ui.mdEl);
   placeCaret(ui.mdEl);
+  // Незаконченный длинный code fence живёт в ограниченном окне и следует за
+  // собственной нижней строкой. Общую ленту при этом двигает только run intent.
+  const typedPres = $$('pre', ui.mdEl);
+  const livePre = typedPres.length ? typedPres[typedPres.length - 1] : null;
+  typedPres.forEach((pre) => pre.classList.remove('live-code'));
+  if (livePre && inCodeBlock(text)) {
+    livePre.classList.add('live-code');
+    livePre.scrollTop = livePre.scrollHeight;
+  }
   if (measure) {
     ui.lastHeightCheck = now;
     const after = ui.mdEl.offsetHeight;
@@ -3416,7 +3504,7 @@ function scrollSoon(ui) {
   const now = performance.now();
   if (now - (ui.lastScroll || 0) < 80) return;
   ui.lastScroll = now;
-  scrollDown();
+  scrollDown(false, ui);
 }
 
 function typerStart(ui) {
@@ -3614,6 +3702,8 @@ function clearRunRoute(ui) {
 function settleVisualDone(ui) {
   if (!ui || ui.visualDone) return;
   clearRunRoute(ui);
+  if (S.followUi === ui) S.followUi = null;
+  if (ui.stopFollowWatch) ui.stopFollowWatch();
   ui.visualDone = true;
   if (ui.resolveVisualDone) {
     ui.resolveVisualDone();
@@ -3664,15 +3754,11 @@ function queueResponseFinish(ui, content, success) {
         ...$$('.ui-panel', ui.mdEl),
         ...(ui.replyLive && ui.replyLive.isConnected ? $$('.ui-panel', ui.replyLive) : []),
       ];
-      const scroller = ui.node.closest('.cam-chat') || stream();
       // ПЕРВОПРИЧИНА «видно только после повторного открытия»: пустой ui-panel
-      // во время печати имеет display:none. После mount он вырастает вниз, а
-      // старый код насильно возвращал прежний scrollTop — то есть оставлял
-      // новые controls ровно за нижней кромкой. При повторном открытии pinToBottom
-      // уже показывал их. Сохраняем не координату, а намерение «я следую за
-      // ответом»: если человек был у низа, новый UI тоже обязан попасть в кадр.
-      const followPanel = !!(panels.length && scroller &&
-        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 220);
+      // во время печати имеет display:none и затем вырастает за нижней кромкой.
+      // Геометрия ПОСЛЕ роста уже ничего не говорит о намерении пользователя,
+      // поэтому решение хранится на run с момента wheel/touch/scroll-away.
+      $$('pre.live-code', ui.mdEl).forEach((pre) => pre.classList.remove('live-code'));
       foldCodeBlocks(ui.mdEl);
       mountUiPanels(ui.mdEl);
       if (ui.replyLive && ui.replyLive.isConnected) mountUiPanels(ui.replyLive);
@@ -3706,15 +3792,11 @@ function queueResponseFinish(ui, content, success) {
       // Route принадлежит этому ответу и исчезнет в settleVisualDone — вместе
       // с фактическим завершением визуальной печати, а не по сетевому done.
 
-      // Если человек сам ушёл вверх, не перетягиваем его. Если он следил за
-      // текущим ответом у нижней кромки, показываем смонтированные controls в
-      // том же жизненном цикле — не после закрытия/повторного открытия чата.
-      if (ui.node.isConnected) {
-        if (followPanel && scroller) {
-          requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
-        } else if (!panels.length && S.streamRun === ui.runId) {
-          scrollDown();
-        }
+      // Если человек сам ушёл вверх, не перетягиваем его. Иначе controls
+      // появляются в кадре в том же lifecycle, без закрытия диалога.
+      if (ui.node.root.isConnected) {
+        scrollDown(false, ui);
+        if (panels.length) followGrowingPanel(ui.replyLive || ui.mdEl, 900, ui);
       }
     } finally {
       settleVisualDone(ui);

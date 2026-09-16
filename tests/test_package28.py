@@ -162,14 +162,26 @@ class RoutingAndPlanCostTests(unittest.TestCase):
         self.assertEqual(explanation["tier"], "base")
         self.assertEqual(llm._REASONING_EFFORT["coder"], "low")
 
-    def test_plan_is_local_and_has_no_preflight_model_call(self) -> None:
+    def test_plan_is_semantic_and_has_no_generic_error_fallback(self) -> None:
         runner = agent.Agent(agent_mode=True)
-        with mock.patch.object(agent.llm, "chat") as blocking_chat:
-            plan = runner.make_plan("Напиши игру шахматы")
-        blocking_chat.assert_not_called()
-        self.assertEqual(len(plan), 3)
-        self.assertIn("Реализовать", plan[1])
-        self.assertIn("Проверить", plan[2])
+        semantic = [
+            "Определить правила ходов и состояния шахматной партии",
+            "Реализовать доску, фигуры и проверку допустимых ходов",
+            "Добавить шах, мат, пат и смену активного игрока",
+            "Проверить рокировку, превращение пешки и завершение партии",
+        ]
+        with mock.patch.object(agent.llm, "chat", return_value={
+            "content": json.dumps(semantic, ensure_ascii=False),
+        }) as planner:
+            plan = runner.make_plan("Напиши игру шахматы", ["write_file"])
+        self.assertEqual(plan, semantic)
+        self.assertEqual(planner.call_count, 1)
+        self.assertEqual(planner.call_args.kwargs["tier"], "nano")
+        self.assertIn("write_file", planner.call_args.args[0][-1]["content"])
+
+        with mock.patch.object(agent.llm, "chat", side_effect=RuntimeError("offline")):
+            self.assertEqual(runner.make_plan("Напиши игру шахматы"), [],
+                             "a planner error must not resurrect the old generic three-step card")
 
     def test_plan_progress_uses_two_natural_model_turns_not_one_per_item(self) -> None:
         route = {
@@ -203,9 +215,16 @@ class RoutingAndPlanCostTests(unittest.TestCase):
             observed_plan_steps.append(runner.plan_at)
             return next(turns)
 
+        semantic_plan = [
+            "Создать шахматную доску и начальную расстановку",
+            "Реализовать допустимые ходы фигур",
+            "Проверить сохранённую игру и правила завершения",
+        ]
         with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
              mock.patch.object(agent.llm, "chat_stream", side_effect=model_turn) as streamed, \
-             mock.patch.object(agent.llm, "chat") as blocking_chat, \
+             mock.patch.object(agent.llm, "chat", return_value={
+                 "content": json.dumps(semantic_plan, ensure_ascii=False),
+             }) as planner, \
              mock.patch.object(agent.tools, "schemas", return_value=schema), \
              mock.patch.object(agent.tools, "call", return_value={"ok": True}):
             events = list(runner.run(
@@ -214,7 +233,7 @@ class RoutingAndPlanCostTests(unittest.TestCase):
             ))
 
         self.assertEqual(streamed.call_count, 2)
-        blocking_chat.assert_not_called()
+        planner.assert_called_once()
         self.assertEqual(observed_plan_steps, [0, 3],
                          "plan stays hidden until the first turn proves autonomous execution")
         progress = [event["step"] for event in events if event.get("type") == "plan_step"]
@@ -254,15 +273,47 @@ class RoutingAndPlanCostTests(unittest.TestCase):
         ]
         with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
              mock.patch.object(agent.llm, "chat_stream", return_value=stream), \
+             mock.patch.object(agent.llm, "chat") as planner, \
              mock.patch.object(agent.tools, "schemas", return_value=[]):
             events = list(agent.Agent(agent_mode=True).run(
                 [{"role": "user", "content": "Сделай документ"}],
                 user_text="Сделай документ",
             ))
+        planner.assert_not_called()
         self.assertFalse(any(event.get("type") in ("plan", "plan_step") for event in events))
         self.assertTrue(any(event.get("type") == "reply_ui" for event in events))
         first_delta = next(event for event in events if event.get("type") == "delta")
         self.assertIn("Какой формат", first_delta["text"])
+
+    def test_unauthorized_tool_alone_does_not_prove_autonomous_execution(self) -> None:
+        route = {
+            "tier": "base", "reason": "test", "score": 0.5,
+            "verbose": True, "offer_tools": True,
+        }
+        schema = [{
+            "type": "function",
+            "function": {"name": "write_file", "parameters": {"type": "object"}},
+        }]
+        turns = iter((
+            [{"type": "done", "tool_calls": [{
+                "id": "unknown-1", "type": "function",
+                "function": {"name": "nonexistent_tool", "arguments": "{}"},
+            }]}],
+            [{"type": "delta", "text": "Не могу выполнить это действие."},
+             {"type": "done", "tool_calls": []}],
+        ))
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=lambda *_a, **_k: next(turns)), \
+             mock.patch.object(agent.llm, "chat") as planner, \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(agent.tools, "call") as dispatch:
+            events = list(agent.Agent(agent_mode=True).run(
+                [{"role": "user", "content": "Сделай задачу"}],
+                user_text="Сделай задачу",
+            ))
+        planner.assert_not_called()
+        dispatch.assert_not_called()
+        self.assertFalse(any(event.get("type") == "plan" for event in events))
 
     def test_ask_user_defers_plan_until_answer_starts_real_execution(self) -> None:
         route = {
@@ -271,8 +322,8 @@ class RoutingAndPlanCostTests(unittest.TestCase):
         }
         schema = [{
             "type": "function",
-            "function": {"name": "ask_user", "parameters": {"type": "object"}},
-        }]
+            "function": {"name": name, "parameters": {"type": "object"}},
+        } for name in ("ask_user", "write_file")]
         turns = iter((
             [{"type": "done", "tool_calls": [{
                 "id": "ask-1", "type": "function",
@@ -280,15 +331,25 @@ class RoutingAndPlanCostTests(unittest.TestCase):
                     "question": "Какой формат?", "options": "PDF | Word",
                 }, ensure_ascii=False)},
             }]}],
+            [{"type": "done", "tool_calls": [{
+                "id": "write-1", "type": "function",
+                "function": {"name": "write_file", "arguments": json.dumps({
+                    "path": "document.pdf", "content": "PDF",
+                }, ensure_ascii=False)},
+            }]}],
             [
-                {"type": "delta", "text": "Начинаю собирать PDF."},
+                {"type": "delta", "text": "PDF собран и сохранён."},
                 {"type": "done", "tool_calls": []},
             ],
         ))
         runner = agent.Agent(agent_mode=True)
         with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
              mock.patch.object(agent.llm, "chat_stream", side_effect=lambda *_a, **_k: next(turns)), \
+             mock.patch.object(runner, "make_plan", return_value=[
+                 "Собрать содержимое PDF", "Записать документ", "Проверить файл",
+             ]) as planner, \
              mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(agent.tools, "call", return_value={"ok": True}), \
              mock.patch.object(runner, "_wait_answer", return_value={
                  "id": "q1", "status": "answered", "answer": "PDF",
              }):
@@ -300,6 +361,7 @@ class RoutingAndPlanCostTests(unittest.TestCase):
         plan_at = next(i for i, event in enumerate(events) if event.get("type") == "plan")
         self.assertLess(question_at, plan_at)
         self.assertFalse(any(event.get("type") == "plan" for event in events[:question_at]))
+        planner.assert_called_once_with("Сделай документ", ["write_file"])
 
     def test_tiny_reasoning_is_hidden_but_substantial_reasoning_is_streamed(self) -> None:
         route = {
@@ -422,6 +484,49 @@ class AutomaticMemoryTests(unittest.TestCase):
             "kind": "preference", "key": "Предпочтение", "value": "стейки",
         }], "a generic first-person rule works without a steak vocabulary entry")
 
+    def test_semantic_memory_covers_personal_context_and_enforces_verbatim_values(self) -> None:
+        text = ("Меня зовут Марина, я работаю UX-дизайнером и использую "
+                "MacBook Air M2 с 8 ГБ памяти.")
+        extraction = [
+            {"kind": "person", "key": "Имя", "value": "Марина"},
+            {"kind": "person", "key": "Профессия", "value": "UX-дизайнером"},
+            {"kind": "fact", "key": "Устройство", "value": "MacBook Air M2"},
+            # Пересказ модели не является буквальным фрагментом и отбрасывается.
+            {"kind": "fact", "key": "Оперативная память", "value": "8 GB RAM"},
+        ]
+        stored = []
+        with mock.patch.object(agent.llm, "chat", return_value={
+                 "content": "```json\n" + json.dumps(extraction, ensure_ascii=False) + "\n```",
+             }) as semantic, \
+             mock.patch.object(agent.db, "remember",
+                               side_effect=lambda *args: stored.append(args) or {"ok": True}):
+            saved = agent.remember_semantic_facts(text)
+
+        self.assertEqual(len(saved), 3)
+        self.assertEqual([item[2] for item in stored],
+                         ["Марина", "UX-дизайнером", "MacBook Air M2"])
+        self.assertNotIn("8 GB RAM", str(stored))
+        self.assertEqual(semantic.call_args.kwargs["tier"], "nano")
+        self.assertEqual(semantic.call_args.kwargs["temperature"], 0.0)
+
+    def test_semantic_memory_dedupes_obvious_alias_at_writer_boundary(self) -> None:
+        text = "Я живу в Питере и работаю редактором."
+        extraction = [
+            {"kind": "fact", "key": "city", "value": "Питере"},
+            {"kind": "person", "key": "Профессия", "value": "редактором"},
+        ]
+        with mock.patch.object(agent.llm, "chat", return_value={
+                 "content": json.dumps(extraction, ensure_ascii=False),
+             }), mock.patch.object(agent.db, "remember", return_value={"ok": True}) as writer:
+            agent.remember_semantic_facts(text)
+        writer.assert_called_once_with("person", "Профессия", "редактором", 1.1)
+
+    def test_semantic_memory_skips_nonpersonal_and_sensitive_prompts(self) -> None:
+        with mock.patch.object(agent.llm, "chat") as semantic:
+            self.assertEqual(agent.remember_semantic_facts("Объясни квантовую физику"), [])
+            self.assertEqual(agent.remember_semantic_facts("Мой API token — abc123"), [])
+        semantic.assert_not_called()
+
     def test_memory_writer_merges_key_aliases_without_rewriting_values(self) -> None:
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -458,6 +563,15 @@ class AutomaticMemoryTests(unittest.TestCase):
                 self.assertEqual(len(upgraded), 1)
                 self.assertEqual((upgraded[0]["kind"], upgraded[0]["key"], upgraded[0]["value"]),
                                  ("person", "Город", "питер"))
+
+                conn.execute("DELETE FROM memory")
+                job = db.remember("person", "Профессия", "UX-дизайнером")
+                same_job = db.remember("fact", "occupation", "арт-директором")
+                rows = db.recall()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(same_job["id"], job["id"])
+                self.assertEqual((rows[0]["kind"], rows[0]["key"], rows[0]["value"]),
+                                 ("person", "Работа", "арт-директором"))
         finally:
             conn.close()
 
@@ -804,7 +918,7 @@ class VisionUiContractTests(unittest.TestCase):
 
 class InstallerBuildTests(unittest.TestCase):
     def test_installer_uses_the_application_version(self) -> None:
-        self.assertEqual(installer_build.version(), "1.2.0-beta.3")
+        self.assertEqual(installer_build.version(), "1.2.0-beta.4")
 
     def test_rebuild_preserves_previous_embedded_keys_without_a_keys_file(self) -> None:
         cloud, deep, gigachat = "cloud-fixture", "deep-fixture", "gigachat-fixture"
