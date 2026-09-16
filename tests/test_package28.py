@@ -5,6 +5,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import sqlite3
 import ssl
 import sys
 import tempfile
@@ -16,7 +17,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
 
-from jarvis import agent, auto, config, llm, orchestrator, server  # noqa: E402
+from jarvis import agent, auto, config, db, llm, orchestrator, server  # noqa: E402
 from jarvis.tools import media  # noqa: E402
 
 _BUILD_SPEC = importlib.util.spec_from_file_location("jarvis_installer_build", ROOT / "install" / "build.py")
@@ -224,6 +225,51 @@ class RoutingAndPlanCostTests(unittest.TestCase):
                       if event.get("type") == "delta" and "сохранена" in event.get("text", ""))
         self.assertLess(third, answer, "verification segment must become current before its model turn")
 
+    def test_normal_chat_never_emits_a_plan(self) -> None:
+        route = {
+            "tier": "base", "reason": "test", "score": 0.4,
+            "verbose": True, "offer_tools": False,
+        }
+        stream = [
+            {"type": "delta", "text": "Обычный ответ."},
+            {"type": "done", "tool_calls": []},
+        ]
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", return_value=stream), \
+             mock.patch.object(agent.tools, "schemas", return_value=[]):
+            events = list(agent.Agent(agent_mode=False).run(
+                [{"role": "user", "content": "Разбери вопрос"}],
+                user_text="Разбери вопрос",
+            ))
+        self.assertFalse(any(event.get("type") in ("plan", "plan_step") for event in events))
+
+    def test_tiny_reasoning_is_hidden_but_substantial_reasoning_is_streamed(self) -> None:
+        route = {
+            "tier": "smart", "reason": "test", "score": 0.8,
+            "verbose": True, "offer_tools": False,
+        }
+
+        def run_with(reasoning_parts):
+            stream = ([{"type": "reasoning", "text": part} for part in reasoning_parts] + [
+                {"type": "delta", "text": "Готовый ответ."},
+                {"type": "done", "tool_calls": []},
+            ])
+            with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+                 mock.patch.object(agent.llm, "chat_stream", return_value=stream), \
+                 mock.patch.object(agent.tools, "schemas", return_value=[]):
+                return list(agent.Agent(agent_mode=True).run(
+                    [{"role": "user", "content": "Реши сложную задачу"}],
+                    user_text="Реши сложную задачу",
+                ))
+
+        tiny = run_with(["Проверяю."])
+        self.assertFalse(any(event.get("type") == "thinking" for event in tiny))
+        parts = ["Сначала проверяю исходные ограничения и зависимости. ",
+                 "Затем сопоставляю варианты, риски и проверяемый итог решения."]
+        substantial = run_with(parts)
+        thinking = [event["text"] for event in substantial if event.get("type") == "thinking"]
+        self.assertEqual(thinking, ["".join(parts)])
+
 
 class AutomaticMemoryTests(unittest.TestCase):
     def test_city_and_food_facts_are_extracted_without_an_llm(self) -> None:
@@ -243,6 +289,60 @@ class AutomaticMemoryTests(unittest.TestCase):
         self.assertIn(("person", "Город", "Казань", 1.15), stored)
         self.assertIn(("preference", "Питание: предпочтения", "острую еду", 1.15), stored)
         self.assertIn(("preference", "Питание: аллергия", "арахис", 1.15), stored)
+
+    def test_city_correction_and_steak_are_saved_without_extra_tokens(self) -> None:
+        moved = agent.extract_obvious_memories("Я переехал в питер")
+        corrected = agent.extract_obvious_memories(
+            "Я сказал что пошутил и я всё же до сих пор в мск")
+        steak = agent.extract_obvious_memories("Я люблю стейки")
+        self.assertEqual(moved, [{
+            "kind": "person", "key": "Город", "value": "Санкт-Петербург",
+        }])
+        self.assertEqual(corrected, [{
+            "kind": "person", "key": "Город", "value": "Москва",
+        }])
+        self.assertEqual(steak, [{
+            "kind": "preference", "key": "Питание: предпочтения", "value": "стейки",
+        }])
+
+    def test_memory_writer_merges_english_aliases_and_updates_corrections(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(db.SCHEMA)
+        try:
+            with mock.patch.object(db, "_CONN", conn):
+                first = db.remember("person", "Город", "Санкт-Петербург", 1.15)
+                duplicate = db.remember("fact", "city", "питер")
+                rows = db.recall()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(duplicate["id"], first["id"])
+                self.assertEqual((rows[0]["kind"], rows[0]["key"], rows[0]["value"]),
+                                 ("person", "Город", "Санкт-Петербург"))
+
+                corrected = db.remember("fact", "location", "мск", 1.15)
+                rows = db.recall()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(corrected["id"], first["id"])
+                self.assertEqual(rows[0]["value"], "Москва")
+
+                # Реальная upgrade-ситуация: старая база уже содержит обе
+                # карточки, созданные предыдущей версией.
+                conn.execute("DELETE FROM memory")
+                conn.execute(
+                    "INSERT INTO memory VALUES(?,?,?,?,?,?,?)",
+                    ("old-ru", "person", "Город", "Санкт-Петербург", 1, 1, 1),
+                )
+                conn.execute(
+                    "INSERT INTO memory VALUES(?,?,?,?,?,?,?)",
+                    ("old-en", "fact", "city", "питер", 1, 2, 2),
+                )
+                conn.commit()
+                upgraded = db.recall()
+                self.assertEqual(len(upgraded), 1)
+                self.assertEqual((upgraded[0]["kind"], upgraded[0]["key"], upgraded[0]["value"]),
+                                 ("person", "Город", "Санкт-Петербург"))
+        finally:
+            conn.close()
 
 
 class DirectDelayedDeliveryTests(unittest.TestCase):
@@ -286,7 +386,8 @@ class VisionUiContractTests(unittest.TestCase):
         self.assertIn("```ui", contract)
         self.assertRegex(contract, r"tiles\s+Стиль:")
         self.assertIn("Варианты не оформляй\nобычным Markdown-списком", contract)
-        self.assertIn("Не добавляй button\n«Сгенерировать»", contract)
+        self.assertIn("Не добавляй button «Сгенерировать»", contract)
+        self.assertIn("Никогда не создавай\n`text`/`area`", contract)
         self.assertIn("«Свой вариант»", contract)
         self.assertIn("Если стиль уже\nявно задан", contract)
         self.assertIn("НЕ показывай ui для\nфактического вопроса, сводки новостей", contract)
@@ -502,13 +603,11 @@ class VisionUiContractTests(unittest.TestCase):
         stream.assert_called_once()
         dispatch.assert_not_called()
         done = [event for event in events if event.get("type") == "done"][-1]
-        self.assertIn(question, done["content"])
-        self.assertIn("```ui\ntext Твой ответ = Напиши свой вариант\n```", done["content"])
-        self.assertTrue(agent.has_interactive_ui(done["content"]))
-        direct_ui = [event for event in events if event.get("type") == "reply_ui"]
-        self.assertEqual(direct_ui, [{
-            "type": "reply_ui", "spec": "text Твой ответ = Напиши свой вариант",
-        }], "SSE must carry a parser-independent frontend control specification")
+        self.assertEqual(done["content"], question)
+        self.assertNotIn("```ui", done["content"])
+        self.assertFalse(agent.has_interactive_ui(done["content"]))
+        self.assertFalse([event for event in events if event.get("type") == "reply_ui"],
+                         "plain clarification must use the main composer")
         self.assertEqual(done["tools"], [])
 
     def test_clarification_fallback_preserves_listed_options_as_tiles(self) -> None:
@@ -542,8 +641,7 @@ class VisionUiContractTests(unittest.TestCase):
         unrelated = agent.reply_ui_fallback(
             "Могу подготовить:\n- отчёт\n- таблицу\nНо какой дедлайн?"
         )
-        self.assertIn("text Твой ответ", unrelated)
-        self.assertNotIn("tiles", unrelated)
+        self.assertEqual(unrelated, "", "deadline question uses the existing composer")
         self.assertFalse(agent.needs_reply_ui(
             "Готовая сводка с фактами и источниками. Без встречного вопроса."
         ))
@@ -583,7 +681,7 @@ class VisionUiContractTests(unittest.TestCase):
 
 class InstallerBuildTests(unittest.TestCase):
     def test_installer_uses_the_application_version(self) -> None:
-        self.assertEqual(installer_build.version(), "1.2.0-beta.1")
+        self.assertEqual(installer_build.version(), "1.2.0-beta.2")
 
     def test_rebuild_preserves_previous_embedded_keys_without_a_keys_file(self) -> None:
         cloud, deep, gigachat = "cloud-fixture", "deep-fixture", "gigachat-fixture"

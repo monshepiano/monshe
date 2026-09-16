@@ -493,10 +493,10 @@ try {
    (см. разделы «камера в диалоге» и «санкции / уведомления в диалоге» ниже). */
 
 /* ============================ переключатели ============================ */
-$('#tgAgent').addEventListener('click', function () {
-  S.agentMode = !S.agentMode;
-  this.classList.toggle('on', S.agentMode);
-  this.setAttribute('aria-pressed', S.agentMode ? 'true' : 'false');
+$('#tgAgent').addEventListener('change', function () {
+  // Настоящий checkbox-switch: состояние принадлежит самому control, а не
+  // декоративному классу кнопки.
+  S.agentMode = this.checked;
   beep(S.agentMode ? 760 : 420, 0.1);
   $('#input').placeholder = S.agentMode
     ? 'Поставь задачу — разобью на шаги и сделаю сам…'
@@ -554,6 +554,26 @@ async function refreshState() {
 /* ================== догрузка сообщений, пришедших извне ==================
    Фоновая задача AUTO пишет ответ прямо в диалог на сервере. Раньше он
    появлялся только после переоткрытия чата — теперь подтягиваем на лету. */
+function typeAutoReply(node, content, done) {
+  const text = String(content || '');
+  const md = el('div', 'md typing');
+  node.body.appendChild(md);
+  if (!text) { md.classList.remove('typing'); if (done) done(); return; }
+  // AUTO использует тот же elapsed-time typer и тот же синий cursor, что
+  // обычный ответ. Отложенная реплика больше не возникает целым абзацем.
+  const ui = {
+    node, runId: S.streamRun, mdEl: md, buffer: '', shown: '', typer: null,
+    pendingReplyUi: '', replyUiSpec: '', replyLive: null, cps: 0, acc: 0,
+    lastScroll: 0, floor: 0,
+  };
+  ui.onTyped = () => {
+    md.classList.remove('typing');
+    clearTypingDecorations(md);
+    if (done) done();
+  };
+  typeInto(ui, text);
+}
+
 async function syncChatTail() {
   if (!S.chatId || S.streaming || S.editing) return;
   const r = await api('/api/messages?chat_id=' + encodeURIComponent(S.chatId));
@@ -567,11 +587,13 @@ async function syncChatTail() {
     if (!meta.from_auto) return;          // свои ответы рисует сам стрим
     const node = addAiMsg(m.created_at);
     node.root.dataset.msgId = m.id;
-    node.body.innerHTML = '<div class="md">' + MD.render(m.content) + '</div>';
-    foldCodeBlocks(node.body);
-    mountUiPanels(node.body);
-    (meta.files || []).forEach((f) => attachFileChip(node.body, f));
-    addMsgActions(node, m.content);
+    typeAutoReply(node, m.content, () => {
+      foldCodeBlocks(node.body);
+      mountUiPanels(node.body);
+      (meta.files || []).forEach((f) => attachFileChip(node.body, f));
+      addMsgActions(node, m.content);
+      scrollDown();
+    });
     added = true;
   });
   if (added) { scrollDown(); sfx('note'); }
@@ -738,7 +760,6 @@ function renderMessages(host, messages) {
       node.body.appendChild(el('div', 'md', MD.render(m.content)));
       foldCodeBlocks(node.body);
       mountUiPanels(node.body);
-      if (meta.model) node.modelEl.textContent = meta.model;
       (meta.files || []).forEach((f) => attachFileChip(node.body, f));
       addMsgActions(node, m.content);
     }
@@ -1848,7 +1869,10 @@ function shortStep(t) {
    затем в самом сообщении остаётся компактная открываемая вкладка со всеми
    исходными формулировками. */
 function archiveCompletedPlan(ui) {
-  if (!ui || ui.planArchive || !ui.node || !ui.node.body) return;
+  // Обычный ответ приходит сюда через общий done, но не имеет plan event.
+  // Пустая «План выполнен · 0 шагов» была следствием отсутствия этого guard.
+  if (!ui || !ui.agentMode || !(ui.planItems || []).length ||
+      ui.planArchive || !ui.node || !ui.node.body) return;
   const card = makeCard('☰', 'План выполнен', 'plan-card plan-complete', true);
   const list = el('ul', 'plan-list');
   (ui.planItems || []).forEach((item, index) => {
@@ -1868,6 +1892,12 @@ function archiveCompletedPlan(ui) {
 
 function undockPlan(ui) {
   if (!ui || ui.planFinished) return;
+  // done есть у каждого ответа; normal chat не должен получать пустой архив.
+  if (!ui.agentMode || !(ui.planItems || []).length) {
+    ui.planFinished = true;
+    releasePlanGate(ui);
+    return;
+  }
   ui.planFinished = true;
   clearPlanTimers(ui);
   finishPlanItems(ui);
@@ -2132,6 +2162,12 @@ function parseUiSpec(src) {
   return real.length ? real : items;
 }
 
+function hasMeaningfulUiItems(items) {
+  // Свободный text/area дублирует основной composer. В сочетании с настоящим
+  // выбором он допустим, но сам по себе отдельной панели не заслуживает.
+  return (items || []).some((item) => item.t !== 'text' && item.t !== 'area');
+}
+
 function choiceKey(text) {
   return String(text || '').toLocaleLowerCase('ru-RU')
     .replace(/[^a-zа-яё0-9]+/gi, ' ').trim();
@@ -2165,7 +2201,7 @@ function mountUiPanels(root) {
   $$('.ui-panel', root).forEach((box) => {
     if (box.dataset.live === '1') return;
     const items = parseUiSpec(box.dataset.ui || '');
-    if (!items.length) { box.remove(); return; }
+    if (!items.length || !hasMeaningfulUiItems(items)) { box.remove(); return; }
     stripMirroredChoiceList(box, items);
     box.dataset.live = '1';
     box.innerHTML = '';
@@ -2593,6 +2629,10 @@ async function send(opts) {
   const requestIsolatedCam = !!(requestCamNode && !S.camLink);
   const requestChatId = requestIsolatedCam ? (S.camChatId || '') : (S.chatId || '');
   const requestKind = requestIsolatedCam ? 'cam' : '';
+  // Режимы принадлежат запросу: смена switch во время загрузки кадра не
+  // меняет уже начатую задачу задним числом.
+  const requestAgentMode = !!S.agentMode;
+  const requestComputerUse = !!S.computerUse;
 
   // Вложения, правка и текст тоже принадлежат этому запросу. Раньше снимок
   // делался ПОСЛЕ await загрузки автокадра: за это время повторное открытие
@@ -2663,6 +2703,7 @@ async function send(opts) {
     visualDone: false,
     routeEl: null,
     pendingReplyUi: '',
+    agentMode: requestAgentMode,
   };
   // Сетевой SSE может закрыться раньше, чем локальный typer покажет последний
   // символ. finally ждёт именно эту границу, а не состояние сокета.
@@ -2694,8 +2735,8 @@ async function send(opts) {
       body: JSON.stringify({
         chat_id: requestChatId, kind: requestKind, text,
         edit_of: editing ? editing.id : '',
-        agent_mode: S.agentMode,
-        computer_use: S.computerUse,
+        agent_mode: requestAgentMode,
+        computer_use: requestComputerUse,
         silent: !!opts.silent,
         attachments: atts,
       }),
@@ -3044,6 +3085,11 @@ function deferMountedReplyUi(ui) {
 
 function flushPendingReplyUi(ui) {
   if (!ui || !ui.pendingReplyUi || ui.shown !== ui.buffer) return false;
+  if (!hasMeaningfulUiItems(parseUiSpec(ui.pendingReplyUi))) {
+    ui.pendingReplyUi = '';
+    ui.replyUiSpec = '';
+    return false;
+  }
   if (ui.replyLive && ui.replyLive.isConnected) ui.replyLive.remove();
   const live = el('div', 'reply-ui-live');
   const panel = el('div', 'ui-panel');
@@ -3194,8 +3240,8 @@ function markImportantThought(mdEl) {
   const last = parts[parts.length - 1];
   if (!last) return;
   const text = (last.textContent || '').trim();
-  const important = /^(?:⚠\ufe0f?\s*)?(?:важно|критично|обязательно|не забудьте|important|critical)\s*[:—.!]/i.test(text) ||
-    /\b(?:необратим\w*|нельзя отменить|без резервной копии|риск потери|потребуется подтверждение)\b/i.test(text);
+  const important = /^(?:⚠\ufe0f?\s*)?(?:важно|главное|критично|обязательно|внимание|осторожно|не забудьте|обратите внимание|ключевой момент|рекомендация|совет|important|critical)\s*[:—.!]/i.test(text) ||
+    /\b(?:необратим\w*|нельзя отменить|без резервной копии|риск\s+(?:потери|утечки|блокировки)|потребуется подтверждение|перед тем как продолжить|обязательно (?:сохран|провер|включ|отключ))\b/i.test(text);
   last.classList.toggle('action-important', important);
 }
 
@@ -3454,9 +3500,12 @@ if ($('#bellBtn')) {
    actions и кнопка Stop ждут, пока ui.buffer действительно дойдёт до ui.shown.
    Так сетевой EOF не выдаёт недопечатанный ответ за визуально готовый. */
 function clearRunRoute(ui) {
-  if (!ui || !ui.routeEl) return;
-  ui.routeEl.remove();
+  if (!ui) return;
+  if (ui.routeEl) ui.routeEl.remove();
   ui.routeEl = null;
+  // Пользователь выбрал вариант «в шапке ответа только во время генерации»:
+  // сценарий и точная модель исчезают на visual-done одной границей.
+  if (ui.node && ui.node.modelEl) ui.node.modelEl.textContent = '';
 }
 
 function settleVisualDone(ui) {
@@ -3571,7 +3620,10 @@ function queueResponseFinish(ui, content, success) {
   typerFlush(ui);
 }
 
-const TIER_LABEL = { nano: 'экономный', base: 'базовый', smart: 'усиленный', coder: 'кодовый', vision: 'зрение' };
+const TIER_LABEL = {
+  nano: 'простой запрос', base: 'обычный запрос', smart: 'сложный запрос',
+  coder: 'работа с кодом', vision: 'работа со зрением',
+};
 
 function dispatchStreamEvent(ev, ui) {
   if (ui.planGate) {
@@ -3628,7 +3680,7 @@ function handleEvent(ev, ui) {
         if (head) head.appendChild(ui.routeEl);
       }
       if (ui.routeEl) {
-        ui.routeEl.textContent = 'маршрут: ' + (TIER_LABEL[ev.tier] || ev.tier);
+        ui.routeEl.textContent = 'сценарий: ' + (TIER_LABEL[ev.tier] || ev.tier);
         ui.routeEl.title = ev.reason || '';
       }
       // Кухню показываем только на сложных задачах: на «привет» и короткий
@@ -3638,7 +3690,7 @@ function handleEvent(ev, ui) {
     }
 
     case 'model':
-      node.modelEl.textContent = ' · ' + (ev.model || '');
+      node.modelEl.textContent = ev.model ? 'модель: ' + ev.model : '';
       $('#footModel').textContent = ev.model || '—';
       break;
 
@@ -3671,6 +3723,8 @@ function handleEvent(ev, ui) {
     }
 
     case 'plan': {
+      // Вторая граница после backend: plan виден только реальному AGENT-run.
+      if (!ui.agentMode || !(ev.steps || []).length) break;
       beginPlanGate(ui);
       // Агент может составить план дважды за прогон (уточнил задачу — сделал
       // новый). Прежнюю панель и прежнюю карточку убираем, иначе первая так и
@@ -3881,6 +3935,12 @@ function handleEvent(ev, ui) {
       break;
     }
 
+    case 'memory_saved':
+      // Локальный extractor записывает очевидный факт до model/tool loop, поэтому
+      // прежний tool_result('remember') здесь никогда не срабатывал.
+      pulseNav('memory', true);
+      break;
+
     case 'file': {
       ui.files.push(ev);
       const wrap = ui.filesBox || (ui.filesBox = el('div', ''));
@@ -3934,6 +3994,7 @@ function handleEvent(ev, ui) {
       // а монтируем только на визуальной границе shown === buffer. Если после
       // раннего mount придёт ещё текст, typeInto снова отложит ту же панель.
       const spec = String(ev.spec || '').trim();
+      if (!hasMeaningfulUiItems(parseUiSpec(spec))) break;
       ui.replyUiSpec = spec;
       ui.pendingReplyUi = spec;
       if (ui.replyLive && ui.replyLive.isConnected) ui.replyLive.remove();

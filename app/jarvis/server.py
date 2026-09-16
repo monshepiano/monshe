@@ -448,8 +448,13 @@ class Handler(BaseHTTPRequestHandler):
 
         # Очевидные факты первого лица сохраняются на входной границе, а не по
         # доброй воле модели. Это локальные regex, поэтому ни задержки, ни
-        # расхода токенов у обычной реплики не появляется.
-        agent.remember_obvious_facts(text)
+        # расхода токенов у обычной реплики не появляется. Отдельное событие
+        # запускает видимый border-pass у «Памяти» даже если модель не вызвала
+        # remember повторно.
+        saved_facts = agent.remember_obvious_facts(text)
+        if saved_facts:
+            self._sse({"type": "memory_saved", "count": len(saved_facts),
+                       "keys": [item.get("key", "") for item in saved_facts]})
 
         # Название диалога придумывает модель — но это отдельный запрос к сети.
         # Раньше он выполнялся ДО первого токена ответа, и пользователь ждал

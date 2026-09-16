@@ -48,19 +48,24 @@
 
     <nav class="nav">
       <button class="nav-item active" data-view="chat" data-name="Чат">
+        <i class="nav-outline" aria-hidden="true"></i>
         <span class="nav-ico">◈</span><span class="nav-label">Чат</span>
       </button>
       <button class="nav-item" data-view="auto" data-name="AUTO">
+        <i class="nav-outline" aria-hidden="true"></i>
         <span class="nav-ico">◎</span><span class="nav-label">AUTO</span>
         <span class="badge" id="autoBadge">0</span>
       </button>
       <button class="nav-item" data-view="files" data-name="Файлы">
+        <i class="nav-outline" aria-hidden="true"></i>
         <span class="nav-ico">▤</span><span class="nav-label">Файлы</span>
       </button>
       <button class="nav-item" data-view="memory" data-name="Память">
+        <i class="nav-outline" aria-hidden="true"></i>
         <span class="nav-ico">◇</span><span class="nav-label">Память</span>
       </button>
       <button class="nav-item" data-view="settings" data-name="Настройки">
+        <i class="nav-outline" aria-hidden="true"></i>
         <span class="nav-ico">⚙</span><span class="nav-label">Настройки</span>
       </button>
     </nav>
@@ -178,11 +183,12 @@
             <button class="toggle" id="tgComputer" data-tip="Управление мышью и клавиатурой">
               <span class="tg-dot"></span>Компьютер
             </button>
-            <button class="toggle" id="tgAgent" type="button" aria-pressed="false"
-                    data-tip="Многошаговая задача: составлю план и выполню сам">
-              <span class="tg-dot"></span>AGENT
-            </button>
             <div class="spacer"></div>
+            <label class="agent-switch" data-tip="Многошаговая задача: составлю план и выполню сам">
+              <span class="agent-switch-label">AGENT</span>
+              <input id="tgAgent" type="checkbox" role="switch" aria-label="Агентский режим">
+              <span class="agent-switch-track" aria-hidden="true"><i></i></span>
+            </label>
           </div>
         </div>
       </div>

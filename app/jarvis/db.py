@@ -372,24 +372,112 @@ def delete_task(task_id: str) -> None:
 
 
 # --------------------------------------------------------------- memory
+# Модель и локальный extractor могут назвать один факт по-разному: «Город»,
+# «city», «location». Сравнивать сырые строки нельзя — это и породило две
+# карточки Санкт-Петербурга. Здесь, на единственной границе записи, русские и
+# английские алиасы получают одну identity и одно каноническое название.
+_MEMORY_KEY_ALIASES = {
+    "city": ("person", "Город", "person:city"),
+    "current city": ("person", "Город", "person:city"),
+    "location": ("person", "Город", "person:city"),
+    "город": ("person", "Город", "person:city"),
+    "город проживания": ("person", "Город", "person:city"),
+    "местоположение": ("person", "Город", "person:city"),
+    "favorite food": ("preference", "Питание: предпочтения", "preference:food"),
+    "favourite food": ("preference", "Питание: предпочтения", "preference:food"),
+    "food": ("preference", "Питание: предпочтения", "preference:food"),
+    "food preference": ("preference", "Питание: предпочтения", "preference:food"),
+    "любимая еда": ("preference", "Питание: предпочтения", "preference:food"),
+    "питание предпочтения": ("preference", "Питание: предпочтения", "preference:food"),
+}
+_CITY_ALIASES = {
+    "мск": "Москва", "москва": "Москва", "москве": "Москва",
+    "питер": "Санкт-Петербург", "спб": "Санкт-Петербург",
+    "санкт петербург": "Санкт-Петербург", "санкт петербурге": "Санкт-Петербург",
+}
+
+
+def _memory_token(value: str) -> str:
+    text = str(value or "").casefold().replace("ё", "е")
+    return " ".join("".join(ch if ch.isalnum() else " " for ch in text).split())
+
+
+def canonical_memory(kind: str, key: str, value: str) -> tuple[str, str, str, str]:
+    """Вернуть kind/key/value и стабильную identity одного пользовательского факта."""
+    clean_kind = str(kind or "fact").strip().casefold() or "fact"
+    clean_key = " ".join(str(key or "Факт").split()).strip() or "Факт"
+    clean_value = " ".join(str(value or "").split()).strip()
+    token = _memory_token(clean_key)
+    alias = _MEMORY_KEY_ALIASES.get(token)
+    if alias:
+        clean_kind, clean_key, identity = alias
+        if identity == "person:city":
+            clean_value = _CITY_ALIASES.get(_memory_token(clean_value), clean_value)
+        return clean_kind, clean_key, clean_value, identity
+    return clean_kind, clean_key, clean_value, clean_kind + ":" + token
+
+
+def _compact_memory() -> None:
+    """Схлопнуть алиасы уже существующей базы при первом открытии новой версии."""
+    with _LOCK:
+        rows = [dict(row) for row in _CONN.execute("SELECT * FROM memory").fetchall()]
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            _kind, _key, _value, identity = canonical_memory(
+                row.get("kind", ""), row.get("key", ""), row.get("value", ""))
+            groups.setdefault(identity, []).append(row)
+        changed = False
+        for items in groups.values():
+            # Самая свежая запись — последняя заявленная пользователем версия.
+            keep = max(items, key=lambda item: (float(item.get("updated_at") or 0),
+                                                 float(item.get("created_at") or 0)))
+            kind, key, value, _identity = canonical_memory(
+                keep.get("kind", ""), keep.get("key", ""), keep.get("value", ""))
+            if (keep.get("kind") != kind or keep.get("key") != key or keep.get("value") != value):
+                _CONN.execute("UPDATE memory SET kind=?, key=?, value=? WHERE id=?",
+                              (kind, key, value, keep["id"]))
+                changed = True
+            for duplicate in items:
+                if duplicate["id"] != keep["id"]:
+                    _CONN.execute("DELETE FROM memory WHERE id=?", (duplicate["id"],))
+                    changed = True
+        if changed:
+            _CONN.commit()
+
+
 def remember(kind: str, key: str, value: str, weight: float = 1.0) -> Dict[str, Any]:
-    existing = query_one("SELECT * FROM memory WHERE kind=? AND key=?", (kind, key))
+    kind, key, value, identity = canonical_memory(kind, key, value)
     ts = now()
-    if existing:
-        execute(
-            "UPDATE memory SET value=?, weight=?, updated_at=? WHERE id=?",
-            (value, weight, ts, existing["id"]),
+    with _LOCK:
+        rows = [dict(row) for row in _CONN.execute("SELECT * FROM memory").fetchall()]
+        matches = [row for row in rows if canonical_memory(
+            row.get("kind", ""), row.get("key", ""), row.get("value", ""))[3] == identity]
+        if matches:
+            # Сохраняем один стабильный id, а старые alias-карточки удаляем.
+            existing = max(matches, key=lambda item: (float(item.get("updated_at") or 0),
+                                                       float(item.get("created_at") or 0)))
+            _CONN.execute(
+                "UPDATE memory SET kind=?, key=?, value=?, weight=?, updated_at=? WHERE id=?",
+                (kind, key, value, weight, ts, existing["id"]),
+            )
+            for duplicate in matches:
+                if duplicate["id"] != existing["id"]:
+                    _CONN.execute("DELETE FROM memory WHERE id=?", (duplicate["id"],))
+            _CONN.commit()
+            return {**existing, "kind": kind, "key": key, "value": value,
+                    "weight": weight, "updated_at": ts}
+        mem_id = uid("mem_")
+        _CONN.execute(
+            "INSERT INTO memory(id,kind,key,value,weight,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+            (mem_id, kind, key, value, weight, ts, ts),
         )
-        return {**existing, "value": value, "weight": weight}
-    mem_id = uid("mem_")
-    execute(
-        "INSERT INTO memory(id,kind,key,value,weight,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-        (mem_id, kind, key, value, weight, ts, ts),
-    )
-    return {"id": mem_id, "kind": kind, "key": key, "value": value, "weight": weight}
+        _CONN.commit()
+    return {"id": mem_id, "kind": kind, "key": key, "value": value,
+            "weight": weight, "created_at": ts, "updated_at": ts}
 
 
 def recall(kind: str = "", limit: int = 80) -> List[Dict[str, Any]]:
+    _compact_memory()
     if kind:
         return query(
             "SELECT * FROM memory WHERE kind=? ORDER BY weight DESC, updated_at DESC LIMIT ?",
@@ -399,15 +487,16 @@ def recall(kind: str = "", limit: int = 80) -> List[Dict[str, Any]]:
 
 
 def update_memory(mem_id: str, key: str = "", value: str = "") -> Optional[Dict[str, Any]]:
-    """Правка существующего факта по id: можно поменять и название, и текст."""
+    """Правка существующего факта по id с тем же alias/dedupe-контрактом."""
     item = query_one("SELECT * FROM memory WHERE id=?", (mem_id,))
     if not item:
         return None
     key = (key or item["key"]).strip() or item["key"]
     value = value if value != "" else item["value"]
-    execute("UPDATE memory SET key=?, value=?, updated_at=? WHERE id=?",
-            (key, value, now(), mem_id))
-    return {**item, "key": key, "value": value}
+    # Убираем редактируемую строку, затем единый writer либо обновит её смысловой
+    # alias, либо создаст новый факт. UI всё равно перечитывает список по id.
+    execute("DELETE FROM memory WHERE id=?", (mem_id,))
+    return remember(item.get("kind", "fact"), key, value, float(item.get("weight") or 1.0))
 
 
 def recent_user_messages(days: int = 30, limit: int = 60) -> List[str]:
@@ -429,17 +518,23 @@ def forget(mem_id: str) -> None:
 
 
 def forget_by_key(key: str, kind: str = "") -> int:
-    """Забыть факт по названию — так его удаляет сам Джарвис, id он не видит."""
+    """Забыть факт по названию, включая русские/английские aliases."""
     key = (key or "").strip()
     if not key:
         return 0
-    if kind:
-        rows = query("SELECT id FROM memory WHERE kind=? AND key=?", (kind, key))
-    else:
-        rows = query("SELECT id FROM memory WHERE key=?", (key,))
+    _kind, _key, _value, wanted = canonical_memory(kind or "fact", key, "")
+    rows = query("SELECT * FROM memory")
+    matched = []
     for row in rows:
+        row_identity = canonical_memory(
+            row.get("kind", ""), row.get("key", ""), row.get("value", ""))[3]
+        # Для неканонического ключа заданный kind остаётся ограничением. Для
+        # city/food alias сама identity уже достаточно точна.
+        if row_identity == wanted or (not kind and _memory_token(row.get("key", "")) == _memory_token(key)):
+            matched.append(row)
+    for row in matched:
         execute("DELETE FROM memory WHERE id=?", (row["id"],))
-    return len(rows)
+    return len(matched)
 
 
 # ------------------------------------------------------------- approvals

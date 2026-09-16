@@ -33,6 +33,17 @@ def _fact_value(value: str, limit: int = 120) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n,.;:!?—–-")[:limit]
 
 
+def _city_value(value: str) -> str:
+    city = _fact_value(value, 48)
+    token = re.sub(r"[^a-zа-яё0-9]+", " ", city.casefold()).replace("ё", "е").strip()
+    aliases = {
+        "мск": "Москва", "москва": "Москва", "москве": "Москва",
+        "питер": "Санкт-Петербург", "спб": "Санкт-Петербург",
+        "санкт петербург": "Санкт-Петербург", "санкт петербурге": "Санкт-Петербург",
+    }
+    return aliases.get(token, city)
+
+
 def extract_obvious_memories(text: str) -> List[Dict[str, str]]:
     """Извлечь только явно заявленные личные факты без LLM и лишних токенов.
 
@@ -61,11 +72,29 @@ def extract_obvious_memories(text: str) -> List[Dict[str, str]]:
         found = re.search(pattern, raw, re.I)
         if not found:
             continue
-        city = _fact_value(found.group(1), 48)
+        city = _city_value(found.group(1))
         # «переехал в новую квартиру/дом» — событие, но не новый город.
         if city and not re.search(r"\b(?:квартир|дом|офис|комнат|общежит)\w*\b", city, re.I):
             facts.append({"kind": "person", "key": "Город", "value": city})
         break
+
+    # Исправление старого факта важнее первоначальной реплики: «пошутил, я всё
+    # же до сих пор в мск» обязано заменить Петербург, даже если глагол «живу»
+    # опущен. Закрытый cue не даёт принять обычное «я в магазине» за город.
+    correction_cue = re.search(
+        r"\b(?:пошутил(?:а)?|на\s+самом\s+деле|вс[её]\s+же|вс[её]\s+ещ[её]|до\s+сих\s+пор)\b",
+        raw, re.I)
+    if correction_cue:
+        corrected = re.search(
+            r"\b(?:я\s+)?(?:вс[её]\s+же\s+)?(?:вс[её]\s+ещ[её]\s+)?"
+            r"(?:до\s+сих\s+пор\s+)?(?:живу\s+|остаюсь\s+|нахожусь\s+)?в\s+"
+            r"([A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\- ]{1,45}?)"
+            r"(?=\s+(?:и|но|а)\s+|[,.;!?]|$)", raw, re.I)
+        if corrected:
+            city = _city_value(corrected.group(1))
+            if city and not re.search(r"\b(?:квартир|дом|офис|комнат|магазин)\w*\b", city, re.I):
+                facts = [item for item in facts if item["key"] != "Город"]
+                facts.insert(0, {"kind": "person", "key": "Город", "value": city})
 
     favourite = re.search(
         r"\b(?:моя\s+)?любим(?:ая|ое)\s+(?:еда|блюдо|кухня)\s*(?:—|–|-|:|это)?\s*"
@@ -95,8 +124,8 @@ def extract_obvious_memories(text: str) -> List[Dict[str, str]]:
         value = _fact_value(preference.group(1))
         food = bool(re.search(
             r"\b(?:ед\w*|блюд\w*|кухн\w*|пицц\w*|суши|ролл\w*|мяс\w*|рыб\w*|"
-            r"овощ\w*|фрукт\w*|кофе|чай|сыр\w*|сладк\w*|остр\w*|веган\w*|"
-            r"вегетариан\w*)\b", value, re.I))
+            r"овощ\w*|фрукт\w*|кофе|чай|сыр\w*|стейк\w*|сладк\w*|остр\w*|"
+            r"веган\w*|вегетариан\w*)\b", value, re.I))
         key = "Питание: предпочтения" if food else "Предпочтение"
         if value and not any(item["key"] == key for item in facts):
             facts.append({"kind": "preference", "key": key, "value": value})
@@ -119,11 +148,11 @@ def remember_obvious_facts(text: str) -> List[Dict[str, Any]]:
 # в том же запросе непосредственно перед user message. Классы закрытые — не
 # список тем, который пришлось бы бесконечно дополнять частными заплатками.
 PROACTIVE_UI_CONTRACT = """КОНТРАКТ ЭТОГО ХОДА — ЖИВОЙ ВЫБОР:
-Показывай интерактивные controls часто, но только когда человеку действительно
-есть что выбирать. Блок ```ui ОБЯЗАТЕЛЕН в любом из трёх случаев:
+Показывай интерактивные controls только когда человеку действительно есть что
+выбирать. Блок ```ui ОБЯЗАТЕЛЕН в любом из трёх случаев:
 1) в творческой/созидательной просьбе не задан важный вариант (концепция, стиль,
-   формат, объём, сложность или набор возможностей);
-2) ты задаёшь уточняющий вопрос либо пишешь «выбери/какой вариант/что именно»;
+   формат, объём, сложность или набор возможностей) и можно назвать 2–4 варианта;
+2) ты просишь выбрать между двумя или более уже названными вариантами;
 3) предлагаешь несколько равноправных настроек или путей продолжения.
 В случае 1 сначала покажи 2–4 КОНТЕКСТНЫХ варианта и дождись следующей реплики:
 не выбирай молча и не запускай generate/create до выбора. Варианты не оформляй
@@ -133,12 +162,12 @@ PROACTIVE_UI_CONTRACT = """КОНТРАКТ ЭТОГО ХОДА — ЖИВОЙ �
 tiles Стиль: вариант 1 | вариант 2 | вариант 3
 ```
 
-Если честные конечные варианты перечислить нельзя, но тебе нужен ответ человека,
-используй `text Твой ответ = Напиши свой вариант` или `area Детали = Можно
-подробно`. НЕЛЬЗЯ заканчивать ход одним текстовым вопросом. Интерфейс сам
-добавит «Свой вариант» к конечному списку и отправку. Не добавляй button
-«Сгенерировать», «Отправить» или «Поехали». Если пользователь уже задал все
-существенные параметры — сразу выполняй просьбу без панели. НЕ показывай ui для
+Если честные конечные варианты перечислить нельзя, задай один короткий обычный
+вопрос и остановись: человек ответит в основном composer. Никогда не создавай
+`text`/`area` только ради второго свободного поля ввода. Интерфейс сам добавит
+«Свой вариант» к конечному списку и отправку. Не добавляй button «Сгенерировать»,
+«Отправить» или «Поехали». Если пользователь уже задал все существенные
+параметры — сразу выполняй просьбу без панели. НЕ показывай ui для
 фактического вопроса, сводки новостей/погоды, отчёта о уже выполненном действии
 или простого продолжения с заданными параметрами: там полезного выбора нет."""
 
@@ -197,8 +226,11 @@ def has_choice_ui(text: str) -> bool:
     return any("|" in match.group(1) for match in _UI_FENCE.finditer(str(text or "")))
 
 
+# Свободные text/area не считаются полезным интерактивом: основной composer уже
+# даёт ровно такой ввод. UI нужен лишь там, где он выражает настоящий выбор или
+# специализированное значение, которое обычной строкой задавать неудобно.
 _UI_CONTROL = re.compile(
-    r"^\s*(?:tiles|multi|rank|slider|number|rate|toggle|text|area|date|color|button)\s+\S",
+    r"^\s*(?:tiles|multi|rank|slider|number|rate|toggle|date|color|button)\s+\S",
     re.IGNORECASE | re.MULTILINE,
 )
 _REPLY_REQUEST = re.compile(
@@ -291,12 +323,10 @@ def needs_reply_ui(text: str, user_text: str = "") -> bool:
 
 
 def reply_ui_fallback(text: str = "") -> str:
-    """Превратить забытый моделью текстовый вопрос в рабочий control.
+    """Создать tiles только из настоящего списка вариантов.
 
-    Модель ставит вопрос и до списка, и после него. В первом случае берём пункты
-    после вопроса; во втором — весь список, но только когда финальная реплика
-    действительно просит выбрать вариант. Так описание перед вопросом о сроке
-    не превращается в ложные плитки.
+    Если вариантов нет, возвращаем пустую строку: обычный вопрос уже имеет
+    composer под ним, и второе text/area поле было лишним дубликатом.
     """
     question = ""
     lines = str(text or "").splitlines()
@@ -316,7 +346,7 @@ def reply_ui_fallback(text: str = "") -> str:
     if len(options) >= 2:
         label = question or "Выбери вариант"
         return "```ui\ntiles %s: %s\n```" % (label, " | ".join(options))
-    return "```ui\ntext Твой ответ = Напиши свой вариант\n```"
+    return ""
 
 
 def contextual_choice_fallback(text: str = "") -> str:
@@ -995,6 +1025,12 @@ class Agent:
         # generate_image в следующем ходе. Результат переиспользуем для модели,
         # но второй provider-call и второй file event не создаём.
         completed_calls: Dict[str, Dict[str, Any]] = {}
+        # Reasoning сначала копится невидимо. Если весь ход мыслей оказался
+        # одной короткой фразой, карточка вообще не создаётся. После достижения
+        # порога накопленное показывается целиком, дальнейшие chunks идут живьём.
+        thinking_pending: List[str] = []
+        thinking_visible = False
+        thinking_min_chars = 90
 
         for step in range(max_steps):
             # phase="think" — это то самое ожидание перед первым словом ответа.
@@ -1028,14 +1064,19 @@ class Agent:
                     self.model_used = event.get("model", "")
                     yield {"type": "model", "model": event.get("model"), "tier": tier}
                 elif etype == "reasoning":
-                    # МЫСЛИ НУЖНЫ НЕ ВСЕГДА. «Покажи новости» — не та задача,
-                    # ради которой стоит разворачивать окно с рассуждениями:
-                    # оно занимает экран и отвлекает от самого ответа. Мысли
-                    # показываем там, где виден труд: агентский режим,
-                    # управление компьютером или работа в несколько шагов
-                    # (второй шаг — уже признак непростой задачи).
+                    # МЫСЛИ НУЖНЫ НЕ ВСЕГДА. Даже в сложном режиме одна короткая
+                    # служебная фраза не заслуживает отдельной карточки.
                     if self.show_thinking:
-                        yield {"type": "thinking", "text": event["text"]}
+                        piece = str(event.get("text") or "")
+                        if thinking_visible:
+                            if piece:
+                                yield {"type": "thinking", "text": piece}
+                        elif piece:
+                            thinking_pending.append(piece)
+                            if len("".join(thinking_pending).strip()) >= thinking_min_chars:
+                                thinking_visible = True
+                                yield {"type": "thinking", "text": "".join(thinking_pending)}
+                                thinking_pending = []
                 elif etype == "delta":
                     acc_text.append(event["text"])
                     # Модель отмечает начало шага строкой [ШАГ N]. Ловим её в
@@ -1198,20 +1239,26 @@ class Agent:
             if not social_only and needs_reply_ui(text_piece, user_text):
                 if not has_interactive_ui(text_piece):
                     panel = reply_ui_fallback(text_piece)
-                    addition = ("\n\n" if text_piece.strip() else "") + panel
-                    text_piece += addition
-                    if gate_open:
-                        yield {"type": "delta", "text": addition}
-                    else:
+                    if panel:
+                        addition = ("\n\n" if text_piece.strip() else "") + panel
+                        text_piece += addition
+                        if gate_open:
+                            yield {"type": "delta", "text": addition}
+                        else:
+                            yield {"type": "delta", "text": text_piece}
+                            gate_open = True
+                    elif not gate_open:
+                        # Свободный ответ человек напишет в composer. Обычный
+                        # вопрос показываем, но второй input не создаём.
                         yield {"type": "delta", "text": text_piece}
                         gate_open = True
                 elif not gate_open:
                     yield {"type": "delta", "text": text_piece}
                     gate_open = True
-                # Отдельный UI-event — второй, независимый путь до DOM. Даже
-                # если конкретный Markdown-парсер/частичный fence даст сбой,
-                # фронт получит чистую спецификацию и построит controls сам.
-                panels = list(_UI_FENCE.finditer(text_piece))
+                # Отдельный UI-event нужен только настоящему выбору. Fence из
+                # одного text/area намеренно игнорируется как дубль composer.
+                panels = [match for match in _UI_FENCE.finditer(text_piece)
+                          if _UI_CONTROL.search(match.group(1))]
                 if panels:
                     yield {"type": "reply_ui", "spec": panels[-1].group(1).strip()}
                 final_text = text_piece

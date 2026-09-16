@@ -206,8 +206,8 @@ register("telegram_send_file", media.telegram_send_file,
 # --------------------------------------------------------------- ПАМЯТЬ/AUTO
 def _remember(key: str, value: str, kind: str = "fact") -> Dict[str, Any]:
     from .. import db
-    db.remember(kind or "fact", key, value)
-    return {"ok": True, "saved": {"key": key, "value": value}}
+    saved = db.remember(kind or "fact", key, value)
+    return {"ok": True, "saved": {"key": saved["key"], "value": saved["value"]}}
 
 
 def _forget(key: str, kind: str = "") -> Dict[str, Any]:

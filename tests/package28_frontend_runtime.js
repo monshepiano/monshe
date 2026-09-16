@@ -439,6 +439,12 @@ function testImportantHeadingCaretAndTrail() {
   ctx.clearTypingDecorations(plain);
   assert.strictEqual(plain.querySelector('.typing-trail'), null,
     'when typing pauses, the last word must immediately return to plain text');
+  p.textContent = 'Главное: проверьте результат перед публикацией';
+  ctx.markImportantThought(plain);
+  ctx.placeCaret(plain);
+  assert(plain.querySelector('.caret').classList.contains('caret-important'),
+    'a key recommendation must receive the gold semantic marker without extra model tokens');
+  ctx.clearTypingDecorations(plain);
   p.textContent = 'Обычный ответ без риска';
   ctx.markImportantThought(plain);
   assert(!p.classList.contains('action-important'),
@@ -468,12 +474,13 @@ function testImportantHeadingCaretAndTrail() {
 
   assert(/\.caret\s*\{[^}]*#00bff3[^}]*box-shadow/s.test(css), 'normal cursor is visibly bright blue');
   const goldCaret = css.match(/\.caret\.caret-important\s*\{([^}]*)\}/s);
-  assert(goldCaret && /opacity\s*:\s*\.58/.test(goldCaret[1]));
+  assert(goldCaret && /opacity\s*:\s*\.84/.test(goldCaret[1]),
+    'important caret must be clearly visible rather than a rare dim flicker');
   assert(!/#fff(?:fff)?\b/i.test(goldCaret[1]), 'gold caret must not flare to pure white');
   assert(/\.normal-trail\s*\{[^}]*linear-gradient\(90deg,#9ab0ba[^}]*#74c7d8[^}]*#b6edf3[^}]*text-shadow/s.test(css),
     'ordinary cursor trail must remain delicately but visibly blue');
-  assert(/\.important-trail\s*\{[^}]*linear-gradient\(90deg,var\(--tx\)\s+0%[^}]*#c2b278[^}]*#c6b163[^}]*#c8ba7b[^}]*text-shadow/s.test(css),
-    'gold trail must use the deliberately dimmed warm palette');
+  assert(/\.important-trail\s*\{[^}]*linear-gradient\(90deg,var\(--tx\)\s+0%[^}]*#dfbb53[^}]*#e6c15d[^}]*#f0d88d[^}]*text-shadow/s.test(css),
+    'gold trail must visibly mark important thought without changing typing speed');
   assert(/\.caret\s*\{[^}]*animation\s*:\s*cursorBreathe[^}]*\}/s.test(css));
   assert(!/@keyframes (?:spark|twBlink)[^{]*\{[^}]*box-shadow/s.test(css),
     'cursor animation must stay on compositor opacity/transform');
@@ -487,10 +494,10 @@ function testImportantHeadingCaretAndTrail() {
   assert(/ask-own/.test(question) && /Свой вариант/.test(question),
     'blocking ask_user controls must offer the same custom answer escape hatch');
   const panels = extractFunction(js, 'mountUiPanels');
+  assert(/!hasMeaningfulUiItems\(items\)/.test(panels),
+    'a panel made only of free text must be removed because the composer already exists');
   assert(/hasFreeEntry/.test(panels) && /askable\s*&&\s*!hasFreeEntry/.test(panels),
-    'a free-text fallback control must not render a duplicate custom-answer field');
-  assert(/go\.disabled\s*=\s*!ready\(\)/.test(panels),
-    'empty fallback text cannot be submitted accidentally');
+    'free entry alongside a real choice must not create a second custom-answer field');
 }
 
 function makePlanItem(text) {
@@ -562,7 +569,10 @@ function testPlanTypingCompletionAndDockRaces() {
     },
     setTimeout(fn, ms) { timers.push({ fn, ms }); return timers.length; },
   });
-  const ui = { runId: 7, planFinished: false, planDock: dock, planCard: card };
+  const ui = {
+    runId: 7, planFinished: false, planDock: dock, planCard: card,
+    agentMode: true, planItems: [makePlanItem('Шаг').li],
+  };
   finishCtx.undockPlan(ui);
   assert.deepStrictEqual(trace, ['clear', 'finish', 'release', 'archive']);
   assert(ui.planFinished && !card.isConnected, 'completion removes the obsolete flying source card');
@@ -577,6 +587,8 @@ function testPlanTypingCompletionAndDockRaces() {
   assert(dock.classList.contains('plan-gone') && !dock.isConnected);
 
   const archive = extractFunction(js, 'archiveCompletedPlan');
+  assert(/!ui\.agentMode/.test(archive) && /!\(ui\.planItems \|\| \[\]\)\.length/.test(archive),
+    'normal chat and empty plans must never create a completed-plan tab');
   assert(/collapseToThumb\(card/.test(archive) && /th-plan/.test(archive) && /instant: true/.test(archive),
     'the full completed plan must persist as an immediately readable collapsed tab');
   assert(!/archiveCompletedPlan/.test(extractFunction(js, 'discardPlan')),
@@ -587,8 +599,10 @@ function testPlanTypingCompletionAndDockRaces() {
   assert(/\.pd-bar\s*\{[^}]*display:flex[^}]*gap/s.test(css) &&
     /\.pd-seg\s*\{[^}]*flex:1 1 0/s.test(css),
     'plan progress segments must share the available width equally');
-  assert(/\.pd-seg\.now::after\s*\{[^}]*animation:segmentShimmer/s.test(css),
-    'only the current task segment carries the moving shimmer');
+  assert(!/\.pd-seg\.now::after\s*\{/.test(css));
+  assert(/\.pd-seg\.now\s*\{[^}]*animation:segmentBeat 1\.05s/s.test(css) &&
+    /@keyframes segmentBeat\s*\{50%\{[^}]*box-shadow:0 0 17px/s.test(css),
+    'the whole current segment must pulse in sync with the current plan dot');
   assert(/\.plan-card\.plan-complete/.test(css) && /\.plan-dock\.done/.test(css));
 
   const finish = extractFunction(js, 'queueResponseFinish');
@@ -631,6 +645,7 @@ function testRepeatedPlanEventReplacesOwnership() {
   const ui = {
     node: { body }, statusEl: status, planDock: oldDock, planCard: oldCard,
     planItems: [], planList: null, planHome: null, planFinished: false,
+    agentMode: true,
   };
   ctx.handleEvent({ type: 'plan', steps: ['Один', 'Два'] }, ui);
   const firstReplacement = ui.planCard;
@@ -855,6 +870,8 @@ function testPendingInteractivePanelAndRouteLifecycle() {
     ['deferMountedReplyUi', 'flushPendingReplyUi', 'typeInto', 'clearRunRoute', 'settleVisualDone'],
     {
       String, el: miniEl,
+      parseUiSpec() { return [{ t: 'tiles' }]; },
+      hasMeaningfulUiItems(items) { return items.some((item) => item.t !== 'text' && item.t !== 'area'); },
       mountUiPanels(root) {
         mounted += 1;
         const panel = root.querySelector('.ui-panel');
@@ -918,6 +935,11 @@ function testPendingInteractivePanelAndRouteLifecycle() {
 }
 
 function testInteractiveFenceReachesFrontendPanel() {
+  const meaningful = loadFunctions(['hasMeaningfulUiItems'], {});
+  assert.strictEqual(meaningful.hasMeaningfulUiItems([{ t: 'text' }, { t: 'area' }]), false,
+    'free-only controls must fall back to the one main composer');
+  assert.strictEqual(meaningful.hasMeaningfulUiItems([{ t: 'tiles' }, { t: 'text' }]), true,
+    'a custom answer remains allowed next to a real predefined choice');
   const context = { window: {} };
   vm.createContext(context);
   vm.runInContext(markdown, context);
@@ -964,90 +986,92 @@ function testRussianImageAndHudFollowupContract() {
     'production settings must expose zero-setup Russian image gateway status');
 
   const togglesAt = html.indexOf('<div class="toggles">');
-  const togglesEnd = html.indexOf('</div>', togglesAt);
+  const togglesEnd = html.indexOf('<!-- ---------- VIEW: AUTO', togglesAt);
   const cameraAt = html.indexOf('id="tgCamera"', togglesAt);
   const computerAt = html.indexOf('id="tgComputer"', togglesAt);
+  const spacerAt = html.indexOf('class="spacer"', togglesAt);
   const agentAt = html.indexOf('id="tgAgent"', togglesAt);
-  assert(togglesAt >= 0 && cameraAt < computerAt && computerAt < agentAt && agentAt < togglesEnd,
-    'the labelled AGENT control must share the Camera/Computer row');
-  assert(/id="tgAgent"[\s\S]{0,180}<span class="tg-dot"><\/span>AGENT/.test(html),
-    'AGENT must retain a visible label instead of becoming an ambiguous icon');
-  assert(/\.toggle\s*\{[^}]*min-height:28px[^}]*padding:5px 12px/s.test(css));
-  assert(/#tgAgent\.on\s*\{[^}]*rgba\(143,134,207,\.17\)/s.test(css),
-    'AGENT uses the same fixed toggle geometry with its violet active accent');
-  const tipRule = css.match(/\.toggle\[data-tip\][^{]*::after\s*\{([^}]*)\}/s);
+  assert(togglesAt >= 0 && cameraAt < computerAt && computerAt < spacerAt &&
+    spacerAt < agentAt && agentAt < togglesEnd,
+  'AGENT must occupy the right edge of the footer directly below Send');
+  assert(/<label class="agent-switch"[\s\S]{0,220}<span class="agent-switch-label">AGENT<\/span>[\s\S]{0,120}<input id="tgAgent" type="checkbox" role="switch"/.test(html),
+    'AGENT must be a real labelled checkbox switch, not a button with a dot');
+  assert(!/<button[^>]+id="tgAgent"/.test(html));
+  assert(/\.toggle\s*\{[^}]*height:28px[^}]*padding:0 12px/s.test(css));
+  assert(/\.agent-switch\s*\{[^}]*height:28px[^}]*display:flex/s.test(css) &&
+    /\.agent-switch-track\s*\{[^}]*width:29px[^}]*height:16px/s.test(css));
+  assert(/#tgAgent'\)\.addEventListener\('change'[\s\S]*S\.agentMode\s*=\s*this\.checked/.test(js));
+  const tipRule = css.match(/\.agent-switch\[data-tip\][^{]*::after\s*\{([^}]*)\}/s);
   assert(/\.composer\s*\{[^}]*overflow:visible/s.test(css) && tipRule &&
     /z-index:60/.test(tipRule[1]) && /white-space:nowrap/.test(tipRule[1]),
-    'toggle tooltips must render whole above the composer and adjacent borders');
+  'switch tooltip must render whole above the composer and adjacent borders');
 
   const refresh = extractFunction(js, 'refreshState');
   assert(/st\.running_tasks/.test(refresh) && /auto-running', running > 0/.test(refresh),
     'AUTO shimmer is derived only from tasks actually running now');
   assert(!/auto-running', active > 0/.test(refresh),
     'queued or scheduled tasks must not animate AUTO');
-  assert(/\.nav-item\[data-view="auto"\]\.auto-running::after/.test(css) &&
-    /animation:autoNavFlow/.test(css));
+  assert(/\.nav-item\[data-view="auto"\]\.auto-running \.nav-outline/.test(css) &&
+    /animation:autoOutlineFlow/.test(css));
+  assert(!/auto-running::after/.test(css), 'AUTO gradient must not fill the tab area');
+  assert((html.match(/class="nav-outline"/g) || []).length === 5,
+    'every navigation tab must own the same outline-only effect layer');
 
   const events = extractFunction(js, 'handleEvent');
+  assert(/case 'memory_saved':[\s\S]*pulseNav\('memory', true\)/.test(events),
+    'deterministic memory writes must trigger the visible memory outline');
   assert(/ev\.name === 'remember'\) pulseNav\('memory', true\)/.test(events),
-    'successful memory writes get the stronger one-shot pulse');
+    'model-driven memory writes get the same outline pulse');
   assert(/case 'file':[\s\S]*pulseNav\('files', false\)/.test(events),
-    'actual file saves get the subtle one-shot pulse');
-  const fileGlint = css.match(/@keyframes fileSaveGlint\s*\{([\s\S]*?)\n\}/);
-  assert(/\.nav-item\.save-glint\s*\{animation:fileSaveGlint \.72s/.test(css) && fileGlint &&
-    /rgba\(143,179,90,\.26\)/.test(fileGlint[1]) && /rgba\(0,212,255,\.12\)/.test(fileGlint[1]),
-    'Files must receive one quick, clearly visible cyan/green save pass');
-  assert(/@keyframes memorySaveGlint/.test(css));
+    'actual file saves trigger the Files outline pulse');
+  assert(/\.nav-item\.save-glint \.nav-outline\s*\{[^}]*fileSaveOutline \.72s/s.test(css) &&
+    /@keyframes fileSaveOutline/.test(css) && /@keyframes memorySaveOutline/.test(css),
+    'Files and Memory use quick, clearly visible, outline-only colour passes');
 
-  assert(/case 'reply_ui':[\s\S]*pendingReplyUi\s*=\s*spec[\s\S]*flushPendingReplyUi\(ui\)/.test(events),
-    'reply controls must enter the pending lifecycle instead of overtaking typed text');
+  const autoType = extractFunction(js, 'typeAutoReply');
+  assert(/typeInto\(ui, text\)/.test(autoType) && /md typing/.test(autoType),
+    'delayed AUTO messages must use the normal cursor typing lane');
+  const syncTail = extractFunction(js, 'syncChatTail');
+  assert(/typeAutoReply\(node, m\.content/.test(syncTail));
+  assert(!/node\.body\.innerHTML\s*=/.test(syncTail),
+    'AUTO replies may not appear as an already completed HTML block');
+
+  assert(/case 'reply_ui':[\s\S]*hasMeaningfulUiItems\(parseUiSpec\(spec\)\)/.test(events),
+    'free-only reply UI must be rejected before mounting');
   const replies = extractFunction(js, 'showReplies');
-  assert(/followGrowingPanel\(box, 520 \+ items\.length \* 60\)/.test(replies),
-    'staggered next-request chips must use the same smooth growth-follow path');
+  assert(/followGrowingPanel\(box, 520 \+ items\.length \* 60\)/.test(replies));
   const follow = extractFunction(js, 'followGrowingPanel');
-  assert(/wheel/.test(follow) && /touchstart/.test(follow),
-    'manual wheel or touch must cancel automatic follow immediately');
+  assert(/wheel/.test(follow) && /touchstart/.test(follow));
 
-  assert(/\.composer-wrap\s*\{[^}]*linear-gradient\(180deg,rgba\(4,7,13,0\) 0%/s.test(css),
-    'the composer boundary must fade gradually instead of covering text abruptly');
-  assert(/\.panel-card\.live::before\s*\{display:none\}/.test(css),
-    'working/reasoning animation must not tint the card background');
-  assert(/toolFrameFlow 1\.45s/.test(css) && !/toolTextFlow/.test(css),
-    'Working keeps the more colourful pass strictly on its contour');
+  assert(/\.composer-wrap\s*\{[^}]*linear-gradient\(180deg,rgba\(4,7,13,0\) 0%/s.test(css));
+  assert(/сценарий:/.test(events) && /модель:/.test(events),
+    'the selected scenario and model live in the response header');
+  const clearMeta = extractFunction(js, 'clearRunRoute');
+  assert(/modelEl\.textContent\s*=\s*''/.test(clearMeta),
+    'scenario and model disappear at visual completion as selected by the user');
 }
 
 function testThinkingGradientContract() {
-  assert(!/\.think-card\.live \.think-stream::after\s*\{/.test(css),
-    'the rejected narrow thinking beam must not return');
-  assert(!/\.panel-card\.live \.card-head::after\s*\{/.test(css),
-    'the rejected narrow tool-header beam must not return');
-
   const field = css.match(/\.panel-card\.live::before\s*\{([^}]*)\}/s);
   assert(field && /display\s*:\s*none/.test(field[1]),
     'live cards must have no animated interior field');
 
   const frame = css.match(/\.panel-card\.live::after\s*\{([^}]*)\}/s);
-  assert(frame && /inset\s*:\s*0/.test(frame[1]) && /padding\s*:\s*1px/.test(frame[1]),
-    'the animated gradient must cover only the complete border ring');
+  assert(frame && /inset\s*:\s*-1px/.test(frame[1]) && /padding\s*:\s*1px/.test(frame[1]),
+    'the animated gradient must cover the complete border ring');
   assert(/mask-composite\s*:\s*exclude/.test(frame[1]));
-  assert(/opacity\s*:\s*\.18/.test(frame[1]) && /wholeFrameFlow\s+1\.65s/.test(frame[1]),
-    'the contour is already visible on the first frame, including very fast actions');
-  assert(/@keyframes wholeFrameFlow\s*\{0%\{opacity:\.18\}/.test(css),
-    'reasoning contour must not begin at zero opacity');
+  assert(/opacity\s*:\s*\.58/.test(frame[1]) && /wholeFrameFlow 1\.25s/.test(frame[1]) &&
+    /background-position:85% 0/.test(frame[1]),
+  'reasoning outline must be colourful on the first frame and move immediately');
+  assert(/@keyframes wholeFrameFlow\s*\{[\s\S]*0%\{opacity:\.58/.test(css));
 
   const toolFrame = css.match(/\.tool-card\.live::after\s*\{([^}]*)\}/s);
-  assert(toolFrame && /rgba\(52,215,235,\.48\)/.test(toolFrame[1]) &&
-    /rgba\(142,105,218,\.46\)/.test(toolFrame[1]) && /rgba\(215,157,72,\.42\)/.test(toolFrame[1]),
-    'Working contour keeps a cyan/violet/amber palette at restrained brightness');
-
-  const executableCss = css.replace(/\/\*[\s\S]*?\*\//g, '');
-  assert(!/wholeTextFlow|toolTextFlow|wholeCardFlow/.test(executableCss),
-    'neither card text nor card interior may animate');
-  assert(!/background-position\s*:/.test(executableCss),
-    'no animated gradient may trigger background repaint frames');
-  assert(!/stShimmer/.test(css), 'status text must not repaint a clipped gradient forever');
-  assert(/function runStatus[\s\S]*q\.animate\(\[/.test(js),
-    'status phrase transition uses compositor Web Animations instead of forced layout');
+  assert(toolFrame && /#42e0f2/.test(toolFrame[1]) && /#a878ed/.test(toolFrame[1]) &&
+    /#efa953/.test(toolFrame[1]) && /toolFrameFlow 1\.08s/.test(toolFrame[1]),
+  'Working contour must be brighter and more colourful without filling the card');
+  assert(/\.think-card\.live \.card-head,\.think-card\.live \.think-stream,[\s\S]*\.tool-card\.live \.kv span\s*\{[^}]*background-clip:text[^}]*liveTextFlow 1\.25s/s.test(css),
+    'thinking and tool text must receive the same immediate restrained colour pass');
+  assert(/@keyframes liveTextFlow/.test(css));
   assert(!/\.think-stream::(?:before|after)[^{]*\{[^}]*caret/s.test(css),
     'thinking stays a masked scrolling stream, not a cursor animation');
 }
