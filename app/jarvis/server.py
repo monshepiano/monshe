@@ -16,12 +16,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import agent, auto, billing, db, ideas, llm, orchestrator, sandbox, tools
+from . import __version__, agent, auto, billing, db, ideas, llm, orchestrator, sandbox, tools
 from .config import CONFIG, WORKSPACE, HOME
 from .tools import media
 
 WEB_DIR = Path(__file__).parent / "web"
-VERSION = "1.0.0"
+VERSION = __version__
 
 
 def _json_bytes(data: Any) -> bytes:
