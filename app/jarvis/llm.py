@@ -13,13 +13,20 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
-from .config import CONFIG
-from . import db
+from .config import CONFIG, LOG_DIR
+from . import db, telemetry
 
 _SSL_CTX = ssl.create_default_context()
 _MODELS_CACHE: Dict[str, Tuple[float, List[str]]] = {}
 _META_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
 _CACHE_LOCK = threading.RLock()
+# Параметры OpenAI-compatible API на практике различаются даже у моделей
+# одного gateway. Запоминаем доказанное HTTP-ошибкой отсутствие по паре
+# provider/model, чтобы каждый новый ответ не тратил первый запрос на 400.
+_UNSUPPORTED: Dict[Tuple[str, str], set[str]] = {}
+_CAPABILITY_PATH = LOG_DIR / "llm-capabilities.json"
+_CAPABILITY_LOADED = False
+_CAPABILITY_FIELDS = {"reasoning_effort", "stream_options", "tools", "tool_choice"}
 
 # Ориентировочные цены (₽ за 1 млн токенов) — для счётчика расходов в UI.
 PRICES_RUB = {
@@ -276,25 +283,87 @@ _REASONING_EFFORT = {
 }
 
 
-def _drop_unsupported(payload: Dict[str, Any], detail: str) -> bool:
-    """Убрать из запроса параметр, который не понял этот сервер.
+def _load_capability_cache() -> None:
+    """Лениво загружает только безопасный allowlist полей; corrupt файл игнорируется."""
+    global _CAPABILITY_LOADED
+    with _CACHE_LOCK:
+        if _CAPABILITY_LOADED:
+            return
+        _CAPABILITY_LOADED = True
+        try:
+            raw = json.loads(_CAPABILITY_PATH.read_text(encoding="utf-8"))
+            for item in raw.get("unsupported", []):
+                provider = str(item.get("provider") or "")
+                model = str(item.get("model") or "")
+                names = set(item.get("fields") or []) & _CAPABILITY_FIELDS
+                if provider and model and names:
+                    _UNSUPPORTED[(provider, model)] = names
+        except Exception:
+            pass
 
-    Возвращает True, если что-то выбросили и повтор имеет смысл. Порядок
-    важен: сначала расстаёмся с необязательной «глубиной размышления», и
-    только потом — с инструментами, без которых Джарвис теряет руки.
-    """
-    low = (detail or "").lower()
-    if "reasoning_effort" in payload and ("reasoning" in low or "unknown" in low or "unsupported" in low):
-        payload.pop("reasoning_effort", None)
-        return True
-    if "tools" in payload:
-        payload.pop("tools", None)
+
+def _persist_capability_cache() -> None:
+    """Атомарный tiny state: не заставляет каждый запуск повторять известный HTTP 400."""
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        body = {
+            "version": 1,
+            "unsupported": [
+                {"provider": provider, "model": model, "fields": sorted(names)}
+                for (provider, model), names in sorted(_UNSUPPORTED.items()) if names
+            ],
+        }
+        tmp = _CAPABILITY_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(body, ensure_ascii=False, separators=(",", ":")),
+                       encoding="utf-8")
+        tmp.replace(_CAPABILITY_PATH)
+    except Exception:
+        pass
+
+
+def _remember_unsupported(provider: str, model: str, *names: str) -> None:
+    names_set = set(names) & _CAPABILITY_FIELDS
+    if not provider or not model or not names_set:
+        return
+    _load_capability_cache()
+    with _CACHE_LOCK:
+        known = _UNSUPPORTED.setdefault((provider, model), set())
+        before = len(known)
+        known.update(names_set)
+        if len(known) != before:
+            _persist_capability_cache()
+
+
+def _apply_capability_cache(payload: Dict[str, Any], provider: str, model: str) -> None:
+    _load_capability_cache()
+    with _CACHE_LOCK:
+        missing = set(_UNSUPPORTED.get((provider, model), set()))
+    for name in missing:
+        payload.pop(name, None)
+    if "tools" not in payload:
         payload.pop("tool_choice", None)
-        return True
-    if "reasoning_effort" in payload:
-        payload.pop("reasoning_effort", None)
-        return True
-    return False
+
+
+def _drop_unsupported(payload: Dict[str, Any], detail: str,
+                      provider: str = "", model: str = "") -> bool:
+    """Убрать и закэшировать ровно доказанно неподдерживаемый параметр."""
+    low = (detail or "").lower()
+    candidates: List[str] = []
+    if "stream_options" in payload and (
+            "stream_options" in low or "include_usage" in low):
+        candidates = ["stream_options"]
+    elif "reasoning_effort" in payload and "reasoning_effort" in low:
+        candidates = ["reasoning_effort"]
+    elif "tool_choice" in payload and "tool_choice" in low:
+        candidates = ["tool_choice"]
+    elif "tools" in payload and ("tools" in low or "function calling" in low):
+        candidates = ["tools", "tool_choice"]
+    if not candidates:
+        return False
+    for name in candidates:
+        payload.pop(name, None)
+    _remember_unsupported(provider, model, *candidates)
+    return True
 
 
 def _build_payload(model: str, messages: List[Dict], tools: Optional[List[Dict]], stream: bool,
@@ -332,36 +401,44 @@ def _build_payload(model: str, messages: List[Dict], tools: Optional[List[Dict]]
         payload["tool_choice"] = "auto"
     if stream:
         payload["stream_options"] = {"include_usage": True}
+    _apply_capability_cache(payload, provider, model)
     return payload
 
 
 def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] = None,
          temperature: Optional[float] = None, max_tokens: Optional[int] = None,
-         provider: Optional[str] = None, timeout: int = 180) -> Dict[str, Any]:
+         provider: Optional[str] = None, timeout: int = 180,
+         operation: str = "llm") -> Dict[str, Any]:
     """Не-стриминговый вызов с автоматическим фолбэком на резервного провайдера.
 
     timeout — для служебных мелочей вроде подсказок ответа: ждать их 3 минуты
     бессмысленно, пользователь к тому времени уже пишет следующий вопрос.
     """
     providers = [provider] if provider else (active_providers() or ["cloudru"])
+    span = telemetry.Span(operation, tier=tier)
     last_error: Optional[Exception] = None
+    last_provider = ""
+    last_model = ""
     for prov in providers:
         conf = provider_conf(prov)
         if not conf.get("api_key"):
             continue
         model = pick_model(tier, prov)
+        last_provider, last_model = prov, model
         payload = _build_payload(model, messages, tools, False, temperature, max_tokens, prov, tier)
         for attempt in range(2):
             try:
                 with _request(conf["base_url"].rstrip("/") + "/chat/completions", conf["api_key"],
                               payload, timeout=timeout) as resp:
                     body = json.loads(resp.read().decode("utf-8"))
+                span.first_token()
                 usage = body.get("usage") or {}
                 pt = int(usage.get("prompt_tokens") or 0)
                 ct = int(usage.get("completion_tokens") or 0)
                 db.log_usage(prov, model, tier, pt, ct, estimate_cost(model, pt, ct))
                 choice = (body.get("choices") or [{}])[0]
                 message = choice.get("message") or {}
+                span.finish("ok", provider=prov, model=model)
                 return {
                     "content": message.get("content") or "",
                     "tool_calls": message.get("tool_calls") or [],
@@ -377,7 +454,9 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
                 except Exception:
                     pass
                 last_error = LLMError("HTTP %s %s: %s" % (exc.code, model, detail))
-                if exc.code in (400, 404, 422) and _drop_unsupported(payload, detail):
+                span.retried()
+                if exc.code in (400, 404, 422) and _drop_unsupported(
+                        payload, detail, prov, model):
                     # модель не поняла какой-то параметр (tools или
                     # reasoning_effort) — выбрасываем именно его и повторяем,
                     # а не заваливаем весь запрос
@@ -385,32 +464,45 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
                 break
             except Exception as exc:  # сеть/таймаут
                 last_error = exc
+                span.retried()
                 time.sleep(1.2)
+    span.finish("error", provider=last_provider, model=last_model,
+                error_type=type(last_error).__name__ if last_error else "no_provider")
     raise LLMError("Не удалось получить ответ от моделей: %s" % last_error)
 
 
-def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] = None,
-                temperature: Optional[float] = None, max_tokens: Optional[int] = None,
-                provider: Optional[str] = None) -> Generator[Dict[str, Any], None, None]:
-    """Стриминг. Отдаёт словари: {type: delta|reasoning|tool_calls|done|error}."""
+def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] = None,
+                      temperature: Optional[float] = None, max_tokens: Optional[int] = None,
+                      provider: Optional[str] = None, operation: str = "llm_stream",
+                      _span: Optional[telemetry.Span] = None) -> Generator[Dict[str, Any], None, None]:
+    """Внутренняя реализация; публичная обёртка гарантирует закрытие span."""
     providers = [provider] if provider else (active_providers() or ["cloudru"])
+    span = _span or telemetry.Span(operation, tier=tier)
     last_error: Optional[Exception] = None
+    last_provider = ""
+    last_model = ""
     for prov in providers:
         conf = provider_conf(prov)
         if not conf.get("api_key"):
             continue
         model = pick_model(tier, prov)
+        last_provider, last_model = prov, model
+        span.fields.update({"provider": prov, "model": model})
         payload = _build_payload(model, messages, tools, True, temperature, max_tokens, prov, tier)
         # попытка 1 — с инструментами; попытка 2 — без них (если модель их не умеет)
         for attempt in range(2):
             started_output = False
+            saw_done = False
             try:
                 with _request(conf["base_url"].rstrip("/") + "/chat/completions", conf["api_key"], payload) as resp:
                     acc_content: List[str] = []
                     acc_reasoning: List[str] = []
                     tool_acc: Dict[int, Dict[str, Any]] = {}
                     usage: Dict[str, Any] = {}
-                    started_output = True
+                    # Открытый HTTP response и служебное событие `model` ещё не
+                    # являются выводом модели. Если сокет оборвался до первого
+                    # content/reasoning/tool delta, следующий provider может
+                    # безопасно продолжить — пользователю нечего дублировать.
                     yield {"type": "model", "model": model, "provider": prov, "tier": tier}
                     for raw in resp:
                         line = raw.decode("utf-8", "ignore").strip()
@@ -418,6 +510,7 @@ def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[D
                             continue
                         chunk = line[5:].strip()
                         if chunk == "[DONE]":
+                            saw_done = True
                             break
                         try:
                             obj = json.loads(chunk)
@@ -429,13 +522,19 @@ def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[D
                             delta = choice.get("delta") or {}
                             piece = delta.get("content")
                             if piece:
+                                started_output = True
+                                span.first_token()
                                 acc_content.append(piece)
                                 yield {"type": "delta", "text": piece}
                             think = delta.get("reasoning_content") or delta.get("reasoning")
                             if think:
+                                started_output = True
+                                span.first_token()
                                 acc_reasoning.append(think)
                                 yield {"type": "reasoning", "text": think}
                             for tc in delta.get("tool_calls") or []:
+                                started_output = True
+                                span.first_token()
                                 idx = tc.get("index", 0)
                                 slot = tool_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
                                 if tc.get("id"):
@@ -446,6 +545,12 @@ def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[D
                                 if fn.get("arguments"):
                                     slot["arguments"] += fn["arguments"]
                                     yield {"type": "tool_partial", "name": slot["name"], "args": slot["arguments"]}
+                # A clean socket EOF is not a completion signal. Before the
+                # first real delta it is safe to try the next provider; after a
+                # delta, fallback would duplicate already-visible output and is
+                # therefore forbidden by the same started_output boundary.
+                if not saw_done:
+                    raise LLMError("поток завершился без маркера [DONE]")
                 pt = int((usage or {}).get("prompt_tokens") or 0)
                 ct = int((usage or {}).get("completion_tokens") or 0)
                 if pt or ct:
@@ -459,6 +564,7 @@ def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[D
                             "type": "function",
                             "function": {"name": slot["name"], "arguments": slot.get("arguments") or "{}"},
                         })
+                span.finish("ok", provider=prov, model=model)
                 yield {
                     "type": "done",
                     "content": "".join(acc_content),
@@ -476,16 +582,52 @@ def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[D
                 except Exception:
                     pass
                 last_error = LLMError("HTTP %s: %s" % (exc.code, detail))
+                span.retried()
                 if (exc.code in (400, 404, 422) and not started_output
-                        and _drop_unsupported(payload, detail)):
+                        and _drop_unsupported(payload, detail, prov, model)):
                     # сервер не понял какой-то параметр (reasoning_effort или
                     # tools) — выбрасываем именно его и пробуем ещё раз
                     continue
+                if started_output:
+                    span.finish("error", provider=prov, model=model,
+                                error_type=type(last_error).__name__)
+                    yield {"type": "error", "error": "Поток модели прерван: %s" % last_error}
+                    return
                 break
             except Exception as exc:
                 last_error = exc
+                span.retried()
+                if started_output:
+                    span.finish("error", provider=prov, model=model,
+                                error_type=type(exc).__name__)
+                    yield {"type": "error", "error": "Поток модели прерван: %s" % exc}
+                    return
                 break
+    span.finish("error", provider=last_provider, model=last_model,
+                error_type=type(last_error).__name__ if last_error else "no_provider")
     yield {"type": "error", "error": "Модели недоступны: %s" % last_error}
+
+
+def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] = None,
+                temperature: Optional[float] = None, max_tokens: Optional[int] = None,
+                provider: Optional[str] = None,
+                operation: str = "llm_stream") -> Generator[Dict[str, Any], None, None]:
+    """Стриминг с telemetry success/error/cancel даже при досрочном close()."""
+    span = telemetry.Span(operation, tier=tier)
+    try:
+        yield from _chat_stream_impl(messages, tier=tier, tools=tools,
+                                     temperature=temperature, max_tokens=max_tokens,
+                                     provider=provider, operation=operation, _span=span)
+    except GeneratorExit:
+        span.finish("cancelled")
+        raise
+    except BaseException as exc:
+        span.finish("error", error_type=type(exc).__name__)
+        raise
+    finally:
+        # Идемпотентно: normal/error уже закрыты implementation, а close()
+        # до первого/между yield получает корректный cancelled.
+        span.finish("cancelled")
 
 
 def vision(prompt: str, image_data_url: str, tier: str = "vision") -> str:

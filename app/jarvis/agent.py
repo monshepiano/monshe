@@ -8,9 +8,9 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Any, Dict, Generator, Iterable, List, Optional
+from typing import Any, Callable, Dict, Generator, Iterable, List, Optional
 
-from . import db, llm, orchestrator, sandbox, tools
+from . import db, llm, orchestrator, sandbox, telemetry, tools
 from .config import CONFIG
 
 
@@ -33,84 +33,96 @@ def _fact_value(value: str, limit: int = 120) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n,.;:!?—–-")[:limit]
 
 
-def _city_value(value: str) -> str:
-    """Очистить явно названный город, не переписывая слова пользователя.
-
-    Память должна устранять дубли ключей (``Город``/``city``), а не угадывать,
-    что человек «на самом деле» имел в виду. Поэтому Питер остаётся Питером,
-    МСК — МСК; новое значение всё равно заменит прежний city-факт через единый
-    identity в db.remember.
-    """
-    return _fact_value(value, 48)
+_MEMORY_SECRET = re.compile(
+    r"\b(?:парол\w*|password|api[ _-]?key|secret|token|cvv|номер\s+карт\w*|"
+    r"паспорт\w*)\b", re.IGNORECASE,
+)
 
 
 def extract_obvious_memories(text: str) -> List[Dict[str, str]]:
-    """Извлечь только явно заявленные личные факты без LLM и лишних токенов.
+    """Локально извлечь явно сказанные устойчивые факты по грамматике фразы.
 
-    Это не попытка «понять весь язык». Закрытые конструкции первого лица
-    достаточно надёжны для фактов, потеря которых особенно заметна: новый
-    город, любимая еда, ограничения и аллергии. Остальное по-прежнему может
-    сохранить штатный remember-инструмент модели.
+    Здесь намеренно нет словарей городов, блюд, устройств или других тематик.
+    Мы распознаём отношения первого лица (нравится, зовут, живу, работаю) и
+    явную просьбу запомнить; значение всегда остаётся дословным фрагментом.
+    Это устраняет отдельный скрытый LLM-вызов, который мог конкурировать с
+    первым токеном следующего ответа.
     """
     raw = re.sub(r"\s+", " ", str(text or "")).strip()
-    if not raw:
+    if not raw or _MEMORY_SECRET.search(raw):
         return []
     facts: List[Dict[str, str]] = []
 
-    city_patterns = (
-        r"\b(?:я\s+)?переехал(?:а)?(?:\s+из\s+[^,.!?]{1,45})?\s+в\s+"
-        r"([A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\- ]{1,45}?)"
-        r"(?=\s+(?:и|но|а)\s+|[,.;!?]|$)",
-        r"\bя\s+(?:теперь\s+)?живу\s+в\s+"
-        r"([A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\- ]{1,45}?)"
-        r"(?=\s+(?:и|но|а)\s+|[,.;!?]|$)",
-        r"\bмой\s+(?:новый\s+)?город\s*(?:—|–|-|:|это)\s*"
-        r"([A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\- ]{1,45}?)"
-        r"(?=\s+(?:и|но|а)\s+|[,.;!?]|$)",
+    def add(kind: str, relation: str, candidate: str, limit: int = 120,
+            distinct_key: bool = False) -> None:
+        value = re.split(
+            r"\s+(?:и|а|но|and|but)\s+(?=(?:я|мне|меня|мой|моя|мои|у\s+меня|"
+            r"работаю|учусь|живу|пользуюсь|использую|i|my|work|study|live|use)\b)",
+            candidate, maxsplit=1, flags=re.IGNORECASE,
+        )[0]
+        value = _fact_value(value, limit)
+        if not value:
+            return
+        key = "%s: %s" % (relation, value[:42]) if distinct_key else relation
+        fact = {"kind": kind, "key": key, "value": value}
+        if fact not in facts:
+            facts.append(fact)
+
+    preferences = (
+        ("Предпочтение", r"\b(?:я\s+)?(?:люблю|обожаю|предпочитаю)\s+([^,.!?]{2,100})"),
+        ("Предпочтение", r"\bмне\s+нрав(?:ится|ятся)\s+([^,.!?]{2,100})"),
+        ("Ограничение", r"\b(?:я\s+)?(?:не\s+люблю|не\s+переношу|избегаю)\s+([^,.!?]{2,100})"),
+        ("Preference", r"\b(?:i\s+)?(?:love|prefer|like)\s+([^,.!?]{2,100})"),
+        ("Restriction", r"\b(?:i\s+)?(?:dislike|avoid|cannot tolerate)\s+([^,.!?]{2,100})"),
     )
-    for pattern in city_patterns:
-        found = re.search(pattern, raw, re.I)
-        if not found:
-            continue
-        city = _city_value(found.group(1))
-        # «переехал в новую квартиру/дом» — событие, но не новый город.
-        if city and not re.search(r"\b(?:квартир|дом|офис|комнат|общежит)\w*\b", city, re.I):
-            facts.append({"kind": "person", "key": "Город", "value": city})
-        break
+    for relation, pattern in preferences:
+        for found in re.finditer(pattern, raw, re.IGNORECASE):
+            # Положительный шаблон способен начать совпадение внутри «не люблю».
+            before = raw[max(0, found.start() - 12):found.start()].casefold()
+            if relation in {"Предпочтение", "Preference"} and re.search(r"\b(?:не|not)\s*$", before):
+                continue
+            add("preference", relation, found.group(1), 100, distinct_key=True)
 
-    favourite = re.search(
-        r"\b(?:моя\s+)?любим(?:ая|ое)\s+(?:еда|блюдо|кухня)\s*(?:—|–|-|:|это)?\s*"
-        r"([^,.!?]{2,80})", raw, re.I)
-    if favourite:
-        value = _fact_value(favourite.group(1))
-        if value:
-            facts.append({"kind": "preference", "key": "Любимая еда", "value": value})
+    # Это грамматические отношения, не тематические словари значений. Стабильный
+    # relation key позволяет честно заменить устаревшее имя/работу/место вместо
+    # накопления противоречащих карточек.
+    durable = (
+        ("person", "Имя / обращение", r"\b(?:меня\s+зовут|называй\s+меня|обращайся\s+ко\s+мне\s+как)\s+([^,.!?]{1,80})"),
+        ("person", "Имя / обращение", r"\b(?:my\s+name\s+is|call\s+me)\s+([^,.!?]{1,80})"),
+        # Русские формы ниже уже однозначно от первого лица, поэтому второе
+        # «я» после связки не обязательно: «я люблю X и работаю Y» — две clauses.
+        ("person", "Работа", r"\b(?:я\s+)?работаю\s+([^,.!?]{2,120})"),
+        ("person", "Обучение", r"\b(?:я\s+)?учусь\s+([^,.!?]{2,120})"),
+        ("person", "Место проживания", r"\b(?:я\s+)?живу\s+([^,.!?]{2,120})"),
+        ("fact", "Основной инструмент", r"\b(?:я\s+)?(?:пользуюсь|использую)\s+([^,.!?]{2,120})"),
+        # В английском bare verb не кодирует лицо, поэтому разрешаем опущенное
+        # I только непосредственно после coordinating conjunction.
+        ("person", "Work", r"(?:\bi\s+|\b(?:and|but)\s+)work\s+([^,.!?]{2,120})"),
+        ("person", "Study", r"(?:\bi\s+|\b(?:and|but)\s+)study\s+([^,.!?]{2,120})"),
+        ("person", "Location", r"(?:\bi\s+|\b(?:and|but)\s+)live\s+([^,.!?]{2,120})"),
+        ("fact", "Primary tool", r"(?:\bi\s+|\b(?:and|but)\s+)use\s+([^,.!?]{2,120})"),
+    )
+    for kind, relation, pattern in durable:
+        for found in re.finditer(pattern, raw, re.IGNORECASE):
+            add(kind, relation, found.group(1))
 
-    excluded = re.search(r"\bя\s+(?:не\s+ем|не\s+пью|избегаю)\s+([^,.!?]{2,80})", raw, re.I)
-    if excluded:
-        value = _fact_value(excluded.group(1))
-        if value:
-            facts.append({"kind": "preference", "key": "Питание: исключения", "value": value})
+    # Явная команда памяти — общий escape hatch для любого полезного факта,
+    # которому не нужна новая тема в коде («учти, у меня ...»). Не создаём рядом
+    # вторую generic-карточку, если та же clause уже разобрана грамматически.
+    directives = (
+        r"\b(?:запомни|учти)(?:\s*[:,]?\s*(?:что\s+)?)?([^.!?]{2,180})",
+        r"\b(?:remember|keep\s+in\s+mind)(?:\s+that)?\s+([^.!?]{2,180})",
+    )
+    for pattern in directives:
+        for found in re.finditer(pattern, raw, re.IGNORECASE):
+            clause = _fact_value(found.group(1), 180)
+            if not clause:
+                continue
+            known = any(fact["value"].casefold() in clause.casefold() for fact in facts)
+            if not known:
+                add("fact", "Явный факт", clause, 180, distinct_key=True)
 
-    allergy = re.search(
-        r"\b(?:у\s+меня\s+(?:есть\s+)?)?аллергия\s+на\s+([^,.!?]{2,80})", raw, re.I)
-    if allergy:
-        value = _fact_value(allergy.group(1))
-        if value:
-            facts.append({"kind": "preference", "key": "Питание: аллергия", "value": value})
-
-    # Общее правило первого лица, без словарей частных блюд и иных догадок.
-    # Оно сохраняет «люблю стейки» не потому, что знает слово «стейки», а потому
-    # что пользователь явно назвал предпочтение. Классификацию при желании
-    # уточнит штатный remember-инструмент модели.
-    preference = re.search(r"\b(?:я\s+)?(?:люблю|обожаю|предпочитаю)\s+([^,.!?]{2,80})", raw, re.I)
-    if preference:
-        value = _fact_value(preference.group(1))
-        if value and not any(item["key"] == "Предпочтение" for item in facts):
-            facts.append({"kind": "preference", "key": "Предпочтение", "value": value})
-
-    return facts
-
+    return facts[:8]
 
 def remember_obvious_facts(text: str) -> List[Dict[str, Any]]:
     saved = []
@@ -119,131 +131,15 @@ def remember_obvious_facts(text: str) -> List[Dict[str, Any]]:
     return saved
 
 
-# Дешёвый semantic writer запускается только для реплик с личным сигналом. Это
-# не перечень городов/блюд: закрытый признак — человек говорит о себе, своих
-# ограничениях, предпочтениях, планах или просит учитывать факт в будущем.
-_PERSONAL_MEMORY_SIGNAL = re.compile(
-    r"\b(?:я|мне|меня|мой|моя|мо[её]|мои|мы|нам|наш|наша|у\s+меня|"
-    r"живу|работаю|учусь|планирую|предпоч\w*|любим\w*|люблю|переехал\w*|"
-    r"не\s+(?:ем|пью|переношу)|аллерги\w*|вегетариан\w*|цель\w*|macbook|"
-    r"ноутбук\w*|устройств\w*|запомни|учти|называй|зовут|"
-    r"i|i'm|im|my|mine|we|our|prefer\w*|allerg\w*|work|live)\b",
-    re.IGNORECASE,
-)
-_MEMORY_SECRET = re.compile(
-    r"\b(?:парол\w*|password|api[ _-]?key|secret|token|cvv|номер\s+карт\w*|"
-    r"паспорт\w*)\b", re.IGNORECASE,
-)
-
-
-def has_personal_memory_signal(text: str) -> bool:
-    """Нужен ли отдельный semantic scan, не отправляя в него каждую реплику."""
-    raw = str(text or "").strip()
-    return bool(raw and _PERSONAL_MEMORY_SIGNAL.search(raw)
-                and not _MEMORY_SECRET.search(raw))
-
-
-def _memory_json_items(text: str) -> List[Dict[str, Any]]:
-    """Достать первый JSON-массив кандидатов без жадного ``[.*]``."""
-    raw = str(text or "").strip()
-    fence = re.search(r"```(?:json)?\s*(.+?)```", raw, re.I | re.S)
-    if fence:
-        raw = fence.group(1).strip()
-    candidates = [raw]
-    for start in (m.start() for m in re.finditer(r"\[", raw)):
-        depth, quoted, escaped = 0, False, False
-        for at in range(start, len(raw)):
-            ch = raw[at]
-            if escaped:
-                escaped = False
-                continue
-            if ch == "\\" and quoted:
-                escaped = True
-                continue
-            if ch == '"':
-                quoted = not quoted
-                continue
-            if quoted:
-                continue
-            if ch == "[":
-                depth += 1
-            elif ch == "]":
-                depth -= 1
-                if depth == 0:
-                    candidates.append(raw[start:at + 1])
-                    break
-    for candidate in candidates:
-        try:
-            value = json.loads(candidate)
-        except Exception:
-            continue
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)][:8]
-    return []
-
-
-def _verbatim_memory_value(source: str, candidate: Any) -> str:
-    """Вернуть ровно исходный фрагмент пользователя, а не пересказ модели."""
-    wanted = str(candidate or "").strip()
-    if not wanted or len(wanted) > 180:
-        return ""
-    at = source.casefold().find(wanted.casefold())
-    if at < 0:
-        return ""
-    return source[at:at + len(wanted)].strip()
-
-
 def remember_semantic_facts(text: str) -> List[Dict[str, Any]]:
-    """Проактивно сохранить явно названные долговременные личные факты.
+    """Compatibility entry point for the local, verbatim memory writer.
 
-    Модель только выбирает ``kind/key`` и указывает цитату. Writer принимает
-    value лишь когда это буквальный substring исходного prompt, поэтому
-    «Питер» не превратится в «Санкт-Петербург». Alias/dedupe по-прежнему
-    выполняются единственной границей ``db.remember``. Ошибка — тихое отсутствие
-    новых фактов, без generic/hardcoded fallback.
+    Semantic extraction used to make a hidden 25-second nano request after SSE.
+    A quick next message could then contend with that request on the provider.
+    The foreground agent still has the generic ``remember`` tool; this fallback
+    intentionally performs no network I/O and persists only proven grammar.
     """
-    source = str(text or "").strip()
-    if not has_personal_memory_signal(source):
-        return []
-    try:
-        result = llm.chat([
-            {"role": "system", "content":
-             "Ты безопасный экстрактор долговременной персональной памяти. "
-             "Извлеки до 5 только ЯВНО сказанных пользователем фактов, которые "
-             "помогут в следующих задачах: имя/обращение, работа/учёба, семья, "
-             "устойчивые предпочтения и ограничения, устройство/среда, долгий "
-             "проект или цель. Не сохраняй текущую команду, одноразовое желание, "
-             "догадку, шутку, пароль, ключ, токен, платёжные или паспортные данные. "
-             "Для value скопируй минимальный значимый фрагмент ИЗ ТЕКСТА БУКВА В "
-             "БУКВУ — не переводи, не исправляй и не нормализуй. Ответь только JSON: "
-             "[{\"kind\":\"person|preference|project|fact\",\"key\":\"короткое "
-             "стабильное название по-русски\",\"value\":\"дословная цитата\"}]. "
-             "Если полезных фактов нет, ответь []."},
-            {"role": "user", "content": source},
-        ], tier="nano", max_tokens=500, temperature=0.0, timeout=25)
-    except Exception:
-        return []
-
-    obvious_ids = {
-        db.canonical_memory(item["kind"], item["key"], item["value"])[3]
-        for item in extract_obvious_memories(source)
-    }
-    seen = set(obvious_ids)
-    saved: List[Dict[str, Any]] = []
-    for item in _memory_json_items(result.get("content", "")):
-        kind = str(item.get("kind") or "fact").strip().casefold()
-        if kind not in {"person", "preference", "project", "fact"}:
-            kind = "fact"
-        key = " ".join(str(item.get("key") or "").split()).strip()[:64]
-        value = _verbatim_memory_value(source, item.get("value"))
-        if not key or not value or _MEMORY_SECRET.search(key + " " + value):
-            continue
-        identity = db.canonical_memory(kind, key, value)[3]
-        if identity in seen:
-            continue
-        seen.add(identity)
-        saved.append(db.remember(kind, key, value, 1.1))
-    return saved
+    return remember_obvious_facts(text)
 
 
 # Длинный общий prompt — плохое место для протокола интерфейса: после истории,
@@ -385,10 +281,26 @@ def _listed_options(lines: List[str], start: int = 0) -> List[str]:
     return options
 
 
+def combined_reply_ui_spec(text: str) -> str:
+    """Собрать controls из всех model fences в одну физическую панель.
+
+    Контракт просит один ``ui`` block, но provider иногда повторяет fence для
+    каждого вопроса. Раньше frontend получал только последний block и терял
+    часть preflight. Здесь модельная разметка сходится к одной панели, а точные
+    повторения строк не создают дублей controls.
+    """
+    controls: List[str] = []
+    for match in _UI_FENCE.finditer(str(text or "")):
+        for raw_line in match.group(1).splitlines():
+            line = raw_line.strip()
+            if line and _UI_CONTROL.match(line) and line not in controls:
+                controls.append(line)
+    return "\n".join(controls)
+
+
 def has_interactive_ui(text: str) -> bool:
     """Есть ли внутри ui-fence хотя бы один реально поддерживаемый control."""
-    return any(_UI_CONTROL.search(match.group(1))
-               for match in _UI_FENCE.finditer(str(text or "")))
+    return bool(combined_reply_ui_spec(text))
 
 
 def needs_reply_ui(text: str, user_text: str = "") -> bool:
@@ -627,9 +539,14 @@ JSON-описание вызова прямо в тексте. Любые их �
 """
     if agent_mode:
         base += """
-АГЕНТСКИЙ РЕЖИМ:
-Если без критически недостающего выбора получится другая задача, задай ОДИН короткий
-уточняющий вопрос и остановись — это ещё не начало выполнения и план тут не нужен.
+АГЕНТСКИЙ РЕЖИМ — ЕДИНЫЙ PREFLIGHT:
+До первого инструмента просмотри задачу ЦЕЛИКОМ и одним решением определи ВСЕ
+критически недостающие параметры. Если они есть, задай их В ОДНОМ сообщении и
+ОДНОМ ```ui блоке: отдельная строка control на каждый независимый вопрос (не
+больше 4). «Свой вариант» добавляет интерфейс — не дублируй его строкой. Не запускай
+инструменты, не строй план и останови этот turn. Нельзя спрашивать один параметр,
+получать ответ, а затем выдавать следующую панель: некритичное выбери разумно.
+Если критических пробелов нет, не устраивай анкету — сразу работай.
 Когда данных достаточно, пользователь больше не участвует: выполни работу инструментами
 по шагам, не останавливаясь на промежуточные вопросы. Некритичные пробелы закрой разумным
 допущением и укажи его в финале. Заверши развёрнутым итогом: что сделано, что найдено,
@@ -774,65 +691,21 @@ def _claims_action(text: str) -> bool:
 
 
 def suggest_replies(user_text: str, answer: str) -> List[str]:
-    """Три коротких варианта продолжения разговора — кнопками под ответом.
+    """Мгновенные локальные продолжения — никакого второго облачного запроса.
 
-    Делает самая дешёвая модель (nano) и с жёстким лимитом токенов: подсказки
-    не должны ни задерживать ответ, ни стоить заметных денег. Любая ошибка
-    означает «подсказок нет» — ответ пользователя от этого не страдает.
+    Эти кнопки появляются уже после foreground. Их прежняя nano-генерация могла
+    занимать до 20 секунд, конкурировала с новым сообщением и часто возвращала
+    невалидный JSON. Универсальные разговорные действия полезнее нестабильной
+    псевдоперсонализации; содержимое реплик никуда не логируется.
     """
+    del user_text
+    span = telemetry.Span("reply_suggestions", source="local")
     if not (answer or "").strip():
+        span.finish("empty")
         return []
-    try:
-        out = llm.chat([
-            {"role": "system", "content":
-             "Ты помогаешь пользователю продолжить разговор с ассистентом. "
-             "По последнему ответу ассистента предложи РОВНО 3 коротких варианта "
-             "следующей реплики ОТ ЛИЦА ПОЛЬЗОВАТЕЛЯ. Каждый — до 6 слов, по-русски, "
-             "без нумерации и кавычек, разные по смыслу: уточнить, углубить, "
-             "попросить действие. Ответь ТОЛЬКО JSON-массивом из 3 строк."},
-            {"role": "user", "content": ("Мой запрос: %s\n\nОтвет ассистента: %s"
-                                         % (user_text[:600], answer[:1200]))},
-        ], tier="nano", max_tokens=160, temperature=0.8, timeout=20).get("content", "")
-    except Exception:
-        return []
-    return _parse_replies(out)
-
-
-def _parse_replies(out: str) -> List[str]:
-    """Достать три реплики из ответа модели — как бы она их ни оформила.
-
-    ПОЧЕМУ не просто json.loads. Просили «ТОЛЬКО JSON-массив», и разбор был
-    на это завязан. Но nano — самая слабая модель: она регулярно отвечает
-    списком с дефисами, нумерацией или добавляет «Вот варианты:». Тогда
-    regex не находил массив, функция возвращала пустоту, и полоса подсказок,
-    помигав заглушками, просто исчезала. Формат ответа модели — не то, на
-    что можно опираться; опираемся на строки, а JSON разбираем как удачу.
-    """
-    out = (out or "").strip()
-    if not out:
-        return []
-    items: List[str] = []
-    match = re.search(r"\[.*\]", out, re.S)
-    if match:
-        try:
-            items = [str(x) for x in json.loads(match.group(0))]
-        except Exception:
-            items = []
-    if not items:
-        # Запасной разбор: обычные строки с любой маркировкой в начале.
-        # Строку, кончающуюся двоеточием, отбрасываем — это заголовок вроде
-        # «Вот варианты:», а не реплика. Признак структурный, не список фраз.
-        for line in out.splitlines():
-            line = re.sub(r'^\s*(?:[-*•—]|\d+[.)])\s*', '', line).strip()
-            line = line.strip('",[]«»').strip()
-            if line and not line.endswith(":"):
-                items.append(line)
-    clean = []
-    for it in items:
-        it = str(it).strip().strip('"«»').strip()
-        if 2 <= len(it) <= 70 and it not in clean:
-            clean.append(it)
-    return clean[:3]
+    items = ["Расскажи подробнее", "Покажи на примере", "Предложи следующий шаг"]
+    span.finish("ok", count=len(items))
+    return items
 
 
 # Служебные отметки шагов плана: их видит фронт, но не пользователь.
@@ -964,12 +837,18 @@ class Agent:
     """Один прогон агента (чат-ответ или фоновая задача)."""
 
     def __init__(self, chat_id: str = "", task_id: str = "", agent_mode: bool = False,
-                 computer_use: bool = False, approvals_auto: bool = False) -> None:
+                 computer_use: bool = False, approvals_auto: bool = False,
+                 visible_plan: bool = True,
+                 cancel_check: Optional[Callable[[], bool]] = None) -> None:
         self.chat_id = chat_id
         self.task_id = task_id
         self.agent_mode = agent_mode
         self.computer_use = computer_use
         self.approvals_auto = approvals_auto
+        # AUTO исполняется без чата: semantic planner там был невидим, но всё
+        # равно создавал отдельный облачный запрос перед каждым заданием.
+        self.visible_plan = visible_plan
+        self.cancel_check = cancel_check
         self.sandbox_id = chat_id or ""
         self.created_files: List[Dict[str, Any]] = []
         self.used_tools: List[str] = []
@@ -978,6 +857,12 @@ class Agent:
         self.plan_at = 0           # какой шаг идёт сейчас
         self.plan_steps: List[str] = []   # формулировки шагов для prompt/UI
         self.show_thinking = False # показывать ли ход мыслей (решается по ходу)
+
+    def _cancelled(self) -> bool:
+        try:
+            return bool(self.cancel_check and self.cancel_check())
+        except Exception:
+            return False
 
     def _advance_plan(self, target: int) -> List[Dict[str, Any]]:
         """Продвинуть UI-план до реальной границы, не вызывая ради неё LLM."""
@@ -998,6 +883,9 @@ class Agent:
         approval = db.create_approval(tool_name, args, risk, reason, self.chat_id, self.task_id)
         deadline = time.time() + timeout
         while time.time() < deadline:
+            if self._cancelled():
+                db.decide_approval(approval["id"], "expired")
+                return {**approval, "status": "cancelled"}
             fresh = db.get_approval(approval["id"])
             if fresh and fresh.get("status") in ("approved", "rejected"):
                 return fresh
@@ -1016,6 +904,8 @@ class Agent:
         record = db.create_question(self.chat_id, question, options)
         deadline = time.time() + timeout
         while time.time() < deadline:
+            if self._cancelled():
+                return {**record, "status": "cancelled", "answer": ""}
             fresh = db.get_question(record["id"])
             if fresh and fresh.get("status") == "answered":
                 return fresh
@@ -1076,7 +966,8 @@ class Agent:
                  "Ответь ТОЛЬКО JSON-массивом строк без markdown и пояснений."},
                 {"role": "user", "content":
                  "Задача: %s\nПервый выбранный агентом инструмент: %s" % (text, tools_hint)},
-            ], tier="nano", max_tokens=450, temperature=0.2, timeout=25)
+            ], tier="nano", max_tokens=450, temperature=0.2, timeout=25,
+               operation="planner")
             steps = parse_plan_steps(result.get("content", ""))
             return steps if 3 <= len(steps) <= 6 else []
         except Exception:
@@ -1084,8 +975,8 @@ class Agent:
 
     # ------------------------------------------------------------------ run
     def run(self, messages: List[Dict[str, Any]], user_text: str = "",
-            has_image: bool = False,
-            require_ui_choice: bool = False) -> Generator[Dict[str, Any], None, None]:
+            has_image: bool = False, require_ui_choice: bool = False,
+            preflight_resolved: bool = False) -> Generator[Dict[str, Any], None, None]:
         # каждый диалог работает в своей песочнице
         sandbox.set_chat(self.sandbox_id)
         route = orchestrator.choose_tier(
@@ -1113,6 +1004,14 @@ class Agent:
                 return
 
         available = tools.schemas(_tool_groups(self.computer_use))
+        if self.agent_mode:
+            # AGENT preflight живёт в одном обычном response turn как единая
+            # multi-control ui-панель. Блокирующий singleton ask_user оставлял
+            # старый SSE ждать в БД, а каждый ответ пользователя запускал новый
+            # run — отсюда цепочка конфликтующих ответов на скриншоте. В AGENT
+            # этот tool физически не выдаётся модели; ожидание завершает turn.
+            available = [schema for schema in available
+                         if (schema.get("function") or {}).get("name") != "ask_user"]
         if not route.get("offer_tools", True):
             # оркестратор отдал реплику дешёвой модели именно потому, что
             # инструменты тут не нужны — не суём их ей в руки
@@ -1135,7 +1034,7 @@ class Agent:
         # semantic plan выходит перед ними. Обычный текст/уточнение просто снимают
         # pending и никогда не получают фиктивную карточку.
         plan: List[str] = []
-        plan_pending = bool(self.agent_mode and user_text and not social_only)
+        plan_pending = bool(self.visible_plan and self.agent_mode and user_text and not social_only)
         plan_announced = False
         deferred_work_events: List[Dict[str, Any]] = []
 
@@ -1171,7 +1070,9 @@ class Agent:
 
         convo = list(messages)
         final_text = ""
+        reply_ui_sent = False
         retried_claim = False          # ловушку вранья взводим один раз за прогон
+        preflight_retry = False        # после общей панели цепочка вопросов запрещена
         choice_failures = 0            # максимум одна перепроверка model output
         seen_calls: Dict[str, int] = {}   # защита от зацикливания на одном вызове
         # Идемпотентность дорогой генерации: LLM нередко повторяет тот же
@@ -1186,6 +1087,8 @@ class Agent:
         thinking_min_chars = 90
 
         for step in range(max_steps):
+            if self._cancelled():
+                return
             # phase="think" — это то самое ожидание перед первым словом ответа.
             # Фронт по нему показывает мигающий курсор вместо крутилки; угадывать
             # состояние по тексту статуса он не должен.
@@ -1214,7 +1117,11 @@ class Agent:
             gate_open = False
             defer_plan_decision = bool(plan_pending and not plan_announced)
 
-            for event in llm.chat_stream(convo, tier=tier, tools=available):
+            for event in llm.chat_stream(
+                    convo, tier=tier, tools=available,
+                    operation="auto_model" if self.task_id else "foreground_model"):
+                if self._cancelled():
+                    return
                 etype = event.get("type")
                 if etype == "model":
                     self.model_used = event.get("model", "")
@@ -1382,9 +1289,10 @@ class Agent:
                 if not gate_open and text_piece:
                     yield {"type": "delta", "text": text_piece}
                     gate_open = True
-                panels = list(_UI_FENCE.finditer(text_piece))
-                if panels:
-                    yield {"type": "reply_ui", "spec": panels[-1].group(1).strip()}
+                panel_spec = combined_reply_ui_spec(text_piece)
+                if panel_spec:
+                    reply_ui_sent = True
+                    yield {"type": "reply_ui", "spec": panel_spec}
                 break
 
             missing_required_choice = bool(
@@ -1405,9 +1313,10 @@ class Agent:
                         abandon_unstarted_plan()
                     final_text = contextual_choice_fallback(text_piece)
                     yield {"type": "delta", "text": final_text}
-                    panels = list(_UI_FENCE.finditer(final_text))
-                    if panels:
-                        yield {"type": "reply_ui", "spec": panels[-1].group(1).strip()}
+                    panel_spec = combined_reply_ui_spec(final_text)
+                    if panel_spec:
+                        reply_ui_sent = True
+                        yield {"type": "reply_ui", "spec": panel_spec}
                     break
                 if text_piece.strip():
                     convo.append({"role": "assistant", "content": text_piece})
@@ -1421,6 +1330,39 @@ class Agent:
                         "```ui блок с `tiles Стиль: A | B | C`, опираясь на "
                         "реальные детали кадра. Затем остановись и дождись выбора."),
                 })
+                continue
+
+            # Ответ на единую AGENT-панель закрывает preflight физически, а не
+            # только формулировкой prompt. Если provider всё же пытается начать
+            # второй раунд вопросов, не выпускаем этот текст в SSE и один раз
+            # возвращаем модель к автономной работе. Повторное нарушение
+            # завершается честной ошибкой, но никогда новой конфликтующей панелью.
+            repeats_preflight = bool(
+                self.agent_mode and preflight_resolved and
+                (has_interactive_ui(text_piece) or needs_reply_ui(text_piece, user_text))
+            )
+            if repeats_preflight:
+                if gate_open:
+                    if not defer_plan_decision:
+                        yield {"type": "reset"}
+                    gate_open = False
+                deferred_work_events.clear()
+                thinking_pending = []
+                thinking_visible = False
+                if preflight_retry:
+                    abandon_unstarted_plan()
+                    final_text = ("Не удалось начать автономное выполнение: модель повторно "
+                                  "запросила уже собранные параметры. Попробуй ещё раз — "
+                                  "новая панель не была открыта.")
+                    yield {"type": "delta", "text": final_text}
+                    break
+                preflight_retry = True
+                convo.append({"role": "assistant", "content": text_piece})
+                convo.append({"role": "system", "content":
+                              "НАРУШЕНИЕ PREFLIGHT: пользователь уже ответил на единую "
+                              "панель. Не задавай вопросов и не печатай ui. Прямо сейчас "
+                              "вызови нужные инструменты и выполни исходную задачу; все "
+                              "оставшиеся мелочи реши разумными допущениями."})
                 continue
 
             # ОБЩИЙ HARD GATE ДЛЯ УТОЧНЕНИЙ. Prompt помогает модели выбрать
@@ -1453,10 +1395,10 @@ class Agent:
                     gate_open = True
                 # Отдельный UI-event нужен только настоящему выбору. Fence из
                 # одного text/area намеренно игнорируется как дубль composer.
-                panels = [match for match in _UI_FENCE.finditer(text_piece)
-                          if _UI_CONTROL.search(match.group(1))]
-                if panels:
-                    yield {"type": "reply_ui", "spec": panels[-1].group(1).strip()}
+                panel_spec = combined_reply_ui_spec(text_piece)
+                if panel_spec:
+                    reply_ui_sent = True
+                    yield {"type": "reply_ui", "spec": panel_spec}
                 final_text = text_piece
                 break
 
@@ -1543,6 +1485,8 @@ class Agent:
                 final_text = text_piece
 
             for call in tool_calls:
+                if self._cancelled():
+                    return
                 fn = call.get("function", {})
                 name = fn.get("name", "")
                 try:
@@ -1642,6 +1586,8 @@ class Agent:
                 # через официальный GigaChat API. Поэтому file/tool_result не могут
                 # обогнать скачивание и сохранение JPG даже в AUTO-задаче.
                 elapsed = round(time.time() - started, 2)
+                if self._cancelled():
+                    return
 
                 if (name == "generate_image" and isinstance(result, dict) and result.get("ok")):
                     completed_calls[sig] = dict(result)
@@ -1663,6 +1609,9 @@ class Agent:
             # Следующий естественный ход модели получит результаты этих
             # инструментов и переведёт UI к фазе проверки в начале цикла.
 
+        if self._cancelled():
+            return
+
         if not final_text:
             if plan and not plan_announced:
                 for plan_event in announce_plan():
@@ -1679,7 +1628,8 @@ class Agent:
                     "role": "user",
                     "content": "Подведи итог выполненной работы для пользователя: что сделано и результат. "
                                "Кратко, markdown, по-русски. Не печатай вызовы инструментов.",
-                }], tier=tier, max_tokens=1400)
+                }], tier=tier, max_tokens=1400,
+                   operation="auto_final" if self.task_id else "foreground_final")
                 final_text = closing.get("content", "")
             except Exception as exc:
                 yield {"type": "error", "error": str(exc)}
@@ -1714,6 +1664,16 @@ class Agent:
                 )
                 yield {"type": "delta", "text": final_text[final_text.index("\n\n---\n"):]}
 
+        # Writer-boundary для live interactive: какой бы веткой ни завершился
+        # ответ (обычный turn, fallback или closing после tools), reply_ui обязан
+        # попасть в этот же SSE ДО done. Это не зависит от повторной загрузки
+        # истории и не заставляет фронтенд угадывать fence из финального текста.
+        if not reply_ui_sent:
+            panel_spec = combined_reply_ui_spec(final_text)
+            if panel_spec:
+                reply_ui_sent = True
+                yield {"type": "reply_ui", "spec": panel_spec}
+
         # Варианты продолжения СЮДА НЕ ВХОДЯТ. Раньше они считались прямо здесь,
         # и пользователь ждал ещё один запрос к модели уже после готового ответа:
         # ответ дописан, а поток не закрыт и кнопка «стоп» продолжает гореть.
@@ -1739,9 +1699,11 @@ class Agent:
 
 
 def run_headless(prompt: str, task_id: str = "", agent_mode: bool = True,
-                 chat_id: str = "") -> Dict[str, Any]:
+                 chat_id: str = "",
+                 cancel_check: Optional[Callable[[], bool]] = None) -> Dict[str, Any]:
     """Запуск без UI (для фоновых задач AUTO). Возвращает итог и лог событий."""
-    agent = Agent(chat_id=chat_id, task_id=task_id, agent_mode=agent_mode, approvals_auto=False)
+    agent = Agent(chat_id=chat_id, task_id=task_id, agent_mode=agent_mode,
+                  approvals_auto=False, visible_plan=False, cancel_check=cancel_check)
     # Фоновая задача исполняется «сейчас»: время ожидания уже прошло, поэтому
     # никаких «напомню позже» — нужен готовый текст, который увидит пользователь.
     extra = (

@@ -182,77 +182,70 @@ def escalate(tier: str) -> Optional[str]:
     return ladder.get(tier)
 
 
-# Готовые выжимки истории: ключ — граница сжатия, значение — текст выжимки.
-# Живёт в памяти процесса; потерять её не страшно, в худшем случае следующая
-# длинная реплика посчитает выжимку заново — уже в фоне.
+# Локальный extractive cache. Раньше здесь стартовал «фоновый» nano-запрос
+# непосредственно перед foreground-моделью текущей реплики. На одном gateway
+# эти два запроса конкурировали за rate limit и именно сводка задерживала первый
+# токен обычного ответа. История теперь сжимается без сети и без второго LLM.
 _SUM_CACHE: Dict[str, str] = {}
-_SUM_BUSY: Dict[str, bool] = {}
 
 
-def _sum_key(head: List[Dict[str, Any]]) -> str:
-    """Отпечаток сжимаемой части. Пока она не изменилась, выжимка годна."""
-    import hashlib
-    raw = "\n".join("%s:%s" % (m.get("role"), str(m.get("content"))[:200]) for m in head)
-    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()
+def _history_content(value: Any) -> str:
+    """Вернуть только видимый текст, не протаскивая data URL и UI-протокол."""
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, list):
+        text = " ".join(
+            str(item.get("text") or "") for item in value
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+    else:
+        text = str(value or "")
+    text = re.sub(r"```ui\b.*?```", " ", text, flags=re.I | re.S)
+    return " ".join(text.split()).strip()
 
 
-def _make_summary(head: List[Dict[str, Any]], key: str) -> str:
-    from . import llm  # локальный импорт, чтобы избежать циклов
-    text = "\n".join("%s: %s" % (m.get("role"), str(m.get("content"))[:600]) for m in head)
-    try:
-        summary = llm.chat(
-            [
-                {"role": "system", "content": "Сожми диалог в 10 фактов-тезисов на русском. Только факты, кратко."},
-                {"role": "user", "content": text[:12000]},
-            ],
-            tier="nano", max_tokens=500, temperature=0.2,
-        ).get("content", "")
-    except Exception:
-        summary = ""
-    if summary:
-        _SUM_CACHE[key] = summary
-    _SUM_BUSY.pop(key, None)
-    return summary
+def _make_summary(messages: List[Dict[str, Any]], budget: int = 2200) -> str:
+    """Недорогая дословная сводка последних значимых реплик старой части."""
+    selected: List[str] = []
+    left = max(400, budget)
+    for message in reversed(messages):
+        text = _history_content(message.get("content", ""))
+        if not text:
+            continue
+        role = "Пользователь" if message.get("role") == "user" else "JARVIS"
+        line = "• %s: %s" % (role, text[:360])
+        if selected and len(line) > left:
+            continue
+        selected.append(line[:left])
+        left -= min(len(line), left)
+        if left < 120:
+            break
+    return "\n".join(reversed(selected))
 
 
 def summarize_history(messages: List[Dict[str, Any]], keep_last: int = 12) -> List[Dict[str, Any]]:
-    """Экономия токенов без платы временем ответа.
-
-    ПОЧЕМУ ЗДЕСЬ НЕТ ОЖИДАНИЯ МОДЕЛИ. Раньше сжатие было обычным вызовом
-    llm.chat прямо в этой функции, а зовут её ПЕРЕД первым словом ответа.
-    Пока диалог короткий (до 16 сообщений), вызова нет и Джарвис отвечает
-    сразу. Как только диалог перевалил порог, к каждому ответу молча
-    добавлялся целый лишний поход в облако — и ответ, ничем не отличавшийся
-    от предыдущего, вдруг начинал ждать. Это и есть «то очень быстро, то
-    очень медленно»: скорость зависела не от вопроса, а от длины переписки,
-    причём в момент, когда пользователь уже смотрит на пустой экран.
-
-    Ждать ради экономии токенов нельзя: ответ важнее. Поэтому выжимку мы
-    БЕРЁМ готовую, если она есть, а если её нет — отдаём хвост немедленно и
-    считаем выжимку в фоне, чтобы она была готова к следующей реплике.
-    """
+    """Сжать длинную историю локально, не конкурируя с foreground LLM."""
     if len(messages) <= keep_last + 4:
         return messages
-
-    head = messages[:-keep_last]
-    tail = messages[-keep_last:]
-    key = _sum_key(head)
-
+    head, tail = messages[:-keep_last], messages[-keep_last:]
+    anchor = head[-1]
+    anchor_text = _history_content(anchor.get("content", ""))
+    key = "%s:%s:%s" % (
+        anchor.get("id") or anchor.get("created_at") or len(head),
+        len(head), hash(anchor_text),
+    )
     summary = _SUM_CACHE.get(key)
-    if summary:
-        return [{"role": "system", "content": "Краткая память о предыдущей части диалога:\n" + summary}] + tail
-
-    # Выжимки ещё нет. Не задерживаем ответ ни на секунду: считаем её в фоне.
-    if not _SUM_BUSY.get(key):
-        _SUM_BUSY[key] = True
-        import threading
-        threading.Thread(target=_make_summary, args=(head, key),
-                         name="jarvis-summary", daemon=True).start()
-    return tail
+    if summary is None:
+        summary = _make_summary(head)
+        if len(_SUM_CACHE) >= 64:
+            _SUM_CACHE.pop(next(iter(_SUM_CACHE)))
+        _SUM_CACHE[key] = summary
+    return [{"role": "system", "content":
+             "Дословная сводка предыдущего разговора:\n" + summary}] + tail
 
 
 # ------------------------------------------------------------- имя диалога
-_TITLE_STOP = re.compile(r"^[\s\"'«»`*#>\-–—.:]+|[\s\"'«»`*#>\-–—.:]+$")
+
 
 # такие «названия» бессмысленны — их не принимаем ни от модели, ни как фолбэк
 _BAD_TITLES = {
@@ -327,7 +320,7 @@ def _keyword_title(text: str) -> str:
 
 
 def _fallback_title(text: str) -> str:
-    """Если модель недоступна — собираем заголовок из ключевых слов."""
+    """Собрать короткий навигационный заголовок только из исходной просьбы."""
     title = _keyword_title(text)
     if title and not _is_bad_title(title):
         return title[:40]
@@ -337,47 +330,15 @@ def _fallback_title(text: str) -> str:
     return clean[:38].rstrip(" ,;:-") or "Диалог"
 
 
-def _clean_model_title(raw: str) -> str:
-    title = (raw or "").split("\n")[0]
-    title = re.sub(r"^\s*(название|заголовок|title)\s*[:\-—]\s*", "", title, flags=re.I)
-    title = _TITLE_STOP.sub("", title).strip()
-    title = re.sub(r"\s+", " ", title)
-    return title
-
-
 def _make_title(text: str, kind: str = "chat") -> str:
-    """Название придумывает сама модель — коротко и по смыслу."""
-    from . import llm  # локальный импорт, чтобы избежать циклов
+    """Локальный заголовок без auxiliary LLM и конкуренции с основным ответом.
 
-    snippet = re.sub(r"\s+", " ", (text or "").strip())[:900]
-    if not snippet:
-        return _fallback_title(text)
-
-    what = ("названия диалогов" if kind == "chat" else "названия фоновых задач")
-    system = (
-        "Ты придумываешь %s. По сообщению пользователя дай короткое название на русском.\n"
-        "ПРАВИЛА:\n"
-        "1. 2-5 слов, до 34 символов, по сути темы — чтобы через неделю было понятно, о чём речь.\n"
-        "2. Без кавычек, без точки в конце, без эмодзи, без пояснений.\n"
-        "3. ЗАПРЕЩЕНО отвечать общими словами: «Новый диалог», «Чат», «Диалог», «Беседа», "
-        "«Вопрос», «Запрос», «Без названия», «Разное», «Общение», «Тема».\n"
-        "4. Если тема непонятна — назови её по ключевым словам сообщения.\n"
-        "5. Ответь ТОЛЬКО названием, одной строкой." % what
-    )
-    for attempt in range(2):
-        try:
-            raw = llm.chat(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": snippet},
-                ],
-                tier="nano", max_tokens=24, temperature=0.2 if attempt == 0 else 0.7,
-            ).get("content", "")
-        except Exception:
-            break
-        title = _clean_model_title(raw)
-        if title and len(title) <= 48 and not _is_bad_title(title):
-            return title[:40]
+    Для навигационного ярлыка уже достаточно измеримых ключевых слов исходной
+    просьбы. Второй облачный ответ делал первый turn медленнее, мог дважды ждать
+    retry и иногда всё равно возвращал общий заголовок. ``kind`` сохранён в API,
+    но алгоритму не нужна тематическая таблица.
+    """
+    del kind
     return _fallback_title(text)
 
 

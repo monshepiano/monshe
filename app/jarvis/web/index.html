@@ -204,7 +204,11 @@
           <h2>AUTO · фоновые задачи</h2>
           <p class="muted">JARVIS сам решает, что уходит в фон, и присылает результат.</p>
         </div>
-        <button class="btn primary" id="addTaskBtn">Новая задача</button>
+        <div class="auto-head-actions">
+          <button class="btn ghost" id="clearDoneBtn" title="Удалить все выполненные задачи">Очистить выполненные</button>
+          <button class="btn ghost auto-pause" id="autoPauseBtn" title="Поставить все актуальные задачи на паузу">Ⅱ&nbsp; Пауза</button>
+          <button class="btn primary" id="addTaskBtn">Новая задача</button>
+        </div>
       </div>
       <div class="task-grid" id="taskGrid"></div>
     </section>

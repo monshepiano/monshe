@@ -8,13 +8,17 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from . import agent, db, ideas, llm
+from . import agent, db, ideas
 from .config import CONFIG
 from .tools import media
 
 _STOP = threading.Event()
 _WORKER: Optional[threading.Thread] = None
-_RUNNING: Dict[str, bool] = {}
+# Reservation и terminal transition проходят под одним lock. Раньше два
+# scheduler/API потока оба успевали увидеть отсутствие id и запускали дубль.
+_RUN_LOCK = threading.RLock()
+_RUNNING: Dict[str, threading.Event] = {}
+MAX_PARALLEL = 1  # на 8-ГБ Mac/API одна быстрая работа лучше взаимного удушения
 
 
 # ------------------------------------------------------------------ расписание
@@ -127,7 +131,9 @@ def has_similar_pending(text: str, chat_id: str = "") -> bool:
     if not want:
         return False
     for task in db.list_tasks():
-        if task.get("status") not in ("queued", "scheduled", "running"):
+        # Paused is still unfinished work. Excluding it let the same prompt be
+        # enqueued again during a global pause, so resume released duplicates.
+        if task.get("status") not in ("queued", "scheduled", "running", "paused"):
             continue
         if chat_id and task.get("chat_id") and task.get("chat_id") != chat_id:
             continue
@@ -178,29 +184,70 @@ def safe_delayed_message(prompt: str, schedule: str = "") -> Optional[str]:
     return body or "Я на связи — назначенное время пришло."
 
 
-def execute_task(task_id: str) -> None:
-    task = db.get_task(task_id)
-    if not task or _RUNNING.get(task_id):
-        return
-    _RUNNING[task_id] = True
-    db.update_task(task_id, status="running", progress=0.05)
-    db.append_task_event(task_id, {"type": "status", "text": "Задача запущена"})
+def _reserve_task(task_id: str, *, manual: bool = False,
+                  due: bool = False) -> Optional[tuple[Dict[str, Any], threading.Event]]:
+    """Атомарно занять задачу ДО создания worker thread."""
+    with _RUN_LOCK:
+        if CONFIG.get("auto.paused", False) or task_id in _RUNNING:
+            return None
+        if len(_RUNNING) >= MAX_PARALLEL:
+            return None
+        task = db.get_task(task_id)
+        if not task:
+            return None
+        status = task.get("status")
+        allowed = status == "queued"
+        if due and status == "scheduled":
+            allowed = float(task.get("next_run") or 0) <= time.time()
+        if manual and status in ("queued", "scheduled", "done", "error", "cancelled"):
+            allowed = True
+        if not allowed:
+            return None
+        cancelled = threading.Event()
+        _RUNNING[task_id] = cancelled
+        db.update_task(task_id, status="running", resume_status="", progress=0.05)
+        db.append_task_event(task_id, {"type": "status", "text": "Задача запущена"})
+        return task, cancelled
+
+
+def _execute_reserved(task: Dict[str, Any], cancelled: threading.Event) -> None:
+    task_id = task["id"]
     try:
         direct = safe_delayed_message(task.get("prompt", ""), task.get("schedule", ""))
         if direct is not None:
             # Никакого Agent и, следовательно, никакого terminal/tool sanction.
             result = {"content": direct, "files": []}
         else:
-            result = agent.run_headless(task["prompt"], task_id=task_id, agent_mode=True,
-                                        chat_id=task.get("chat_id") or "")
+            result = agent.run_headless(
+                task["prompt"], task_id=task_id, agent_mode=True,
+                chat_id=task.get("chat_id") or "", cancel_check=cancelled.is_set)
+        if cancelled.is_set():
+            return
         content = result.get("content") or "Задача выполнена."
         files = result.get("files") or []
-        db.update_task(task_id, status="done", progress=1.0, result=content)
-        db.append_task_event(task_id, {"type": "done", "text": "Готово"})
-        # Результат показываем ОДИН раз. Раньше на одну задачу приходилось
-        # четыре записи: карточка «в фоне», текст «Принято…», уведомление и
-        # сам ответ. Уведомление нужно только тогда, когда ответ некуда
-        # положить — если задача пришла из диалога, ответ и есть уведомление.
+        schedule = task.get("schedule") or ""
+        nxt = parse_schedule(schedule) if is_repeating(schedule) else None
+
+        # Terminal-state protection: pause/cancel выигрывают гонку у позднего
+        # результата. И наоборот, уже завершённая задача не воскресает paused.
+        with _RUN_LOCK:
+            fresh = db.get_task(task_id)
+            if cancelled.is_set() or not fresh or fresh.get("status") != "running":
+                return
+            if nxt:
+                if CONFIG.get("auto.paused", False):
+                    db.update_task(task_id, status="paused", resume_status="scheduled",
+                                   next_run=nxt, progress=0, result=content)
+                else:
+                    db.update_task(task_id, status="scheduled", resume_status="",
+                                   next_run=nxt, progress=0, result=content)
+            else:
+                db.update_task(task_id, status="done", resume_status="",
+                               progress=1.0, result=content)
+            db.append_task_event(task_id, {"type": "done", "text": "Готово"})
+
+        # Результат показываем ОДИН раз. Уведомление нужно только тогда, когда
+        # ответ некуда положить — если задача пришла из диалога, ответ и есть оно.
         if task.get("chat_id"):
             db.add_message(task["chat_id"], "assistant", content,
                            {"task_id": task_id, "from_auto": True,
@@ -208,18 +255,90 @@ def execute_task(task_id: str) -> None:
         else:
             db.notify("AUTO: " + task["title"], content[:300], "success")
         _telegram_report(task["title"], content, files)
-
-        schedule = task.get("schedule") or ""
-        if is_repeating(schedule):
-            nxt = parse_schedule(schedule)
-            if nxt:
-                db.update_task(task_id, status="scheduled", next_run=nxt, progress=0)
     except Exception as exc:
-        db.update_task(task_id, status="error", result="Ошибка: %s" % exc)
-        db.append_task_event(task_id, {"type": "error", "text": str(exc)[:300]})
-        db.notify("AUTO: ошибка в задаче", "%s — %s" % (task["title"], exc), "error")
+        with _RUN_LOCK:
+            fresh = db.get_task(task_id)
+            if (not cancelled.is_set() and fresh and
+                    fresh.get("status") == "running"):
+                db.update_task(task_id, status="error", resume_status="",
+                               result="Ошибка: %s" % exc)
+                db.append_task_event(task_id, {"type": "error", "text": str(exc)[:300]})
+                db.notify("AUTO: ошибка в задаче", "%s — %s" % (task["title"], exc), "error")
     finally:
-        _RUNNING.pop(task_id, None)
+        with _RUN_LOCK:
+            if _RUNNING.get(task_id) is cancelled:
+                _RUNNING.pop(task_id, None)
+
+
+def execute_task(task_id: str, manual: bool = False) -> bool:
+    """Синхронный entry point (удобен тестам); резервирует задачу ровно раз."""
+    reserved = _reserve_task(task_id, manual=manual)
+    if not reserved:
+        return False
+    _execute_reserved(*reserved)
+    return True
+
+
+def launch_task(task_id: str, *, manual: bool = False, due: bool = False) -> bool:
+    """Зарезервировать и только затем создать daemon worker."""
+    reserved = _reserve_task(task_id, manual=manual, due=due)
+    if not reserved:
+        return False
+    threading.Thread(target=_execute_reserved, args=reserved,
+                     name="jarvis-task-" + task_id[-6:], daemon=True).start()
+    return True
+
+
+def pause_all() -> int:
+    """Персистентно заморозить очередь и кооперативно остановить workers."""
+    CONFIG.set("auto.paused", True)
+    changed = 0
+    with _RUN_LOCK:
+        for signal in _RUNNING.values():
+            signal.set()
+        for task in db.list_tasks(limit=1000):
+            status = task.get("status")
+            if status not in ("queued", "scheduled", "running"):
+                continue
+            resume = "scheduled" if status == "scheduled" else "queued"
+            db.update_task(task["id"], status="paused", resume_status=resume)
+            changed += 1
+    return changed
+
+
+def resume_all() -> int:
+    """Возобновить paused-задачи; просроченное расписание запускается сейчас."""
+    changed = 0
+    with _RUN_LOCK:
+        CONFIG.set("auto.paused", False)
+        now_ts = time.time()
+        for task in db.list_tasks(limit=1000):
+            if task.get("status") != "paused":
+                continue
+            resume = task.get("resume_status") or "queued"
+            if resume == "scheduled" and float(task.get("next_run") or 0) > now_ts:
+                status = "scheduled"
+            else:
+                status = "queued"
+            db.update_task(task["id"], status=status, resume_status="")
+            changed += 1
+    return changed
+
+
+def cancel_task(task_id: str) -> bool:
+    with _RUN_LOCK:
+        signal = _RUNNING.get(task_id)
+        if signal:
+            signal.set()
+        task = db.get_task(task_id)
+        if not task or task.get("status") in ("done", "error", "cancelled"):
+            return False
+        db.update_task(task_id, status="cancelled", resume_status="")
+        return True
+
+
+def is_paused() -> bool:
+    return bool(CONFIG.get("auto.paused", False))
 
 
 def _telegram_report(title: str, content: str, files: List[Dict[str, Any]]) -> None:
@@ -235,35 +354,62 @@ def _telegram_report(title: str, content: str, files: List[Dict[str, Any]]) -> N
 
 # --------------------------------------------------------------- проактивность
 _LAST_PROACTIVE = 0.0
+_PROACTIVE_BUSY = False
+_PROACTIVE_LOCK = threading.Lock()
 
 
-def proactive_tick() -> None:
+def proactive_tick(_reserved: bool = False) -> None:
     """Раз в несколько часов JARVIS сам предлагает полезное действие."""
     global _LAST_PROACTIVE
-    if not CONFIG.get("auto.proactive", True) or in_quiet_hours():
+    if not _reserved:
+        if not CONFIG.get("auto.proactive", True) or in_quiet_hours():
+            return
+        if time.time() - _LAST_PROACTIVE < 4 * 3600:
+            return
+        _LAST_PROACTIVE = time.time()
+    # Проактивность не имеет права занимать LLM-provider за спиной у
+    # пользователя. Берём последнюю реальную тему и формируем честный локальный
+    # follow-up; так немедленная новая реплика никогда не конкурирует с тайным
+    # 25-секундным запросом.
+    recent = db.recent_user_messages(days=30, limit=5)
+    if not recent:
         return
-    if time.time() - _LAST_PROACTIVE < 4 * 3600:
+    topic = " ".join(str(recent[0] or "").split()).strip()
+    if not topic:
         return
-    _LAST_PROACTIVE = time.time()
-    memories = db.recall(limit=25)
-    if not memories:
-        return
-    facts = "\n".join("- %s: %s" % (m["key"], m["value"]) for m in memories[:20])
+    out = ("Можно вернуться к недавней задаче «%s» и довести её до следующего "
+           "конкретного результата." % topic[:180])
     try:
-        out = llm.chat([
-            {"role": "system", "content":
-             "Ты — проактивный ассистент JARVIS. На основе фактов о пользователе предложи ОДНО "
-             "конкретное полезное действие прямо сейчас (1-2 предложения, по-русски). "
-             "Если полезного нет — ответь ровно 'NONE'."},
-            {"role": "user", "content": facts},
-        ], tier="nano", max_tokens=200, temperature=0.7).get("content", "").strip()
-        if out and "NONE" not in out.upper():
-            db.notify("Идея от JARVIS", out[:400], "info")
-            conf = CONFIG.get("telegram", {}) or {}
-            if conf.get("enabled"):
-                media.send_telegram("💡 <b>JARVIS</b>\n" + out[:900], silent=True)
+        db.notify("Идея от JARVIS", out[:400], "info")
+        conf = CONFIG.get("telegram", {}) or {}
+        if conf.get("enabled"):
+            media.send_telegram("💡 <b>JARVIS</b>\n" + out[:900], silent=True)
     except Exception:
         pass
+
+
+def proactive_async() -> bool:
+    """Due/busy reservation happens before thread creation, not inside it."""
+    global _LAST_PROACTIVE, _PROACTIVE_BUSY
+    if (not CONFIG.get("auto.proactive", True) or in_quiet_hours() or
+            time.time() - _LAST_PROACTIVE < 4 * 3600):
+        return False
+    with _PROACTIVE_LOCK:
+        if _PROACTIVE_BUSY:
+            return False
+        _PROACTIVE_BUSY = True
+        _LAST_PROACTIVE = time.time()
+
+    def work() -> None:
+        global _PROACTIVE_BUSY
+        try:
+            proactive_tick(_reserved=True)
+        finally:
+            with _PROACTIVE_LOCK:
+                _PROACTIVE_BUSY = False
+
+    threading.Thread(target=work, name="jarvis-proactive", daemon=True).start()
+    return True
 
 
 # -------------------------------------------------------------------- worker
@@ -271,33 +417,31 @@ def _loop() -> None:
     while not _STOP.is_set():
         nearest = None
         try:
-            if CONFIG.get("auto.enabled", True):
+            if CONFIG.get("auto.enabled", True) and not is_paused():
                 now_ts = time.time()
                 for task in db.list_tasks(limit=60):
                     if _STOP.is_set():
                         break
                     status = task.get("status")
                     if status == "queued":
-                        threading.Thread(target=execute_task, args=(task["id"],), daemon=True).start()
-                        time.sleep(0.2)
+                        if not launch_task(task["id"]):
+                            # Лимит занят: остальные сохраняют порядок очереди.
+                            break
                     elif status == "scheduled":
                         nxt = task.get("next_run") or 0
                         if nxt <= now_ts:
-                            # запускаем СРАЗУ, а не «ставим в очередь и ждём
-                            # следующего круга» — иначе задача опаздывает
-                            # на целый тик сверх назначенного времени
-                            db.update_task(task["id"], status="queued")
-                            threading.Thread(target=execute_task, args=(task["id"],),
-                                             daemon=True).start()
+                            if not launch_task(task["id"], due=True):
+                                break
                         else:
                             left = nxt - now_ts
                             nearest = left if nearest is None else min(nearest, left)
-                # проактивные идеи ходят в сеть: в отдельном потоке, иначе
-                # медленный ответ модели задерживает все напоминания
-                threading.Thread(target=proactive_tick, daemon=True).start()
-                # подсказки для пустого экрана готовим заранее — сам refresh
-                # решает, пора ли (раз в несколько часов), и молчит, если рано
-                ideas.refresh_async()
+                # Дешёвое локальное обслуживание запускаем только в простой;
+                # due/busy gates срабатывают до создания коротких threads.
+                with _RUN_LOCK:
+                    idle = not _RUNNING
+                if idle:
+                    proactive_async()
+                    ideas.refresh_async()
         except Exception:
             pass
         # тик подстраивается под ближайшую задачу: секундные напоминания не опаздывают
@@ -310,6 +454,15 @@ def start() -> None:
     global _WORKER
     if _WORKER and _WORKER.is_alive():
         return
+    # Процесс мог закрыться посреди работы: persisted `running` не означает,
+    # что worker пережил restart. Возвращаем такие задачи в честную очередь.
+    with _RUN_LOCK:
+        for task in db.list_tasks(limit=1000):
+            if task.get("status") == "running":
+                if is_paused():
+                    db.update_task(task["id"], status="paused", resume_status="queued")
+                else:
+                    db.update_task(task["id"], status="queued", resume_status="")
     _STOP.clear()
     _WORKER = threading.Thread(target=_loop, name="jarvis-auto", daemon=True)
     _WORKER.start()
@@ -317,6 +470,9 @@ def start() -> None:
 
 def stop() -> None:
     _STOP.set()
+    with _RUN_LOCK:
+        for signal in _RUNNING.values():
+            signal.set()
 
 
 def create_background_task(title: str, prompt: str, schedule: str = "",
@@ -325,9 +481,13 @@ def create_background_task(title: str, prompt: str, schedule: str = "",
     task = db.create_task(title=title or "Фоновая задача", prompt=prompt,
                           mode="auto", schedule=schedule or "", chat_id=chat_id)
     nxt = parse_schedule(schedule)
-    if nxt and nxt > time.time() + 0.5:
-        db.update_task(task["id"], status="scheduled", next_run=nxt)
-        task = db.get_task(task["id"]) or task
+    wanted = "scheduled" if nxt and nxt > time.time() + 0.5 else "queued"
+    if is_paused():
+        db.update_task(task["id"], status="paused", resume_status=wanted,
+                       **({"next_run": nxt} if nxt else {}))
+    elif wanted == "scheduled":
+        db.update_task(task["id"], status="scheduled", resume_status="", next_run=nxt)
+    task = db.get_task(task["id"]) or task
     return task
 
 

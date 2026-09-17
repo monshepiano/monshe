@@ -128,6 +128,7 @@ class MiniNode {
   set isConnected(value) { this._connected = !!value; }
   get children() { return this.childNodes.filter((node) => node.nodeType === 1); }
   get lastChild() { return this.childNodes[this.childNodes.length - 1] || null; }
+  get firstElementChild() { return this.children[0] || null; }
   get lastElementChild() {
     const items = this.children;
     return items[items.length - 1] || null;
@@ -381,20 +382,27 @@ function testImportantHeadingCaretAndTrail() {
     },
   );
   assert(/const TYPE_MS\s*=\s*20/.test(js), 'DOM typing is capped at 50 renders per second');
-  assert(/const CPS_TALK\s*=\s*95/.test(js));
+  assert(/const CPS_TALK\s*=\s*125/.test(js) && /const CPS_TALK_MAX\s*=\s*245/.test(js));
+  assert(/const CPS_CODE\s*=\s*420/.test(js) && /const CPS_SMOOTH_MS\s*=\s*340/.test(js));
   assert(!/CPS_IMPORTANT/.test(js), 'headings must not have a separate speed');
   assert(!/function importantLine|function headingEndedSince/.test(js),
     'headings must not add a hidden rate or pause branch');
+  const target = loadFunctions(['talkTargetCps'], {
+    Math, Number, CPS_TALK: 125, CPS_TALK_MAX: 245,
+  });
+  assert.strictEqual(target.talkTargetCps(120), 125);
+  assert(target.talkTargetCps(800) > 200 && target.talkTargetCps(800) < 245,
+    'a long ready tail accelerates continuously without crossing the visual-speed ceiling');
   const typer = extractFunction(js, 'typerStart');
-  assert(/let want\s*=\s*code\s*\?\s*CPS_CODE\s*:\s*CPS_TALK/.test(typer));
+  assert(/let want\s*=\s*code\s*\?\s*CPS_CODE\s*:\s*talkTargetCps\(left\)/.test(typer));
   assert(!/heading|important/i.test(typer), 'typer must not inspect markdown headings');
   assert(/performance\.now\(\)/.test(typer) && /CPS_SMOOTH_MS/.test(typer),
     'elapsed-time CPS must survive delayed timer frames');
   assert(/Math\.min\(32,\s*now\s*-\s*lastTick\)/.test(typer),
     'a delayed browser frame must not be paid back as a visible character burst');
   assert(/step\s*=\s*Math\.min\(step,\s*left,\s*code\s*\?\s*10\s*:\s*4\)/.test(typer));
-  assert(!/left\s*>|backlog|boost|mult/i.test(typer),
-    'typing speed must depend on content, never SSE chunk/backlog size');
+  assert(!/left\s*>|boost|mult/i.test(typer),
+    'typing acceleration must be smooth rather than a discrete backlog branch');
   assert(/ui\.cps\s*=\s*0[\s\S]*ui\.acc\s*=\s*0/.test(typer),
     'a temporarily drained stream must not leak its previous speed into the next chunk');
 
@@ -1119,13 +1127,13 @@ function testRussianImageAndHudFollowupContract() {
     modelName: 'gpt-test', routeReason: 'reason', routeEl: null,
   };
   metaCtx.updateResponseMeta(metaUi);
-  assert.strictEqual(metaUi.routeEl.textContent, 'Качество · gpt-test');
+  assert.strictEqual(metaUi.routeEl.textContent, 'качество · gpt-test');
   assert.strictEqual(metaUi.routeEl.parentNode, metaHead);
   assert.strictEqual(legacyModel.textContent, '', 'legacy model badge must not duplicate persistent metadata');
   const metaStyle = css.match(/\.ai-route\s*\{([^}]*)\}/s);
   assert(metaStyle && !/border|background|border-radius/.test(metaStyle[1]) &&
-    /font:9\.5px/.test(metaStyle[1]) && /rgba\(154,202,219,\.68\)/.test(metaStyle[1]),
-    'response metadata is small readable low-contrast text, never a framed pill');
+    /font:8\.5px/.test(metaStyle[1]) && /rgba\(154,202,219,\.43\)/.test(metaStyle[1]),
+    'response metadata is tiny readable low-contrast text, never a framed pill');
 
   assert(/const permission = ev\.style === 'permission'/.test(events) &&
     /permission \? '◇ Можно открыть приложение\?'/.test(events) &&
@@ -1191,6 +1199,79 @@ function testReadinessFollowHistoryAndLiveCodeContracts() {
     'typing code remains in a bounded internally scrolling viewport');
 }
 
+
+async function testAutoPollingReconciliationAndBulkControls() {
+  // A slower poll must never replace a newer task snapshot.
+  const pending = [];
+  const state = { taskLoadRun: 0, tasks: [], autoPaused: false };
+  let renders = 0;
+  const loadCtx = loadFunctions(['loadTasks'], {
+    S: state,
+    api() { return new Promise((resolve) => pending.push(resolve)); },
+    renderTasks() { renders += 1; },
+  });
+  const oldPoll = loadCtx.loadTasks();
+  const newPoll = loadCtx.loadTasks();
+  pending[1]({ tasks: [{ id: 'new' }], paused: true });
+  await newPoll;
+  pending[0]({ tasks: [{ id: 'stale' }], paused: false });
+  await oldPoll;
+  assert.deepStrictEqual(state.tasks.map((task) => task.id), ['new']);
+  assert.strictEqual(state.autoPaused, true);
+  assert.strictEqual(renders, 1, 'a stale poll response is discarded without a DOM pass');
+
+  // Identical polling data keeps the exact card node and performs no repaint.
+  const grid = new MiniNode('div');
+  const autoNav = new MiniNode('div');
+  const pause = new MiniNode('button');
+  const clear = new MiniNode('button');
+  const task = {
+    id: 'stable', title: 'Task', prompt: 'Work', status: 'running', progress: 0.4,
+    result: '', schedule: '', next_run: 0, updated_at: 1, resume_status: '', events: [],
+  };
+  let paints = 0;
+  const reconcileState = { tasks: [task], autoPaused: false };
+  const reconcileCtx = loadFunctions(['taskFingerprint', 'renderTasks'], {
+    S: reconcileState, Map, JSON, String,
+    $$(selector, node) { return node.querySelectorAll(selector); },
+    $(selector) {
+      if (selector === '#taskGrid') return grid;
+      if (selector === '.nav-item[data-view="auto"]') return autoNav;
+      if (selector === '#autoPauseBtn') return pause;
+      if (selector === '#clearDoneBtn') return clear;
+      return null;
+    },
+    el: miniEl,
+    paintTaskCard(card, current) {
+      paints += 1;
+      card.className = 'task-card ' + current.status;
+      card.dataset.taskId = String(current.id);
+      card.dataset.fingerprint = reconcileCtx.taskFingerprint(current);
+    },
+  });
+  const originalCard = new MiniNode('article');
+  originalCard.className = 'task-card running';
+  originalCard.dataset.taskId = 'stable';
+  originalCard.dataset.fingerprint = reconcileCtx.taskFingerprint(task);
+  grid.appendChild(originalCard);
+  reconcileCtx.renderTasks();
+  assert.strictEqual(grid.firstElementChild, originalCard);
+  assert.strictEqual(paints, 0, 'unchanged task polling must produce zero card repaint');
+
+  reconcileState.tasks = [{ ...task, progress: 0.8, updated_at: 2 }];
+  reconcileCtx.renderTasks();
+  assert.strictEqual(grid.firstElementChild, originalCard,
+    'a changed task is patched in its keyed card instead of replacing the node');
+  assert.strictEqual(paints, 1);
+
+  assert(/id="clearDoneBtn"/.test(html) && /id="autoPauseBtn"/.test(html),
+    'AUTO exposes clear-completed and global pause/play controls');
+  assert(/\/api\/tasks\/clear-completed/.test(js) &&
+    /S\.autoPaused \? '\/api\/tasks\/resume-all' : '\/api\/tasks\/pause-all'/.test(js));
+  assert(/\.task-card\.paused::before\s*\{[^}]*rgba\(154,202,219,\.42\)/s.test(css),
+    'paused cards retain a distinct calm state');
+}
+
 function testThinkingGradientContract() {
   const field = css.match(/\.panel-card\.live::before\s*\{([^}]*)\}/s);
   assert(field && /display\s*:\s*none/.test(field[1]),
@@ -1206,9 +1287,11 @@ function testThinkingGradientContract() {
   assert(/@keyframes wholeFrameFlow\s*\{[\s\S]*0%\{opacity:\.58/.test(css));
 
   const toolFrame = css.match(/\.tool-card\.live::after\s*\{([^}]*)\}/s);
-  assert(toolFrame && /#42e0f2/.test(toolFrame[1]) && /#a878ed/.test(toolFrame[1]) &&
-    /#efa953/.test(toolFrame[1]) && /toolFrameFlow 1\.08s/.test(toolFrame[1]),
-  'Working contour must be brighter and more colourful without filling the card');
+  assert(toolFrame && /rgba\(66,224,242,\.18\)/.test(toolFrame[1]) &&
+    /rgba\(168,120,237,\.68\)/.test(toolFrame[1]) &&
+    /rgba\(239,169,83,\.66\)/.test(toolFrame[1]) &&
+    /background-size:290% 100%/.test(toolFrame[1]) && /toolFrameFlow 1\.18s/.test(toolFrame[1]),
+  'Working contour must be wide, feathered, and restrained without filling the card');
   const textBand = css.match(/\.think-card\.live \.card-head,\.think-card\.live \.think-stream,[\s\S]*?\.tool-card\.live \.kv span\s*\{([^}]*)\}/s);
   assert(textBand && /color:transparent/.test(textBand[1]) && /background-clip:text/.test(textBand[1]) &&
     /#61e7ff 45\.2%/.test(textBand[1]) && /#718fff 46\.8%/.test(textBand[1]) &&
@@ -1220,11 +1303,11 @@ function testThinkingGradientContract() {
     'thinking stays a masked scrolling stream, not a cursor animation');
 
   const autoOutline = css.match(/\.nav-item\[data-view="auto"\]\.auto-running \.nav-outline\s*\{([^}]*)\}/s);
-  assert(autoOutline && /background-size:320% 100%/.test(autoOutline[1]) &&
-    /autoOutlineFlow 3\.4s cubic-bezier\(\.45,0,\.55,1\) infinite alternate/.test(autoOutline[1]) &&
-    /drop-shadow\(0 0 4px/.test(autoOutline[1]) && /drop-shadow\(0 0 8px/.test(autoOutline[1]) &&
+  assert(autoOutline && /background-size:390% 100%/.test(autoOutline[1]) &&
+    /autoOutlineFlow 3\.8s cubic-bezier\(\.45,0,\.55,1\) infinite alternate/.test(autoOutline[1]) &&
+    /drop-shadow\(0 0 8px/.test(autoOutline[1]) && /drop-shadow\(0 0 17px/.test(autoOutline[1]) &&
     (autoOutline[1].match(/rgba\(/g) || []).length >= 12,
-    'running AUTO keeps a bright feathered border gradient with a layered glow');
+    'running AUTO keeps a restrained feathered border gradient with a wider layered glow');
   const memoryOutline = css.match(/\.nav-item\.save-glint-strong \.nav-outline\s*\{([^}]*)\}/s);
   assert(memoryOutline && /#b477ff/.test(memoryOutline[1]) && /#ef79cf/.test(memoryOutline[1]) &&
     /memorySaveOutline 1\.35s/.test(memoryOutline[1]),
@@ -1253,8 +1336,9 @@ function testThinkingGradientContract() {
   testInteractiveFenceReachesFrontendPanel();
   testRussianImageAndHudFollowupContract();
   testReadinessFollowHistoryAndLiveCodeContracts();
+  await testAutoPollingReconciliationAndBulkControls();
   testThinkingGradientContract();
-  console.log('package28_frontend_runtime: 12 regression groups passed');
+  console.log('package28_frontend_runtime: 13 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

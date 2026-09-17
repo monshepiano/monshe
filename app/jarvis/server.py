@@ -16,7 +16,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import __version__, agent, auto, billing, db, ideas, llm, orchestrator, sandbox, tools
+from . import (__version__, agent, auto, billing, db, ideas, llm, orchestrator,
+               sandbox, telemetry, tools)
 from .config import CONFIG, WORKSPACE, HOME
 from .tools import media
 
@@ -41,6 +42,21 @@ def _canonical_response_content(chunks: List[str], done_content: Any) -> str:
     if streamed.strip():
         return streamed
     return str(done_content or "")
+
+
+def _finish_local_post(chat_id: str, text: str, *, title: bool) -> None:
+    """Do cheap local bookkeeping only after the foreground SSE is closed.
+
+    The former daemon could start a 25-second semantic LLM request just before
+    the user's next message. Memory is now written by the verbatim local parser
+    before generation; this boundary deliberately contains no network work.
+    """
+    if not title:
+        return
+    try:
+        db.rename_chat(chat_id, orchestrator.make_chat_title(text))
+    except Exception:
+        pass
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -150,7 +166,8 @@ class Handler(BaseHTTPRequestHandler):
             chat_id = (params.get("chat_id") or [""])[0]
             return self._json({"ok": True, "messages": db.get_messages(chat_id)})
         if path == "/api/tasks":
-            return self._json({"ok": True, "tasks": db.list_tasks()})
+            return self._json({"ok": True, "tasks": db.list_tasks(),
+                               "paused": auto.is_paused()})
         if path == "/api/approvals":
             return self._json({"ok": True, "approvals": db.list_approvals()})
         if path == "/api/notifications":
@@ -215,14 +232,22 @@ class Handler(BaseHTTPRequestHandler):
                 chat_id=body.get("chat_id") or "")
             return self._json({"ok": True, "task": task})
         if path == "/api/tasks/run":
-            threading.Thread(target=auto.execute_task, args=(body.get("task_id", ""),), daemon=True).start()
-            return self._json({"ok": True})
+            started = auto.launch_task(body.get("task_id", ""), manual=True)
+            return self._json({"ok": started,
+                               "error": "AUTO на паузе или уже занят" if not started else ""})
         if path == "/api/tasks/delete":
-            db.delete_task(body.get("task_id", ""))
+            task_id = body.get("task_id", "")
+            auto.cancel_task(task_id)
+            db.delete_task(task_id)
             return self._json({"ok": True})
         if path == "/api/tasks/cancel":
-            db.update_task(body.get("task_id", ""), status="cancelled")
-            return self._json({"ok": True})
+            return self._json({"ok": auto.cancel_task(body.get("task_id", ""))})
+        if path == "/api/tasks/clear-completed":
+            return self._json({"ok": True, "deleted": db.delete_completed_tasks()})
+        if path == "/api/tasks/pause-all":
+            return self._json({"ok": True, "paused": True, "changed": auto.pause_all()})
+        if path == "/api/tasks/resume-all":
+            return self._json({"ok": True, "paused": False, "changed": auto.resume_all()})
         if path == "/api/replies":
             # Варианты продолжения запрашиваются ОТДЕЛЬНО, уже после того как
             # ответ закрыт: иначе они держали бы поток открытым и кнопка «стоп»
@@ -377,7 +402,7 @@ class Handler(BaseHTTPRequestHandler):
     # --------------------------------------------------------------- состояние
     def _state(self) -> Dict[str, Any]:
         tasks = db.list_tasks(limit=50)
-        active = [t for t in tasks if t.get("status") in ("running", "queued", "scheduled")]
+        active = [t for t in tasks if t.get("status") in ("running", "queued", "scheduled", "paused")]
         # UI glow означает именно выполняемую сейчас работу. Очередь и расписание
         # остаются в badge, но не имеют права выдавать ожидание за активность.
         running = [t for t in tasks if t.get("status") == "running"]
@@ -388,6 +413,7 @@ class Handler(BaseHTTPRequestHandler):
             "tasks": tasks,
             "active_tasks": len(active),
             "running_tasks": len(running),
+            "auto_paused": auto.is_paused(),
             "approvals": db.list_approvals(),
             "notifications": notes,
             "unread": len([n for n in notes if not n.get("read")]),
@@ -406,6 +432,9 @@ class Handler(BaseHTTPRequestHandler):
         agent_mode = bool(body.get("agent_mode"))
         computer_use = bool(body.get("computer_use"))
         attachments: List[Dict[str, Any]] = body.get("attachments") or []
+        foreground_span = telemetry.Span(
+            "foreground", agent_mode=agent_mode, computer_use=computer_use,
+            attachment_count=len(attachments))
 
         if not chat_id:
             # Камера ведёт СВОЙ разговор: он нужен ради отдельного контекста,
@@ -423,6 +452,7 @@ class Handler(BaseHTTPRequestHandler):
             self._sse({"type": "error", "error": "Не заданы API-ключи. Открой Настройки и вставь ключ Cloud.ru."})
             self._sse({"type": "end"})
             self._sse_close()
+            foreground_span.finish("error", error_type="no_provider")
             return
 
         # пользовательское сообщение
@@ -456,33 +486,10 @@ class Handler(BaseHTTPRequestHandler):
             self._sse({"type": "memory_saved", "count": len(saved_facts),
                        "keys": [item.get("key", "") for item in saved_facts]})
 
-        # Более широкие факты (имя, работа, устройство, долгий проект) требуют
-        # семантики. Запускаем дешёвый writer параллельно основному ответу: он не
-        # задерживает первый токен, но обычно уже готов к следующей задаче.
-        # Writer принимает value только как дословный substring этого prompt.
-        if agent.has_personal_memory_signal(text):
-            def _memory_scan(txt: str = text) -> None:
-                try:
-                    agent.remember_semantic_facts(txt)
-                except Exception:
-                    pass
-
-            threading.Thread(target=_memory_scan, name="jarvis-memory", daemon=True).start()
-
-        # Название диалога придумывает модель — но это отдельный запрос к сети.
-        # Раньше он выполнялся ДО первого токена ответа, и пользователь ждал
-        # молча несколько секунд. Теперь заголовок уезжает в фон.
+        # Окончательный title локален и применяется после закрытия SSE. Память
+        # уже записана verbatim parser выше — скрытого auxiliary LLM больше нет.
         history_all = db.get_messages(chat_id)
-        if len([m for m in history_all if m["role"] == "user"]) == 1:
-            db.rename_chat(chat_id, text[:40].strip() or "Новый диалог")
-
-            def _title(cid: str = chat_id, txt: str = text) -> None:
-                try:
-                    db.rename_chat(cid, orchestrator.make_chat_title(txt))
-                except Exception:
-                    pass
-
-            threading.Thread(target=_title, name="jarvis-title", daemon=True).start()
+        post_title = len([m for m in history_all if m["role"] == "user"]) == 1
 
         # Фон? Решение принимает ОДНА сторона — сервер. Раньше сюда же лезла
         # модель через schedule_task, и на одну просьбу появлялись две задачи
@@ -506,9 +513,12 @@ class Handler(BaseHTTPRequestHandler):
             db.add_message(chat_id, "assistant", note,
                            {"task_id": task["id"], "bg_card": True})
             # content пустой: текст уже нарисован карточкой «В фоне»
+            foreground_span.first_token()
             self._sse({"type": "done", "content": "", "files": [], "tools": ["schedule_task"]})
             self._sse({"type": "end"})
             self._sse_close()
+            foreground_span.finish("ok", background=True)
+            _finish_local_post(chat_id, text, title=post_title)
             return
 
         # сборка контекста
@@ -542,6 +552,17 @@ class Handler(BaseHTTPRequestHandler):
         # следующий текст «давай уточним» снова терял controls. Vision-добавка
         # объединяется здесь же: один источник протокола и всё тот же LLM-call.
         messages.append({"role": "system", "content": agent.turn_ui_contract(has_image)})
+        if agent_mode and body.get("silent"):
+            # Ответ панели — продолжение того же AGENT preflight, а не повод
+            # открыть новую анкету. Детерминированная turn-граница сильнее
+            # вероятностного «максимум один вопрос»: всё некритичное после неё
+            # агент решает сам и переходит к инструментам.
+            messages.append({"role": "system", "content":
+                "AGENT PREFLIGHT ЗАВЕРШЁН: текущая реплика содержит единый ответ "
+                "пользователя на предыдущую interactive-панель. Запрещено задавать "
+                "ещё один уточняющий вопрос или показывать новый ui-блок. Считай "
+                "критические параметры собранными, некритичные выбери разумно и "
+                "сразу продолжай автономное выполнение инструментами."})
         messages.append(user_message)
 
         runner = agent.Agent(chat_id=chat_id, agent_mode=agent_mode, computer_use=computer_use)
@@ -555,18 +576,23 @@ class Handler(BaseHTTPRequestHandler):
         used_tools: List[str] = []
         selected_tier = ""
         alive = True
+        run_error = ""
         partial: List[str] = []
         thinking: List[str] = []
         trace: List[Dict[str, Any]] = []
         try:
             for event in runner.run(
                     messages, user_text=text, has_image=has_image,
-                    require_ui_choice=require_ui_choice):
+                    require_ui_choice=require_ui_choice,
+                    preflight_resolved=bool(agent_mode and body.get("silent"))):
                 etype = event.get("type")
                 if etype == "route":
                     selected_tier = str(event.get("tier") or "")
                 elif etype == "delta":
+                    foreground_span.first_token()
                     partial.append(event.get("text", ""))
+                elif etype == "error":
+                    run_error = str(event.get("error") or "agent_error")
                 elif etype == "reset":
                     partial = []
                 elif etype == "thinking":
@@ -601,6 +627,7 @@ class Handler(BaseHTTPRequestHandler):
                 # прекращали работу и ответ пропадал. Теперь генерация доводится
                 # до конца молча, а результат сохраняется в переписку.
         except Exception as exc:
+            run_error = type(exc).__name__
             if alive:
                 self._sse({"type": "error", "error": str(exc)})
         finally:
@@ -616,6 +643,11 @@ class Handler(BaseHTTPRequestHandler):
             if alive:
                 self._sse({"type": "end"})
             self._sse_close()
+            foreground_span.finish(
+                "error" if run_error else "ok", model=runner.model_used,
+                tier=selected_tier, tool_count=len(used_tools),
+                error_type=run_error or None)
+            _finish_local_post(chat_id, text, title=post_title)
 
 
 def _warm_models() -> None:

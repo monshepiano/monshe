@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     events TEXT,
     schedule TEXT,
     next_run REAL,
+    resume_status TEXT DEFAULT '',
     chat_id TEXT,
     created_at REAL,
     updated_at REAL
@@ -114,6 +115,9 @@ with _LOCK:
     cols = {r[1] for r in _CONN.execute("PRAGMA table_info(chats)")}
     if "kind" not in cols:
         _CONN.execute("ALTER TABLE chats ADD COLUMN kind TEXT DEFAULT ''")
+    task_cols = {r[1] for r in _CONN.execute("PRAGMA table_info(tasks)")}
+    if "resume_status" not in task_cols:
+        _CONN.execute("ALTER TABLE tasks ADD COLUMN resume_status TEXT DEFAULT ''")
     _CONN.commit()
 
 
@@ -371,6 +375,16 @@ def delete_task(task_id: str) -> None:
     execute("DELETE FROM tasks WHERE id=?", (task_id,))
 
 
+def delete_completed_tasks() -> int:
+    """Удалить именно успешно выполненные карточки одним transaction."""
+    with _LOCK:
+        row = _CONN.execute("SELECT COUNT(*) FROM tasks WHERE status='done'").fetchone()
+        count = int(row[0] if row else 0)
+        _CONN.execute("DELETE FROM tasks WHERE status='done'")
+        _CONN.commit()
+    return count
+
+
 # --------------------------------------------------------------- memory
 # Модель и локальный extractor могут назвать один факт по-разному: «Город»,
 # «city», «location». Сравнивать сырые строки нельзя — это и порождало две
@@ -383,6 +397,7 @@ _MEMORY_KEY_ALIASES = {
     "location": ("person", "Город", "person:city"),
     "город": ("person", "Город", "person:city"),
     "город проживания": ("person", "Город", "person:city"),
+    "место проживания": ("person", "Город", "person:city"),
     "местоположение": ("person", "Город", "person:city"),
     "favorite food": ("preference", "Питание: предпочтения", "preference:food"),
     "favourite food": ("preference", "Питание: предпочтения", "preference:food"),
@@ -396,11 +411,17 @@ _MEMORY_KEY_ALIASES = {
     "обращение": ("person", "Имя / обращение", "person:name"),
     "как обращаться": ("person", "Имя / обращение", "person:name"),
     "job": ("person", "Работа", "person:occupation"),
+    "work": ("person", "Работа", "person:occupation"),
     "occupation": ("person", "Работа", "person:occupation"),
     "profession": ("person", "Работа", "person:occupation"),
     "работа": ("person", "Работа", "person:occupation"),
     "профессия": ("person", "Работа", "person:occupation"),
     "должность": ("person", "Работа", "person:occupation"),
+    "education": ("person", "Обучение", "person:education"),
+    "study": ("person", "Обучение", "person:education"),
+    "обучение": ("person", "Обучение", "person:education"),
+    "учеба": ("person", "Обучение", "person:education"),
+    "учёба": ("person", "Обучение", "person:education"),
     "device": ("fact", "Устройство", "fact:device"),
     "computer": ("fact", "Устройство", "fact:device"),
     "laptop": ("fact", "Устройство", "fact:device"),
@@ -424,6 +445,14 @@ _MEMORY_KEY_ALIASES = {
 def _memory_token(value: str) -> str:
     text = str(value or "").casefold().replace("ё", "е")
     return " ".join("".join(ch if ch.isalnum() else " " for ch in text).split())
+
+
+def _preference_relation(key: str) -> str:
+    """Общая полярность предпочтения, независимая от названного объекта."""
+    token = _memory_token(key)
+    negative = ("огранич", "аллерг", "исключ", "не люблю", "не перенош",
+                "избега", "allerg", "avoid", "dislike", "restriction")
+    return "avoid" if any(mark in token for mark in negative) else "like"
 
 
 def canonical_memory(kind: str, key: str, value: str) -> tuple[str, str, str, str]:
@@ -472,8 +501,25 @@ def remember(kind: str, key: str, value: str, weight: float = 1.0) -> Dict[str, 
     ts = now()
     with _LOCK:
         rows = [dict(row) for row in _CONN.execute("SELECT * FROM memory").fetchall()]
-        matches = [row for row in rows if canonical_memory(
-            row.get("kind", ""), row.get("key", ""), row.get("value", ""))[3] == identity]
+        matches = []
+        value_token = _memory_token(value)
+        for row in rows:
+            row_kind, _row_key, row_value, row_identity = canonical_memory(
+                row.get("kind", ""), row.get("key", ""), row.get("value", ""))
+            same_identity = row_identity == identity
+            # Локальный и semantic extractors могут дать одному дословному
+            # предпочтению разные заголовки. Для kind=preference буквальное
+            # равенство value — безопасная общая identity: «люблю X» и модельный
+            # «Любимый …: X» не создают две карточки. Полярность локальный writer
+            # хранит в разных values/keys; неизвестные person facts по одному
+            # значению здесь намеренно не склеиваются.
+            same_preference = bool(
+                kind == "preference" and row_kind == "preference" and
+                _preference_relation(key) == _preference_relation(_row_key) and
+                value_token and _memory_token(row_value) == value_token
+            )
+            if same_identity or same_preference:
+                matches.append(row)
         if matches:
             # Сохраняем один стабильный id, а старые alias-карточки удаляем.
             existing = max(matches, key=lambda item: (float(item.get("updated_at") or 0),

@@ -23,6 +23,9 @@ const S = {
   streaming: false,
   abort: null,
   streamRun: 0,
+  chatOpenRun: 0,       // поздний /messages не может перерисовать уже другой чат
+  taskLoadRun: 0,
+  autoPaused: false,
   followUi: null,       // текущий run и явное намерение следовать за его ростом
   attachments: [],
   config: {},
@@ -530,6 +533,7 @@ async function refreshState() {
   S.config = st.config || {};
   applySilentTools(st.silent_tools);
   S.tasks = st.tasks || [];
+  S.autoPaused = !!st.auto_paused;
   S.approvals = st.approvals || [];
   S.notifications = st.notifications || [];
   S.unread = st.unread || 0;
@@ -709,6 +713,7 @@ function startRenameChat(item, c) {
 }
 
 function newChat() {
+  S.chatOpenRun += 1; // инвалидируем любой ещё летящий openChat()
   if (S.camNode || S.camStream) stopCam(); // чистим и активный, и ошибочный/pending-сеанс
   S.sanctionNodes = {};
   S.chatId = null;
@@ -722,6 +727,7 @@ function newChat() {
 $('#newChatBtn').addEventListener('click', newChat);
 
 async function openChat(id) {
+  const ticket = ++S.chatOpenRun;
   if (S.camNode || S.camStream) stopCam();
   // Уходим из диалога во время ответа: генерацию НЕ обрываем — сервер доведёт
   // её до конца и сохранит в переписку. Просто отпускаем интерфейс.
@@ -734,12 +740,17 @@ async function openChat(id) {
   S.fdir = '';
   showView('chat');
   const r = await api('/api/messages?chat_id=' + encodeURIComponent(id));
-  const stream = $('#stream'); stream.innerHTML = '';
+  // Быстрые переключения чатов могут вернуть HTTP-ответы в обратном порядке.
+  if (ticket !== S.chatOpenRun || id !== S.chatId) return;
+  const stream = $('#stream');
+  // Скрытая render-транзакция: браузер ни на одном paint не видит историю в
+  // позиции 0. В том же task строим DOM, отключаем smooth, ставим низ и только
+  // затем открываем ленту. Картинки корректируют высоту лишь после их load.
+  stream.classList.add('history-rendering');
+  stream.innerHTML = '';
   renderMessages(stream, r.messages || []);
-  // Сразу показываем ПОСЛЕДНИЙ момент разговора — без заметной серии rAF/timer
-  // прокруток. Единственная последующая коррекция привязана к реальной загрузке
-  // ещё не готовой картинки, которая действительно меняет высоту ленты.
   pinToBottom(stream);
+  stream.classList.remove('history-rendering');
   loadChats();
   // диалог, который дописывался в фоне: тихо перечитываем, пока не появится ответ
   if (S.detached === id) watchDetached(id);
@@ -997,7 +1008,14 @@ function killWelcome() { const w = $('.welcome'); if (w) w.remove(); }
    один мгновенный pin только в момент, когда получает реальную высоту. */
 function pinToBottom(box) {
   if (!box) return;
-  const put = () => { box.scrollTop = box.scrollHeight; };
+  // CSS smooth-scroll превращал даже прямое присваивание scrollTop в видимый
+  // проезд через всю историю. Каждая pin-транзакция временно и синхронно
+  // выключает интерполяцию; класс снимается только после самой записи.
+  const put = () => {
+    box.classList.add('pin-instant');
+    box.scrollTop = box.scrollHeight;
+    box.classList.remove('pin-instant');
+  };
   put();
   $$('img', box).forEach((img) => {
     if (img.complete) return;
@@ -1232,7 +1250,9 @@ function updateResponseMeta(ui) {
     if (head) head.appendChild(ui.routeEl);
   }
   const parts = [];
-  if (scenario) parts.push(scenario.charAt(0).toUpperCase() + scenario.slice(1));
+  // Это тихий технический паспорт ответа, не заголовок: сценарий намеренно
+  // остаётся со строчной буквы, как и просил пользователь.
+  if (scenario) parts.push(scenario);
   if (model) parts.push(model);
   ui.routeEl.textContent = parts.join(' · ');
   ui.routeEl.title = ui.routeReason || parts.join(' · ');
@@ -2063,7 +2083,35 @@ function discardPlan(ui) {
 }
 
 function markBorn(card) {
-  if (card) card.dataset.born = String(performance.now());
+  if (!card) return;
+  card.dataset.born = String(performance.now());
+  // Быстрый tool_start/tool_result может целиком пройти между двумя paint.
+  // Два rAF отмечают только реально представленное браузеру состояние.
+  if (card.classList.contains('tool-card')) {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (card.isConnected && !card.dataset.livePainted) {
+        card.dataset.livePainted = String(performance.now());
+      }
+    }));
+  }
+}
+
+function finishToolLive(card) {
+  if (!card) return;
+  const finish = () => {
+    if (!card.isConnected) return;
+    const painted = Number(card.dataset.livePainted || 0);
+    if (!painted) {
+      requestAnimationFrame(finish);
+      return;
+    }
+    // Одного кадра технически достаточно, но не человеческому глазу.
+    // Держим мягкий проход 180 ms после первого доказанного paint.
+    const left = 180 - (performance.now() - painted);
+    if (left > 0) setTimeout(finish, left);
+    else card.classList.remove('live');
+  };
+  requestAnimationFrame(finish);
 }
 
 function collapseSoon(card, opts) {
@@ -3223,12 +3271,11 @@ function showError(ui, msg) {
 /* ================== плавная печать ответа ==================
    Сервер шлёт текст кусками, а показываем мы его по буквам:
    отдельный таймер догоняет буфер со скоростью, зависящей от отставания. */
-/* Скорость печати зависит от того, ЧТО печатается, а не от отставания.
-   Разговорный текст человек читает по мере появления — его гоним медленно,
-   с отчётливыми паузами на знаках препинания. Код, таблицы и длинные
-   технические простыни читать «на лету» никто не будет: их выдаём быстро,
-   чтобы не заставлять ждать. Раньше единственным критерием было отставание,
-   поэтому длинный ответ всегда «улетал» — вместе с ним пропадал и курсор. */
+/* Печать учитывает и вид содержимого, и реальную длину очереди. Фиксированные
+   95 зн/с превращали 1000 знаков уже готового ответа в искусственные 10,5 с.
+   Но и ступенчатый backlog-режим был плох: текст внезапно «выстреливал».
+   Поэтому backlog даёт только плавную ограниченную прибавку, а текущий CPS
+   догоняет цель экспоненциально — без смены темпа за один кадр. */
 const TYPE_MS = 20;              // не чаще 50 DOM-render/с: кадры остаются анимациям
 /* ПОЧЕМУ ЗДЕСЬ СКОРОСТИ В ЗНАКАХ/СЕК, А НЕ «ЗНАКОВ ЗА ТАКТ».
    Раньше шаг был целым числом за такт: 1 в разговоре, 2 после 900 знаков,
@@ -3239,12 +3286,18 @@ const TYPE_MS = 20;              // не чаще 50 DOM-render/с: кадры �
    то невероятно быстро» — не два неверных числа, а сама лестница.
    Теперь скорость задаётся в знаках в секунду, накапливается дробно и
    сглаживается, поэтому переходы не видны, а темп ровный. */
-const CPS_TALK = 95;             // весь разговор, включая markdown-заголовки
-const CPS_CODE = 360;            // код и таблицы: быстро, но без пачечных выстрелов
-/* Скорость больше НЕ зависит от сетевого backlog. Один и тот же ответ не
-   должен печататься по-разному только потому, что провайдер прислал крупный
-   или мелкий SSE-chunk. Меняется лишь класс содержимого, переход сглажен. */
-const CPS_SMOOTH_MS = 220;
+const CPS_TALK = 125;            // естественный разговор при короткой очереди
+const CPS_TALK_MAX = 245;        // длинный готовый хвост не держит интерфейс
+const CPS_CODE = 420;            // код и таблицы: быстро, но без пачечных выстрелов
+const CPS_SMOOTH_MS = 340;        // заметно мягче старых ступеней скорости
+
+function talkTargetCps(left) {
+  // До 120 символов темп базовый. Затем непрерывная насыщаемая кривая: даже
+  // огромная очередь не пересекает CPS_TALK_MAX и не создаёт «залп» текста.
+  const queued = Math.max(0, Number(left || 0) - 120);
+  const blend = 1 - Math.exp(-queued / 520);
+  return CPS_TALK + (CPS_TALK_MAX - CPS_TALK) * blend;
+}
 
 function deferMountedReplyUi(ui) {
   if (!ui || !ui.replyLive || !ui.replyLive.isConnected) return;
@@ -3540,10 +3593,10 @@ function typerStart(ui) {
     if (now < (ui.holdUntil || 0)) return;
 
     const code = inCodeBlock(ui.shown) || fastLine(ui.buffer, ui.shown.length);
-    // Markdown-заголовок здесь намеренно не проверяется: у него тот же CPS,
-    // что у любого разговорного текста. Ни размер хвоста, ни размер сетевых
-    // chunk-ов скорость больше не меняют.
-    let want = code ? CPS_CODE : CPS_TALK;
+    // Markdown-заголовок здесь намеренно не проверяется: у него разговорный
+    // темп. Размер очереди меняет только мягкую целевую скорость, не размер
+    // очередного DOM-шага и не скорость скачком.
+    let want = code ? CPS_CODE : talkTargetCps(left);
     if (!ui.cps) ui.cps = want;
     const blend = 1 - Math.exp(-elapsed / CPS_SMOOTH_MS);
     ui.cps += (want - ui.cps) * blend;
@@ -4095,7 +4148,7 @@ function handleEvent(ev, ui) {
         else txt = JSON.stringify(r, null, 1).slice(0, 4000);
         pre.textContent = txt || '(пусто)';
         card.inner.appendChild(pre);
-        card.classList.remove('live');
+        finishToolLive(card);
         // отработал — сворачиваем в миниатюру, но не раньше, чем карточку
         // успели увидеть (см. CARD_MIN_MS)
         collapseSoon(card, {
@@ -5076,52 +5129,133 @@ function renderNotes() {
 
 /* ============================ AUTO ============================ */
 async function loadTasks() {
+  const ticket = ++S.taskLoadRun;
   const r = await api('/api/tasks');
+  if (ticket !== S.taskLoadRun) return;
   S.tasks = r.tasks || [];
+  S.autoPaused = !!r.paused;
   renderTasks();
 }
+
+function taskFingerprint(t) {
+  // updated_at намеренно входит в fingerprint: backend меняет его только при
+  // реальном status/event/result transition. Сам polling DOM не трогает.
+  return JSON.stringify([
+    t.title, t.prompt, t.status, t.progress, t.result, t.schedule, t.next_run,
+    t.updated_at, t.resume_status, t.events || [],
+  ]);
+}
+
+function paintTaskCard(card, t) {
+  const st = t.status || 'queued';
+  const wasOpen = !!card.querySelector('.tc-events.open');
+  card.className = 'task-card ' + st;
+  card.dataset.taskId = String(t.id);
+  const stateRu = {
+    queued: 'в очереди', running: 'выполняется', done: 'готово', error: 'ошибка',
+    scheduled: 'по расписанию', paused: 'на паузе', cancelled: 'отменена',
+  }[st] || st;
+  card.innerHTML =
+    '<div class="tc-head"><div class="tc-title">' + esc(t.title) + '</div>' +
+    '<div class="tc-state ' + st + '">' + stateRu + '</div></div>' +
+    '<div class="tc-prompt">' + esc(t.prompt) + '</div>' +
+    '<div class="tc-bar"><i style="width:' + Math.round((t.progress || 0) * 100) + '%"></i></div>' +
+    (t.schedule ? '<div class="muted" style="font-size:11px;margin-bottom:6px">⟳ ' + esc(t.schedule) +
+      (t.next_run ? ' · следующий запуск ' + fmtTime(t.next_run) : '') + '</div>' : '') +
+    '<div class="tc-events' + (wasOpen ? ' open' : '') + '"></div>' +
+    (t.result ? '<div class="tc-result md">' + MD.render(String(t.result).slice(0, 2500)) + '</div>' : '') +
+    '<div class="tc-actions"></div>';
+
+  const evBox = card.querySelector('.tc-events');
+  (t.events || []).slice(-40).forEach((e) => {
+    evBox.appendChild(el('div', 'tc-ev', esc(typeof e === 'string' ? e : (e.text || JSON.stringify(e)))));
+  });
+  const acts = card.querySelector('.tc-actions');
+  const mk = (label, cls, fn, disabled) => {
+    const b = el('button', 'btn sm ' + (cls || ''), label);
+    b.disabled = !!disabled;
+    b.addEventListener('click', fn);
+    acts.appendChild(b);
+  };
+  if ((t.events || []).length) mk('Лог', 'ghost', () => evBox.classList.toggle('open'));
+  if (st !== 'running') {
+    mk('Запустить', 'primary', async () => {
+      const r = await api('/api/tasks/run', { task_id: t.id });
+      if (!r.ok) toast(r.error || 'Задача уже занята', 'warn');
+      else toast('Задача запущена', 'info');
+      loadTasks();
+    }, S.autoPaused);
+  } else {
+    mk('Отменить', 'ghost', async () => {
+      await api('/api/tasks/cancel', { task_id: t.id }); loadTasks();
+    });
+  }
+  mk('Удалить', 'danger', async () => {
+    await api('/api/tasks/delete', { task_id: t.id }); loadTasks();
+  });
+  card.dataset.fingerprint = taskFingerprint(t);
+}
+
 function renderTasks() {
   const grid = $('#taskGrid');
   const autoNav = $('.nav-item[data-view="auto"]');
   if (autoNav) autoNav.classList.toggle('auto-running',
     S.tasks.some((task) => task.status === 'running'));
+  const pause = $('#autoPauseBtn');
+  if (pause) {
+    pause.classList.toggle('play', S.autoPaused);
+    pause.innerHTML = S.autoPaused ? '▶&nbsp; Продолжить' : 'Ⅱ&nbsp; Пауза';
+    pause.title = S.autoPaused ? 'Продолжить все актуальные задачи' : 'Поставить все актуальные задачи на паузу';
+  }
+  const clear = $('#clearDoneBtn');
+  if (clear) clear.disabled = !S.tasks.some((task) => task.status === 'done');
+
   if (!S.tasks.length) {
-    grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><span class="e-ico">◎</span>' +
-      'Фоновых задач нет.<br>Напиши в чат «каждый день в 9:00 присылай сводку новостей» — ' +
-      'я сам заведу задачу и буду присылать результат.</div>';
+    if (!grid.querySelector(':scope > .task-empty')) {
+      grid.replaceChildren(el('div', 'empty task-empty',
+        '<span class="e-ico">◎</span>Фоновых задач нет.<br>' +
+        'Напиши в чат «каждый день в 9:00 присылай сводку новостей» — ' +
+        'я сам заведу задачу и буду присылать результат.'));
+      grid.firstElementChild.style.gridColumn = '1/-1';
+    }
     return;
   }
-  grid.innerHTML = '';
-  S.tasks.forEach((t, i) => {
-    const st = t.status || 'queued';
-    const card = el('div', 'task-card ' + st);
-    card.style.animationDelay = (i * 0.03) + 's';
-    const stateRu = { queued: 'в очереди', running: 'выполняется', done: 'готово', error: 'ошибка', scheduled: 'по расписанию', cancelled: 'отменена' }[st] || st;
-    card.innerHTML =
-      '<div class="tc-head"><div class="tc-title">' + esc(t.title) + '</div>' +
-      '<div class="tc-state ' + st + '">' + stateRu + '</div></div>' +
-      '<div class="tc-prompt">' + esc(t.prompt) + '</div>' +
-      '<div class="tc-bar"><i style="width:' + Math.round((t.progress || 0) * 100) + '%"></i></div>' +
-      (t.schedule ? '<div class="muted" style="font-size:11px;margin-bottom:6px">⟳ ' + esc(t.schedule) +
-        (t.next_run ? ' · следующий запуск ' + fmtTime(t.next_run) : '') + '</div>' : '') +
-      '<div class="tc-events"></div>' +
-      (t.result ? '<div class="tc-result md">' + MD.render(String(t.result).slice(0, 2500)) + '</div>' : '') +
-      '<div class="tc-actions"></div>';
 
-    const evBox = card.querySelector('.tc-events');
-    (t.events || []).slice(-40).forEach((e) => {
-      evBox.appendChild(el('div', 'tc-ev', esc(typeof e === 'string' ? e : (e.text || JSON.stringify(e)))));
-    });
-
-    const acts = card.querySelector('.tc-actions');
-    const mk = (label, cls, fn) => { const b = el('button', 'btn sm ' + (cls || ''), label); b.addEventListener('click', fn); acts.appendChild(b); };
-    if ((t.events || []).length) mk('Лог', 'ghost', () => evBox.classList.toggle('open'));
-    if (st !== 'running') mk('Запустить', 'primary', async () => { await api('/api/tasks/run', { task_id: t.id }); toast('Задача запущена', 'info'); setTimeout(loadTasks, 700); });
-    else mk('Отменить', 'ghost', async () => { await api('/api/tasks/cancel', { task_id: t.id }); loadTasks(); });
-    mk('Удалить', 'danger', async () => { await api('/api/tasks/delete', { task_id: t.id }); loadTasks(); });
-    grid.appendChild(card);
+  const byId = new Map($$('.task-card', grid).map((card) => [card.dataset.taskId, card]));
+  $$('.task-empty', grid).forEach((node) => node.remove());
+  let cursor = grid.firstElementChild;
+  S.tasks.forEach((t) => {
+    const key = String(t.id);
+    let card = byId.get(key);
+    if (!card) {
+      card = el('div', 'task-card');
+      paintTaskCard(card, t);
+    } else {
+      byId.delete(key);
+      if (card.dataset.fingerprint !== taskFingerprint(t)) paintTaskCard(card, t);
+    }
+    // Если порядок не изменился, это ноль DOM mutations. insertBefore нужен
+    // только новому элементу или реальной смене updated_at-порядка.
+    if (card !== cursor) grid.insertBefore(card, cursor);
+    cursor = card.nextElementSibling;
   });
+  byId.forEach((card) => card.remove());
 }
+
+$('#clearDoneBtn').addEventListener('click', async () => {
+  const r = await api('/api/tasks/clear-completed', {});
+  toast('Выполненные задачи очищены: ' + Number(r.deleted || 0), 'success');
+  loadTasks();
+});
+
+$('#autoPauseBtn').addEventListener('click', async () => {
+  const path = S.autoPaused ? '/api/tasks/resume-all' : '/api/tasks/pause-all';
+  const r = await api(path, {});
+  if (!r.ok) { toast(r.error || 'Не удалось изменить AUTO', 'warn'); return; }
+  S.autoPaused = !!r.paused;
+  toast(S.autoPaused ? 'AUTO поставлен на паузу' : 'AUTO продолжает задачи', 'info');
+  loadTasks();
+});
 
 $('#addTaskBtn').addEventListener('click', () => {
   modal(

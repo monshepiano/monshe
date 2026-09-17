@@ -109,6 +109,7 @@ DEFAULTS: Dict[str, Any] = {
     },
     "auto": {
         "enabled": True,
+        "paused": False,
         "tick_seconds": 5,
         "proactive": True,
         "quiet_hours": [1, 8],

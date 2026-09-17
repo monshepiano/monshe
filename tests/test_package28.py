@@ -17,8 +17,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
 
-from jarvis import agent, auto, config, db, llm, orchestrator, server  # noqa: E402
-from jarvis.tools import media  # noqa: E402
+from jarvis import agent, auto, config, db, ideas, llm, orchestrator, server, telemetry  # noqa: E402
+from jarvis.tools import media, web  # noqa: E402
 
 _BUILD_SPEC = importlib.util.spec_from_file_location("jarvis_installer_build", ROOT / "install" / "build.py")
 assert _BUILD_SPEC and _BUILD_SPEC.loader
@@ -315,7 +315,7 @@ class RoutingAndPlanCostTests(unittest.TestCase):
         dispatch.assert_not_called()
         self.assertFalse(any(event.get("type") == "plan" for event in events))
 
-    def test_ask_user_defers_plan_until_answer_starts_real_execution(self) -> None:
+    def test_agent_uses_one_preflight_panel_and_never_receives_ask_user(self) -> None:
         route = {
             "tier": "base", "reason": "test", "score": 0.5,
             "verbose": True, "offer_tools": True,
@@ -324,44 +324,110 @@ class RoutingAndPlanCostTests(unittest.TestCase):
             "type": "function",
             "function": {"name": name, "parameters": {"type": "object"}},
         } for name in ("ask_user", "write_file")]
+        stream = [
+            {"type": "delta", "text": (
+                "Уточню всё необходимое сразу.\n\n```ui\n"
+                "tiles Формат: PDF | Word\n"
+                "slider Объём 1..10 = 4\n```")},
+            {"type": "done", "tool_calls": []},
+        ]
+        runner = agent.Agent(agent_mode=True)
+        captured = {}
+
+        def chat_stream(*_args, **kwargs):
+            captured["tools"] = kwargs.get("tools", [])
+            return stream
+
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=chat_stream), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(runner, "make_plan") as planner:
+            events = list(runner.run(
+                [{"role": "user", "content": "Сделай документ"}],
+                user_text="Сделай документ",
+            ))
+        names = [(item.get("function") or {}).get("name") for item in captured["tools"]]
+        self.assertEqual(names, ["write_file"])
+        panels = [event for event in events if event.get("type") == "reply_ui"]
+        self.assertEqual(len(panels), 1)
+        self.assertIn("tiles Формат", panels[0]["spec"])
+        self.assertIn("slider Объём", panels[0]["spec"])
+        self.assertFalse(any(event.get("type") == "plan" for event in events))
+        planner.assert_not_called()
+
+    def test_separate_model_fences_are_merged_into_one_preflight_panel(self) -> None:
+        route = {
+            "tier": "base", "reason": "test", "score": 0.5,
+            "verbose": True, "offer_tools": True,
+        }
+        stream = [
+            {"type": "delta", "text": (
+                "Уточню параметры.\n\n```ui\ntiles Формат: PDF | Markdown\n```\n"
+                "И тон.\n\n```ui\ntiles Тон: Деловой | Дружелюбный\n```"
+            )},
+            {"type": "done", "tool_calls": []},
+        ]
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", return_value=stream), \
+             mock.patch.object(agent.tools, "schemas", return_value=[]):
+            events = list(agent.Agent(agent_mode=True).run(
+                [{"role": "user", "content": "Сделай документ"}],
+                user_text="Сделай документ",
+            ))
+        panels = [event for event in events if event.get("type") == "reply_ui"]
+        self.assertEqual(len(panels), 1)
+        self.assertEqual(panels[0]["spec"],
+                         "tiles Формат: PDF | Markdown\ntiles Тон: Деловой | Дружелюбный")
+
+    def test_answered_agent_preflight_cannot_open_a_second_panel(self) -> None:
+        route = {
+            "tier": "base", "reason": "test", "score": 0.5,
+            "verbose": True, "offer_tools": True,
+        }
+        schema = [{"type": "function", "function": {
+            "name": "write_file", "parameters": {"type": "object"},
+        }}]
         turns = iter((
-            [{"type": "done", "tool_calls": [{
-                "id": "ask-1", "type": "function",
-                "function": {"name": "ask_user", "arguments": json.dumps({
-                    "question": "Какой формат?", "options": "PDF | Word",
-                }, ensure_ascii=False)},
-            }]}],
+            [
+                {"type": "delta", "text": "Ещё один вопрос?\n\n```ui\ntiles Тон: Деловой | Дружелюбный\n```"},
+                {"type": "done", "tool_calls": [{
+                    "id": "premature-write", "type": "function",
+                    "function": {"name": "write_file", "arguments": json.dumps({
+                        "path": "wrong.md", "content": "Нельзя выполнять вместе с вопросом",
+                    }, ensure_ascii=False)},
+                }]},
+            ],
             [{"type": "done", "tool_calls": [{
                 "id": "write-1", "type": "function",
                 "function": {"name": "write_file", "arguments": json.dumps({
-                    "path": "document.pdf", "content": "PDF",
+                    "path": "document.md", "content": "Готово",
                 }, ensure_ascii=False)},
             }]}],
             [
-                {"type": "delta", "text": "PDF собран и сохранён."},
+                {"type": "delta", "text": "Документ готов."},
                 {"type": "done", "tool_calls": []},
             ],
         ))
         runner = agent.Agent(agent_mode=True)
         with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
              mock.patch.object(agent.llm, "chat_stream", side_effect=lambda *_a, **_k: next(turns)), \
-             mock.patch.object(runner, "make_plan", return_value=[
-                 "Собрать содержимое PDF", "Записать документ", "Проверить файл",
-             ]) as planner, \
              mock.patch.object(agent.tools, "schemas", return_value=schema), \
-             mock.patch.object(agent.tools, "call", return_value={"ok": True}), \
-             mock.patch.object(runner, "_wait_answer", return_value={
-                 "id": "q1", "status": "answered", "answer": "PDF",
-             }):
+             mock.patch.object(agent.tools, "call", return_value={"ok": True}) as dispatch, \
+             mock.patch.object(runner, "make_plan", return_value=[
+                 "Собрать содержимое", "Записать документ", "Проверить файл",
+             ]) as planner:
             events = list(runner.run(
-                [{"role": "user", "content": "Сделай документ"}],
-                user_text="Сделай документ",
+                [{"role": "user", "content": "Формат: Markdown"}],
+                user_text="Формат: Markdown", preflight_resolved=True,
             ))
-        question_at = next(i for i, event in enumerate(events) if event.get("type") == "question")
-        plan_at = next(i for i, event in enumerate(events) if event.get("type") == "plan")
-        self.assertLess(question_at, plan_at)
-        self.assertFalse(any(event.get("type") == "plan" for event in events[:question_at]))
-        planner.assert_called_once_with("Сделай документ", ["write_file"])
+        self.assertFalse(any(event.get("type") == "reply_ui" for event in events))
+        shown = "".join(event.get("text", "") for event in events if event.get("type") == "delta")
+        self.assertNotIn("Ещё один вопрос", shown)
+        self.assertIn("Документ готов", shown)
+        planner.assert_called_once_with("Формат: Markdown", ["write_file"])
+        dispatch.assert_called_once_with(
+            "write_file", {"path": "document.md", "content": "Готово"},
+        )
 
     def test_tiny_reasoning_is_hidden_but_substantial_reasoning_is_streamed(self) -> None:
         route = {
@@ -452,13 +518,13 @@ class TerminalPermissionTests(unittest.TestCase):
 
 
 class AutomaticMemoryTests(unittest.TestCase):
-    def test_city_and_food_facts_are_extracted_without_an_llm(self) -> None:
-        text = "Я переехал из Москвы в Казань и люблю острую еду. У меня есть аллергия на арахис."
+    def test_general_preferences_are_extracted_without_topic_vocabularies(self) -> None:
+        text = "Я люблю острую еду, мне нравятся прогулки, но я не переношу арахис."
         facts = agent.extract_obvious_memories(text)
-        keyed = {item["key"]: item["value"] for item in facts}
-        self.assertEqual(keyed["Город"], "Казань")
-        self.assertEqual(keyed["Предпочтение"], "острую еду")
-        self.assertEqual(keyed["Питание: аллергия"], "арахис")
+        triples = {(item["key"], item["value"]) for item in facts}
+        self.assertIn(("Предпочтение: острую еду", "острую еду"), triples)
+        self.assertIn(("Предпочтение: прогулки", "прогулки"), triples)
+        self.assertIn(("Ограничение: арахис", "арахис"), triples)
         self.assertEqual(agent.extract_obvious_memories("Я переехал в новую квартиру."), [])
 
         stored = []
@@ -466,62 +532,57 @@ class AutomaticMemoryTests(unittest.TestCase):
              mock.patch.object(agent.llm, "chat") as model:
             agent.remember_obvious_facts(text)
         model.assert_not_called()
-        self.assertIn(("person", "Город", "Казань", 1.15), stored)
-        self.assertIn(("preference", "Предпочтение", "острую еду", 1.15), stored)
-        self.assertIn(("preference", "Питание: аллергия", "арахис", 1.15), stored)
+        self.assertIn(("preference", "Предпочтение: острую еду", "острую еду", 1.15), stored)
+        self.assertIn(("preference", "Ограничение: арахис", "арахис", 1.15), stored)
 
-    def test_explicit_facts_are_saved_without_value_rewrites_or_special_dishes(self) -> None:
+    def test_preference_values_remain_verbatim_without_special_examples(self) -> None:
         moved = agent.extract_obvious_memories("Я переехал в питер")
-        joke = agent.extract_obvious_memories(
-            "Я сказал что пошутил и я всё же до сих пор в мск")
+        joke = agent.extract_obvious_memories("Я сказал что пошутил и я всё же до сих пор в мск")
         steak = agent.extract_obvious_memories("Я люблю стейки")
-        self.assertEqual(moved, [{
-            "kind": "person", "key": "Город", "value": "питер",
-        }], "memory dedupe must not rename values supplied by the user")
-        self.assertEqual(joke, [],
-                         "the deterministic writer must not infer corrections from jokes")
+        disliked = agent.extract_obvious_memories("Я не люблю стейки")
+        self.assertEqual(moved, [])
+        self.assertEqual(joke, [])
         self.assertEqual(steak, [{
-            "kind": "preference", "key": "Предпочтение", "value": "стейки",
-        }], "a generic first-person rule works without a steak vocabulary entry")
+            "kind": "preference", "key": "Предпочтение: стейки", "value": "стейки",
+        }])
+        self.assertEqual(disliked, [{
+            "kind": "preference", "key": "Ограничение: стейки", "value": "стейки",
+        }], "negative preference must not also be recorded as positive")
 
-    def test_semantic_memory_covers_personal_context_and_enforces_verbatim_values(self) -> None:
+    def test_local_memory_covers_durable_grammar_without_auxiliary_llm(self) -> None:
         text = ("Меня зовут Марина, я работаю UX-дизайнером и использую "
                 "MacBook Air M2 с 8 ГБ памяти.")
-        extraction = [
-            {"kind": "person", "key": "Имя", "value": "Марина"},
-            {"kind": "person", "key": "Профессия", "value": "UX-дизайнером"},
-            {"kind": "fact", "key": "Устройство", "value": "MacBook Air M2"},
-            # Пересказ модели не является буквальным фрагментом и отбрасывается.
-            {"kind": "fact", "key": "Оперативная память", "value": "8 GB RAM"},
-        ]
         stored = []
-        with mock.patch.object(agent.llm, "chat", return_value={
-                 "content": "```json\n" + json.dumps(extraction, ensure_ascii=False) + "\n```",
-             }) as semantic, \
+        with mock.patch.object(agent.llm, "chat") as semantic, \
              mock.patch.object(agent.db, "remember",
                                side_effect=lambda *args: stored.append(args) or {"ok": True}):
             saved = agent.remember_semantic_facts(text)
 
         self.assertEqual(len(saved), 3)
-        self.assertEqual([item[2] for item in stored],
-                         ["Марина", "UX-дизайнером", "MacBook Air M2"])
-        self.assertNotIn("8 GB RAM", str(stored))
-        self.assertEqual(semantic.call_args.kwargs["tier"], "nano")
-        self.assertEqual(semantic.call_args.kwargs["temperature"], 0.0)
+        self.assertEqual(stored, [
+            ("person", "Имя / обращение", "Марина", 1.15),
+            ("person", "Работа", "UX-дизайнером", 1.15),
+            ("fact", "Основной инструмент", "MacBook Air M2 с 8 ГБ памяти", 1.15),
+        ])
+        semantic.assert_not_called()
 
-    def test_semantic_memory_dedupes_obvious_alias_at_writer_boundary(self) -> None:
-        text = "Я живу в Питере и работаю редактором."
-        extraction = [
-            {"kind": "fact", "key": "city", "value": "Питере"},
-            {"kind": "person", "key": "Профессия", "value": "редактором"},
-        ]
-        with mock.patch.object(agent.llm, "chat", return_value={
-                 "content": json.dumps(extraction, ensure_ascii=False),
-             }), mock.patch.object(agent.db, "remember", return_value={"ok": True}) as writer:
+    def test_local_memory_splits_linked_first_person_clauses_without_duplicates(self) -> None:
+        text = "Я люблю стейки и работаю редактором."
+        with mock.patch.object(agent.llm, "chat") as semantic, \
+             mock.patch.object(agent.db, "remember", return_value={"ok": True}) as writer:
             agent.remember_semantic_facts(text)
-        writer.assert_called_once_with("person", "Профессия", "редактором", 1.1)
+        self.assertEqual(writer.call_args_list, [
+            mock.call("preference", "Предпочтение: стейки", "стейки", 1.15),
+            mock.call("person", "Работа", "редактором", 1.15),
+        ])
+        semantic.assert_not_called()
 
-    def test_semantic_memory_skips_nonpersonal_and_sensitive_prompts(self) -> None:
+    def test_local_memory_has_generic_explicit_escape_hatch_and_secret_gate(self) -> None:
+        explicit = agent.extract_obvious_memories("Учти, у меня двое детей.")
+        self.assertEqual(explicit, [{
+            "kind": "fact", "key": "Явный факт: у меня двое детей",
+            "value": "у меня двое детей",
+        }])
         with mock.patch.object(agent.llm, "chat") as semantic:
             self.assertEqual(agent.remember_semantic_facts("Объясни квантовую физику"), [])
             self.assertEqual(agent.remember_semantic_facts("Мой API token — abc123"), [])
@@ -591,8 +652,10 @@ class DirectDelayedDeliveryTests(unittest.TestCase):
         task = {
             "id": "timer-1", "chat_id": "chat-1", "title": "Приветствие",
             "prompt": "Напиши через 2 секунды: привет", "schedule": "in 2s",
+            "status": "queued",
         }
-        with mock.patch.object(auto.db, "get_task", return_value=task), \
+        running = {**task, "status": "running"}
+        with mock.patch.object(auto.db, "get_task", side_effect=[task, running]), \
              mock.patch.object(auto.db, "update_task") as update, \
              mock.patch.object(auto.db, "append_task_event"), \
              mock.patch.object(auto.db, "add_message") as add_message, \
@@ -603,7 +666,7 @@ class DirectDelayedDeliveryTests(unittest.TestCase):
 
         headless.assert_not_called()
         notify.assert_not_called()
-        update.assert_any_call("timer-1", status="done", progress=1.0, result="привет")
+        update.assert_any_call("timer-1", status="done", resume_status="", progress=1.0, result="привет")
         add_message.assert_called_once_with(
             "chat-1", "assistant", "привет",
             {"task_id": "timer-1", "from_auto": True, "files": [], "title": "Приветствие"},
@@ -918,7 +981,7 @@ class VisionUiContractTests(unittest.TestCase):
 
 class InstallerBuildTests(unittest.TestCase):
     def test_installer_uses_the_application_version(self) -> None:
-        self.assertEqual(installer_build.version(), "1.2.0-beta.4")
+        self.assertEqual(installer_build.version(), "1.2.0-beta.5")
 
     def test_rebuild_preserves_previous_embedded_keys_without_a_keys_file(self) -> None:
         cloud, deep, gigachat = "cloud-fixture", "deep-fixture", "gigachat-fixture"
@@ -1371,6 +1434,292 @@ class ImageGenerationContractTests(unittest.TestCase):
             ["sunrise.jpg", "midnight.jpg"],
         )
         self.assertEqual(len(runner.created_files), 2)
+
+
+class LatencyAndResilienceTests(unittest.TestCase):
+    class _Response:
+        def __init__(self, lines=(), error=None):
+            self.lines = list(lines)
+            self.error = error
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def __iter__(self):
+            yield from self.lines
+            if self.error:
+                raise self.error
+
+    @staticmethod
+    def _span():
+        span = mock.Mock()
+        span.fields = {}
+        return span
+
+    def test_stream_falls_back_when_socket_dies_before_real_output(self) -> None:
+        broken = self._Response(error=OSError("read failed before delta"))
+        chunk = json.dumps({"choices": [{"delta": {"content": "готово"}}]}).encode()
+        healthy = self._Response([b"data: " + chunk + b"\n", b"data: [DONE]\n"])
+        with mock.patch.object(llm, "active_providers", return_value=["first", "second"]), \
+             mock.patch.object(llm, "provider_conf", return_value={
+                 "api_key": "test", "base_url": "https://provider.invalid",
+             }), mock.patch.object(llm, "pick_model", side_effect=lambda _tier, provider: provider + "-model"), \
+             mock.patch.object(llm, "_request", side_effect=[broken, healthy]) as request:
+            events = list(llm._chat_stream_impl(
+                [{"role": "user", "content": "test"}], _span=self._span(),
+            ))
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual([event.get("text") for event in events if event["type"] == "delta"],
+                         ["готово"])
+        self.assertEqual(events[-1]["type"], "done")
+        self.assertEqual(events[-1]["provider"], "second")
+
+    def test_stream_never_falls_back_after_first_real_delta(self) -> None:
+        chunk = json.dumps({"choices": [{"delta": {"content": "часть"}}]}).encode()
+        broken = self._Response([b"data: " + chunk + b"\n"], OSError("late read failure"))
+        with mock.patch.object(llm, "active_providers", return_value=["first", "second"]), \
+             mock.patch.object(llm, "provider_conf", return_value={
+                 "api_key": "test", "base_url": "https://provider.invalid",
+             }), mock.patch.object(llm, "pick_model", side_effect=lambda _tier, provider: provider + "-model"), \
+             mock.patch.object(llm, "_request", return_value=broken) as request:
+            events = list(llm._chat_stream_impl(
+                [{"role": "user", "content": "test"}], _span=self._span(),
+            ))
+        request.assert_called_once()
+        self.assertEqual([event["type"] for event in events], ["model", "delta", "error"])
+        self.assertIn("прерван", events[-1]["error"])
+
+    def test_stream_clean_eof_before_output_falls_back(self) -> None:
+        empty_eof = self._Response([])
+        chunk = json.dumps({"choices": [{"delta": {"content": "резерв"}}]}).encode()
+        healthy = self._Response([b"data: " + chunk + b"\n", b"data: [DONE]\n"])
+        with mock.patch.object(llm, "active_providers", return_value=["first", "second"]), \
+             mock.patch.object(llm, "provider_conf", return_value={
+                 "api_key": "test", "base_url": "https://provider.invalid",
+             }), mock.patch.object(llm, "pick_model", side_effect=lambda _tier, provider: provider + "-model"), \
+             mock.patch.object(llm, "_request", side_effect=[empty_eof, healthy]) as request:
+            events = list(llm._chat_stream_impl(
+                [{"role": "user", "content": "test"}], _span=self._span(),
+            ))
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual([event.get("text") for event in events if event["type"] == "delta"],
+                         ["резерв"])
+        self.assertEqual(events[-1]["type"], "done")
+        self.assertEqual(events[-1]["provider"], "second")
+
+    def test_stream_clean_eof_after_output_is_an_error_without_fallback(self) -> None:
+        chunk = json.dumps({"choices": [{"delta": {"content": "часть"}}]}).encode()
+        truncated = self._Response([b"data: " + chunk + b"\n"])
+        with mock.patch.object(llm, "active_providers", return_value=["first", "second"]), \
+             mock.patch.object(llm, "provider_conf", return_value={
+                 "api_key": "test", "base_url": "https://provider.invalid",
+             }), mock.patch.object(llm, "pick_model", side_effect=lambda _tier, provider: provider + "-model"), \
+             mock.patch.object(llm, "_request", return_value=truncated) as request:
+            events = list(llm._chat_stream_impl(
+                [{"role": "user", "content": "test"}], _span=self._span(),
+            ))
+        request.assert_called_once()
+        self.assertEqual([event["type"] for event in events], ["model", "delta", "error"])
+        self.assertIn("[DONE]", events[-1]["error"])
+
+    def test_history_summary_is_local_and_keeps_recent_context(self) -> None:
+        messages = [
+            {"id": str(index), "role": "user" if index % 2 == 0 else "assistant",
+             "content": "реплика %d" % index}
+            for index in range(22)
+        ]
+        orchestrator._SUM_CACHE.clear()
+        with mock.patch.object(llm, "chat") as hidden_llm:
+            compact = orchestrator.summarize_history(messages, keep_last=10)
+        hidden_llm.assert_not_called()
+        self.assertEqual(compact[0]["role"], "system")
+        self.assertIn("реплика 11", compact[0]["content"])
+        self.assertEqual(compact[1:], messages[-10:])
+
+    def test_post_sse_bookkeeping_cannot_start_semantic_llm_or_thread(self) -> None:
+        with mock.patch.object(server.orchestrator, "make_chat_title", return_value="Локальный заголовок"), \
+             mock.patch.object(server.db, "rename_chat") as rename, \
+             mock.patch.object(server.agent, "remember_semantic_facts") as semantic, \
+             mock.patch.object(server.threading, "Thread") as thread:
+            server._finish_local_post("chat-1", "Длинная тема", title=True)
+        rename.assert_called_once_with("chat-1", "Локальный заголовок")
+        semantic.assert_not_called()
+        thread.assert_not_called()
+
+    def test_ideas_and_proactivity_do_not_use_hidden_llm_calls(self) -> None:
+        with mock.patch.object(llm, "chat") as hidden_llm, \
+             mock.patch.object(ideas, "_read", return_value={}), \
+             mock.patch.object(ideas, "_write") as write, \
+             mock.patch.object(ideas.db, "recent_user_messages", return_value=[
+                 "Собери сравнительную таблицу поставщиков для проекта",
+             ]):
+            cards = ideas.refresh(force=True)
+        hidden_llm.assert_not_called()
+        write.assert_called_once()
+        self.assertTrue(cards)
+        self.assertIn("следующий конкретный шаг", cards[0]["prompt"])
+
+        with mock.patch.object(llm, "chat") as hidden_llm, \
+             mock.patch.object(auto.db, "recent_user_messages", return_value=["Подготовь отчёт"]), \
+             mock.patch.object(auto.db, "notify") as notify, \
+             mock.patch.object(auto.CONFIG, "get", return_value={}):
+            auto.proactive_tick(_reserved=True)
+        hidden_llm.assert_not_called()
+        notify.assert_called_once()
+
+    def test_web_search_marks_fast_engine_errors_as_partial(self) -> None:
+        hit = [{"title": "One", "url": "https://one.example/a", "snippet": "A"}]
+        with mock.patch.object(web, "_ddg", return_value=hit), \
+             mock.patch.object(web, "_mail_search", side_effect=OSError("blocked")), \
+             mock.patch.object(web, "_wikipedia", return_value=[]), \
+             mock.patch.object(web.telemetry, "Span") as span_type:
+            result = web.web_search("query", count=5)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["partial"])
+        self.assertIn("mail_search", result["warnings"][0])
+        span_type.return_value.finish.assert_called_once()
+        self.assertEqual(span_type.return_value.finish.call_args.args[0], "partial")
+        self.assertEqual(span_type.return_value.finish.call_args.kwargs["error_count"], 1)
+
+    def test_web_search_reports_ok_only_after_all_engines_complete(self) -> None:
+        ddg = [{"title": "One", "url": "https://one.example/a", "snippet": "A"}]
+        mail = [{"title": "Two", "url": "https://two.example/b", "snippet": "B"}]
+        with mock.patch.object(web, "_ddg", return_value=ddg), \
+             mock.patch.object(web, "_mail_search", return_value=mail), \
+             mock.patch.object(web, "_wikipedia", return_value=[]), \
+             mock.patch.object(web.telemetry, "Span") as span_type:
+            result = web.web_search("query", count=5)
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["partial"])
+        self.assertEqual([item["title"] for item in result["results"]], ["One", "Two"])
+        self.assertEqual(span_type.return_value.finish.call_args.args[0], "ok")
+
+    def test_deep_research_preserves_degraded_search_status(self) -> None:
+        found = {
+            "ok": True, "partial": True,
+            "results": [{"title": "One", "url": "https://one.example/a", "snippet": "A"}],
+        }
+        page = {"ok": True, "url": "https://one.example/a", "title": "One", "text": "Body"}
+        with mock.patch.object(web, "web_search", return_value=found), \
+             mock.patch.object(web, "open_url", return_value=page), \
+             mock.patch.object(web.telemetry, "Span") as span_type:
+            result = web.deep_research("query", pages=1)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["partial"])
+        self.assertEqual(span_type.return_value.finish.call_args.args[0], "partial")
+        self.assertTrue(span_type.return_value.finish.call_args.kwargs["search_partial"])
+
+    def test_telemetry_rotates_and_span_finishes_only_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            path = folder / "latency.jsonl"
+            path.write_text("x" * 80, encoding="utf-8")
+            with mock.patch.object(telemetry, "LOG_DIR", folder), \
+                 mock.patch.object(telemetry, "_PATH", path), \
+                 mock.patch.object(telemetry, "_MAX_BYTES", 32):
+                telemetry.emit("web.search", duration_ms=12.5, status="partial",
+                               provider="p", model="m", retry=1, error_count=1)
+            self.assertTrue(Path(str(path) + ".1").exists())
+            row = json.loads(path.read_text("utf-8"))
+            self.assertEqual((row["operation"], row["status"], row["retry"]),
+                             ("web.search", "partial", 1))
+
+        with mock.patch.object(telemetry, "emit") as emit:
+            span = telemetry.Span("foreground")
+            span.first_token()
+            span.finish("ok")
+            span.finish("error")
+        emit.assert_called_once()
+        self.assertIn("ttft_ms", emit.call_args.kwargs)
+
+
+class AutoLifecycleRaceTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        with auto._RUN_LOCK:
+            auto._RUNNING.clear()
+
+    def test_paused_task_still_blocks_a_duplicate_prompt(self) -> None:
+        tasks = [
+            {"id": "paused", "status": "paused", "prompt": "Собери отчёт", "chat_id": "chat-1"},
+            {"id": "done", "status": "done", "prompt": "Другой отчёт", "chat_id": "chat-1"},
+        ]
+        with mock.patch.object(auto.db, "list_tasks", return_value=tasks):
+            self.assertTrue(auto.has_similar_pending("  собери   ОТЧЁТ ", "chat-1"))
+            self.assertFalse(auto.has_similar_pending("Собери отчёт", "chat-2"))
+
+    def test_two_launchers_can_reserve_one_task_only_once(self) -> None:
+        task = {"id": "race-task", "status": "queued", "prompt": "work"}
+        results = []
+        gate = __import__("threading").Barrier(3)
+
+        def reserve():
+            gate.wait()
+            results.append(auto._reserve_task("race-task"))
+
+        with mock.patch.object(auto.CONFIG, "get", return_value=False), \
+             mock.patch.object(auto.db, "get_task", return_value=task), \
+             mock.patch.object(auto.db, "update_task") as update, \
+             mock.patch.object(auto.db, "append_task_event"), \
+             mock.patch.object(auto, "MAX_PARALLEL", 1):
+            threads = [__import__("threading").Thread(target=reserve) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            gate.wait()
+            for thread in threads:
+                thread.join(2)
+        self.assertEqual(sum(result is not None for result in results), 1)
+        update.assert_called_once_with(
+            "race-task", status="running", resume_status="", progress=0.05,
+        )
+
+    def test_pause_cancellation_wins_over_a_late_worker_result(self) -> None:
+        task = {"id": "late-task", "title": "Late", "prompt": "work",
+                "status": "running", "schedule": "", "chat_id": "chat-1"}
+        cancelled = __import__("threading").Event()
+        with auto._RUN_LOCK:
+            auto._RUNNING[task["id"]] = cancelled
+
+        def finish_late(*_args, **_kwargs):
+            cancelled.set()
+            return {"content": "late answer", "files": []}
+
+        with mock.patch.object(auto, "safe_delayed_message", return_value=None), \
+             mock.patch.object(auto.agent, "run_headless", side_effect=finish_late), \
+             mock.patch.object(auto.db, "update_task") as update, \
+             mock.patch.object(auto.db, "add_message") as add_message, \
+             mock.patch.object(auto.db, "append_task_event"):
+            auto._execute_reserved(task, cancelled)
+        update.assert_not_called()
+        add_message.assert_not_called()
+        self.assertNotIn(task["id"], auto._RUNNING)
+
+    def test_pause_and_resume_preserve_each_tasks_intended_state(self) -> None:
+        future = time.time() + 600
+        tasks = [
+            {"id": "queued", "status": "queued", "resume_status": "", "next_run": 0},
+            {"id": "scheduled", "status": "scheduled", "resume_status": "", "next_run": future},
+            {"id": "done", "status": "done", "resume_status": "", "next_run": 0},
+        ]
+
+        def update(task_id, **fields):
+            item = next(item for item in tasks if item["id"] == task_id)
+            item.update(fields)
+
+        with mock.patch.object(auto.db, "list_tasks", side_effect=lambda **_kwargs: tasks), \
+             mock.patch.object(auto.db, "update_task", side_effect=update), \
+             mock.patch.object(auto.CONFIG, "set") as set_config:
+            self.assertEqual(auto.pause_all(), 2)
+            self.assertEqual([item["status"] for item in tasks], ["paused", "paused", "done"])
+            self.assertEqual([item["resume_status"] for item in tasks[:2]],
+                             ["queued", "scheduled"])
+            self.assertEqual(auto.resume_all(), 2)
+        self.assertEqual([item["status"] for item in tasks], ["queued", "scheduled", "done"])
+        self.assertEqual(set_config.call_args_list, [
+            mock.call("auto.paused", True), mock.call("auto.paused", False),
+        ])
 
 
 if __name__ == "__main__":
