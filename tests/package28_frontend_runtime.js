@@ -1225,6 +1225,8 @@ async function testAutoPollingReconciliationAndBulkControls() {
   const autoNav = new MiniNode('div');
   const pause = new MiniNode('button');
   const clear = new MiniNode('button');
+  const stats = new MiniNode('div');
+  const autoBar = new MiniNode('div');
   const task = {
     id: 'stable', title: 'Task', prompt: 'Work', status: 'running', progress: 0.4,
     result: '', schedule: '', next_run: 0, updated_at: 1, resume_status: '', events: [],
@@ -1239,6 +1241,8 @@ async function testAutoPollingReconciliationAndBulkControls() {
       if (selector === '.nav-item[data-view="auto"]') return autoNav;
       if (selector === '#autoPauseBtn') return pause;
       if (selector === '#clearDoneBtn') return clear;
+      if (selector === '#autoStats') return stats;
+      if (selector === '#autoBar') return autoBar;
       return null;
     },
     el: miniEl,
@@ -1257,6 +1261,12 @@ async function testAutoPollingReconciliationAndBulkControls() {
   reconcileCtx.renderTasks();
   assert.strictEqual(grid.firstElementChild, originalCard);
   assert.strictEqual(paints, 0, 'unchanged task polling must produce zero card repaint');
+  assert(/<i>всего<\/i><b>1<\/b>/.test(stats.innerHTML) &&
+    /<i>актуальных<\/i><b>1<\/b>/.test(stats.innerHTML) &&
+    /<i>в работе<\/i><b>1<\/b>/.test(stats.innerHTML),
+  'AUTO summary reports total, current and running task counts');
+  assert.strictEqual(pause.textContent, 'Ⅱ', 'global pause control is icon-only');
+  assert(autoBar.classList.contains('running'));
 
   reconcileState.tasks = [{ ...task, progress: 0.8, updated_at: 2 }];
   reconcileCtx.renderTasks();
@@ -1264,8 +1274,16 @@ async function testAutoPollingReconciliationAndBulkControls() {
     'a changed task is patched in its keyed card instead of replacing the node');
   assert.strictEqual(paints, 1);
 
-  assert(/id="clearDoneBtn"/.test(html) && /id="autoPauseBtn"/.test(html),
-    'AUTO exposes clear-completed and global pause/play controls');
+  const autoBarAt = html.indexOf('class="auto-bar"');
+  const pauseAt = html.indexOf('id="autoPauseBtn"', autoBarAt);
+  const clearAt = html.indexOf('id="clearDoneBtn"', autoBarAt);
+  assert(autoBarAt >= 0 && pauseAt > autoBarAt && clearAt > pauseAt &&
+    /id="autoStats"/.test(html),
+    'AUTO mirrors the Files summary bar with pause left of clear');
+  assert(/id="clearDoneBtn"[^>]*>[\s\n]*Очистить<\/button>/.test(html) &&
+    !/Очистить выполненные/.test(html) &&
+    /pause\.textContent = S\.autoPaused \? '▶' : 'Ⅱ'/.test(js),
+    'bulk controls use compact requested labels');
   assert(/\/api\/tasks\/clear-completed/.test(js) &&
     /S\.autoPaused \? '\/api\/tasks\/resume-all' : '\/api\/tasks\/pause-all'/.test(js));
   assert(/\.task-card\.paused::before\s*\{[^}]*rgba\(154,202,219,\.42\)/s.test(css),
@@ -1287,11 +1305,17 @@ function testThinkingGradientContract() {
   assert(/@keyframes wholeFrameFlow\s*\{[\s\S]*0%\{opacity:\.58/.test(css));
 
   const toolFrame = css.match(/\.tool-card\.live::after\s*\{([^}]*)\}/s);
-  assert(toolFrame && /rgba\(66,224,242,\.18\)/.test(toolFrame[1]) &&
-    /rgba\(168,120,237,\.68\)/.test(toolFrame[1]) &&
-    /rgba\(239,169,83,\.66\)/.test(toolFrame[1]) &&
+  assert(toolFrame && /rgba\(66,224,242,\.08\)/.test(toolFrame[1]) &&
+    /rgba\(168,120,237,\.39\)/.test(toolFrame[1]) &&
+    /rgba\(239,169,83,\.37\)/.test(toolFrame[1]) &&
     /background-size:290% 100%/.test(toolFrame[1]) && /toolFrameFlow 1\.18s/.test(toolFrame[1]),
-  'Working contour must be wide, feathered, and restrained without filling the card');
+  'Working contour must be wide and substantially dimmer without filling the card');
+  const startLive = extractFunction(js, 'startToolLive');
+  const finishLive = extractFunction(js, 'finishToolLive');
+  assert(/classList\.remove\('live'\)[\s\S]*offsetWidth[\s\S]*classList\.add\('live'\)/.test(startLive) &&
+    /TOOL_LIVE_AFTER_PAINT_MS/.test(finishLive) && /const TOOL_LIVE_AFTER_PAINT_MS = 440/.test(js) &&
+    /node\.body\.insertBefore\(card, ui\.statusEl\);\s*startToolLive\(card\)/.test(js),
+    'a tool animation starts from a forced pre-live style and survives a verified paint');
   const textBand = css.match(/\.think-card\.live \.card-head,\.think-card\.live \.think-stream,[\s\S]*?\.tool-card\.live \.kv span\s*\{([^}]*)\}/s);
   assert(textBand && /color:transparent/.test(textBand[1]) && /background-clip:text/.test(textBand[1]) &&
     /#61e7ff 45\.2%/.test(textBand[1]) && /#718fff 46\.8%/.test(textBand[1]) &&
@@ -1305,9 +1329,10 @@ function testThinkingGradientContract() {
   const autoOutline = css.match(/\.nav-item\[data-view="auto"\]\.auto-running \.nav-outline\s*\{([^}]*)\}/s);
   assert(autoOutline && /background-size:390% 100%/.test(autoOutline[1]) &&
     /autoOutlineFlow 3\.8s cubic-bezier\(\.45,0,\.55,1\) infinite alternate/.test(autoOutline[1]) &&
-    /drop-shadow\(0 0 8px/.test(autoOutline[1]) && /drop-shadow\(0 0 17px/.test(autoOutline[1]) &&
-    (autoOutline[1].match(/rgba\(/g) || []).length >= 12,
-    'running AUTO keeps a restrained feathered border gradient with a wider layered glow');
+    /drop-shadow\(0 0 6px/.test(autoOutline[1]) && /drop-shadow\(0 0 15px/.test(autoOutline[1]) &&
+    /drop-shadow\(0 0 28px/.test(autoOutline[1]) && /drop-shadow\(0 0 44px/.test(autoOutline[1]) &&
+    (autoOutline[1].match(/rgba\(/g) || []).length >= 14,
+    'running AUTO keeps its border-only gradient but emits a broad four-layer glow');
   const memoryOutline = css.match(/\.nav-item\.save-glint-strong \.nav-outline\s*\{([^}]*)\}/s);
   assert(memoryOutline && /#b477ff/.test(memoryOutline[1]) && /#ef79cf/.test(memoryOutline[1]) &&
     /memorySaveOutline 1\.35s/.test(memoryOutline[1]),

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional
 
@@ -69,19 +70,23 @@ def extract_obvious_memories(text: str) -> List[Dict[str, str]]:
             facts.append(fact)
 
     preferences = (
-        ("Предпочтение", r"\b(?:я\s+)?(?:люблю|обожаю|предпочитаю)\s+([^,.!?]{2,100})"),
-        ("Предпочтение", r"\bмне\s+нрав(?:ится|ятся)\s+([^,.!?]{2,100})"),
-        ("Ограничение", r"\b(?:я\s+)?(?:не\s+люблю|не\s+переношу|избегаю)\s+([^,.!?]{2,100})"),
-        ("Preference", r"\b(?:i\s+)?(?:love|prefer|like)\s+([^,.!?]{2,100})"),
-        ("Restriction", r"\b(?:i\s+)?(?:dislike|avoid|cannot tolerate)\s+([^,.!?]{2,100})"),
+        ("Нравится", r"\b(?:я\s+)?(?:люблю|обожаю|предпочитаю)\s+([^,.!?]{2,100})"),
+        ("Нравится", r"\bмне\s+нрав(?:ится|ятся)\s+([^,.!?]{2,100})"),
+        ("Не нравится", r"\b(?:я\s+)?(?:не\s+люблю|не\s+переношу|избегаю)\s+([^,.!?]{2,100})"),
+        ("Нравится", r"\b(?:i\s+)?(?:love|prefer|like)\s+([^,.!?]{2,100})"),
+        ("Не нравится", r"\b(?:i\s+)?(?:dislike|avoid|cannot tolerate)\s+([^,.!?]{2,100})"),
     )
     for relation, pattern in preferences:
         for found in re.finditer(pattern, raw, re.IGNORECASE):
             # Положительный шаблон способен начать совпадение внутри «не люблю».
             before = raw[max(0, found.start() - 12):found.start()].casefold()
-            if relation in {"Предпочтение", "Preference"} and re.search(r"\b(?:не|not)\s*$", before):
+            if relation == "Нравится" and re.search(r"\b(?:не|not)\s*$", before):
                 continue
-            add("preference", relation, found.group(1), 100, distinct_key=True)
+            # Заголовок описывает ОТНОШЕНИЕ, value хранит дословный объект.
+            # Включать объект ещё и в key («Предпочтение: обезьянок») означало
+            # показывать одно и то же дважды. Разные предпочтения различает
+            # writer identity по value, а не искусственно раздутый заголовок.
+            add("preference", relation, found.group(1), 100)
 
     # Это грамматические отношения, не тематические словари значений. Стабильный
     # relation key позволяет честно заменить устаревшее имя/работу/место вместо
@@ -136,10 +141,94 @@ def remember_semantic_facts(text: str) -> List[Dict[str, Any]]:
 
     Semantic extraction used to make a hidden 25-second nano request after SSE.
     A quick next message could then contend with that request on the provider.
-    The foreground agent still has the generic ``remember`` tool; this fallback
-    intentionally performs no network I/O and persists only proven grammar.
+    This fallback intentionally performs no network I/O and persists only
+    proven first-person grammar.
     """
     return remember_obvious_facts(text)
+
+
+_MEMORY_REPAIR_LOCK = threading.Lock()
+_MEMORY_REPAIR_DONE = False
+
+
+def repair_legacy_automatic_memories() -> int:
+    """Один раз убрать мусор второго writer из уже существующей базы.
+
+    До этой версии локальный parser сначала сохранял корректный факт, а затем
+    модель в том же turn могла вызвать ``remember`` ещё несколько раз. У старой
+    таблицы нет origin, но есть надёжная причинная граница: timestamp user
+    message → timestamp следующего user message. Если первая реплика содержит
+    доказанную first-person grammar, preference/model-записи из её короткого
+    окна заменяются ровно теми дословными фактами, которые parser способен
+    воспроизвести. Ручные старые записи вне такого окна не трогаются; удалённый
+    пользователем факт не воскресает, потому что без существующей строки окно
+    не создаёт replacement.
+    """
+    global _MEMORY_REPAIR_DONE
+    with _MEMORY_REPAIR_LOCK:
+        if _MEMORY_REPAIR_DONE:
+            return 0
+        _MEMORY_REPAIR_DONE = True
+        try:
+            messages = db.query(
+                "SELECT id,chat_id,content,created_at FROM messages WHERE role='user' "
+                "ORDER BY created_at,id"
+            )
+            # Следующая реплика считается внутри того же диалога: параллельный
+            # camera/другой chat не должен преждевременно обрезать causal window.
+            next_in_chat: Dict[str, float] = {}
+            following: Dict[str, float] = {}
+            for message in reversed(messages):
+                chat_id = str(message.get("chat_id") or "")
+                next_in_chat[str(message.get("id") or "")] = following.get(chat_id, 0)
+                following[chat_id] = float(message.get("created_at") or 0)
+            rows = db.query("SELECT * FROM memory")
+            remove_ids = set()
+            replacements: List[Dict[str, str]] = []
+            for message in messages:
+                facts = extract_obvious_memories(message.get("content", ""))
+                if not facts:
+                    continue
+                started = float(message.get("created_at") or 0)
+                next_at = next_in_chat.get(str(message.get("id") or "")) or started + 600
+                ended = min(next_at, started + 600)
+                in_window = []
+                fact_tokens = [
+                    [token for token in re.findall(r"\w+", fact["value"].casefold())
+                     if len(token) >= 4]
+                    for fact in facts
+                ]
+                for row in rows:
+                    event_at = max(float(row.get("created_at") or 0),
+                                   float(row.get("updated_at") or 0))
+                    if not (started - 0.25 <= event_at < ended):
+                        continue
+                    kind = str(row.get("kind") or "").casefold()
+                    row_tokens = [token for token in re.findall(
+                        r"\w+", (str(row.get("key") or "") + " " +
+                                  str(row.get("value") or "")).casefold()) if len(token) >= 4]
+                    related = any(
+                        a.startswith(b) or b.startswith(a)
+                        for group in fact_tokens for a in group for b in row_tokens
+                    )
+                    if kind == "preference" or related:
+                        in_window.append(row["id"])
+                if in_window:
+                    remove_ids.update(in_window)
+                    replacements.extend(facts)
+            for mem_id in remove_ids:
+                db.forget(mem_id)
+            seen = set()
+            for fact in replacements:
+                sig = (fact["kind"], fact["key"], fact["value"])
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                db.remember(*sig, 1.15)
+            return len(remove_ids)
+        except Exception:
+            # Миграция качества не имеет права мешать запуску интерфейса.
+            return 0
 
 
 # Длинный общий prompt — плохое место для протокола интерфейса: после истории,
@@ -420,7 +509,7 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) ->
 • песочница на сервере: write_file, read_file, list_files, run_python, run_shell, make_archive (файлы можно прислать пользователю);
 • управление песочницей: sandbox_info (что внутри), delete_file (убрать лишнее), sandbox_clear (стереть всё), sandbox_rename (дать имя);
 • медиа: generate_image, analyze_image, analyze_video, transcribe_audio;
-• память: remember (сохраняй важные факты о пользователе САМ, без напоминаний), recall, forget;
+• память: явно сказанные факты система сохраняет локально до твоего запуска; тебе доступны recall и forget;
 • диалог: ask_user — задать короткий уточняющий вопрос с кнопками-вариантами;
 • компьютер пользователя: screenshot, screen_info, mouse_click, mouse_move, mouse_scroll, mouse_drag, type_text, press_key, open_app.
 
@@ -434,9 +523,9 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) ->
 3. Если пользователь просит файл (отчёт, таблицу, код, презентацию) — создай его в песочнице и укажи, что он готов к скачиванию.
 4. Ссылайся на источники ссылками, когда искал в интернете.
 5. Форматируй ответ markdown: заголовки, списки, **жирный**, таблицы, ```блоки кода```.
-6. Замечаешь личные факты (предпочтения, планы, имена) — вызывай remember. Память можно и ПРАВИТЬ:
-   факт устарел (переехал, сменил работу) — вызови remember с тем же key и новым value, старое заменится;
-   просят забыть — вызови forget с этим key. Не плоди дубли вроде «Город» и «Город 2».
+6. Явные личные факты (предпочтения, имена, работа) уже сохраняет входной локальный parser —
+   не пересказывай их и не создавай вторую запись. Если пользователь прямо просит забыть факт,
+   вызови forget с существующим key. Не выдумывай категории памяти и не сохраняй вводные слова.
 7. Не выдумывай результаты инструментов: если инструмент вернул ошибку — честно скажи и предложи обход.
 8. Развилка, где ты обязан ОСТАНОВИТЬСЯ и без ответа не можешь работать дальше
    (куда сохранить файл, продолжать ли рискованный путь) — вызови ask_user
@@ -512,6 +601,14 @@ JSON-описание вызова прямо в тексте. Любые их �
 пришло тебе, выполни прямо сейчас в этом диалоге — в том числе игру, код,
 исследование или большой файл.
 """
+    if not computer_use:
+        base += """
+ГРАНИЦА КОМПЬЮТЕРА:
+Режим «Компьютер» сейчас ВЫКЛЮЧЕН. run_shell/run_python работают headless внутри
+песочницы: запрещено использовать в них open, osascript, webbrowser, NSWorkspace
+или иной способ показывать внешнее приложение, окно, файл либо URL на компьютере.
+Если без внешнего окна нельзя — система сначала отдельно спросит пользователя.
+"""
     if computer_use:
         base += """
 РЕЖИМ УПРАВЛЕНИЯ КОМПЬЮТЕРОМ — ЖЕЛЕЗНОЕ ПРАВИЛО:
@@ -568,13 +665,40 @@ def _tool_groups(computer_use: bool) -> List[str]:
     return groups
 
 
-def opens_terminal(tool_name: str, args: Optional[Dict[str, Any]] = None) -> bool:
-    """Распознать все штатные пути, способные открыть видимое окно Terminal.
+def _tool_source(tool_name: str, args: Optional[Dict[str, Any]] = None) -> str:
+    args = args or {}
+    return str(args.get("command") or args.get("code") or "")
 
-    Проверка стоит перед dispatch, поэтому приложение не успеет мелькнуть до
-    вопроса. Это не классификация «опасности»: пользователю просто принадлежит
-    решение, появится ли поверх ответа отдельное окно.
+
+def opens_external_ui(tool_name: str, args: Optional[Dict[str, Any]] = None) -> bool:
+    """Может ли вызов вывести окно/URL за пределами интерфейса JARVIS.
+
+    На Mac универсальный LaunchServices-вход — ``open``; также закрываем
+    AppleScript, webbrowser/NSWorkspace и Linux/Windows launchers. Это проверка
+    механизма запуска, а не бесконечный список приложений, поэтому Safari,
+    Preview и ещё не существующее приложение проходят одну границу.
+    Обычный Python ``open(file)`` намеренно не совпадает.
     """
+    if tool_name == "open_app":
+        return True
+    if tool_name not in {"run_shell", "run_python"}:
+        return False
+    source = _tool_source(tool_name, args)
+    patterns = (
+        r"(?:^|[;&|]\s*|\n\s*)(?:sudo\s+)?(?:/usr/bin/)?open(?:\s|$)",
+        r"['\"](?:sudo\s+)?(?:/usr/bin/)?open\s+",
+        r"['\"](?:/usr/bin/)?open['\"]",
+        r"\b(?:osascript|xdg-open)\b",
+        r"\bgio\s+open\b",
+        r"(?:^|[;&|]\s*|\n\s*)start\s+",
+        r"\b(?:webbrowser\s*\.|NSWorkspace\b)",
+        r"/Applications/[^\n]+\.app(?:/Contents/MacOS/)?",
+    )
+    return any(re.search(pattern, source, re.IGNORECASE) for pattern in patterns)
+
+
+def opens_terminal(tool_name: str, args: Optional[Dict[str, Any]] = None) -> bool:
+    """Распознать штатные пути, способные открыть видимое окно Terminal."""
     args = args or {}
     if tool_name == "open_app":
         # Нормализация принадлежит только имени приложения и не связана с
@@ -585,7 +709,7 @@ def opens_terminal(tool_name: str, args: Optional[Dict[str, Any]] = None) -> boo
         return target in {"terminal", "терминал", "iterm", "iterm2", "warp"}
     if tool_name not in {"run_shell", "run_python"}:
         return False
-    payload = str(args.get("command") or args.get("code") or "").casefold()
+    payload = _tool_source(tool_name, args).casefold()
     terminal_name = r"(?:terminal|терминал|iterm2?|warp)"
     patterns = (
         rf"\bopen\s+(?:[^\n;&|]*\s)?-a\s+['\"]?{terminal_name}\b",
@@ -596,19 +720,24 @@ def opens_terminal(tool_name: str, args: Optional[Dict[str, Any]] = None) -> boo
     return any(re.search(pattern, payload, re.IGNORECASE) for pattern in patterns)
 
 
-def approval_style(tool_name: str, args: Optional[Dict[str, Any]] = None) -> str:
-    """Визуальный тон вопроса: permission не маскируется под угрозу."""
-    if opens_terminal(tool_name, args) and tool_name != "run_shell":
+def approval_style(tool_name: str, args: Optional[Dict[str, Any]] = None,
+                   computer_use: bool = False) -> str:
+    """Визуальный тон вопроса: появление окна — permission, не угроза."""
+    if opens_terminal(tool_name, args) or (
+            not computer_use and opens_external_ui(tool_name, args)):
         return "permission"
     return "danger"
 
 
-def needs_approval(tool_name: str, args: Optional[Dict[str, Any]] = None) -> Optional[str]:
+def needs_approval(tool_name: str, args: Optional[Dict[str, Any]] = None,
+                   computer_use: bool = False) -> Optional[str]:
     """Возвращает причину, если нужно подтверждение пользователя."""
-    # Открытие Terminal спрашиваем всегда, даже если общую автосанкцию на
-    # computer-use пользователь когда-то отключил в настройках.
+    # Вне явно включённого режима «Компьютер» любое внешнее окно принадлежит
+    # пользователю. Проверяем до dispatch — приложение не успеет мелькнуть.
     if opens_terminal(tool_name, args):
         return "открытие приложения «Терминал»"
+    if not computer_use and opens_external_ui(tool_name, args):
+        return "открытие окна или приложения вне режима «Компьютер»"
     risk = tools.risk_of(tool_name)
     safety = CONFIG.get("safety", {}) or {}
     if risk == "safe":
@@ -966,7 +1095,7 @@ class Agent:
                  "Ответь ТОЛЬКО JSON-массивом строк без markdown и пояснений."},
                 {"role": "user", "content":
                  "Задача: %s\nПервый выбранный агентом инструмент: %s" % (text, tools_hint)},
-            ], tier="nano", max_tokens=450, temperature=0.2, timeout=25,
+            ], tier="nano", max_tokens=320, temperature=0.2, timeout=5,
                operation="planner")
             steps = parse_plan_steps(result.get("content", ""))
             return steps if 3 <= len(steps) <= 6 else []
@@ -1004,6 +1133,13 @@ class Agent:
                 return
 
         available = tools.schemas(_tool_groups(self.computer_use))
+        # Автопамять имеет ровно одного владельца: локальный грамматический
+        # extractor на входе сообщения. Раньше та же реплика одновременно
+        # отдавалась модели с remember — она успевала добавить «кстати»,
+        # выдуманную категорию и пересказ того же preference. Удаляем второй
+        # writer физически из schemas и runtime allowlist; recall/forget остаются.
+        available = [schema for schema in available
+                     if (schema.get("function") or {}).get("name") != "remember"]
         if self.agent_mode:
             # AGENT preflight живёт в одном обычном response turn как единая
             # multi-control ui-панель. Блокирующий singleton ask_user оставлял
@@ -1171,17 +1307,13 @@ class Agent:
                             if not defer_plan_decision:
                                 yield {"type": "delta", "text": joined}
                 elif etype == "tool_partial":
-                    out = {"type": "tool_hint", "name": event.get("name", ""),
+                    # Имя функции приходит раньше полного JSON/конца model turn.
+                    # Не держим его за plan gate: tool-card ещё не открывается,
+                    # но статус сразу меняется с абстрактного «Думаю» на честное
+                    # «Готовлю поиск/файл». Это убирает длинное ложное ощущение,
+                    # будто AGENT всё ещё не решил, что делать.
+                    yield {"type": "tool_hint", "name": event.get("name", ""),
                            "group": tools.group_of(event.get("name", ""))}
-                    if defer_plan_decision:
-                        # Provider присылает partial много раз. До появления
-                        # плана достаточно последней подсказки — так status не
-                        # перезапускает один и тот же жёлтый курсор десятки раз.
-                        deferred_work_events[:] = [e for e in deferred_work_events
-                                                   if e.get("type") != "tool_hint"]
-                        deferred_work_events.append(out)
-                    else:
-                        yield out
                 elif etype == "done":
                     tool_calls = event.get("tool_calls") or []
                     if event.get("reasoning") and not acc_text:
@@ -1560,9 +1692,15 @@ class Agent:
                        "group": tools.group_of(name),
                        "risk": tools.risk_of(name)}
 
-                reason = needs_approval(name, args)
-                if reason and not self.approvals_auto:
-                    style = approval_style(name, args)
+                external_without_computer = bool(
+                    not self.computer_use and opens_external_ui(name, args))
+                reason = needs_approval(name, args, computer_use=self.computer_use)
+                # approvals_auto используется у headless AUTO для обычных
+                # серверных шагов, но не является тайным разрешением выводить
+                # GUI на Mac. Внешнее окно без включённого «Компьютера» всегда
+                # проходит через видимый вопрос до dispatch.
+                if reason and (external_without_computer or not self.approvals_auto):
+                    style = approval_style(name, args, computer_use=self.computer_use)
                     yield {"type": "status", "text": "Жду твоего разрешения"
                            if style == "permission" else "Жду твоего подтверждения"}
                     yield {"type": "approval_wait", "tool": name, "label": tools.label_of(name),

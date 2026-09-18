@@ -177,6 +177,8 @@ class RoutingAndPlanCostTests(unittest.TestCase):
         self.assertEqual(plan, semantic)
         self.assertEqual(planner.call_count, 1)
         self.assertEqual(planner.call_args.kwargs["tier"], "nano")
+        self.assertLessEqual(planner.call_args.kwargs["timeout"], 5)
+        self.assertLessEqual(planner.call_args.kwargs["max_tokens"], 320)
         self.assertIn("write_file", planner.call_args.args[0][-1]["content"])
 
         with mock.patch.object(agent.llm, "chat", side_effect=RuntimeError("offline")):
@@ -466,12 +468,22 @@ class TerminalPermissionTests(unittest.TestCase):
             "code": "import os; os.system('open -a Terminal')",
         }))
         self.assertFalse(agent.opens_terminal("open_app", {"name": "Safari"}))
+        self.assertTrue(agent.opens_external_ui("open_app", {"name": "Safari"}))
+        self.assertTrue(agent.opens_external_ui("run_shell", {"command": "open report.pdf"}))
+        self.assertTrue(agent.opens_external_ui("run_python", {
+            "code": "import webbrowser; webbrowser.open('https://example.com')",
+        }))
+        self.assertFalse(agent.opens_external_ui("run_python", {
+            "code": "with open('report.txt') as fh: print(fh.read())",
+        }), "ordinary sandbox file I/O must not be mistaken for a GUI launch")
         self.assertEqual(agent.needs_approval("open_app", {"name": "Terminal"}),
                          "открытие приложения «Терминал»")
+        self.assertEqual(agent.needs_approval("run_shell", {"command": "open report.pdf"}),
+                         "открытие окна или приложения вне режима «Компьютер»")
         self.assertEqual(agent.approval_style("open_app", {"name": "Terminal"}),
                          "permission")
         self.assertEqual(agent.approval_style("run_shell", {"command": "open -a Terminal"}),
-                         "danger", "a shell command keeps its stronger existing sanction")
+                         "permission", "opening an external window is a soft permission")
 
     def test_terminal_permission_is_emitted_before_dispatch(self) -> None:
         route = {
@@ -516,15 +528,47 @@ class TerminalPermissionTests(unittest.TestCase):
         )
         dispatch.assert_not_called()
 
+    def test_agent_cannot_auto_approve_external_window_when_computer_is_off(self) -> None:
+        route = {"tier": "base", "reason": "test", "score": 0.4,
+                 "verbose": True, "offer_tools": True}
+        schema = [{"type": "function", "function": {
+            "name": "run_shell", "parameters": {"type": "object"}}}]
+        turns = iter((
+            [{"type": "done", "tool_calls": [{
+                "id": "open-preview", "type": "function",
+                "function": {"name": "run_shell", "arguments": json.dumps({
+                    "command": "open report.pdf",
+                })},
+            }]}],
+            [{"type": "delta", "text": "Файл не открывался."},
+             {"type": "done", "tool_calls": []}],
+        ))
+        runner = agent.Agent(agent_mode=True, computer_use=False, approvals_auto=True)
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=lambda *_a, **_k: next(turns)), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(runner, "make_plan", return_value=[]), \
+             mock.patch.object(runner, "_wait_approval", return_value={"status": "rejected"}) as wait, \
+             mock.patch.object(agent.tools, "call") as dispatch:
+            events = list(runner.run(
+                [{"role": "user", "content": "Подготовь и открой отчёт"}],
+                user_text="Подготовь и открой отчёт",
+            ))
+        approval = next(event for event in events if event.get("type") == "approval_wait")
+        self.assertEqual(approval["style"], "permission")
+        self.assertIn("вне режима", approval["reason"])
+        wait.assert_called_once()
+        dispatch.assert_not_called()
+
 
 class AutomaticMemoryTests(unittest.TestCase):
     def test_general_preferences_are_extracted_without_topic_vocabularies(self) -> None:
         text = "Я люблю острую еду, мне нравятся прогулки, но я не переношу арахис."
         facts = agent.extract_obvious_memories(text)
         triples = {(item["key"], item["value"]) for item in facts}
-        self.assertIn(("Предпочтение: острую еду", "острую еду"), triples)
-        self.assertIn(("Предпочтение: прогулки", "прогулки"), triples)
-        self.assertIn(("Ограничение: арахис", "арахис"), triples)
+        self.assertIn(("Нравится", "острую еду"), triples)
+        self.assertIn(("Нравится", "прогулки"), triples)
+        self.assertIn(("Не нравится", "арахис"), triples)
         self.assertEqual(agent.extract_obvious_memories("Я переехал в новую квартиру."), [])
 
         stored = []
@@ -532,8 +576,8 @@ class AutomaticMemoryTests(unittest.TestCase):
              mock.patch.object(agent.llm, "chat") as model:
             agent.remember_obvious_facts(text)
         model.assert_not_called()
-        self.assertIn(("preference", "Предпочтение: острую еду", "острую еду", 1.15), stored)
-        self.assertIn(("preference", "Ограничение: арахис", "арахис", 1.15), stored)
+        self.assertIn(("preference", "Нравится", "острую еду", 1.15), stored)
+        self.assertIn(("preference", "Не нравится", "арахис", 1.15), stored)
 
     def test_preference_values_remain_verbatim_without_special_examples(self) -> None:
         moved = agent.extract_obvious_memories("Я переехал в питер")
@@ -543,11 +587,14 @@ class AutomaticMemoryTests(unittest.TestCase):
         self.assertEqual(moved, [])
         self.assertEqual(joke, [])
         self.assertEqual(steak, [{
-            "kind": "preference", "key": "Предпочтение: стейки", "value": "стейки",
+            "kind": "preference", "key": "Нравится", "value": "стейки",
         }])
         self.assertEqual(disliked, [{
-            "kind": "preference", "key": "Ограничение: стейки", "value": "стейки",
+            "kind": "preference", "key": "Не нравится", "value": "стейки",
         }], "negative preference must not also be recorded as positive")
+        self.assertEqual(agent.extract_obvious_memories("Кстати, я люблю обезьянок"), [{
+            "kind": "preference", "key": "Нравится", "value": "обезьянок",
+        }], "a discourse prefix must not become a second memory")
 
     def test_local_memory_covers_durable_grammar_without_auxiliary_llm(self) -> None:
         text = ("Меня зовут Марина, я работаю UX-дизайнером и использую "
@@ -572,7 +619,7 @@ class AutomaticMemoryTests(unittest.TestCase):
              mock.patch.object(agent.db, "remember", return_value={"ok": True}) as writer:
             agent.remember_semantic_facts(text)
         self.assertEqual(writer.call_args_list, [
-            mock.call("preference", "Предпочтение: стейки", "стейки", 1.15),
+            mock.call("preference", "Нравится", "стейки", 1.15),
             mock.call("person", "Работа", "редактором", 1.15),
         ])
         semantic.assert_not_called()
@@ -633,6 +680,71 @@ class AutomaticMemoryTests(unittest.TestCase):
                 self.assertEqual(same_job["id"], job["id"])
                 self.assertEqual((rows[0]["kind"], rows[0]["key"], rows[0]["value"]),
                                  ("person", "Работа", "арт-директором"))
+        finally:
+            conn.close()
+
+    def test_model_cannot_become_a_second_automatic_memory_writer(self) -> None:
+        route = {"tier": "base", "reason": "test", "score": 0,
+                 "verbose": False, "offer_tools": True}
+        schemas = [{"type": "function", "function": {"name": name,
+                    "parameters": {"type": "object"}}}
+                   for name in ("remember", "recall", "forget")]
+        stream = [{"type": "delta", "text": "Понял."},
+                  {"type": "done", "tool_calls": []}]
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.tools, "schemas", return_value=schemas), \
+             mock.patch.object(agent.llm, "chat_stream", return_value=stream) as call:
+            list(agent.Agent().run([{"role": "user", "content": "Я люблю обезьянок"}],
+                                   user_text="Я люблю обезьянок"))
+        offered = call.call_args.kwargs["tools"]
+        self.assertEqual({item["function"]["name"] for item in offered}, {"recall", "forget"})
+
+    def test_preferences_have_clean_relation_labels_and_value_identities(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(db.SCHEMA)
+        try:
+            with mock.patch.object(db, "_CONN", conn):
+                monkey = db.remember("preference", "Предпочтение: обезьянок", "обезьянок")
+                steak = db.remember("preference", "Любимая еда", "стейки")
+                avoid = db.remember("preference", "Ограничение", "арахис")
+                same_monkey = db.remember("preference", "Предпочтения", "обезьянок")
+                rows = db.recall()
+            self.assertEqual(same_monkey["id"], monkey["id"])
+            self.assertEqual(len(rows), 3)
+            self.assertEqual({(row["key"], row["value"]) for row in rows}, {
+                ("Нравится", "обезьянок"), ("Нравится", "стейки"),
+                ("Не нравится", "арахис"),
+            })
+            self.assertNotEqual(monkey["id"], steak["id"],
+                                "one clean relation label must not overwrite another object")
+        finally:
+            conn.close()
+
+    def test_upgrade_repairs_same_turn_model_memory_noise_from_history(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(db.SCHEMA)
+        conn.execute("INSERT INTO chats(id,title,created_at,updated_at) VALUES(?,?,?,?)",
+                     ("chat", "test", 90, 110))
+        conn.execute("INSERT INTO messages(id,chat_id,role,content,meta,created_at) VALUES(?,?,?,?,?,?)",
+                     ("msg", "chat", "user", "Кстати, я люблю обезьянок", "{}", 100))
+        legacy = [
+            ("local", "preference", "Предпочтение: обезьянок", "обезьянок", 1, 101, 101),
+            ("noise-1", "preference", "Предпочтения", "кстати", 1, 102, 102),
+            ("noise-2", "fact", "Обезьяны", "люблю обезьян", 1, 103, 103),
+            ("manual", "fact", "Важный факт", "оставить", 1, 10, 10),
+        ]
+        conn.executemany("INSERT INTO memory VALUES(?,?,?,?,?,?,?)", legacy)
+        conn.commit()
+        try:
+            with mock.patch.object(db, "_CONN", conn), \
+                 mock.patch.object(agent, "_MEMORY_REPAIR_DONE", False):
+                self.assertEqual(agent.repair_legacy_automatic_memories(), 3)
+                rows = db.recall()
+            self.assertEqual({(row["key"], row["value"]) for row in rows}, {
+                ("Нравится", "обезьянок"), ("Важный факт", "оставить"),
+            })
         finally:
             conn.close()
 
@@ -981,7 +1093,7 @@ class VisionUiContractTests(unittest.TestCase):
 
 class InstallerBuildTests(unittest.TestCase):
     def test_installer_uses_the_application_version(self) -> None:
-        self.assertEqual(installer_build.version(), "1.2.0-beta.5")
+        self.assertEqual(installer_build.version(), "1.2.0-beta.6")
 
     def test_rebuild_preserves_previous_embedded_keys_without_a_keys_file(self) -> None:
         cloud, deep, gigachat = "cloud-fixture", "deep-fixture", "gigachat-fixture"
@@ -1524,6 +1636,30 @@ class LatencyAndResilienceTests(unittest.TestCase):
         request.assert_called_once()
         self.assertEqual([event["type"] for event in events], ["model", "delta", "error"])
         self.assertIn("[DONE]", events[-1]["error"])
+
+    def test_nonstream_timeout_is_one_total_budget_not_one_per_retry(self) -> None:
+        clock = [0.0]
+
+        def request_timeout(*_args, **_kwargs):
+            clock[0] += 4.5
+            raise TimeoutError("slow provider")
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        with mock.patch.object(llm, "active_providers", return_value=["first", "second"]), \
+             mock.patch.object(llm, "provider_conf", return_value={
+                 "api_key": "test", "base_url": "https://provider.invalid",
+             }), mock.patch.object(llm, "pick_model", return_value="model"), \
+             mock.patch.object(llm, "_request", side_effect=request_timeout) as request, \
+             mock.patch.object(llm.time, "monotonic", side_effect=lambda: clock[0]), \
+             mock.patch.object(llm.time, "sleep", side_effect=sleep), \
+             mock.patch.object(llm.telemetry, "Span", return_value=self._span()):
+            with self.assertRaises(llm.LLMError):
+                llm.chat([{"role": "user", "content": "plan"}], timeout=5)
+        request.assert_called_once()
+        self.assertLessEqual(request.call_args.kwargs["timeout"], 5)
+        self.assertEqual(clock[0], 5.0)
 
     def test_history_summary_is_local_and_keeps_recent_context(self) -> None:
         messages = [

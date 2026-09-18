@@ -411,15 +411,19 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
          operation: str = "llm") -> Dict[str, Any]:
     """Не-стриминговый вызов с автоматическим фолбэком на резервного провайдера.
 
-    timeout — для служебных мелочей вроде подсказок ответа: ждать их 3 минуты
-    бессмысленно, пользователь к тому времени уже пишет следующий вопрос.
+    ``timeout`` — общий wall-clock budget всего вызова, включая повтор и
+    резервного провайдера. Раньше он ошибочно применялся к КАЖДОЙ попытке:
+    planner с timeout=25 мог задержать AGENT более чем на 100 секунд.
     """
     providers = [provider] if provider else (active_providers() or ["cloudru"])
     span = telemetry.Span(operation, tier=tier)
+    deadline = time.monotonic() + max(0.25, float(timeout))
     last_error: Optional[Exception] = None
     last_provider = ""
     last_model = ""
     for prov in providers:
+        if time.monotonic() >= deadline:
+            break
         conf = provider_conf(prov)
         if not conf.get("api_key"):
             continue
@@ -427,9 +431,12 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
         last_provider, last_model = prov, model
         payload = _build_payload(model, messages, tools, False, temperature, max_tokens, prov, tier)
         for attempt in range(2):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             try:
                 with _request(conf["base_url"].rstrip("/") + "/chat/completions", conf["api_key"],
-                              payload, timeout=timeout) as resp:
+                              payload, timeout=max(0.1, remaining)) as resp:
                     body = json.loads(resp.read().decode("utf-8"))
                 span.first_token()
                 usage = body.get("usage") or {}
@@ -465,10 +472,14 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
             except Exception as exc:  # сеть/таймаут
                 last_error = exc
                 span.retried()
-                time.sleep(1.2)
-    span.finish("error", provider=last_provider, model=last_model,
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    time.sleep(min(1.2, remaining))
+    expired = time.monotonic() >= deadline
+    span.finish("timeout" if expired else "error", provider=last_provider, model=last_model,
                 error_type=type(last_error).__name__ if last_error else "no_provider")
-    raise LLMError("Не удалось получить ответ от моделей: %s" % last_error)
+    raise LLMError("Не удалось получить ответ от моделей%s: %s" %
+                   (" за отведённое время" if expired else "", last_error))
 
 
 def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] = None,

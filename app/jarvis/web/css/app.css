@@ -185,21 +185,29 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude}
 .nav-item[data-view="auto"].auto-running .nav-outline{
-  /* Полупрозрачные длинные хвосты не обрывают спектр на углах. Цвет слабее,
-     зато два больших drop-shadow дают рассеянное, а не «неоновое» свечение. */
+  /* Сам border остаётся спокойным, но четыре разнесённых тени дают настоящее
+     мягкое свечение далеко за контуром. Раньше два слабых shadow терялись на
+     тёмном sidebar и градиент выглядел просто цветной линией. */
   background:linear-gradient(105deg,
     rgba(78,224,204,0) 0%,rgba(78,224,204,.08) 14%,rgba(92,218,235,.34) 27%,
     rgba(108,188,255,.43) 36%,rgba(151,132,255,.44) 46%,rgba(190,130,240,.39) 55%,
     rgba(225,132,218,.34) 64%,rgba(255,179,118,.28) 73%,rgba(166,205,153,.12) 84%,
     rgba(78,224,204,0) 100%);
   background-size:390% 100%!important;
-  filter:drop-shadow(0 0 8px rgba(105,213,211,.22)) drop-shadow(0 0 17px rgba(151,132,255,.13));
+  filter:drop-shadow(0 0 6px rgba(105,213,211,.52))
+         drop-shadow(0 0 15px rgba(92,218,235,.36))
+         drop-shadow(0 0 28px rgba(151,132,255,.25))
+         drop-shadow(0 0 44px rgba(105,213,211,.16));
   animation:autoOutlineFlow 3.8s cubic-bezier(.45,0,.55,1) infinite alternate}
-.nav-item[data-view="auto"].auto-running .nav-ico{filter:drop-shadow(0 0 9px rgba(105,213,211,.34))}
+.nav-item[data-view="auto"].auto-running .nav-ico{
+  filter:drop-shadow(0 0 7px rgba(105,213,211,.72)) drop-shadow(0 0 18px rgba(151,132,255,.38))}
 @keyframes autoOutlineFlow{
-  0%{opacity:.38;background-position:108% 0;filter:drop-shadow(0 0 8px rgba(113,196,255,.2)) drop-shadow(0 0 17px rgba(105,213,211,.1))}
-  50%{opacity:.64;filter:drop-shadow(0 0 12px rgba(163,137,255,.28)) drop-shadow(0 0 22px rgba(92,218,235,.13))}
-  100%{opacity:.42;background-position:-145% 0;filter:drop-shadow(0 0 9px rgba(235,145,211,.2)) drop-shadow(0 0 19px rgba(151,132,255,.1))}}
+  0%{opacity:.44;background-position:108% 0;
+    filter:drop-shadow(0 0 6px rgba(113,196,255,.48)) drop-shadow(0 0 15px rgba(105,213,211,.33)) drop-shadow(0 0 28px rgba(151,132,255,.22)) drop-shadow(0 0 44px rgba(105,213,211,.14))}
+  50%{opacity:.68;
+    filter:drop-shadow(0 0 8px rgba(163,137,255,.58)) drop-shadow(0 0 19px rgba(92,218,235,.42)) drop-shadow(0 0 34px rgba(151,132,255,.29)) drop-shadow(0 0 52px rgba(92,218,235,.18))}
+  100%{opacity:.48;background-position:-145% 0;
+    filter:drop-shadow(0 0 7px rgba(235,145,211,.5)) drop-shadow(0 0 17px rgba(151,132,255,.37)) drop-shadow(0 0 31px rgba(92,218,235,.23)) drop-shadow(0 0 47px rgba(151,132,255,.15))}}
 .nav-item.save-glint .nav-outline{
   background:linear-gradient(100deg,transparent 2%,#8fb35a 18%,#43dec6 44%,#42d9ff 68%,#9d7aed 86%,transparent 98%);
   animation:fileSaveOutline .72s cubic-bezier(.16,.78,.25,1) both}
@@ -542,13 +550,15 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   100%{opacity:.42;background-position:-145% 0}}
 .tool-card.live::after{inset:-2px;padding:2px;
   background:linear-gradient(100deg,
-    rgba(66,224,242,.18) 0%,rgba(66,224,242,.62) 10%,rgba(168,120,237,.68) 31%,
-    rgba(239,169,83,.66) 56%,rgba(82,212,160,.62) 78%,rgba(82,229,244,.16) 100%);
-  background-size:290% 100%;filter:blur(.18px);animation:toolFrameFlow 1.18s linear infinite}
+    rgba(66,224,242,.08) 0%,rgba(66,224,242,.34) 10%,rgba(168,120,237,.39) 31%,
+    rgba(239,169,83,.37) 56%,rgba(82,212,160,.34) 78%,rgba(82,229,244,.07) 100%);
+  background-size:290% 100%;filter:blur(.24px);animation:toolFrameFlow 1.18s linear infinite}
 @keyframes toolFrameFlow{
-  0%{opacity:.43;background-position:94% 0}
-  48%{opacity:.68}
-  100%{opacity:.34;background-position:-148% 0}}
+  /* Первый paint уже показывает середину широкой ленты; ждать, пока цвет
+     «доедет» из-за карточки, не нужно. Яркость ниже, чем у thinking outline. */
+  0%{opacity:.31;background-position:72% 0}
+  48%{opacity:.46}
+  100%{opacity:.25;background-position:-148% 0}}
 /* Узкая Apple-Intelligence-подобная лента проходит ИМЕННО по буквам. Большая
    часть background остаётся спокойным цветом текста; насыщенный спектр занимает
    лишь несколько процентов изображения, поэтому это движущийся блик, а не
@@ -567,8 +577,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   animation:liveTextFlow 8.4s cubic-bezier(.45,0,.55,1) infinite}
 .tool-card.live .card-head,.tool-card.live .kv span{
   background-image:linear-gradient(100deg,
-    #adc2c9 0%,#adc2c9 43%,#54edff 45%,#698aff 46.5%,#b56fff 48%,
-    #f16bc8 49.5%,#ff8c77 51%,#ffd364 52.5%,#5ff0bf 54%,#adc2c9 57%,#adc2c9 100%)}
+    #9fadb2 0%,#9fadb2 43%,#64bcc7 45%,#7185bd 46.5%,#9877b5 48%,
+    #b978a6 49.5%,#c48a7d 51%,#c8aa72 52.5%,#69b59b 54%,#9fadb2 57%,#9fadb2 100%)}
 @keyframes liveTextFlow{
   0%{background-position:118% 0}
   100%{background-position:-155% 0}}
@@ -867,9 +877,22 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .spacer{flex:1}
 
 /* ---------- AUTO ---------- */
-.auto-head-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+/* Как у «Файлов»: под заголовком одна спокойная служебная область. Статистика
+   слева, компактные общие действия справа; управление не расползается по title. */
+.auto-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;
+  margin:0 26px 12px;padding:12px 16px;border:1px solid rgba(47,156,146,.22);border-radius:13px;
+  background:var(--panel2);transition:border-color .3s,box-shadow .3s}
+.auto-bar.running{border-color:rgba(72,199,184,.32);
+  box-shadow:0 0 22px rgba(66,205,190,.07),inset 0 0 18px rgba(66,205,190,.025)}
+.auto-stats{display:flex;align-items:center;gap:22px;flex-wrap:wrap;min-width:0}
+.auto-stat{display:flex;flex-direction:column;gap:2px;min-width:0}
+.auto-stat i{font-style:normal;font-size:9.5px;letter-spacing:1.1px;text-transform:uppercase;color:var(--tx3)}
+.auto-stat b{font-family:var(--fm);font-size:13px;font-weight:500;color:var(--tx)}
+.auto-stat.active b{color:#9eead7}.auto-stat.running b{color:#f0ca82}.auto-stat.done b{color:#83dfbd}
+.auto-bar-actions{display:flex;align-items:center;gap:7px;flex-shrink:0}
+.auto-pause{width:34px;padding:6px 0!important;font-family:var(--fm);font-size:13px!important}
 .auto-pause.play{color:#9eead7;border-color:rgba(63,191,149,.38);background:rgba(63,191,149,.08)}
-.auto-head-actions .btn:disabled{opacity:.32;cursor:default;transform:none}
+.auto-bar-actions .btn:disabled{opacity:.32;cursor:default;transform:none}
 .task-grid{flex:1 1 auto;min-height:0;overflow-y:auto;padding:6px 26px 26px;display:grid;
   grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px;align-content:start}
 .task-card{border:1px solid var(--line);border-radius:15px;background:var(--panel);padding:15px;
@@ -1151,6 +1174,8 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   .scroll-date{top:16px}
   .composer-wrap{padding:8px 12px 14px}
   .panel-head,.task-grid,.file-grid,.mem-grid,.settings-grid{padding-left:14px;padding-right:14px}
+  .auto-bar{margin-left:14px;margin-right:14px;padding:11px 12px}
+  .auto-stats{gap:13px}.auto-bar-actions{margin-left:auto}
   .chat-card{margin-left:0}
   .bubble-user{max-width:88%}
 }

@@ -2096,6 +2096,22 @@ function markBorn(card) {
   }
 }
 
+const TOOL_LIVE_AFTER_PAINT_MS = 440;
+
+function startToolLive(card) {
+  if (!card) return;
+  // Корень прежнего «иногда не успел»: карточка создавалась уже с .live и до
+  // вставки не имела вычисленного обычного состояния. Браузер мог объединить
+  // создание, результат и свёртку в один style pass — CSS-анимации формально
+  // существовали, но стартового paint не было. Сначала вставленная карточка
+  // получает layout без эффекта, затем .live запускает анимацию с нулевого
+  // кадра. Это синхронная граница рендера, а не подобранная задержка.
+  card.classList.remove('live');
+  void card.offsetWidth;
+  card.classList.add('live');
+  markBorn(card);
+}
+
 function finishToolLive(card) {
   if (!card) return;
   const finish = () => {
@@ -2105,9 +2121,10 @@ function finishToolLive(card) {
       requestAnimationFrame(finish);
       return;
     }
-    // Одного кадра технически достаточно, но не человеческому глазу.
-    // Держим мягкий проход 180 ms после первого доказанного paint.
-    const left = 180 - (performance.now() - painted);
+    // Счёт идёт от подтверждённого paint, а не от tool_result. Поэтому даже
+    // инструмент за 1 ms получает видимый проход сразу и не теряет его между
+    // сетевыми событиями; яркость при этом можно держать спокойной.
+    const left = TOOL_LIVE_AFTER_PAINT_MS - (performance.now() - painted);
     if (left > 0) setTimeout(finish, left);
     else card.classList.remove('live');
   };
@@ -4025,8 +4042,7 @@ function handleEvent(ev, ui) {
       }
       // строка состояния рассказывает, чем агент занят прямо сейчас
       busyMode(ui, toolTicker(ev), 2200);
-      const card = makeCard('⚙', ev.label || ev.name, 'tool-card live', true);
-      markBorn(card);
+      const card = makeCard('⚙', ev.label || ev.name, 'tool-card', true);
       card.querySelector('.card-head').insertBefore(el('span', 'tool-run'), card.querySelector('.chev'));
       const kv = el('div', 'kv');
       Object.keys(ev.args || {}).forEach((k) => {
@@ -4035,6 +4051,7 @@ function handleEvent(ev, ui) {
       });
       card.inner.appendChild(kv);
       node.body.insertBefore(card, ui.statusEl);
+      startToolLive(card);
       ui.tools[ev.id || ev.name] = card;
       termLine('$ ' + ev.name + ' ' + JSON.stringify(ev.args || {}).slice(0, 300), 'cmd');
       // Прогрессом владеют только plan_step-события оркестратора. Число
@@ -5198,17 +5215,35 @@ function paintTaskCard(card, t) {
 
 function renderTasks() {
   const grid = $('#taskGrid');
+  const running = S.tasks.filter((task) => task.status === 'running').length;
+  const active = S.tasks.filter((task) =>
+    ['queued', 'running', 'scheduled', 'paused'].includes(task.status)).length;
+  const done = S.tasks.filter((task) => task.status === 'done').length;
+  const stats = $('#autoStats');
+  if (stats) {
+    const statHtml = [
+      ['всего', S.tasks.length, ''],
+      ['актуальных', active, 'active'],
+      ['в работе', running, 'running'],
+      ['выполнено', done, 'done'],
+    ].map(([label, value, cls]) => '<span class="auto-stat ' + cls + '"><i>' +
+      label + '</i><b>' + value + '</b></span>').join('');
+    if (stats.innerHTML !== statHtml) stats.innerHTML = statHtml;
+  }
+  const bar = $('#autoBar');
+  if (bar) bar.classList.toggle('running', running > 0);
   const autoNav = $('.nav-item[data-view="auto"]');
-  if (autoNav) autoNav.classList.toggle('auto-running',
-    S.tasks.some((task) => task.status === 'running'));
+  if (autoNav) autoNav.classList.toggle('auto-running', running > 0);
   const pause = $('#autoPauseBtn');
   if (pause) {
     pause.classList.toggle('play', S.autoPaused);
-    pause.innerHTML = S.autoPaused ? '▶&nbsp; Продолжить' : 'Ⅱ&nbsp; Пауза';
-    pause.title = S.autoPaused ? 'Продолжить все актуальные задачи' : 'Поставить все актуальные задачи на паузу';
+    pause.textContent = S.autoPaused ? '▶' : 'Ⅱ';
+    const label = S.autoPaused ? 'Продолжить все актуальные задачи' : 'Поставить все актуальные задачи на паузу';
+    pause.title = label;
+    pause.setAttribute('aria-label', label);
   }
   const clear = $('#clearDoneBtn');
-  if (clear) clear.disabled = !S.tasks.some((task) => task.status === 'done');
+  if (clear) clear.disabled = done === 0;
 
   if (!S.tasks.length) {
     if (!grid.querySelector(':scope > .task-empty')) {

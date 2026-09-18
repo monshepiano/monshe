@@ -399,12 +399,6 @@ _MEMORY_KEY_ALIASES = {
     "город проживания": ("person", "Город", "person:city"),
     "место проживания": ("person", "Город", "person:city"),
     "местоположение": ("person", "Город", "person:city"),
-    "favorite food": ("preference", "Питание: предпочтения", "preference:food"),
-    "favourite food": ("preference", "Питание: предпочтения", "preference:food"),
-    "food": ("preference", "Питание: предпочтения", "preference:food"),
-    "food preference": ("preference", "Питание: предпочтения", "preference:food"),
-    "любимая еда": ("preference", "Питание: предпочтения", "preference:food"),
-    "питание предпочтения": ("preference", "Питание: предпочтения", "preference:food"),
     "name": ("person", "Имя / обращение", "person:name"),
     "preferred name": ("person", "Имя / обращение", "person:name"),
     "имя": ("person", "Имя / обращение", "person:name"),
@@ -435,10 +429,6 @@ _MEMORY_KEY_ALIASES = {
     "operating system": ("fact", "Операционная система", "fact:os"),
     "os": ("fact", "Операционная система", "fact:os"),
     "операционная система": ("fact", "Операционная система", "fact:os"),
-    "allergy": ("preference", "Питание: аллергия", "preference:allergy"),
-    "food allergy": ("preference", "Питание: аллергия", "preference:allergy"),
-    "аллергия": ("preference", "Питание: аллергия", "preference:allergy"),
-    "питание аллергия": ("preference", "Питание: аллергия", "preference:allergy"),
 }
 
 
@@ -450,8 +440,8 @@ def _memory_token(value: str) -> str:
 def _preference_relation(key: str) -> str:
     """Общая полярность предпочтения, независимая от названного объекта."""
     token = _memory_token(key)
-    negative = ("огранич", "аллерг", "исключ", "не люблю", "не перенош",
-                "избега", "allerg", "avoid", "dislike", "restriction")
+    negative = ("огранич", "аллерг", "исключ", "не нравится", "не люблю",
+                "не перенош", "избега", "allerg", "avoid", "dislike", "restriction")
     return "avoid" if any(mark in token for mark in negative) else "like"
 
 
@@ -461,6 +451,15 @@ def canonical_memory(kind: str, key: str, value: str) -> tuple[str, str, str, st
     clean_key = " ".join(str(key or "Факт").split()).strip() or "Факт"
     clean_value = " ".join(str(value or "").split()).strip()
     token = _memory_token(clean_key)
+    # Предпочтение — отношение + дословный объект, а не тема из словаря.
+    # Поэтому у «люблю X» и «люблю Y» одинаковый чистый заголовок, но разные
+    # identity по value; модель больше не должна выдумывать категории вроде
+    # «Обезьяны» или дублировать объект внутри key.
+    if clean_kind == "preference" and clean_value:
+        relation = _preference_relation(clean_key)
+        clean_key = "Не нравится" if relation == "avoid" else "Нравится"
+        identity = "preference:%s:%s" % (relation, _memory_token(clean_value))
+        return clean_kind, clean_key, clean_value, identity
     alias = _MEMORY_KEY_ALIASES.get(token)
     if alias:
         clean_kind, clean_key, identity = alias

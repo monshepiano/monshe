@@ -173,6 +173,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/notifications":
             return self._json({"ok": True, "notifications": db.list_notifications()})
         if path == "/api/memory":
+            agent.repair_legacy_automatic_memories()
             return self._json({"ok": True, "memory": db.recall()})
         if path == "/api/ideas":
             # только готовое: считать здесь нельзя — экран ждать не должен
@@ -401,6 +402,9 @@ class Handler(BaseHTTPRequestHandler):
 
     # --------------------------------------------------------------- состояние
     def _state(self) -> Dict[str, Any]:
+        # Убираем legacy-дубли памяти до первого показа карточек. Функция
+        # process-local idempotent и после первого state-запроса ничего не делает.
+        agent.repair_legacy_automatic_memories()
         tasks = db.list_tasks(limit=50)
         active = [t for t in tasks if t.get("status") in ("running", "queued", "scheduled", "paused")]
         # UI glow означает именно выполняемую сейчас работу. Очередь и расписание
@@ -479,8 +483,8 @@ class Handler(BaseHTTPRequestHandler):
         # Очевидные факты первого лица сохраняются на входной границе, а не по
         # доброй воле модели. Это локальные regex, поэтому ни задержки, ни
         # расхода токенов у обычной реплики не появляется. Отдельное событие
-        # запускает видимый border-pass у «Памяти» даже если модель не вызвала
-        # remember повторно.
+        # запускает видимый border-pass у «Памяти»; модель больше не получает
+        # второй writer и не может добавить пересказ или вводное слово.
         saved_facts = agent.remember_obvious_facts(text)
         if saved_facts:
             self._sse({"type": "memory_saved", "count": len(saved_facts),
