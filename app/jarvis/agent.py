@@ -1690,7 +1690,8 @@ class Agent:
                 yield {"type": "tool_start", "id": call.get("id"), "name": name,
                        "label": tools.label_of(name), "args": args,
                        "group": tools.group_of(name),
-                       "risk": tools.risk_of(name)}
+                       "risk": tools.risk_of(name),
+                       "wait_visual": tools.has_wait_visual(name)}
 
                 external_without_computer = bool(
                     not self.computer_use and opens_external_ui(name, args))

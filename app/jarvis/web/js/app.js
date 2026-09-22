@@ -1313,6 +1313,19 @@ function addMsgActions(node, text) {
 }
 
 /* --- составные карточки внутри ответа --- */
+function memoryTraceCard(facts) {
+  const items = (facts || []).filter((fact) => fact && (fact.key || fact.value));
+  const card = makeCard('✓', 'Запомнить', 'tool-card memory-tool', true);
+  const kv = el('div', 'kv');
+  items.forEach((fact) => {
+    const key = el('i', ''); key.textContent = String(fact.key || 'Факт');
+    const value = el('span', ''); value.textContent = String(fact.value || '');
+    kv.appendChild(key); kv.appendChild(value);
+  });
+  card.inner.appendChild(kv);
+  return card;
+}
+
 /* Восстановить ход мыслей и список действий у сохранённого ответа.
    Показываем сразу свёрнутыми строчками — история не теряется, но и не мешает. */
 function restoreTrace(node, meta) {
@@ -1336,6 +1349,13 @@ function restoreTrace(node, meta) {
       node.body.appendChild(card);
       collapseToThumb(card, { cls: 'th-plan', icon: '☰', title: 'План',
         sub: t.steps.length + ' шаг(ов)', tag: 'выполнен', instant: true });
+    } else if (t.kind === 'memory') {
+      const facts = t.facts || [];
+      const card = memoryTraceCard(facts);
+      node.body.appendChild(card);
+      collapseToThumb(card, { cls: 'th-ok', icon: '✓', title: 'Запомнить',
+        sub: facts.map((fact) => fact.value || '').filter(Boolean).join(', ').slice(0, 80),
+        tag: 'готово', instant: true });
     } else if (t.kind === 'tool') {
       const label = t.label || t.name || 'инструмент';
       const card = makeCard('⚙', label, 'tool-card', false);
@@ -1546,6 +1566,8 @@ const ICO = {
   code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17.5L3.5 12 9 6.5"/><path d="M15 6.5L20.5 12 15 17.5"/></svg>',
   think: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2l2.6 5.6 6 .7-4.5 4.1 1.3 6-5.4-3-5.4 3 1.3-6L3.4 9.5l6-.7z"/></svg>',
   shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7.5 3v5.6c0 4.6-3.1 8-7.5 9.4-4.4-1.4-7.5-4.8-7.5-9.4V6z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 5v14M16 5v14"/></svg>',
+  play: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5.5l10 6.5-10 6.5z"/></svg>',
 };
 
 /* Свернуть блок в компактную строку-миниатюру.
@@ -1667,7 +1689,13 @@ function collapseToThumb(node, opts) {
     setCardOpen(node, true, true);
     node.classList.remove('shrinking', 'unfolding');
     node.classList.add('grown');
-    addFoldButton(node, opts);              // развернули — даём чем свернуть обратно
+    // plan-archive-target — одноразовая невидимая цель первого FLIP-полёта.
+    // Раньше те же opts повторно использовались после ручного сворачивания:
+    // новая миниатюра снова получала opacity:0 + pointer-events:none и потому
+    // «второй раз не открывалась». Повторные миниатюры уже обычные и видимые.
+    const reopenOpts = Object.assign({}, opts, { instant: false });
+    reopenOpts.cls = String(reopenOpts.cls || '').replace(/\bplan-archive-target\b/g, '').trim();
+    addFoldButton(node, reopenOpts);         // развернули — даём чем свернуть обратно
     const h1 = node.getBoundingClientRect().height;     // высота раскрытой карточки
     growHeight(node, h0, h1);
   });
@@ -2085,48 +2113,34 @@ function discardPlan(ui) {
 function markBorn(card) {
   if (!card) return;
   card.dataset.born = String(performance.now());
-  // Быстрый tool_start/tool_result может целиком пройти между двумя paint.
-  // Два rAF отмечают только реально представленное браузеру состояние.
-  if (card.classList.contains('tool-card')) {
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (card.isConnected && !card.dataset.livePainted) {
-        card.dataset.livePainted = String(performance.now());
+  // Класс ожидания уже стоит ДО insertion, поэтому самый первый paint содержит
+  // градиент. rAF здесь ничего не запускает — только доказывает, что браузер
+  // действительно показал хотя бы один кадр до быстрого tool_result.
+  if (card.classList.contains('tool-wait')) {
+    requestAnimationFrame(() => {
+      if (card.isConnected && !card.dataset.waitPainted) {
+        card.dataset.waitPainted = String(performance.now());
       }
-    }));
+    });
   }
 }
 
-const TOOL_LIVE_AFTER_PAINT_MS = 440;
+const TOOL_WAIT_AFTER_PAINT_MS = 560;
 
-function startToolLive(card) {
-  if (!card) return;
-  // Корень прежнего «иногда не успел»: карточка создавалась уже с .live и до
-  // вставки не имела вычисленного обычного состояния. Браузер мог объединить
-  // создание, результат и свёртку в один style pass — CSS-анимации формально
-  // существовали, но стартового paint не было. Сначала вставленная карточка
-  // получает layout без эффекта, затем .live запускает анимацию с нулевого
-  // кадра. Это синхронная граница рендера, а не подобранная задержка.
-  card.classList.remove('live');
-  void card.offsetWidth;
-  card.classList.add('live');
-  markBorn(card);
-}
-
-function finishToolLive(card) {
-  if (!card) return;
+function finishToolWait(card) {
+  if (!card || !card.classList.contains('tool-wait')) return;
   const finish = () => {
     if (!card.isConnected) return;
-    const painted = Number(card.dataset.livePainted || 0);
+    const painted = Number(card.dataset.waitPainted || 0);
     if (!painted) {
       requestAnimationFrame(finish);
       return;
     }
-    // Счёт идёт от подтверждённого paint, а не от tool_result. Поэтому даже
-    // инструмент за 1 ms получает видимый проход сразу и не теряет его между
-    // сетевыми событиями; яркость при этом можно держать спокойной.
-    const left = TOOL_LIVE_AFTER_PAINT_MS - (performance.now() - painted);
+    // Даже мгновенный cache hit оставляет спокойный контур на человечески
+    // различимый срок. Отсчёт идёт от первого paint, не от прихода результата.
+    const left = TOOL_WAIT_AFTER_PAINT_MS - (performance.now() - painted);
     if (left > 0) setTimeout(finish, left);
-    else card.classList.remove('live');
+    else card.classList.remove('tool-wait');
   };
   requestAnimationFrame(finish);
 }
@@ -3957,7 +3971,7 @@ function handleEvent(ev, ui) {
       // verbose остаётся только для того, что мы дорисовываем сами (терминал).
       if (!ui.thinkCard) {
         // карточка раскрыта сразу: мысли должны бежать на глазах, как в терминале
-        ui.thinkCard = makeCard('◇', 'Ход мыслей', 'think-card live', true);
+        ui.thinkCard = makeCard('◇', 'Ход мыслей', 'think-card', true);
         markBorn(ui.thinkCard);
         ui.thinkCard.inner.appendChild(el('div', 'think-stream'));
         node.body.insertBefore(ui.thinkCard, ui.statusEl);
@@ -4042,7 +4056,11 @@ function handleEvent(ev, ui) {
       }
       // строка состояния рассказывает, чем агент занят прямо сейчас
       busyMode(ui, toolTicker(ev), 2200);
-      const card = makeCard('⚙', ev.label || ev.name, 'tool-card', true);
+      // Только registry-marked ожидание получает контур. Класс присутствует
+      // ещё до DOM insertion — никакого отложенного «старта» после открытия.
+      const waitVisual = ev.wait_visual === true;
+      const card = makeCard('⚙', ev.label || ev.name,
+        'tool-card' + (waitVisual ? ' tool-wait' : ''), true);
       card.querySelector('.card-head').insertBefore(el('span', 'tool-run'), card.querySelector('.chev'));
       const kv = el('div', 'kv');
       Object.keys(ev.args || {}).forEach((k) => {
@@ -4051,7 +4069,7 @@ function handleEvent(ev, ui) {
       });
       card.inner.appendChild(kv);
       node.body.insertBefore(card, ui.statusEl);
-      startToolLive(card);
+      markBorn(card);
       ui.tools[ev.id || ev.name] = card;
       termLine('$ ' + ev.name + ' ' + JSON.stringify(ev.args || {}).slice(0, 300), 'cmd');
       // Прогрессом владеют только plan_step-события оркестратора. Число
@@ -4165,7 +4183,7 @@ function handleEvent(ev, ui) {
         else txt = JSON.stringify(r, null, 1).slice(0, 4000);
         pre.textContent = txt || '(пусто)';
         card.inner.appendChild(pre);
-        finishToolLive(card);
+        finishToolWait(card);
         // отработал — сворачиваем в миниатюру, но не раньше, чем карточку
         // успели увидеть (см. CARD_MIN_MS)
         collapseSoon(card, {
@@ -4185,11 +4203,23 @@ function handleEvent(ev, ui) {
       break;
     }
 
-    case 'memory_saved':
-      // Локальный extractor записывает очевидный факт до model/tool loop, поэтому
-      // прежний tool_result('remember') здесь никогда не срабатывал.
+    case 'memory_saved': {
+      // Локальный writer — настоящий инструментальный факт, хотя сетевого tool
+      // call больше нет. Показываем его в trace явно, но без wait-gradient:
+      // сохранение уже завершилось и не должно притворяться загрузкой.
+      const facts = ev.facts || [];
+      const card = memoryTraceCard(facts);
+      markBorn(card);
+      node.body.insertBefore(card, ui.statusEl);
+      collapseSoon(card, {
+        cls: 'th-ok', icon: '✓', title: 'Запомнить',
+        sub: facts.map((fact) => fact.value || '').filter(Boolean).join(', ').slice(0, 80),
+        tag: 'готово',
+      });
       pulseNav('memory', true);
+      scrollDown();
       break;
+    }
 
     case 'file': {
       ui.files.push(ev);
@@ -5237,7 +5267,7 @@ function renderTasks() {
   const pause = $('#autoPauseBtn');
   if (pause) {
     pause.classList.toggle('play', S.autoPaused);
-    pause.textContent = S.autoPaused ? '▶' : 'Ⅱ';
+    pause.innerHTML = S.autoPaused ? ICO.play : ICO.pause;
     const label = S.autoPaused ? 'Продолжить все актуальные задачи' : 'Поставить все актуальные задачи на паузу';
     pause.title = label;
     pause.setAttribute('aria-label', label);

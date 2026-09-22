@@ -17,17 +17,21 @@ TOOLS: Dict[str, Dict[str, Any]] = {}
 
 def register(name: str, fn: Callable, description: str, params: Dict[str, Any],
              risk: str = "safe", group: str = "base", label: str = "",
-             silent: bool = False) -> None:
-    """silent=True — служебный шаг (агент «смотрит на экран»). Такие шаги не
-    показываются в ленте, не пишутся в историю и не требуют подтверждения.
-    Единственное место, где это знание объявлено: раньше оно было продублировано
-    в agent.py, server.py и app.js, и каждый новый инструмент приходилось
-    прописывать в трёх местах."""
+             silent: bool = False, wait_visual: bool = False) -> None:
+    """UI-свойства объявляются рядом с самим инструментом.
+
+    ``silent`` скрывает служебные шаги вроде screenshot. ``wait_visual``
+    означает реальное ожидание сети/долгой обработки и только таким карточкам
+    разрешён спокойный движущийся контур. Раньше фронт красил ВСЕ tools, поэтому
+    мгновенное запоминание выглядело как загрузка, а добавление нового имени
+    требовало ещё одного списка в JavaScript.
+    """
     TOOLS[name] = {
         "fn": fn,
         "risk": risk,
         "group": group,
         "silent": bool(silent),
+        "wait_visual": bool(wait_visual),
         "label": label or name,
         "schema": {
             "type": "function",
@@ -65,27 +69,27 @@ def B(desc: str) -> Dict[str, Any]:
 register("web_search", web.web_search,
          "Поиск в интернете. Используй всегда, когда нужны свежие факты, цены, новости, ссылки.",
          {"query": S("поисковый запрос", True), "count": I("сколько результатов, по умолчанию 6")},
-         "safe", "web", "Поиск в интернете")
+         "safe", "web", "Поиск в интернете", wait_visual=True)
 
 register("open_url", web.open_url,
          "Открыть веб-страницу и прочитать её текст. Это браузер агента на сервере.",
-         {"url": S("адрес страницы", True)}, "safe", "web", "Открыть страницу")
+         {"url": S("адрес страницы", True)}, "safe", "web", "Открыть страницу", wait_visual=True)
 
 register("deep_research", web.deep_research,
          "Глубокое исследование: поиск + чтение нескольких источников. Для сложных вопросов.",
          {"query": S("тема исследования", True), "pages": I("сколько страниц прочитать (1-5)")},
-         "safe", "web", "Исследование")
+         "safe", "web", "Исследование", wait_visual=True)
 
 register("download_file", web.download_file,
          "Скачать файл по ссылке в песочницу.",
          {"url": S("ссылка на файл", True), "filename": S("имя файла")},
-         "caution", "web", "Скачивание")
+         "caution", "web", "Скачивание", wait_visual=True)
 
 register("http_request", web.http_request,
          "Произвольный HTTP-запрос к API (GET/POST).",
          {"url": S("адрес", True), "method": S("метод", False, ["GET", "POST", "PUT", "DELETE"]),
           "body": S("тело запроса"), "headers_json": S("заголовки в JSON")},
-         "caution", "web", "HTTP-запрос")
+         "caution", "web", "HTTP-запрос", wait_visual=True)
 
 # ---------------------------------------------------------------- ПЕСОЧНИЦА
 register("write_file", system.write_file,
@@ -104,11 +108,11 @@ register("delete_file", system.delete_file, "Удалить файл или па
 
 register("run_python", system.run_python,
          "Выполнить python-код в песочнице: расчёты, анализ данных, генерация файлов.",
-         {"code": S("код на python", True)}, "caution", "sandbox", "Python")
+         {"code": S("код на python", True)}, "caution", "sandbox", "Python", wait_visual=True)
 
 register("run_shell", system.run_shell,
          "Выполнить команду в терминале песочницы.",
-         {"command": S("команда", True)}, "danger", "sandbox", "Терминал")
+         {"command": S("команда", True)}, "danger", "sandbox", "Терминал", wait_visual=True)
 
 register("sandbox_info", system.sandbox_info,
          "Посмотреть состояние песочницы этого диалога: имя, сколько файлов, размер, список файлов.",
@@ -175,22 +179,22 @@ register("generate_image", media.generate_image,
          "Сгенерировать изображение по текстовому описанию.",
          {"prompt": S("описание картинки", True), "width": I("ширина"), "height": I("высота"),
           "style": S("стиль, например cinematic, 3d render")},
-         "safe", "media", "Генерация изображения")
+         "safe", "media", "Генерация изображения", wait_visual=True)
 
 register("analyze_image", media.analyze_image,
          "Посмотреть на изображение (файл, кадр камеры, скриншот) и ответить на вопрос о нём.",
          {"image_ref": S("путь к файлу или data-url", True), "question": S("что нужно понять")},
-         "safe", "media", "Анализ изображения")
+         "safe", "media", "Анализ изображения", wait_visual=True)
 
 register("analyze_video", media.analyze_video,
          "Разобрать видео: кадры + речь.",
          {"path": S("путь к видео", True), "question": S("что нужно понять"), "frames": I("сколько кадров")},
-         "safe", "media", "Анализ видео")
+         "safe", "media", "Анализ видео", wait_visual=True)
 
 register("transcribe_audio", media.transcribe_audio,
          "Распознать речь из аудиофайла.",
          {"path_or_data_url": S("путь к аудио", True), "language": S("язык, ru по умолчанию")},
-         "safe", "media", "Распознавание речи")
+         "safe", "media", "Распознавание речи", wait_visual=True)
 
 register("send_telegram", media.send_telegram,
          "Отправить сообщение/уведомление пользователю в Telegram.",
@@ -300,6 +304,11 @@ def group_names(group: str) -> List[str]:
 def is_silent(name: str) -> bool:
     """Служебный ли это шаг (не показывать пользователю)."""
     return bool((TOOLS.get(name) or {}).get("silent"))
+
+
+def has_wait_visual(name: str) -> bool:
+    """Нужен ли карточке индикатор реального ожидания/загрузки."""
+    return bool((TOOLS.get(name) or {}).get("wait_visual"))
 
 
 def silent_names() -> List[str]:

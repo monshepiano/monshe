@@ -246,6 +246,39 @@ class RoutingAndPlanCostTests(unittest.TestCase):
                       if event.get("type") == "delta" and "сохранена" in event.get("text", ""))
         self.assertLess(third, answer, "verification segment must become current before its model turn")
 
+    def test_wait_visual_is_registry_owned_and_only_marks_real_waits(self) -> None:
+        self.assertTrue(agent.tools.has_wait_visual("web_search"))
+        self.assertTrue(agent.tools.has_wait_visual("open_url"))
+        self.assertTrue(agent.tools.has_wait_visual("generate_image"))
+        self.assertFalse(agent.tools.has_wait_visual("remember"))
+        self.assertFalse(agent.tools.has_wait_visual("write_file"))
+        self.assertFalse(agent.tools.has_wait_visual("system_info"))
+
+        route = {"tier": "base", "reason": "test", "score": 0,
+                 "verbose": True, "offer_tools": True}
+        schemas = [{"type": "function", "function": {
+            "name": name, "parameters": {"type": "object"}}}
+            for name in ("open_url", "write_file")]
+        turns = iter((
+            [{"type": "done", "tool_calls": [
+                {"id": "web", "type": "function", "function": {
+                    "name": "open_url", "arguments": json.dumps({"url": "https://example.com"})}},
+                {"id": "file", "type": "function", "function": {
+                    "name": "write_file", "arguments": json.dumps({"path": "x", "content": "y"})}},
+            ]}],
+            [{"type": "delta", "text": "Готово."}, {"type": "done", "tool_calls": []}],
+        ))
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=lambda *_a, **_k: next(turns)), \
+             mock.patch.object(agent.tools, "schemas", return_value=schemas), \
+             mock.patch.object(agent.tools, "call", return_value={"ok": True}):
+            events = list(agent.Agent().run(
+                [{"role": "user", "content": "Прочитай и сохрани"}],
+                user_text="Прочитай и сохрани"))
+        waits = {event["name"]: event["wait_visual"] for event in events
+                 if event.get("type") == "tool_start"}
+        self.assertEqual(waits, {"open_url": True, "write_file": False})
+
     def test_normal_chat_never_emits_a_plan(self) -> None:
         route = {
             "tier": "base", "reason": "test", "score": 0.4,
@@ -1093,7 +1126,7 @@ class VisionUiContractTests(unittest.TestCase):
 
 class InstallerBuildTests(unittest.TestCase):
     def test_installer_uses_the_application_version(self) -> None:
-        self.assertEqual(installer_build.version(), "1.2.0-beta.6")
+        self.assertEqual(installer_build.version(), "1.2.0-beta.7")
 
     def test_rebuild_preserves_previous_embedded_keys_without_a_keys_file(self) -> None:
         cloud, deep, gigachat = "cloud-fixture", "deep-fixture", "gigachat-fixture"

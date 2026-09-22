@@ -638,6 +638,46 @@ function testPlanTypingCompletionAndDockRaces() {
     'normal chat and empty plans must never create a completed-plan tab');
   assert(/collapseToThumb\(card/.test(archive) && /th-plan/.test(archive) && /instant: true/.test(archive),
     'the full completed plan must persist as an immediately readable collapsed tab');
+  const collapse = extractFunction(js, 'collapseToThumb');
+  assert(/reopenOpts\.cls[\s\S]*replace\(\/\\bplan-archive-target\\b\/g/.test(collapse) &&
+    /Object\.assign\(\{\}, opts, \{ instant: false \}\)/.test(collapse),
+    'after first expansion, later plan thumbnails must not reuse the invisible one-shot FLIP target');
+
+  // Execute two full open/fold cycles. The second thumbnail used to be an
+  // invisible pointer-events:none FLIP target and could never receive a click.
+  const planRoot = new MiniNode('div');
+  const planCard = new MiniNode('div'); planCard.className = 'panel-card plan-card';
+  const planHead = new MiniNode('div'); planHead.className = 'card-head open';
+  const planBody = new MiniNode('div'); planBody.className = 'card-body open';
+  planCard.appendChild(planHead); planCard.appendChild(planBody); planRoot.appendChild(planCard);
+  const foldTimers = [];
+  const foldCtx = loadFunctions(['setCardOpen', 'growHeight', 'collapseToThumb', 'addFoldButton'], {
+    Date, Object, String, Math, document: miniDocument, el: miniEl,
+    esc: (value) => String(value), ICO: { bell: 'bell' },
+    window: { getSelection: () => '' },
+    setTimeout(fn, ms) { foldTimers.push({ fn, ms, cancelled: false }); return foldTimers.length; },
+    clearTimeout(id) { if (foldTimers[id - 1]) foldTimers[id - 1].cancelled = true; },
+  });
+  const thumb1 = foldCtx.collapseToThumb(planCard, {
+    cls: 'th-plan plan-archive-target', icon: '☰', title: 'План', instant: true,
+  });
+  thumb1.classList.add('plan-archive-reveal');
+  thumb1.listeners.click();
+  let foldButton = planCard.querySelector('.th-fold');
+  assert(foldButton, 'first expansion must expose a fold control');
+  foldButton.listeners.click({ stopPropagation() {} });
+  while (foldTimers.length) {
+    const timer = foldTimers.shift();
+    if (!timer.cancelled) timer.fn();
+  }
+  const thumb2 = planRoot.querySelector('.thumb');
+  assert(thumb2 && !thumb2.classList.contains('plan-archive-target'),
+    'second thumbnail must be visible and clickable');
+  thumb2.listeners.click();
+  foldButton = planCard.querySelector('.th-fold');
+  assert(foldButton && planCard.style.display === '',
+    'the same completed plan must open for the second time');
+
   assert(!/archiveCompletedPlan/.test(extractFunction(js, 'discardPlan')),
     'stopped or failed plans must not be misrepresented as completed archives');
   assert(!/\.pd-s\.now::after\s*\{/.test(css), 'current dock step must have no underline pseudo-element');
@@ -1081,10 +1121,8 @@ function testRussianImageAndHudFollowupContract() {
     'every navigation tab must own the same outline-only effect layer');
 
   const events = extractFunction(js, 'handleEvent');
-  assert(/case 'memory_saved':[\s\S]*pulseNav\('memory', true\)/.test(events),
-    'deterministic memory writes must trigger the visible memory outline');
-  assert(/ev\.name === 'remember'\) pulseNav\('memory', true\)/.test(events),
-    'model-driven memory writes get the same outline pulse');
+  assert(/case 'memory_saved':[\s\S]*memoryTraceCard\(facts\)[\s\S]*collapseSoon\(card[\s\S]*pulseNav\('memory', true\)/.test(events),
+    'deterministic memory writes must create a visible tool trace and pulse Memory');
   assert(/case 'file':[\s\S]*pulseNav\('files', false\)/.test(events),
     'actual file saves trigger the Files outline pulse');
   assert(/\.nav-item\.save-glint \.nav-outline\s*\{[^}]*fileSaveOutline \.72s/s.test(css) &&
@@ -1235,6 +1273,10 @@ async function testAutoPollingReconciliationAndBulkControls() {
   const reconcileState = { tasks: [task], autoPaused: false };
   const reconcileCtx = loadFunctions(['taskFingerprint', 'renderTasks'], {
     S: reconcileState, Map, JSON, String,
+    ICO: {
+      pause: '<svg><path d="M8 5v14M16 5v14"/></svg>',
+      play: '<svg><path d="M8 5.5l10 6.5-10 6.5z"/></svg>',
+    },
     $$(selector, node) { return node.querySelectorAll(selector); },
     $(selector) {
       if (selector === '#taskGrid') return grid;
@@ -1265,7 +1307,8 @@ async function testAutoPollingReconciliationAndBulkControls() {
     /<i>актуальных<\/i><b>1<\/b>/.test(stats.innerHTML) &&
     /<i>в работе<\/i><b>1<\/b>/.test(stats.innerHTML),
   'AUTO summary reports total, current and running task counts');
-  assert.strictEqual(pause.textContent, 'Ⅱ', 'global pause control is icon-only');
+  assert(/<svg[\s\S]*M8 5v14M16 5v14/.test(pause.innerHTML),
+    'global pause control uses a real stroke SVG, not typographic bars');
   assert(autoBar.classList.contains('running'));
 
   reconcileState.tasks = [{ ...task, progress: 0.8, updated_at: 2 }];
@@ -1282,8 +1325,9 @@ async function testAutoPollingReconciliationAndBulkControls() {
     'AUTO mirrors the Files summary bar with pause left of clear');
   assert(/id="clearDoneBtn"[^>]*>[\s\n]*Очистить<\/button>/.test(html) &&
     !/Очистить выполненные/.test(html) &&
-    /pause\.textContent = S\.autoPaused \? '▶' : 'Ⅱ'/.test(js),
-    'bulk controls use compact requested labels');
+    /pause\.innerHTML = S\.autoPaused \? ICO\.play : ICO\.pause/.test(js) &&
+    !/>Ⅱ<|>▶</.test(html),
+    'bulk controls use real SVG icons and the requested compact clear label');
   assert(/\/api\/tasks\/clear-completed/.test(js) &&
     /S\.autoPaused \? '\/api\/tasks\/resume-all' : '\/api\/tasks\/pause-all'/.test(js));
   assert(/\.task-card\.paused::before\s*\{[^}]*rgba\(154,202,219,\.42\)/s.test(css),
@@ -1291,48 +1335,35 @@ async function testAutoPollingReconciliationAndBulkControls() {
 }
 
 function testThinkingGradientContract() {
-  const field = css.match(/\.panel-card\.live::before\s*\{([^}]*)\}/s);
-  assert(field && /display\s*:\s*none/.test(field[1]),
-    'live cards must have no animated interior field');
+  assert(!/\.think-card\.live|\.panel-card\.live/.test(css + js),
+    'thinking must remain a calm stream with no loading gradient');
 
-  const frame = css.match(/\.panel-card\.live::after\s*\{([^}]*)\}/s);
-  assert(frame && /inset\s*:\s*-1px/.test(frame[1]) && /padding\s*:\s*1px/.test(frame[1]),
-    'the animated gradient must cover the complete border ring');
-  assert(/mask-composite\s*:\s*exclude/.test(frame[1]));
-  assert(/opacity\s*:\s*\.58/.test(frame[1]) && /wholeFrameFlow 1\.25s/.test(frame[1]) &&
-    /background-position:85% 0/.test(frame[1]),
-  'reasoning outline must be colourful on the first frame and move immediately');
-  assert(/@keyframes wholeFrameFlow\s*\{[\s\S]*0%\{opacity:\.58/.test(css));
-
-  const toolFrame = css.match(/\.tool-card\.live::after\s*\{([^}]*)\}/s);
-  assert(toolFrame && /rgba\(66,224,242,\.08\)/.test(toolFrame[1]) &&
-    /rgba\(168,120,237,\.39\)/.test(toolFrame[1]) &&
-    /rgba\(239,169,83,\.37\)/.test(toolFrame[1]) &&
-    /background-size:290% 100%/.test(toolFrame[1]) && /toolFrameFlow 1\.18s/.test(toolFrame[1]),
-  'Working contour must be wide and substantially dimmer without filling the card');
-  const startLive = extractFunction(js, 'startToolLive');
-  const finishLive = extractFunction(js, 'finishToolLive');
-  assert(/classList\.remove\('live'\)[\s\S]*offsetWidth[\s\S]*classList\.add\('live'\)/.test(startLive) &&
-    /TOOL_LIVE_AFTER_PAINT_MS/.test(finishLive) && /const TOOL_LIVE_AFTER_PAINT_MS = 440/.test(js) &&
-    /node\.body\.insertBefore\(card, ui\.statusEl\);\s*startToolLive\(card\)/.test(js),
-    'a tool animation starts from a forced pre-live style and survives a verified paint');
-  const textBand = css.match(/\.think-card\.live \.card-head,\.think-card\.live \.think-stream,[\s\S]*?\.tool-card\.live \.kv span\s*\{([^}]*)\}/s);
-  assert(textBand && /color:transparent/.test(textBand[1]) && /background-clip:text/.test(textBand[1]) &&
-    /#61e7ff 45\.2%/.test(textBand[1]) && /#718fff 46\.8%/.test(textBand[1]) &&
-    /#ef72d0 50%/.test(textBand[1]) && /#65edc4 54\.8%/.test(textBand[1]) &&
-    /liveTextFlow 8\.4s/.test(textBand[1]),
-    'thinking and tool text receive a narrow, calm Apple-style colour band on the glyphs');
-  assert(/@keyframes liveTextFlow/.test(css));
+  const toolFrame = css.match(/\.tool-card\.tool-wait::after\s*\{([^}]*)\}/s);
+  assert(toolFrame && /rgba\(87,194,207,\.10\)/.test(toolFrame[1]) &&
+    /rgba\(139,113,190,\.21\)/.test(toolFrame[1]) &&
+    /background-size:145% 100%/.test(toolFrame[1]) && /background-position:50% 0/.test(toolFrame[1]) &&
+    /opacity:\.42/.test(toolFrame[1]) && /toolWaitFlow 1\.55s/.test(toolFrame[1]),
+  'wait contour is present from its first frame and substantially dimmer');
+  const finishWait = extractFunction(js, 'finishToolWait');
+  assert(/TOOL_WAIT_AFTER_PAINT_MS/.test(finishWait) &&
+    /const TOOL_WAIT_AFTER_PAINT_MS = 560/.test(js) &&
+    /'tool-card' \+ \(waitVisual \? ' tool-wait' : ''\)/.test(js) &&
+    /node\.body\.insertBefore\(card, ui\.statusEl\);\s*markBorn\(card\)/.test(js),
+    'wait class exists before DOM insertion and survives a verified first paint');
+  assert(!/\.tool-card\.(?:live|tool-wait) \.card-head/.test(css) &&
+    !/liveTextFlow/.test(css),
+    'tool and thinking glyphs never receive the conspicuous second gradient');
   assert(!/\.think-stream::(?:before|after)[^{]*\{[^}]*caret/s.test(css),
     'thinking stays a masked scrolling stream, not a cursor animation');
 
   const autoOutline = css.match(/\.nav-item\[data-view="auto"\]\.auto-running \.nav-outline\s*\{([^}]*)\}/s);
   assert(autoOutline && /background-size:390% 100%/.test(autoOutline[1]) &&
-    /autoOutlineFlow 3\.8s cubic-bezier\(\.45,0,\.55,1\) infinite alternate/.test(autoOutline[1]) &&
-    /drop-shadow\(0 0 6px/.test(autoOutline[1]) && /drop-shadow\(0 0 15px/.test(autoOutline[1]) &&
-    /drop-shadow\(0 0 28px/.test(autoOutline[1]) && /drop-shadow\(0 0 44px/.test(autoOutline[1]) &&
-    (autoOutline[1].match(/rgba\(/g) || []).length >= 14,
-    'running AUTO keeps its border-only gradient but emits a broad four-layer glow');
+    /autoOutlineFlow 3\.8s cubic-bezier\(\.45,0,\.55,1\) infinite alternate/.test(autoOutline[1]),
+    'running AUTO keeps its border-only gradient');
+  const autoTab = css.match(/\.nav-item\[data-view="auto"\]\.auto-running\s*\{([^}]*)\}/s);
+  assert(autoTab && /animation:autoTabGlow 2\.4s/.test(autoTab[1]) &&
+    (autoTab[1].match(/0 0/g) || []).length >= 4 && /@keyframes autoTabGlow/.test(css),
+    'AUTO glow lives on the unmasked tab box so Safari cannot clip it away');
   const memoryOutline = css.match(/\.nav-item\.save-glint-strong \.nav-outline\s*\{([^}]*)\}/s);
   assert(memoryOutline && /#b477ff/.test(memoryOutline[1]) && /#ef79cf/.test(memoryOutline[1]) &&
     /memorySaveOutline 1\.35s/.test(memoryOutline[1]),

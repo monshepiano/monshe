@@ -486,9 +486,12 @@ class Handler(BaseHTTPRequestHandler):
         # запускает видимый border-pass у «Памяти»; модель больше не получает
         # второй writer и не может добавить пересказ или вводное слово.
         saved_facts = agent.remember_obvious_facts(text)
-        if saved_facts:
-            self._sse({"type": "memory_saved", "count": len(saved_facts),
-                       "keys": [item.get("key", "") for item in saved_facts]})
+        memory_facts = [{"kind": item.get("kind", "fact"),
+                         "key": item.get("key", ""),
+                         "value": item.get("value", "")} for item in saved_facts]
+        if memory_facts:
+            self._sse({"type": "memory_saved", "count": len(memory_facts),
+                       "facts": memory_facts})
 
         # Окончательный title локален и применяется после закрытия SSE. Память
         # уже записана verbatim parser выше — скрытого auxiliary LLM больше нет.
@@ -583,7 +586,8 @@ class Handler(BaseHTTPRequestHandler):
         run_error = ""
         partial: List[str] = []
         thinking: List[str] = []
-        trace: List[Dict[str, Any]] = []
+        trace: List[Dict[str, Any]] = (
+            [{"kind": "memory", "facts": memory_facts}] if memory_facts else [])
         try:
             for event in runner.run(
                     messages, user_text=text, has_image=has_image,
