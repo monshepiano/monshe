@@ -1139,6 +1139,36 @@ _AGENT_HINT_RE = re.compile(
     re.IGNORECASE)
 
 
+_PLAN_WORTHY_RE = re.compile(
+    r"\b(?:созда\w+|собер\w+|сдела\w+|напиши\w*|постр\w+|разработа\w+|спроектиру\w+|"
+    r"исследу\w+|проанализиру\w+|сравн\w+|подготов\w+|оформи\w+|сгенерир\w+|"
+    r"перепиши\w*|исправ\w+|улучш\w+|расширь|доработа\w+|"
+    r"отч\w+|проект\w*|сайт\w*|игр\w*|приложени\w*|презентаци\w+|да\w*джест|"
+    r"таблиц\w*|исследовани\w*|анализ|сводк\w*|гайд|инструкци\w*|список\w*)\b",
+    re.IGNORECASE)
+
+
+def needs_plan(text: str) -> bool:
+    """Нужен ли видимый ПЛАН — только для действительно многоэтапной работы.
+
+    AGENT — режим для больших дел: «собери отчёт», «сделай сайт», «исследуй
+    рынок». Одноэтапная просьба («погода», «переведи», «найди ссылку»)
+    плана не заслуживает: агент просто берёт инструмент и отвечает — без
+    лишней карточки и без запроса планировщику. Длинная реплика с несколькими
+    требованиями тоже считается многоэтапной.
+    """
+    t = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not t:
+        return False
+    if len(t) >= 140:
+        return True
+    # несколько предложений-поручений в одной реплике — точно план
+    sentences = [s for s in re.split(r"[.!?;]+", t) if len(s.strip()) >= 8]
+    if len(sentences) >= 3:
+        return True
+    return bool(_PLAN_WORTHY_RE.search(t))
+
+
 def suggest_mode(text: str, agent_mode: bool, computer_use: bool) -> Optional[Dict[str, str]]:
     """Реплика явно требует выключенного режима — предложить его до модели.
 
@@ -1148,6 +1178,10 @@ def suggest_mode(text: str, agent_mode: bool, computer_use: bool) -> Optional[Di
     if not t:
         return None
     if not computer_use and _COMPUTER_HINT_RE.search(t):
+        if agent_mode:
+            # AGENT включает «Компьютер» сам, по необходимости, без вопроса —
+            # спрашивать пользователя значило бы ломать автономность режима
+            return None
         return {"mode": "computer",
                 "reason": "нужно управлять мышью и клавиатурой на экране"}
     if not agent_mode and _AGENT_HINT_RE.search(t):
@@ -1685,6 +1719,24 @@ class Agent:
                        "Управление экраном заблокировано правами macOS. "}
 
         available = tools.schemas(_tool_groups(self.computer_use))
+        # AGENT САМ ВКЛЮЧАЕТ «КОМПЬЮТЕР». Автономный режим не должен
+        # останавливаться перед экранной работой: увидев в задаче действия
+        # с мышью/клавиатурой, агент включает режим сам — при живых правах
+        # macOS. Пользователь видит mode_changed (кнопка загорается) и
+        # системную пометку в контексте; рискованные действия по-прежнему
+        # проходят через видимые санкции.
+        if (self.agent_mode and not self.computer_use and user_text
+                and CONFIG.get("computer_use.enabled", True)
+                and _COMPUTER_HINT_RE.search(user_text)):
+            from .tools import system as _sys
+            if _sys.IS_MAC and _sys.accessibility_ok():
+                self.computer_use = True
+                available = tools.schemas(_tool_groups(True))
+                yield {"type": "mode_changed", "mode": "computer", "on": True}
+                messages = list(messages) + [{"role": "system", "content":
+                    "[Система] Режим «Компьютер» включён автоматически для этой "
+                    "задачи: инструменты экрана (screenshot, ui_tree, mouse_click, "
+                    "type_text, press_key) доступны в этом прогоне. Действуй."}]
         if computer_blocked:
             blocked = {"screenshot", "ui_tree", "screen_info", "mouse_click",
                        "mouse_move", "mouse_scroll", "mouse_drag", "type_text",
@@ -1756,7 +1808,20 @@ class Agent:
         # semantic plan выходит перед ними. Обычный текст/уточнение просто снимают
         # pending и никогда не получают фиктивную карточку.
         plan: List[str] = []
-        plan_pending = bool(self.visible_plan and self.agent_mode and user_text and not social_only)
+        # ПЛАН — ТОЛЬКО КОГДА ОН ДЕЙСТВИТЕЛЬНО НУЖЕН. Простая просьба в AGENT
+        # («погода», «переведи») идёт сразу к работе: без карточки плана и
+        # без запроса планировщику. Многоэтапная — с планом, как всегда.
+        # request_mode(agent) от самой модели переводит план_worthy в True:
+        # она увидела многошаговость раньше эвристики.
+        plan_worthy = needs_plan(user_text)
+        plan_pending = bool(self.visible_plan and self.agent_mode and user_text
+                            and not social_only and plan_worthy)
+        # ПЕРВЫЙ ХОД AGENT ДЕРЖИТСЯ ДО ЕГО КОНЦА даже когда плана не будет:
+        # пока ход не закончился, нельзя знать, не окажется ли текст повтором
+        # preflight-вопроса или уточнением с ui-панелью. Раньше это держал сам
+        # plan_pending; теперь план строится только для многоэтапных задач,
+        # а придержать первый ход нужно всегда — это и fence, и шлюз вызовов.
+        intro_hold = bool(self.agent_mode and not social_only)
         plan_announced = False
         deferred_work_events: List[Dict[str, Any]] = []
 
@@ -1874,7 +1939,7 @@ class Agent:
             # также удерживаем первый результат целиком: сначала нужно понять,
             # не является ли он уточняющим вопросом.
             gate_open = False
-            defer_plan_decision = bool(plan_pending and not plan_announced)
+            defer_plan_decision = bool((plan_pending and not plan_announced) or intro_hold)
 
             for event in llm.chat_stream(
                     convo, tier=tier, tools=available,
@@ -2196,10 +2261,12 @@ class Agent:
             # и выпускаем его раньше накопленного reasoning/text/tool_hint.
             elif defer_plan_decision and autonomous_names:
                 plan_pending = False
-                plan = self.make_plan(user_text, autonomous_names)
-                if plan:
-                    for plan_event in announce_plan():
-                        yield plan_event
+                intro_hold = False
+                if plan_worthy:
+                    plan = self.make_plan(user_text, autonomous_names)
+                    if plan:
+                        for plan_event in announce_plan():
+                            yield plan_event
                 for work_event in deferred_work_events:
                     yield work_event
                 deferred_work_events.clear()
@@ -2211,6 +2278,7 @@ class Agent:
                 # Обычный ответ: planner не нужен, фиктивной карточки нет. При
                 # этом длинное reasoning относится к самому ответу и не должно
                 # исчезать вместе с pending-решением о плане.
+                intro_hold = False
                 held_reasoning = list(deferred_work_events)
                 abandon_unstarted_plan()
                 for held_event in held_reasoning:
@@ -2471,6 +2539,7 @@ class Agent:
                             # Разрешение получено: режим действует с этого же прогона
                             if mode == "agent":
                                 self.agent_mode = True
+                                plan_worthy = True
                             elif mode == "computer":
                                 self.computer_use = True
                                 # инструменты экрана появляются в этом же прогоне

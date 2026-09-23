@@ -176,6 +176,15 @@
               </button>
             </div>
             <textarea id="input" rows="1" placeholder="Сообщение для JARVIS…"></textarea>
+            <!-- Ускорение ответа: живёт только пока идёт печать. Один клик —
+                 и оставшийся текст печатается вдвое быстрее. -->
+            <button class="boost-btn" id="boostBtn" data-tip="Ускорить печать ×2"
+                    aria-label="Ускорить печать ответа" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 5l7 7-7 7"/><path d="M13 5l7 7-7 7"/>
+              </svg>
+            </button>
             <button class="send-btn" id="sendBtn" title="Отправить">
               <svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg>
             </button>
@@ -197,7 +206,12 @@
                 <div class="bp-hint" id="budgetHint">Сколько можно потратить на один ответ</div>
                 <div class="bp-variants" id="budgetVariants"></div>
                 <div class="bp-row">
-                  <input class="bp-input" id="budgetInput" type="number" min="1" step="1" placeholder="своё, ₽">
+                  <div class="bp-field">
+                    <button class="bp-step" id="bpMinus" aria-label="Меньше">−</button>
+                    <input class="bp-input" id="budgetInput" type="text" inputmode="numeric"
+                           min="1" step="1" placeholder="своё, ₽">
+                    <button class="bp-step" id="bpPlus" aria-label="Больше">+</button>
+                  </div>
                   <button class="btn primary sm" id="budgetApply">Подтвердить</button>
                 </div>
               </div>

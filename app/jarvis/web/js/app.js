@@ -506,6 +506,24 @@ try {
    (см. разделы «камера в диалоге» и «санкции / уведомления в диалоге» ниже). */
 
 /* ============================ переключатели ============================ */
+/* КРАСНАЯ ВОЛНА AGENT. Включение агентского режима — не смена галочки, а
+   пересадка в гоночный автомобиль: от тумблера к краям экрана мягко
+   расходятся красные акценты, и весь интерфейс наливается цветом режима.
+   Волна — одноразовый слой поверх всего: расширяется, тает, убирается.
+   Класс agent-on на body остаётся и держит красную тему, пока режим жив. */
+function agentWave(originEl) {
+  const src = originEl && originEl.getBoundingClientRect ? originEl : $('#swAgent');
+  const r = (src && src.getBoundingClientRect()) || { left: innerWidth / 2, top: innerHeight / 2, width: 0, height: 0 };
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const wave = el('div', 'agent-wave');
+  const radius = Math.hypot(Math.max(cx, innerWidth - cx), Math.max(cy, innerHeight - cy));
+  wave.style.left = cx + 'px';
+  wave.style.top = cy + 'px';
+  wave.style.setProperty('--aw', (radius * 2.2) + 'px');
+  document.body.appendChild(wave);
+  setTimeout(() => wave.remove(), 950);
+}
+
 $('#tgAgent').addEventListener('change', function () {
   // Настоящий checkbox-switch: состояние принадлежит самому control, а не
   // декоративному классу кнопки. Подпись лежит вне <label>, поэтому она не
@@ -514,6 +532,12 @@ $('#tgAgent').addEventListener('change', function () {
   const shell = this.closest('.agent-switch');
   if (shell) shell.classList.add('tip-dismissed');
   beep(S.agentMode ? 760 : 420, 0.1);
+  // ТЕМА AGENT: включение запускает волну от тумблера (или от тумблера в
+  // карточке-разрешении — координаты передаёт mode_changed), выключение
+  // тихо возвращает нейтральный интерфейс.
+  document.body.classList.toggle('agent-on', S.agentMode);
+  if (S.agentMode) agentWave(S.agentWaveOrigin || $('#swAgent'));
+  S.agentWaveOrigin = null;
   $('#input').placeholder = S.agentMode
     ? 'Поставь задачу — разобью на шаги и сделаю сам…'
     : 'Сообщение для JARVIS…';
@@ -2959,7 +2983,7 @@ function hideBudgetPop() {
   setTimeout(() => {
     budgetPop.classList.remove('bp-closing');
     budgetPop.hidden = true;
-  }, 200);                              // = длительность npOutUp в CSS
+  }, 150);                              // = длительность npOutUp (закрытие чуть быстрее)
 }
 function openBudgetPop() {
   budgetPop.classList.remove('bp-closing');
@@ -3003,6 +3027,27 @@ document.addEventListener('keydown', (e) => {
 });
 const budgetOffBtn = $('#budgetOff');
 if (budgetOffBtn) budgetOffBtn.addEventListener('click', () => setBudget(null));
+/* Свои стрелки суммы вместо браузерных: − и + в стиле Джарвиса. Нативный
+   спиннер number-инпута выглядел чужеродно на тёмной панели. */
+const budgetInput = $('#budgetInput');
+function budgetStepValue(delta) {
+  const cur = parseFloat(String(budgetInput.value).replace(',', '.')) || 0;
+  const next = Math.max(1, Math.round(cur + delta));
+  budgetInput.value = String(next);
+}
+if (budgetInput) {
+  budgetInput.addEventListener('input', () => {
+    budgetInput.value = budgetInput.value.replace(/[^0-9]/g, '').slice(0, 6);
+  });
+  budgetInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); $('#budgetApply').click(); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); budgetStepValue(1); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); budgetStepValue(-1); }
+  });
+}
+const bpMinus = $('#bpMinus'), bpPlus = $('#bpPlus');
+if (bpMinus) bpMinus.addEventListener('click', () => budgetStepValue(-1));
+if (bpPlus) bpPlus.addEventListener('click', () => budgetStepValue(1));
 $('#budgetApply').addEventListener('click', () => {
   const v = parseFloat($('#budgetInput').value);
   if (v > 0) setBudget(v); else toast('Введите сумму больше нуля', 'warn');
@@ -3153,6 +3198,17 @@ async function send(opts) {
     }
     let sib = editing.node.nextElementSibling;
     while (sib) { const nx = sib.nextElementSibling; sib.remove(); sib = nx; }
+  } else if (opts.scenario && opts.scenarioStep) {
+    // СЦЕНАРИЙ — РАЗГОВОР ДЖАРВИСА, а не переписка с ним. Шаги не рисуются
+    // сообщениями пользователя: вместо реплики — тонкая строка этапа.
+    // Ответы печатаются сплошным полотном, этапы отделяются друг от друга.
+    const stage = el('div', 'sc-stage');
+    stage.innerHTML =
+      '<i>' + opts.scenarioStep + '</i>' +
+      '<span class="sc-stage-line"></span>' +
+      '<span class="sc-stage-text">' + esc(text) + '</span>' +
+      '<span class="sc-stage-line"></span>';
+    requestHost.appendChild(stage);
   } else if (!opts.silent) {
     userMsgNode = addUserMsg(text, atts, null, requestHost);
   }
@@ -3555,6 +3611,26 @@ function setStreaming(on) {
   updateSendBtn();
   $('#composer').classList.toggle('busy', on);
   reactor(on ? 'busy' : 'idle');
+  // Ускорение живёт ровно один ответ: новый ответ начинается своим темпом.
+  if (!on) setBoost(false);
+  const bb = $('#boostBtn');
+  if (bb) { bb.disabled = !on; bb.classList.toggle('live', on); }
+}
+
+/* ТУРБО ×2: пока идёт печать, рядом с Send доступна кнопка «». Один клик —
+   оставшийся текст печатается вдвое быстрее; сама кнопка при этом muted —
+   включённое состояние не должно кричать. По контуру бежит быстрый свет. */
+function setBoost(on) {
+  S.turbo = !!on;
+  const bb = $('#boostBtn');
+  if (bb) bb.classList.toggle('on', S.turbo);
+}
+if ($('#boostBtn')) {
+  $('#boostBtn').addEventListener('click', () => {
+    if (!S.streaming) return;
+    setBoost(!S.turbo);
+    beep(S.turbo ? 920 : 620, 0.07);
+  });
 }
 
 /* A. Живое ядро: один визуальный индикатор состояния на весь интерфейс.
@@ -3934,6 +4010,11 @@ function typerStart(ui) {
     // темп. Размер очереди меняет только мягкую целевую скорость, не размер
     // очередного DOM-шага и не скорость скачком.
     let want = code ? CPS_CODE : talkTargetCps(left);
+    // ТУРБО: кнопка ×2 у поля ввода. Ускоряется всё честно — целевая
+    // скорость, предел кадра и паузы препинания. Ответ не «прыгает», а
+    // печатается тем же характером, только вдвое быстрее.
+    const turbo = S.turbo ? 2 : 1;
+    want *= turbo;
     // После done ускоряется ТОЛЬКО плотный контент (код, таблицы, списки):
     // его хвост не должен «досматриваться» минуту. Разговорный текст держит
     // живой темп и паузы препинания до самого конца — скорость печати
@@ -3950,7 +4031,7 @@ function typerStart(ui) {
     let step = Math.floor(ui.acc);
     if (step < 1) return;
     // Дополнительный предел страхует от пачек и при нетипичном timer jitter.
-    step = Math.min(step, left, code ? (ui.fastFinish ? 26 : 10) : 4);
+    step = Math.min(step, left, (code ? (ui.fastFinish ? 26 : 10) : 4) * turbo);
 
     // Не перепрыгиваем через знак препинания пачкой: заканчиваем этот render
     // прямо на нём, а остаток времени переносим на следующий кадр.
@@ -3967,14 +4048,9 @@ function typerStart(ui) {
       renderTyped(ui);
     }
     if (!code) {
-      let pause = PAUSE_AFTER[ui.shown[ui.shown.length - 1]] || 0;
-      // Микропауза между пунктами списка: перевод строки, за которым идёт
-      // новый «- » или «1. » — это смена мысли. Джарвис будто делает вдох,
-      // прежде чем озвучить следующий пункт, а не выпаливает всё разом.
-      if (ui.shown[ui.shown.length - 1] === '\n' &&
-          /^\s*(?:[-*+•]\s|\d+[.)]\s)/.test(ui.buffer.slice(ui.shown.length)))
-        pause = Math.max(pause, 300);
-      if (pause) ui.holdUntil = now + pause * (CPS_TALK / Math.max(CPS_TALK, ui.cps));
+      const pause = PAUSE_AFTER[ui.shown[ui.shown.length - 1]] || 0;
+      if (pause) ui.holdUntil = now + (pause / turbo) *
+        (CPS_TALK / Math.max(CPS_TALK, ui.cps));
     }
     scrollSoon(ui);
   }, TYPE_MS);
@@ -4448,12 +4524,23 @@ function handleEvent(ev, ui) {
       }
       // строка состояния рассказывает, чем агент занят прямо сейчас
       busyMode(ui, toolTicker(ev), 2200);
-      // ОБЫЧНЫЙ РЕЖИМ — БЕЗ КУХНИ. Карточки инструментов и «ход мыслей» —
-      // язык AGENT-режима; без него о работе говорит только курсор: «ищу в
-      // интернете», «открываю страницу». В терминальную панель (вкладка
-      // «Файлы») строчка всё равно попадает — это служебный лог, не чат.
+      // ОБЫЧНЫЙ РЕЖИМ — БЕЗ КУХНИ, НО НЕ ПУСТОТА. Полное молчание читалось
+      // как «завис»: работа идёт, а экран ничего не говорит. Вместо карточек
+      // — тихая строка инструмента: тонкая вертикальная черта, иконка, бледная
+      // подпись, скромное мерцание. Отработав, строка замирает в свёрнутый
+      // след — как пометки инструментов у ассистента: видно, что было, но
+      // внимания не требует.
       if (!ui.agentMode) {
         termLine('$ ' + ev.name + ' ' + JSON.stringify(ev.args || {}).slice(0, 300), 'cmd');
+        const q = el('div', 'quiet-tool');
+        q.innerHTML =
+          '<i class="qt-bar"></i>' +
+          '<span class="qt-ico">' + (ICO.gear || '⚙') + '</span>' +
+          '<span class="qt-label">' + esc(ev.label || ev.name) + '</span>' +
+          '<span class="qt-state"></span>';
+        node.body.insertBefore(q, ui.statusEl);
+        ui.tools[ev.id || ev.name] = q;
+        scrollSoon(ui);
         break;
       }
       // Только registry-marked ожидание получает контур. Класс присутствует
@@ -4637,7 +4724,12 @@ function handleEvent(ev, ui) {
         // выбрасывался — «агент работает без плана».
         if (ui) ui.agentMode = true;
         const t = $('#tgAgent');
-        if (t && !t.checked) { t.checked = true; t.dispatchEvent(new Event('change')); }
+        if (t && !t.checked) {
+          // волна расходится от тумблера в самой карточке-разрешении
+          const origin = node.body.querySelector('.mode-card .mc-switch') || $('#swAgent');
+          S.agentWaveOrigin = origin;
+          t.checked = true; t.dispatchEvent(new Event('change'));
+        }
       } else if (ev.mode === 'computer') {
         if (!S.computerUse) $('#tgComputer').click();
       } else if (ev.mode === 'camera') {
@@ -4715,7 +4807,17 @@ function handleEvent(ev, ui) {
       }
       const card = ui.tools[ev.id || ev.name];
       const ok = ev.result && ev.result.ok !== false;
-      if (card) {
+      if (card && card.classList.contains('quiet-tool')) {
+        // тихий след отработавшего инструмента: черта зеленеет/краснеет,
+        // мерцание останавливается, подпись бледнеет и прячется в маску
+        delete ui.tools[ev.id || ev.name];
+        card.classList.add(ok ? 'qt-done' : 'qt-fail');
+        const st = card.querySelector('.qt-state');
+        if (st) st.textContent = ok
+          ? '✓' + (ev.elapsed != null ? ' · ' + ev.elapsed + 'с' : '')
+          : '✕';
+        // и идём дальше: терминальная строка и смена статуса ниже отработают
+      } else if (card) {
         const run = card.querySelector('.tool-run');
         if (run) { run.style.animation = 'none'; run.style.background = ok ? 'var(--green)' : 'var(--red)'; }
         card.querySelector('.k').className = 'k ' + (ok ? 'tool-ok' : 'tool-err');
@@ -5485,12 +5587,65 @@ function questionCard(ev, onPick) {
     collapseToThumb(card, { cls: 'th-ask', icon: '?', title: 'Вопрос',
                             sub: ev.question || '', tag: answer });
   };
-  opts.forEach((o, i) => {
-    const tone = yesNo ? (i === 0 ? ' good' : ' bad') : '';
-    const b = el('button', 'ask-opt' + tone, esc(o));
-    b.addEventListener('click', () => pick(o));
-    box.appendChild(b);
-  });
+  // РАЗНООБРАЗИЕ ВЫБОРА. Один и тот же список кнопок от вопроса к вопросу
+  // приучает глаз и делает диалог механическим. Теперь каждый уточняющий
+  // вопрос получает СВОЙ тип выбора — как живой собеседник, который каждый
+  // раз подаёт варианты иначе: то таблетками, то списком, то сегментом.
+  // Смысл (первый — зелёный, последний — красный у пар да/нет) сохраняется
+  // в любом оформлении.
+  const ASK_STYLES = ['pills', 'stack', 'cloud', 'seg', 'grid', 'dial'];
+  S.askStyle = ((S.askStyle || 0) + 1) % ASK_STYLES.length;
+  const style = ASK_STYLES[S.askStyle];
+  box.classList.add('ask-s-' + style);
+  card.classList.add('ask-c-' + style);
+  const tone = (i) => yesNo ? (i === 0 ? ' good' : ' bad') : '';
+  if (style === 'stack') {
+    // вертикальный список: номер + текст + стрелка, во всю ширину
+    opts.forEach((o, i) => {
+      const b = el('button', 'ask-opt as-stack' + tone(i));
+      b.innerHTML = '<i>' + (i + 1) + '</i><span>' + esc(o) + '</span><b>›</b>';
+      b.addEventListener('click', () => pick(o));
+      box.appendChild(b);
+    });
+  } else if (style === 'cloud') {
+    // облако чипов: компактные капсулы без порядка
+    opts.forEach((o, i) => {
+      const b = el('button', 'ask-opt as-cloud' + tone(i), esc(o));
+      b.addEventListener('click', () => pick(o));
+      box.appendChild(b);
+    });
+  } else if (style === 'seg') {
+    // слитный сегмент: кнопки склеены в одну полосу
+    opts.forEach((o, i) => {
+      const b = el('button', 'ask-opt as-seg' + tone(i), esc(o));
+      b.addEventListener('click', () => pick(o));
+      box.appendChild(b);
+    });
+  } else if (style === 'grid') {
+    // сетка карточек: у каждого варианта своя ячейка с угловой меткой
+    opts.forEach((o, i) => {
+      const b = el('button', 'ask-opt as-grid' + tone(i));
+      b.innerHTML = '<em>' + String.fromCharCode(65 + i) + '</em><span>' + esc(o) + '</span>';
+      b.addEventListener('click', () => pick(o));
+      box.appendChild(b);
+    });
+  } else if (style === 'dial') {
+    // диск: круглые клавиши с первой буквой, подпись рядом
+    opts.forEach((o, i) => {
+      const b = el('button', 'ask-opt as-dial' + tone(i));
+      b.innerHTML = '<i>' + esc(String(o).trim().charAt(0).toUpperCase() || '?') + '</i>' +
+        '<span>' + esc(o) + '</span>';
+      b.addEventListener('click', () => pick(o));
+      box.appendChild(b);
+    });
+  } else {
+    // классические таблетки (pills)
+    opts.forEach((o, i) => {
+      const b = el('button', 'ask-opt' + tone(i), esc(o));
+      b.addEventListener('click', () => pick(o));
+      box.appendChild(b);
+    });
+  }
   // У любого живого выбора есть выход из конечного списка. Раньше ```ui уже
   // добавлял «Свой вариант», а блокирующий ask_user — нет; один и тот же
   // контракт интерфейса зависел от того, каким путём пошла модель.
@@ -5795,8 +5950,7 @@ async function runScenario(sc) {
   const steps = sc.steps || [];
   for (let i = 0; i < steps.length; i++) {
     if (S.abortedScenario) break;
-    toast('Шаг ' + (i + 1) + ' из ' + steps.length, 'info', sc.title || 'Сценарий');
-    await sendScenarioStep(steps[i]);
+    await sendScenarioStep(steps[i], i + 1, steps.length);
     if (S.abortedScenario) break;
     if (i < steps.length - 1) await sleep(700);
   }
@@ -5811,8 +5965,10 @@ function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
    Поллинг ниже — страховка на случай, если контракт send изменится: увидели
    стрим — ждём его конца; не увидели за 3 с — идём дальше. Stop прерывает
    сценарий целиком (S.abortedScenario). */
-async function sendScenarioStep(text) {
-  try { await send({ text, scenario: true }); } catch (e) { /* шаг не прошёл — идём дальше */ }
+async function sendScenarioStep(text, step, total) {
+  try {
+    await send({ text, scenario: true, scenarioStep: step, scenarioTotal: total });
+  } catch (e) { /* шаг не прошёл — идём дальше */ }
   await new Promise((resolve) => {
     const t0 = Date.now();
     let saw = false;

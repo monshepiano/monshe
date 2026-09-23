@@ -458,14 +458,14 @@ class RoutingAndPlanCostTests(unittest.TestCase):
                  "Собрать содержимое", "Записать документ", "Проверить файл",
              ]) as planner:
             events = list(runner.run(
-                [{"role": "user", "content": "Формат: Markdown"}],
-                user_text="Формат: Markdown", preflight_resolved=True,
+                [{"role": "user", "content": "Собери документ, формат: Markdown"}],
+                user_text="Собери документ, формат: Markdown", preflight_resolved=True,
             ))
         self.assertFalse(any(event.get("type") == "reply_ui" for event in events))
         shown = "".join(event.get("text", "") for event in events if event.get("type") == "delta")
         self.assertNotIn("Ещё один вопрос", shown)
         self.assertIn("Документ готов", shown)
-        planner.assert_called_once_with("Формат: Markdown", ["write_file"])
+        planner.assert_called_once_with("Собери документ, формат: Markdown", ["write_file"])
         dispatch.assert_called_once_with(
             "write_file", {"path": "document.md", "content": "Готово"},
         )
@@ -1335,8 +1335,8 @@ class PlanProgressTests(unittest.TestCase):
                                              "свести ответ"]), \
              mock.patch.object(agent.tools, "call", side_effect=call):
             events = list(runner.run(
-                [{"role": "user", "content": "Найди и перескажи"}],
-                user_text="Найди и перескажи",
+                [{"role": "user", "content": "Собери материал и перескажи"}],
+                user_text="Собери материал и перескажи",
             ))
         steps = [event["step"] for event in events if event.get("type") == "plan_step"]
         results = [i for i, event in enumerate(events)
@@ -2056,7 +2056,8 @@ class VisionUiContractTests(unittest.TestCase):
 
 class InstallerBuildTests(unittest.TestCase):
     def test_installer_uses_the_application_version(self) -> None:
-        self.assertEqual(installer_build.version(), "1.2.0-beta.7")
+        from jarvis import __version__ as app_version
+        self.assertEqual(installer_build.version(), app_version)
 
     def test_rebuild_preserves_previous_embedded_keys_without_a_keys_file(self) -> None:
         cloud, deep, gigachat = "cloud-fixture", "deep-fixture", "gigachat-fixture"
@@ -2945,6 +2946,118 @@ class ClosingDigestCarriesDataTests(unittest.TestCase):
         closing = agent._closing_convo(convo, "base")
         self.assertIn("САМИ ДАННЫЕ", closing[1]["content"])
         self.assertNotIn("Подведи итог выполненной работы", closing[1]["content"])
+
+
+class PlanWorthinessTests(unittest.TestCase):
+    """План — только для действительно многоэтапной работы: простая просьба
+    в AGENT идёт сразу к работе, без карточки плана и без планировщика."""
+
+    def test_simple_requests_do_not_deserve_a_plan(self) -> None:
+        for text in ["погода в Москве", "переведи слово house",
+                     "какая сейчас ставка цб", "найди ссылку на документацию"]:
+            with self.subTest(text=text):
+                self.assertFalse(agent.needs_plan(text))
+
+    def test_multistage_requests_do(self) -> None:
+        for text in ["собери отчёт по рынку", "создай сайт-визитку",
+                     "напиши игру", "исследуй конкурентов и сделай таблицу",
+                     "подготовь дайджест новостей за неделю"]:
+            with self.subTest(text=text):
+                self.assertTrue(agent.needs_plan(text))
+        self.assertTrue(agent.needs_plan("первое " + "очень длинное " * 20 + "требование"))
+
+    def _run_agent(self, user_text, turns, schema):
+        route = {"tier": "base", "reason": "t", "score": 0.5,
+                 "verbose": True, "offer_tools": True}
+        runner = agent.Agent(agent_mode=True)
+        turns_iter = iter(turns)
+
+        def fake_stream(*_a, **_k):
+            return list(next(turns_iter))
+
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=fake_stream), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(runner, "make_plan",
+                               return_value=["Раз", "Два", "Три"]) as planner, \
+             mock.patch.object(agent.tools, "call", return_value={"ok": True}):
+            events = list(runner.run([{"role": "user", "content": user_text}],
+                                     user_text=user_text))
+        return events, planner
+
+    def test_simple_agent_task_skips_planner(self) -> None:
+        schema = [{"type": "function", "function": {"name": "web_search",
+                                                    "parameters": {"type": "object"}}}]
+        events, planner = self._run_agent("погода в Москве", (
+            [{"type": "done", "tool_calls": [{
+                "id": "t1", "type": "function",
+                "function": {"name": "web_search",
+                             "arguments": json.dumps({"query": "погода"})}}]}],
+            [{"type": "delta", "text": "Ясно, 12 градусов."},
+             {"type": "done", "tool_calls": []}],
+        ), schema)
+        self.assertFalse([e for e in events if e.get("type") == "plan"],
+                         "a one-step request must not produce a plan card")
+        self.assertFalse(planner.called, "no planner call for simple requests")
+
+    def test_multistage_agent_task_gets_plan(self) -> None:
+        schema = [{"type": "function", "function": {"name": "web_search",
+                                                    "parameters": {"type": "object"}}}]
+        events, planner = self._run_agent("собери отчёт по рынку кофе", (
+            [{"type": "done", "tool_calls": [{
+                "id": "t1", "type": "function",
+                "function": {"name": "web_search",
+                             "arguments": json.dumps({"query": "рынок"})}}]}],
+            [{"type": "delta", "text": "Готово."},
+             {"type": "done", "tool_calls": []}],
+        ), schema)
+        self.assertTrue([e for e in events if e.get("type") == "plan"])
+        self.assertTrue(planner.called)
+
+
+class AgentSelfComputerUseTests(unittest.TestCase):
+    """Дикий AGENT: экранная работа не останавливает автономность — агент
+    включает «Компьютер» сам, пользователь видит mode_changed."""
+
+    def test_agent_enables_computer_itself(self) -> None:
+        from jarvis.tools import system
+        route = {"tier": "base", "reason": "t", "score": 0.5,
+                 "verbose": True, "offer_tools": True}
+        schema = [{"type": "function", "function": {"name": "web_search",
+                                                    "parameters": {"type": "object"}}}]
+        turns = iter(([
+            {"type": "delta", "text": "Нажимаю."},
+            {"type": "done", "tool_calls": []},
+        ],))
+
+        def fake_stream(*_a, **_k):
+            try:
+                return list(next(turns))
+            except StopIteration:
+                return []
+
+        runner = agent.Agent(agent_mode=True)
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=fake_stream), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(system, "IS_MAC", True), \
+             mock.patch.object(system, "accessibility_ok", return_value=True):
+            events = list(runner.run(
+                [{"role": "user", "content": "нажми кнопку отправки в браузере"}],
+                user_text="нажми кнопку отправки в браузере"))
+        modes = [e for e in events if e.get("type") == "mode_changed"]
+        self.assertTrue(any(e.get("mode") == "computer" and e.get("on")
+                            for e in modes),
+                        "agent must enable computer-use itself for screen tasks")
+        self.assertTrue(runner.computer_use)
+
+    def test_suggest_mode_stays_silent_in_agent_mode(self) -> None:
+        # в AGENT вопрос «включить Компьютер?» не задают — агент включит сам
+        self.assertIsNone(agent.suggest_mode("нажми кнопку", agent_mode=True,
+                                             computer_use=False))
+        hint = agent.suggest_mode("нажми кнопку", agent_mode=False,
+                                  computer_use=False)
+        self.assertEqual(hint["mode"], "computer")
 
 
 if __name__ == "__main__":
