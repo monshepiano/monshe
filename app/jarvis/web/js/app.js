@@ -4307,6 +4307,9 @@ function handleEvent(ev, ui) {
       break;
 
     case 'thinking': {
+      // Ход мыслей — привилегия AGENT-режима: обычный ответ держит одну
+      // строку состояния у курсора, без второй «кухни» в чате.
+      if (!ui.agentMode) break;
       // ПОЧЕМУ «ДУМАЛКА» ОТКРЫВАЛАСЬ НЕ ВЕЗДЕ. Её показ решался ЗАРАНЕЕ, по
       // длине вопроса (verbose приходит из score). Короткая просьба, которая
       // на деле разворачивалась в работу с инструментами, получала verbose:false
@@ -4411,6 +4414,14 @@ function handleEvent(ev, ui) {
       }
       // строка состояния рассказывает, чем агент занят прямо сейчас
       busyMode(ui, toolTicker(ev), 2200);
+      // ОБЫЧНЫЙ РЕЖИМ — БЕЗ КУХНИ. Карточки инструментов и «ход мыслей» —
+      // язык AGENT-режима; без него о работе говорит только курсор: «ищу в
+      // интернете», «открываю страницу». В терминальную панель (вкладка
+      // «Файлы») строчка всё равно попадает — это служебный лог, не чат.
+      if (!ui.agentMode) {
+        termLine('$ ' + ev.name + ' ' + JSON.stringify(ev.args || {}).slice(0, 300), 'cmd');
+        break;
+      }
       // Только registry-marked ожидание получает контур. Класс присутствует
       // ещё до DOM insertion — никакого отложенного «старта» после открытия.
       const waitVisual = ev.wait_visual === true;
@@ -4521,7 +4532,7 @@ function handleEvent(ev, ui) {
       reactor('wait');
       busyMode(ui, ['Жду разрешения', 'режим «' + ev.label + '»'], 1500);
       const MODE_META = {
-        agent: { name: 'AGENT', ico: 'A',
+        agent: { name: 'AGENT', ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V5.4"/><circle cx="12" cy="3.6" r="1.3"/><circle cx="9.2" cy="12.6" r=".9" fill="currentColor" stroke="none"/><circle cx="14.8" cy="12.6" r=".9" fill="currentColor" stroke="none"/><path d="M9.5 16h5"/></svg>',
                  hint: 'автономная работа по плану' },
         camera: { name: 'Камера', ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>',
                   hint: 'живое распознавание кадра' },
@@ -4549,14 +4560,30 @@ function handleEvent(ev, ui) {
             '<button class="mc-skip">Пропустить</button>' +
           '</div>' +
         '</div>';
+      const syncSwitchState = () => {
+        // тумблер всегда показывает ТЕКУЩЕЕ состояние режима: включили его
+        // или нет — при разворачивании карточки из миниатюры это видно сразу
+        const on = !!{ agent: S.agentMode, camera: S.cameraOn,
+                       computer: S.computerUse, budget: !!S.budgetRub }[ev.mode];
+        const track = card.querySelector('.mc-sw-track');
+        if (track) track.classList.toggle('on', on);
+        const small = card.querySelector('.mc-sw-text small');
+        if (small) small.textContent = on ? 'включён' : 'выключен';
+      };
       const done = (answer) => {
         if (card.dataset.done === '1') return;
         card.dataset.done = '1';
         api('/api/questions/answer', { id: ev.id, answer });
-        collapseToThumb(card, {
+        const thumb = collapseToThumb(card, {
           cls: 'th-ask', icon: '⚡', title: 'Разрешение: ' + (ev.label || ''),
           sub: ev.reason || '',
           tag: answer === 'Включить' ? 'включено' : 'пропущено',
+        });
+        // Повторное разворачивание: карточка уже сыграла свою роль — гасим
+        // её как остальные свёрнутые карточки и показываем живой статус режима
+        if (thumb) thumb.addEventListener('click', () => {
+          syncSwitchState();
+          card.classList.add('mc-readonly');
         });
       };
       card.querySelector('.mc-switch').addEventListener('click', () => done('Включить'));

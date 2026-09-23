@@ -159,13 +159,13 @@
         <div class="composer" id="composer">
           <div class="composer-inner">
             <div class="comp-left">
-              <button class="comp-btn" id="attachBtn" title="Прикрепить файл" aria-label="Прикрепить файл">
+              <button class="comp-btn" id="attachBtn" data-tip="Вложить файл" aria-label="Прикрепить файл">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
                      stroke-linecap="round" stroke-linejoin="round">
                   <path d="M21 11.5l-8.8 8.8a5 5 0 0 1-7.1-7.1l9-9a3.4 3.4 0 0 1 4.8 4.8l-9 9a1.8 1.8 0 0 1-2.5-2.5l8.3-8.3"/>
                 </svg>
               </button>
-              <button class="comp-btn mic" id="micBtn" title="Голосовой ввод" aria-label="Голосовой ввод">
+              <button class="comp-btn mic" id="micBtn" data-tip="Голосовой ввод" aria-label="Голосовой ввод">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
                      stroke-linecap="round" stroke-linejoin="round">
                   <rect x="9" y="2.6" width="6" height="11.2" rx="3"/>
@@ -181,14 +181,14 @@
             </button>
           </div>
           <div class="toggles">
-            <button class="toggle" id="tgCamera" data-tip="Живое распознавание: камера прямо в диалоге">
+            <button class="toggle" id="tgCamera" data-tip="Камера — вижу кадр вживую">
               <span class="tg-dot"></span>Камера
             </button>
-            <button class="toggle" id="tgComputer" data-tip="Управление мышью и клавиатурой">
+            <button class="toggle" id="tgComputer" data-tip="Компьютер — клики и ввод">
               <span class="tg-dot"></span>Компьютер
             </button>
             <div class="spacer"></div>
-            <button class="budget-btn" id="tgBudget" data-tip="Лимит расходов на один ответ">
+            <button class="budget-btn" id="tgBudget" data-tip="Лимит ₽ на ответ">
               <span class="budget-coin">₽</span>
             </button>
             <div class="budget-pop" id="budgetPop" hidden>
@@ -202,7 +202,7 @@
                 </div>
               </div>
             </div>
-            <div class="agent-switch" id="swAgent" data-tip="AGENT — многошаговая задача: план и самостоятельное выполнение">
+            <div class="agent-switch" id="swAgent" data-tip="AGENT — план и самостоятельная работа">
               <label class="agent-switch-track">
                 <input id="tgAgent" type="checkbox" role="switch" aria-label="Агентский режим">
                 <i aria-hidden="true">A</i>

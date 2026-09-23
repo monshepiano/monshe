@@ -1284,11 +1284,13 @@ def _closing_convo(convo: List[Dict[str, Any]], tier: str) -> List[Dict[str, Any
     вся история и все результаты инструментов оплачивались второй раз, хотя
     для короткого итога хватает выжимки выполненных шагов."""
     parts: List[str] = []
+    current_task = ""
     for msg in convo:
         role = msg.get("role")
         if role == "user":
             c = str(msg.get("content") or "")
-            if c and not c.startswith("[Система]"):
+            if c and not c.startswith(("[Система]", "[КАДР]")):
+                current_task = c      # последний настоящий запрос пользователя
                 parts.append("Задача: " + c[:500])
         elif role == "tool":
             try:
@@ -1303,14 +1305,20 @@ def _closing_convo(convo: List[Dict[str, Any]], tier: str) -> List[Dict[str, Any
                                           ": " + brief if brief else ""))
         elif role == "assistant" and msg.get("content"):
             parts.append("Промежуточно: " + str(msg["content"])[:200])
-    digest = "\n".join(parts)[-6000:]
+    digest = "\n".join(parts)[-5200:]
+    # ТЕКУЩАЯ ЗАДАЧА — ПЕРВОЙ и никогда не срезается. Раньше длинная история
+    # диалога вытесняла её из хвоста digest: модель получала выжимку из
+    # СТАРЫХ задач («новости», «шахматы»...) и честно отвечала «вы просили
+    # только сводку», хотя текущая просьба была совсем другой.
+    head = ("ТЕКУЩАЯ ЗАДАЧА (отвечай именно на неё):\n" +
+            current_task[:800] + "\n\nИстория прогона:\n") if current_task else ""
     return [
         {"role": "system", "content":
             "Ты JARVIS, персональный ИИ-агент. Отвечай кратко, по-русски, markdown."},
         {"role": "user", "content":
-            "Журнал выполненной работы:\n%s\n\n"
+            "Журнал выполненной работы:\n%s%s\n\n"
             "Подведи итог выполненной работы для пользователя: что сделано и результат. "
-            "Кратко, markdown, по-русски. Не печатай вызовы инструментов." % digest},
+            "Кратко, markdown, по-русски. Не печатай вызовы инструментов." % (head, digest)},
     ]
 
 
@@ -2405,11 +2413,25 @@ class Agent:
                             if mode == "agent":
                                 self.agent_mode = True
                                 # Прогон стартовал без AGENT — плана ещё нет.
-                                # Раз пользователь включил агентский режим,
-                                # план составится при первом же рабочем вызове
-                                # этого же прогона, а не со следующего сообщения.
+                                # ГЛАВНЫЙ СЛУЧАЙ: работу модель уже НАЧАЛА тем же
+                                # ходом (request_mode пришёл вместе с рабочими
+                                # вызовами или после них). Defer-гейт плана
+                                # проверяется только в начале хода — этот ход
+                                # его уже прошёл, и план «вообще не составлялся».
+                                # Строим немедленно, по фактам начатой работы.
                                 if user_text and not social_only and not plan_announced:
-                                    plan_pending = True
+                                    work_started = [t for t in dict.fromkeys(self.used_tools)
+                                                    if t != "ask_user"]
+                                    if work_started:
+                                        plan = self.make_plan(user_text, work_started)
+                                        plan_pending = False
+                                        if plan:
+                                            for plan_event in announce_plan():
+                                                yield plan_event
+                                    else:
+                                        # работы ещё не было — план создаст
+                                        # первый рабочий вызов следующего хода
+                                        plan_pending = True
                             elif mode == "computer":
                                 self.computer_use = True
                                 # инструменты экрана появляются в этом же прогоне
@@ -2464,6 +2486,18 @@ class Agent:
                                      "разумному варианту и скажи, какой выбрал.",
                         }, from_text)
                         continue
+
+                    # ПЛАН ПОД РУКОЙ РАБОТЫ. AGENT могли включить через
+                    # request_mode ЭТИМ ЖЕ ходом — тогда гейт начала хода уже
+                    # позади, и без этой страховки план «вообще не составлялся».
+                    # Строим ровно перед первым настоящим рабочим вызовом.
+                    if (plan_pending and not plan_announced
+                            and name in allowed_tool_names):
+                        plan = self.make_plan(user_text, [name])
+                        plan_pending = False
+                        if plan:
+                            for plan_event in announce_plan():
+                                yield plan_event
 
                     self.used_tools.append(name)
                     yield {"type": "tool_start", "id": call.get("id"), "name": name,

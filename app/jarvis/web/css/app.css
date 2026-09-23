@@ -564,12 +564,12 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .tool-card.tool-wait{position:relative;isolation:isolate;border-color:rgba(91,185,197,.30);
   animation:toolSweepGlow 2.2s linear infinite}
 .tool-card.tool-wait > *{position:relative;z-index:1}
-/* ФОН: еле видно, но заметно — обесцвеченные тона, не яркие. Дышит 3.6с. */
+/* ФОН: еле видно, но ЗАМЕТНО — обесцвеченные тона (не ярче букв), дышит 3.6с */
 .tool-card.tool-wait::before{content:'';position:absolute;inset:0;z-index:0;
-  pointer-events:none;border-radius:inherit;opacity:.05;
+  pointer-events:none;border-radius:inherit;opacity:.09;
   background:linear-gradient(100deg,
-    rgba(126,158,172,0) 0%,rgba(126,158,172,.6) 30%,rgba(150,160,185,.7) 50%,
-    rgba(126,158,172,.6) 70%,rgba(126,158,172,0) 100%);
+    rgba(126,158,172,0) 0%,rgba(126,158,172,.72) 30%,rgba(152,164,190,.85) 50%,
+    rgba(126,158,172,.72) 70%,rgba(126,158,172,0) 100%);
   background-size:200% 100%;
   animation:toolSweep 3.6s linear infinite}
 /* БУКВЫ: насыщенная цветная полоса — та же, что на рамке, в той же фазе.
@@ -601,13 +601,15 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .tool-card.tool-wait .card-inner pre *{color:inherit;-webkit-text-fill-color:inherit}
 .tool-card.tool-wait .card-inner a{color:var(--cy)}
 .tool-card.tool-wait .card-inner .term-line{color:#7ce8b5}
-/* РАМКА: та же насыщенная полоса, в той же фазе — цвет смелый, кольцо тонкое */
+/* РАМКА: та же насыщенная полоса, в той же фазе. Полоса на кольце заметнее:
+   базовый цвет рамки подсвечен, пик полосы — полная непрозрачность */
+.tool-card.tool-wait{border-color:rgba(120,210,225,.42)}
 .tool-card.tool-wait::after{content:'';position:absolute;z-index:3;inset:-1px;padding:1px;
   pointer-events:none;border-radius:inherit;
   background:linear-gradient(90deg,
-    rgba(45,212,228,0) 0%,rgba(45,212,228,0) 35%,
-    rgba(45,212,228,.85) 46%,rgba(64,196,255,1) 50%,rgba(158,124,255,.9) 54%,
-    rgba(45,212,228,0) 65%,rgba(45,212,228,0) 100%);
+    rgba(45,212,228,0) 0%,rgba(45,212,228,0) 33%,
+    rgba(45,212,228,1) 46%,rgba(64,196,255,1) 50%,rgba(158,124,255,1) 54%,
+    rgba(45,212,228,0) 67%,rgba(45,212,228,0) 100%);
   background-size:250% 100%;background-position:120% 0;
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude;
@@ -616,11 +618,12 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 /* СВЕЧЕНИЕ — только ВНУТРИ карточки: внутренняя подсветка пульсирует в фазе
    полосы, наружного ореола нет (снаружи остаётся родная тень карточки) */
 @keyframes toolSweepGlow{
-  0%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 10px rgba(64,196,255,.06)}
-  46%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 13px rgba(64,196,255,.10)}
-  50%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 18px rgba(64,196,255,.16),inset 0 0 34px rgba(158,124,255,.08)}
-  54%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 13px rgba(158,124,255,.10)}
-  100%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 10px rgba(64,196,255,.06)}}
+  0%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 12px rgba(64,196,255,.09)}
+  46%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 17px rgba(64,196,255,.15)}
+  50%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 26px rgba(64,196,255,.24),
+    inset 0 0 52px rgba(158,124,255,.13),inset 0 0 0 1px rgba(64,196,255,.12)}
+  54%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 17px rgba(158,124,255,.15)}
+  100%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 12px rgba(64,196,255,.09)}}
 
 @keyframes toolSweep{
   0%{background-position:120% 0}
@@ -949,10 +952,17 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    его до mouseleave, а не оставляет висеть из-за фокуса checkbox. */
 .toggle[data-tip]:is(:hover,:focus-visible)::after,
 .budget-btn[data-tip]:is(:hover,:focus-visible)::after,
+.comp-btn[data-tip]:is(:hover,:focus-visible)::after,
 .agent-switch[data-tip]:not(.tip-dismissed):hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%);
-  background:rgba(6,14,24,.98);border:1px solid rgba(0,200,240,.42);padding:7px 11px;border-radius:8px;font-size:11px;
-  white-space:nowrap;z-index:60;color:var(--tx2);box-shadow:0 12px 30px rgba(0,0,0,.7),0 0 16px rgba(0,200,240,.1);animation:popIn .18s both;
-  pointer-events:none;letter-spacing:0;font-family:var(--f)}
+  background:rgba(6,14,24,.98);border:1px solid rgba(0,200,240,.42);padding:6px 10px;border-radius:8px;font-size:11px;
+  max-width:180px;width:max-content;white-space:normal;text-align:center;line-height:1.45;
+  z-index:60;color:var(--tx2);box-shadow:0 12px 30px rgba(0,0,0,.7),0 0 16px rgba(0,200,240,.1);
+  pointer-events:none;letter-spacing:0;font-family:var(--f);
+  /* подпись возникает НЕ сразу: ~1с после наведения и остановки курсора —
+     как системные подсказки на компьютере */
+  opacity:0;animation:tipIn .16s .95s both}
+@keyframes tipIn{from{opacity:0;transform:translateX(-50%) translateY(3px)}
+  to{opacity:1;transform:translateX(-50%) translateY(0)}}
 .spacer{flex:1}
 
 /* ---------- AUTO ---------- */
@@ -2148,13 +2158,11 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   justify-content:center;padding:0;transition:all .2s ease}
 .budget-btn:hover{border-color:var(--line2);color:var(--tx2)}
 .budget-coin{font-weight:800;font-size:14px;line-height:1}
-/* активный лимит: жёлтая монета — заметно, но не кричит */
+/* активный лимит: жёлтая монета + пульс ТОЧЬ-В-ТОЧЬ как у точки
+   колокольчика уведомлений — то же время, та же кривая, тот же размах */
 .budget-btn.on{border-color:rgba(240,190,70,.55);color:#f0be46;
-  box-shadow:0 0 8px rgba(240,190,70,.25),inset 0 0 6px rgba(240,190,70,.12);
-  animation:budgetPulse 2.6s ease-in-out infinite}
-@keyframes budgetPulse{
-  0%,100%{box-shadow:0 0 6px rgba(240,190,70,.20),inset 0 0 5px rgba(240,190,70,.10)}
-  50%{box-shadow:0 0 11px rgba(240,190,70,.34),inset 0 0 8px rgba(240,190,70,.16)}}
+  box-shadow:0 0 8px rgba(240,190,70,.25),inset 0 0 6px rgba(240,190,70,.12)}
+.budget-btn.on .budget-coin{animation:bellPing 1.9s ease-in-out infinite}
 /* Панель лимита — ТОТ ЖЕ стиль, что панель уведомлений: плотный тёмный фон,
    шапка-полоса с заголовком и действием, те же радиус и тень. Золотой
    остаётся только акцентом монеты и сумм.
@@ -2266,6 +2274,16 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .mc-switch:hover .mc-sw-track{border-color:var(--mc,var(--violet))}
 .mc-switch:hover .mc-sw-track i{background:var(--mc,var(--violet));
   box-shadow:0 0 8px var(--mc,var(--violet));transform:translateX(14px)}
+/* ВКЛЮЧЁННОЕ состояние (при повторном разворачивании карточки): круглешок
+   справа, цвет режима — тумблер показывает живой статус */
+.mc-sw-track.on{border-color:var(--mc,var(--violet));
+  background:color-mix(in srgb,var(--mc,var(--violet)) 15%,transparent)}
+.mc-sw-track.on i{background:var(--mc,var(--violet));
+  box-shadow:0 0 8px var(--mc,var(--violet));transform:translateX(14px)}
+/* Развёрнутая повторно карточка — уже история: приглушена и неактивна,
+   как остальные свёрнутые-развёрнутые карточки */
+.mode-card.mc-readonly{opacity:.55;pointer-events:none}
+.mode-card.mc-readonly .mc-reason{color:var(--tx3)}
 /* каждый режим — свой цвет: функция видна без чтения */
 .mode-card.m-agent{--mc:#b8afff}
 .mode-card.m-camera{--mc:var(--teal)}

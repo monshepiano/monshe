@@ -1130,8 +1130,9 @@ function testRussianImageAndHudFollowupContract() {
   assert(/\$\$\('\.agent-switch'\)\.forEach\(\(sw\) => sw\.addEventListener\('mouseleave'[\s\S]*tip-dismissed/.test(js));
   const tipRule = css.match(/\.agent-switch\[data-tip\]:not\(\.tip-dismissed\):hover::after\s*\{([^}]*)\}/s);
   assert(/\.composer\s*\{[^}]*overflow:visible/s.test(css) && tipRule &&
-    /z-index:60/.test(tipRule[1]) && /white-space:nowrap/.test(tipRule[1]),
-  'switch tooltip must render above the composer, then stay hidden until mouseleave');
+    /z-index:60/.test(tipRule[1]) && /white-space:normal/.test(tipRule[1]) &&
+    /animation:tipIn \.16s \.95s both/.test(tipRule[1]),
+  'switch tooltip renders above the composer, wraps, and waits ~1s like an OS hint');
 
   const refresh = extractFunction(js, 'refreshState');
   assert(/st\.running_tasks/.test(refresh) && /auto-running', running > 0/.test(refresh),
@@ -1377,7 +1378,7 @@ function testThinkingGradientContract() {
   const toolFrame = css.match(/\.tool-card\.tool-wait::after\s*\{([^}]*)\}/s);
   assert(toolFrame && /background-size:250% 100%/.test(toolFrame[1]) &&
     /toolSweep 2\.2s/.test(toolFrame[1]) &&
-    /rgba\(45,212,228,0\) 35%/.test(toolFrame[1]),
+    /rgba\(45,212,228,0\) 33%/.test(toolFrame[1]),
   'a saturated color stripe sweeps the contour (2.2s)');
   // БУКВЫ несут насыщенный цвет: градиент клипается по тексту всех блоков
   assert(/\.tool-card\.tool-wait \.card-head \.k,\s*\n?\s*\.tool-card\.tool-wait \.card-head \.t,\s*\n?\s*\.tool-card\.tool-wait \.kv,\s*\n?\s*\.tool-card\.tool-wait \.card-inner\s*\{/.test(css) &&
@@ -1391,18 +1392,26 @@ function testThinkingGradientContract() {
   'nested code blocks keep solid color (no dark/invisible code)');
   // ФОН: еле видно, обесцвеченно, дышит медленнее букв
   const toolBg = css.match(/\.tool-card\.tool-wait::before\s*\{([^}]*)\}/s);
-  assert(toolBg && /opacity:\.05/.test(toolBg[1]) &&
-    /rgba\(126,158,172,\.6\)/.test(toolBg[1]) &&
+  assert(toolBg && /opacity:\.09/.test(toolBg[1]) &&
+    /rgba\(126,158,172,\.72\)/.test(toolBg[1]) &&
     /toolSweep 3\.6s linear infinite/.test(toolBg[1]) &&
     !/rgba\(45,212,228/.test(toolBg[1]),
-  'the background wash is barely-there and desaturated, slower than letters');
+  'the background wash is subtle-but-visible and desaturated, slower than letters');
+  // рамка заметна: полоса полной непрозрачности на пике + базовый цвет ярче
+  assert(/rgba\(45,212,228,0\) 33%/.test(css) && /rgba\(45,212,228,0\) 67%/.test(css) &&
+    /\.tool-card\.tool-wait\{border-color:rgba\(120,210,225,\.42\)\}/.test(css),
+  'the contour stripe is wider and fully opaque at its peak');
+  const glowKf2 = css.match(/@keyframes toolSweepGlow\s*\{([^@]*)\}/s);
+  assert(glowKf2 && /inset 0 0 26px rgba\(64,196,255,\.24\)/.test(glowKf2[1]) &&
+    /inset 0 0 52px rgba\(158,124,255,\.13\)/.test(glowKf2[1]),
+  'a bit more colored inner glow in phase with the stripe');
   // фон дышит через opacity-слой ::before; отдельные keyframes дыхания
   // больше не нужны — фон и так в 6 раз медленнее букв (3.6с против 2.2с)
   // СВЕЧЕНИЕ — ТОЛЬКО ВНУТРИ карточки: inset-подсветка в фазе полосы,
   // наружного ореола нет
   const glowKf = css.match(/@keyframes toolSweepGlow\s*\{([^@]*)\}/s);
   assert(glowKf && /toolSweepGlow 2\.2s/.test(css) &&
-    /inset 0 0 18px rgba\(64,196,255,\.16\)/.test(glowKf[1]),
+    /inset 0 0 26px rgba\(64,196,255,\.24\)/.test(glowKf[1]),
   'an inner glow pulses in phase with the stripe');
   // убираем все inset-сегменты: после этого ЦВЕТНЫХ теней остаться не должно —
   // значит, наружного ореола нет вообще
@@ -1521,6 +1530,11 @@ function testProactiveModesBudgetAndAbortContracts() {
     /case 'mode_changed'/.test(js) &&
     js.includes("api('/api/questions/answer'"),
   'mode requests render a NAMED toggle (icon+title+off knob) under the text');
+  assert(/<svg viewBox="0 0 24 24"[^>]*><rect x="5" y="8" width="14" height="11" rx="3"\/>/.test(js) &&
+    /const syncSwitchState = \(\) =>/.test(js) &&
+    /mc-readonly/.test(js) && /\.mode-card\.mc-readonly\{opacity:\.55;pointer-events:none\}/.test(css) &&
+    /\.mc-sw-track\.on i\{[^}]*translateX\(14px\)/s.test(css),
+  'agent gets a robot icon; reopening syncs the knob to the live state and dims the card');
   assert(/\.mc-switch\{[^}]*display:flex[^}]*cursor:pointer/s.test(css) &&
     /\.mc-sw-track\{[^}]*width:38px/s.test(css) &&
     /\.mode-card\.m-agent\{--mc:#b8afff\}/.test(css) &&
@@ -1541,6 +1555,25 @@ function testProactiveModesBudgetAndAbortContracts() {
     /beep\(S\.cameraOn \? 760 : 420, 0\.1\)/.test(js) &&
     /beep\(S\.computerUse \? 760 : 420, 0\.1\)/.test(js),
   'camera/computer buttons beep exactly like the agent switch');
+  // ОБЫЧНЫЙ РЕЖИМ — БЕЗ КУХНИ: карточки инструментов и ход мыслей только
+  // в AGENT; в обычном — одна строка состояния у курсора
+  const toolStartFn = extractFunction(js, 'handleEvent');
+  assert(/if \(!ui\.agentMode\) \{\s*termLine\('\$ ' \+ ev\.name/.test(js) &&
+    /case 'thinking':\s*\{\s*\n\s*\/\/ Ход мыслей — привилегия AGENT[\s\S]*?if \(!ui\.agentMode\) break;/.test(js),
+  'non-agent runs show no tool cards and no thinking card — cursor status only');
+  // подписи: пауза ~1с, компактные, у микрофона и вложения
+  assert(/animation:tipIn \.16s \.95s both/.test(css) &&
+    /@keyframes tipIn/.test(css) && /max-width:180px/.test(css) &&
+    /white-space:normal/.test(css) &&
+    /id="attachBtn" data-tip="Вложить файл"/.test(html) &&
+    /id="micBtn" data-tip="Голосовой ввод"/.test(html) &&
+    /data-tip="AGENT — план и самостоятельная работа"/.test(html) &&
+    /data-tip="Лимит ₽ на ответ"/.test(html),
+  'tooltips wait ~1s, stay compact, mic and attach included');
+  // монета лимита пульсирует как точка колокольчика (тот же bellPing)
+  assert(/\.budget-btn\.on \.budget-coin\{animation:bellPing 1\.9s ease-in-out infinite\}/.test(css) &&
+    !/budgetPulse/.test(css),
+  'the budget coin pulses exactly like the notification bell dot');
   // шаги плана не пролетают: каждый шаг живёт на экране минимум 950мс
   assert(/const PLAN_STEP_MS = 950/.test(js),
   'plan steps hold on screen long enough not to flash by');

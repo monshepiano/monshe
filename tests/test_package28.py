@@ -1349,6 +1349,62 @@ class PlanProgressTests(unittest.TestCase):
         self.assertGreater(last_step_at, results[0])
 
 
+class MidRunAgentPlanTests(unittest.TestCase):
+    """AGENT включили через request_mode ПОСЛЕ старта прогона — план всё
+    равно появляется: и когда работа уже идёт, и когда начнётся следом."""
+
+    def _run(self, calls_turn1, final_text):
+        route = {"tier": "coder", "reason": "t", "score": 0.5,
+                 "verbose": True, "offer_tools": True}
+        schema = [
+            {"type": "function", "function": {"name": "write_file",
+                                              "parameters": {"type": "object"}}},
+            {"type": "function", "function": {"name": "request_mode",
+                                              "parameters": {"type": "object"}}},
+        ]
+        turns = iter((
+            [{"type": "done", "tool_calls": calls_turn1}],
+            [{"type": "delta", "text": final_text},
+             {"type": "done", "tool_calls": []}],
+        ))
+        runner = agent.Agent(agent_mode=False)
+        answered = {"id": "q1", "status": "answered", "answer": "Включить"}
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream",
+                               side_effect=lambda *_a, **_k: next(turns)), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(agent.tools, "call", return_value={"ok": True}), \
+             mock.patch.object(runner, "_wait_answer", return_value=answered), \
+             mock.patch.object(runner, "make_plan",
+                               return_value=["Каркас", "Логика", "Проверка"]):
+            return list(runner.run(
+                [{"role": "user", "content": "напиши игру"}],
+                user_text="напиши игру",
+            ))
+
+    @staticmethod
+    def _call(cid, name, args=None):
+        return {"id": cid, "type": "function",
+                "function": {"name": name,
+                             "arguments": json.dumps(args or {})}}
+
+    def test_plan_when_work_started_before_mode_request(self) -> None:
+        events = self._run([
+            self._call("t1", "write_file", {"path": "a.py", "content": "x"}),
+            self._call("t2", "request_mode", {"mode": "agent", "reason": "многошаговая"}),
+        ], "Готово.")
+        plans = [e for e in events if e.get("type") == "plan"]
+        self.assertTrue(plans, "plan must exist even when AGENT was enabled mid-work")
+
+    def test_plan_when_mode_request_comes_first(self) -> None:
+        events = self._run([
+            self._call("t1", "request_mode", {"mode": "agent", "reason": "многошаговая"}),
+            self._call("t2", "write_file", {"path": "a.py", "content": "x"}),
+        ], "Готово.")
+        plans = [e for e in events if e.get("type") == "plan"]
+        self.assertTrue(plans, "plan must exist when work follows the mode request")
+
+
 class ComputerRightsTests(unittest.TestCase):
     """Нет прав macOS — прогон не умирает: open_permissions остаётся."""
 
