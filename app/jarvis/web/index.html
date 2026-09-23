@@ -181,18 +181,12 @@
             </button>
           </div>
           <div class="toggles">
-            <div class="agent-switch cam-switch" id="swCamera" data-tip="Живое распознавание: камера прямо в диалоге">
-              <label class="agent-switch-track">
-                <input id="tgCamera" type="checkbox" role="switch" aria-label="Камера">
-                <i aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></i>
-              </label>
-            </div>
-            <div class="agent-switch pc-switch" id="swComputer" data-tip="Управление мышью и клавиатурой">
-              <label class="agent-switch-track">
-                <input id="tgComputer" type="checkbox" role="switch" aria-label="Компьютер">
-                <i aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><rect x="6.5" y="3" width="11" height="18" rx="5.5"/><path d="M12 7v3.4"/></svg></i>
-              </label>
-            </div>
+            <button class="toggle" id="tgCamera" data-tip="Живое распознавание: камера прямо в диалоге">
+              <span class="tg-dot"></span>Камера
+            </button>
+            <button class="toggle" id="tgComputer" data-tip="Управление мышью и клавиатурой">
+              <span class="tg-dot"></span>Компьютер
+            </button>
             <div class="spacer"></div>
             <button class="budget-btn" id="tgBudget" data-tip="Лимит расходов на один ответ">
               <span class="budget-coin">₽</span>

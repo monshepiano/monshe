@@ -165,6 +165,13 @@ register("press_key", system.press_key,
          {"key": S("клавиша", True), "modifiers": S("модификаторы через запятую")},
          "danger", "computer", "Нажатие клавиши")
 
+register("open_permissions", system.open_permissions,
+         "Открыть панель прав macOS в Системных настройках: accessibility = "
+         "«Универсальный доступ» (клики и ввод), screen = «Запись экрана» "
+         "(снимки). Вызывай, когда computer-use не работает из-за прав.",
+         {"which": S("какая панель", False, ["accessibility", "screen"])},
+         "caution", "computer", "Настройки прав")
+
 register("open_app", system.open_app,
          "Открыть приложение или ссылку на компьютере пользователя (Safari, Telegram, ozon.ru).",
          {"name": S("имя приложения или URL", True)}, "danger", "computer", "Открыть приложение")

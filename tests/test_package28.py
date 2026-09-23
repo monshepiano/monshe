@@ -1349,6 +1349,71 @@ class PlanProgressTests(unittest.TestCase):
         self.assertGreater(last_step_at, results[0])
 
 
+class ComputerRightsTests(unittest.TestCase):
+    """Нет прав macOS — прогон не умирает: open_permissions остаётся."""
+
+    def test_open_permissions_opens_the_right_pane(self) -> None:
+        from jarvis.tools import system
+
+        calls = []
+        with mock.patch.object(system, "IS_MAC", True), \
+             mock.patch.object(system.subprocess, "run",
+                               side_effect=lambda *a, **k: calls.append(a)):
+            res = system.open_permissions("accessibility")
+            res2 = system.open_permissions("screen")
+        self.assertTrue(res.get("ok") and res2.get("ok"))
+        self.assertIn("Privacy_Accessibility", calls[0][0][1])
+        self.assertIn("Privacy_ScreenCapture", calls[1][0][1])
+
+    def test_blocked_run_keeps_open_permissions_and_warns(self) -> None:
+        route = {"tier": "base", "reason": "t", "score": 0.5,
+                 "verbose": True, "offer_tools": True}
+        schema = [
+            {"type": "function", "function": {"name": "mouse_click",
+                                              "parameters": {"type": "object"}}},
+            {"type": "function", "function": {"name": "open_permissions",
+                                              "parameters": {"type": "object"}}},
+        ]
+        # два хода: в computer-use текст без действий один раз возвращается
+        # моделью к работе (ловушка вранья), второй — финальный
+        turns = iter((
+            [{"type": "delta", "text": "Открою панель прав."},
+             {"type": "done", "tool_calls": []}],
+            [{"type": "delta", "text": "Открою панель прав."},
+             {"type": "done", "tool_calls": []}],
+        ))
+        seen: list = []
+
+        def fake_stream(convo, **kwargs):
+            seen.append({"convo": list(convo), "tools": kwargs.get("tools") or []})
+            return next(turns)
+
+        runner = agent.Agent(computer_use=True)
+        from jarvis.tools import system as sysmod
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=fake_stream), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(sysmod, "IS_MAC", True), \
+             mock.patch.object(sysmod, "accessibility_ok", return_value=False):
+            events = list(runner.run(
+                [{"role": "user", "content": "нажми кнопку нового диалога"}],
+                user_text="нажми кнопку нового диалога",
+            ))
+        # прогон НЕ закончился голым отказом: было предупреждение и обычный ход
+        deltas = [e.get("text", "") for e in events if e.get("type") == "delta"]
+        self.assertTrue(any("заблокировано правами" in d for d in deltas),
+                        "the user sees why screen control is off")
+        self.assertTrue(any("Открою панель прав" in d for d in deltas))
+        # экранные инструменты убраны, open_permissions остался
+        tool_names = {t.get("function", {}).get("name") for t in seen[0]["tools"]}
+        self.assertNotIn("mouse_click", tool_names)
+        self.assertIn("open_permissions", tool_names)
+        # модель получила системное объяснение ситуации
+        self.assertTrue(any(
+            m.get("role") == "system" and "НЕ выданы" in str(m.get("content"))
+            for m in seen[0]["convo"]))
+
+
 class PlanPacingPerTurnTests(unittest.TestCase):
     def test_parallel_batch_advances_plan_at_most_once(self) -> None:
         """Пачка параллельных инструментов — ОДНА фаза работы, не пять шагов.

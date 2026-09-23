@@ -499,15 +499,6 @@ try {
    (см. разделы «камера в диалоге» и «санкции / уведомления в диалоге» ниже). */
 
 /* ============================ переключатели ============================ */
-/* Тумблеры камеры/компьютера — ТОТ ЖЕ контрол, что AGENT: настоящий
-   checkbox-switch. Единая точка установки состояния + тот же звук. */
-function setSwitch(id, on) {
-  const t = $(id);
-  if (!t || !!t.checked === !!on) return;
-  t.checked = !!on;
-  t.dispatchEvent(new Event('change'));
-}
-
 $('#tgAgent').addEventListener('change', function () {
   // Настоящий checkbox-switch: состояние принадлежит самому control, а не
   // декоративному классу кнопки. Подпись лежит вне <label>, поэтому она не
@@ -524,13 +515,13 @@ $('#tgAgent').addEventListener('change', function () {
 $$('.agent-switch').forEach((sw) => sw.addEventListener('mouseleave', function () {
   this.classList.remove('tip-dismissed');
 }));
-$('#tgCamera').addEventListener('change', function () {
-  S.cameraOn = this.checked;
+$('#tgCamera').addEventListener('click', function () {
+  S.cameraOn = !S.cameraOn; this.classList.toggle('on', S.cameraOn);
   beep(S.cameraOn ? 760 : 420, 0.1);
   if (S.cameraOn) startCam(); else stopCam();
 });
-$('#tgComputer').addEventListener('change', function () {
-  S.computerUse = this.checked;
+$('#tgComputer').addEventListener('click', function () {
+  S.computerUse = !S.computerUse; this.classList.toggle('on', S.computerUse);
   beep(S.computerUse ? 760 : 420, 0.1);
   if (!S.computerUse) return;
   // Самопроверка при включении: раньше «не работает» выглядело как молчаливое
@@ -545,12 +536,22 @@ $('#tgComputer').addEventListener('change', function () {
     } else {
       S.computerUse = false;
       const t = $('#tgComputer');
-      if (t) t.checked = false;
+      if (t) t.classList.remove('on');
       sfx('error');
       modal('<h3>COMPUTER-USE не готов</h3>' +
         '<div class="sd" style="margin-bottom:10px">Проверка на этой машине не прошла:</div>' +
         '<pre class="out" style="white-space:pre-wrap">' + esc(st.error || r.error || 'неизвестная причина') + '</pre>' +
-        '<div class="modal-acts"><button class="btn primary" onclick="document.getElementById(\'modalBack\').classList.remove(\'open\')">Понятно</button></div>');
+        '<div class="sd" style="margin:4px 0 10px">Открою нужную панель настроек — включи там приложение, ' +
+        'из которого запущен JARVIS (Терминал), и перезапусти JARVIS:</div>' +
+        '<div class="modal-acts" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">' +
+        '<button class="btn sm primary" id="permAcc">Открыть «Универсальный доступ»</button>' +
+        '<button class="btn sm primary" id="permScr">Открыть «Запись экрана»</button>' +
+        '<button class="btn sm" onclick="document.getElementById(\'modalBack\').classList.remove(\'open\')">Закрыть</button></div>');
+      const openPane = (pane) => api('/api/computer/permissions', { pane })
+        .then((res) => { if (res.ok) toast('Панель открыта — включи JARVIS/Терминал и перезапусти', 'info', 'Права'); });
+      const acc = $('#permAcc'), scr = $('#permScr');
+      if (acc) acc.addEventListener('click', () => openPane('accessibility'));
+      if (scr) scr.addEventListener('click', () => openPane('screen'));
     }
   });
 });
@@ -983,8 +984,14 @@ function watchRunFollow(ui) {
     const run = active();
     if (!run) return;
     const distance = box.scrollHeight - box.scrollTop - box.clientHeight;
+    // ВОССТАНАВЛИВАЕМ прилипание, когда пользователь вернулся вниз.
+    // ВАЖНО: НЕ снимаем followOutput при «далеко от низа» — этот scroll-event
+    // приходит и от НАШЕЙ же программной прокрутки. При быстрой печати кода
+    // (2000 симв/с) контент успевает вырасти >150px между двумя pin-ами, и
+    // обработчик принимал собственную прокрутку за «пользователь ушёл» —
+    // лента бросала ответ вниз без читателя. Намерение уйти снимают только
+    // реальные жесты: wheel и touch выше.
     if (distance < 64) run.followOutput = true;
-    else if (distance > 150) run.followOutput = false; // scrollbar/keyboard scroll-away
   }, { passive: true });
 }
 
@@ -4507,23 +4514,24 @@ function handleEvent(ev, ui) {
 
     case 'mode_request': {
       // Джарвис просит включить режим: короткое «зачем» сверху, ПОД текстом —
-      // небольшая настоящая кнопка из поля ввода (в натуральную величину) и
-      // мелкая «Пропустить». Нажал кнопку — согласие; карточка сворачивается.
+      // ИМЕНОВАННЫЙ тумблер: иконка + название + выключенный круглешок.
+      // Сразу видно, что это за функция и что она отключена — тумблер читается
+      // как «можно активировать», в отличие от безымянной кнопки. Каждый режим
+      // — свой цвет. Мелкая «Пропустить» рядом.
       reactor('wait');
       busyMode(ui, ['Жду разрешения', 'режим «' + ev.label + '»'], 1500);
-      const src = { agent: $('#swAgent'), computer: $('#swComputer'),
-                    camera: $('#swCamera'), budget: budgetBtn }[ev.mode];
-      let cloneHtml = '';
-      try {
-        if (src) {
-          const wrap = el('div');
-          wrap.innerHTML = src.outerHTML;
-          wrap.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
-          wrap.querySelectorAll('.budget-pop').forEach((n) => n.remove());
-          cloneHtml = wrap.innerHTML;
-        }
-      } catch (e) { cloneHtml = ''; }
-      const card = el('div', 'panel-card mode-card');
+      const MODE_META = {
+        agent: { name: 'AGENT', ico: 'A',
+                 hint: 'автономная работа по плану' },
+        camera: { name: 'Камера', ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>',
+                  hint: 'живое распознавание кадра' },
+        computer: { name: 'Компьютер', ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><rect x="6.5" y="3" width="11" height="18" rx="5.5"/><path d="M12 7v3.4"/></svg>',
+                    hint: 'управление мышью и клавиатурой' },
+        budget: { name: 'Лимит ₽', ico: '₽',
+                  hint: 'потолок расходов на ответ' },
+      };
+      const meta = MODE_META[ev.mode] || { name: ev.label || 'режим', ico: '⚡', hint: '' };
+      const card = el('div', 'panel-card mode-card m-' + (ev.mode || 'agent'));
       card.innerHTML =
         '<div class="mc-row">' +
           '<div class="mc-text">' +
@@ -4532,7 +4540,12 @@ function handleEvent(ev, ui) {
               'Для этой задачи режим сильно упростит работу.') + '</div>' +
           '</div>' +
           '<div class="mc-actions">' +
-            '<div class="mc-btn" title="Нажми, чтобы включить">' + cloneHtml + '</div>' +
+            '<button class="mc-switch" title="Нажми, чтобы включить">' +
+              '<span class="mc-sw-ico">' + meta.ico + '</span>' +
+              '<span class="mc-sw-text"><b>' + esc(meta.name) + '</b>' +
+                '<small>выключен · ' + esc(meta.hint) + '</small></span>' +
+              '<span class="mc-sw-track"><i></i></span>' +
+            '</button>' +
             '<button class="mc-skip">Пропустить</button>' +
           '</div>' +
         '</div>';
@@ -4546,7 +4559,7 @@ function handleEvent(ev, ui) {
           tag: answer === 'Включить' ? 'включено' : 'пропущено',
         });
       };
-      card.querySelector('.mc-btn').addEventListener('click', () => done('Включить'));
+      card.querySelector('.mc-switch').addEventListener('click', () => done('Включить'));
       card.querySelector('.mc-skip').addEventListener('click', () => done('Не нужно'));
       node.body.insertBefore(card, ui.statusEl);
       sfx('notify');
@@ -4565,9 +4578,9 @@ function handleEvent(ev, ui) {
         const t = $('#tgAgent');
         if (t && !t.checked) { t.checked = true; t.dispatchEvent(new Event('change')); }
       } else if (ev.mode === 'computer') {
-        setSwitch('#tgComputer', true);
+        if (!S.computerUse) $('#tgComputer').click();
       } else if (ev.mode === 'camera') {
-        setSwitch('#tgCamera', true);
+        if (!S.cameraOn) $('#tgCamera').click();
       } else if (ev.mode === 'budget') {
         if (budgetPop) budgetPop.hidden = false;
       }
@@ -5134,7 +5147,7 @@ async function startCam() {
       S.camPrevPix = null;
       S.cameraOn = false;
       const toggle = $('#tgCamera');
-      if (toggle) toggle.checked = false;
+      if (toggle) toggle.classList.remove('on');
       camState('трансляция остановлена · включи снова', false);
     }));
     camState('трансляция · смотрю', true);
@@ -5149,7 +5162,7 @@ async function startCam() {
     S.camStream = null;
     S.cameraOn = false;
     const toggle = $('#tgCamera');
-    if (toggle) toggle.checked = false;
+    if (toggle) toggle.classList.remove('on');
     camState('нет доступа к камере · можно повторить', false);
     camSay('Не получилось включить камеру: браузер не дал доступ. Разреши камеру для этого сайта и включи её снова.', 'err');
     toast('Нет доступа к камере', 'error');
@@ -5182,7 +5195,7 @@ function stopCam() {
   S.camBusy = false;
   S.cameraOn = false;
   const toggle = $('#tgCamera');
-  if (toggle) toggle.checked = false;
+  if (toggle) toggle.classList.remove('on');
 }
 
 function camState(text, live) {

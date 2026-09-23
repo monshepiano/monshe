@@ -342,6 +342,14 @@ class Handler(BaseHTTPRequestHandler):
                                                               body.get("emoji") or "")})
         if path == "/api/scenarios/delete":
             return self._json({"ok": True, "deleted": db.delete_scenario(body.get("id", ""))})
+        if path == "/api/computer/permissions":
+            # Кнопка «Открыть настройки прав» нажимается самим пользователем —
+            # это и есть согласие открыть Системные настройки.
+            try:
+                opened = system_tools.open_permissions(str(body.get("pane") or "accessibility"))
+            except Exception as exc:  # pragma: no cover - защита полосы
+                opened = {"ok": False, "error": str(exc)}
+            return self._json(opened)
         if path == "/api/budget":
             # Лимит ₽ на лету: работает и до отправки (просто состояние),
             # и во время ответа — активный прогон подхватывает новый лимит

@@ -1122,9 +1122,10 @@ function testRussianImageAndHudFollowupContract() {
   assert(!/<button[^>]+id="tgAgent"/.test(html));
   assert(/\.toggle\s*\{[^}]*height:28px[^}]*padding:0 12px/s.test(css));
   assert(/\.agent-switch\s*\{[^}]*height:28px[^}]*display:flex[^}]*border:0[^}]*background:transparent/s.test(css) &&
-    /\.agent-switch-track\s*\{[^}]*width:48px[^}]*height:28px/s.test(css) &&
-    /\.send-btn\s*\{[^}]*width:48px[^}]*height:38px/s.test(css),
-    'AGENT track stays 28px high and its 48px width aligns with the widened Send control');
+    /\.agent-switch-track\s*\{[^}]*width:42px[^}]*height:28px/s.test(css) &&
+    /\.agent-switch-track input:checked \+ i\{[^}]*translateX\(16px\)/s.test(css) &&
+    /\.send-btn\s*\{[^}]*width:42px[^}]*height:38px/s.test(css),
+    'AGENT track is narrower (42px, 16px travel) and Send matches its width');
   assert(/#tgAgent'\)\.addEventListener\('change'[\s\S]*S\.agentMode\s*=\s*this\.checked[\s\S]*tip-dismissed/.test(js));
   assert(/\$\$\('\.agent-switch'\)\.forEach\(\(sw\) => sw\.addEventListener\('mouseleave'[\s\S]*tip-dismissed/.test(js));
   const tipRule = css.match(/\.agent-switch\[data-tip\]:not\(\.tip-dismissed\):hover::after\s*\{([^}]*)\}/s);
@@ -1377,30 +1378,36 @@ function testThinkingGradientContract() {
   assert(toolFrame && /background-size:250% 100%/.test(toolFrame[1]) &&
     /toolSweep 2\.2s/.test(toolFrame[1]) &&
     /rgba\(45,212,228,0\) 35%/.test(toolFrame[1]),
-  'a narrow colorful vertical stripe sweeps the contour (slower, 2.2s)');
-  const toolBand = css.match(/\.tool-card\.tool-wait::before\s*\{([^}]*)\}/s);
-  assert(toolBand && !/mix-blend-mode/.test(toolBand[1]) &&
-    /inset:0/.test(toolBand[1]) && /z-index:2/.test(toolBand[1]) &&
-    /rgba\(64,196,255,\.17\) 50%/.test(toolBand[1]) &&
-    /toolSweep 2\.2s linear infinite,toolBgBreathe 3\.2s/.test(toolBand[1]),
-  'ONE alpha-color band sweeps the whole card (no bleach blend); bg breathes slower');
-  // ЗАПРЕЩЁН gradient-text на содержимом tool-wait: у каждого текста своя
-  // ширина, полосы ехали вразнобой, а text-fill-color:transparent делал
-  // развёрнутые блоки кода (python и др.) тёмными/невидимыми.
-  const toolWaitBlock = css.slice(css.indexOf('.tool-card.tool-wait::before'),
-    css.indexOf('@keyframes toolSweepGlow'));
-  assert(!/background-clip:text/.test(toolWaitBlock) &&
-    !/-webkit-text-fill-color:transparent/.test(toolWaitBlock),
-  'no per-element gradient text inside tool-wait: one shared band instead');
-  assert(/@keyframes toolBgBreathe/.test(css) &&
-    /inset 0 0 22px rgba\(45,212,228,\.10\)/.test(css),
-  'the card interior breathes slowly (toolBgBreathe)');
+  'a saturated color stripe sweeps the contour (2.2s)');
+  // БУКВЫ несут насыщенный цвет: градиент клипается по тексту всех блоков
+  assert(/\.tool-card\.tool-wait \.card-head \.k,\s*\n?\s*\.tool-card\.tool-wait \.card-head \.t,\s*\n?\s*\.tool-card\.tool-wait \.kv,\s*\n?\s*\.tool-card\.tool-wait \.card-inner\s*\{/.test(css) &&
+    /rgba\(45,212,228,1\) 47%,rgba\(64,196,255,1\) 50%,rgba\(158,124,255,1\) 53%/.test(css) &&
+    /-webkit-text-fill-color:transparent/.test(css),
+  'saturated color lives ON the letters of every text block');
+  // ВЛОЖЕННЫЙ КОД ЗАЩИЩЁН: pre/code/ссылки не наследуют прозрачную заливку —
+  // именно это раньше делало открытый код тёмным
+  assert(/\.tool-card\.tool-wait \.card-inner pre,\s*\n?\s*\.tool-card\.tool-wait \.card-inner code/.test(css) &&
+    /-webkit-text-fill-color:initial/.test(css) && /color:#a9e6ff/.test(css),
+  'nested code blocks keep solid color (no dark/invisible code)');
+  // ФОН: еле видно, обесцвеченно, дышит медленнее букв
+  const toolBg = css.match(/\.tool-card\.tool-wait::before\s*\{([^}]*)\}/s);
+  assert(toolBg && /opacity:\.05/.test(toolBg[1]) &&
+    /rgba\(126,158,172,\.6\)/.test(toolBg[1]) &&
+    /toolSweep 3\.6s linear infinite/.test(toolBg[1]) &&
+    !/rgba\(45,212,228/.test(toolBg[1]),
+  'the background wash is barely-there and desaturated, slower than letters');
+  // фон дышит через opacity-слой ::before; отдельные keyframes дыхания
+  // больше не нужны — фон и так в 6 раз медленнее букв (3.6с против 2.2с)
   // СВЕЧЕНИЕ — ТОЛЬКО ВНУТРИ карточки: inset-подсветка в фазе полосы,
   // наружного ореола нет
   const glowKf = css.match(/@keyframes toolSweepGlow\s*\{([^@]*)\}/s);
   assert(glowKf && /toolSweepGlow 2\.2s/.test(css) &&
-    /inset 0 0 20px rgba\(64,196,255,\.19\)/.test(glowKf[1]) &&
-    !/\) 0 0 2[02]px rgba\(6[45],19[26],2(?:35|55),/.test(glowKf[1]),
+    /inset 0 0 18px rgba\(64,196,255,\.16\)/.test(glowKf[1]),
+  'an inner glow pulses in phase with the stripe');
+  // убираем все inset-сегменты: после этого ЦВЕТНЫХ теней остаться не должно —
+  // значит, наружного ореола нет вообще
+  const outerShadows = glowKf[1].replace(/inset [^,}]*/g, '');
+  assert(!/rgba\((?!0,0,0)[0-9]+,[0-9]+,[0-9]+/.test(outerShadows),
   'the glow lives INSIDE the card only (inset), no outer halo');
   // AUTO-вкладка: ореол — box-shadow на самой вкладке (drop-shadow на
   // замаскированном кольце маска срезала — свечения не было видно)
@@ -1452,7 +1459,7 @@ function testThinkingGradientContract() {
   const agentTrack = css.match(/\.agent-switch-track\s*\{([^}]*)\}/s);
   assert(agentSwitch && /border:0/.test(agentSwitch[1]) && /background:transparent/.test(agentSwitch[1]),
     'AGENT remains a real switch without an outer capsule');
-  assert(agentTrack && /width:48px/.test(agentTrack[1]) && /height:28px/.test(agentTrack[1]) &&
+  assert(agentTrack && /width:42px/.test(agentTrack[1]) && /height:28px/.test(agentTrack[1]) &&
     /border:1px solid var\(--line\)/.test(agentTrack[1]) && /background:transparent/.test(agentTrack[1]),
     'the off AGENT track matches the neutral neighbouring controls at 28px high');
   assert(/\.agent-switch-track:has\(input:checked\)\s*\{[^}]*rgba\(143,134,207,\.18\)/s.test(css),
@@ -1507,36 +1514,33 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
 }
 
 function testProactiveModesBudgetAndAbortContracts() {
-  // проактивные режимы: короткое «зачем» сверху, НЕБОЛЬШАЯ настоящая кнопка
-  // ПОД текстом + мелкая «Пропустить»; сворачивание в строку
-  assert(/case 'mode_request'/.test(js) && /mc-btn/.test(js) &&
-    /mc-skip/.test(js) && /removeAttribute\('id'\)/.test(js) &&
-    /mc-actions/.test(js) &&
+  // проактивные режимы: «зачем» сверху, ПОД ним — ИМЕНОВАННЫЙ тумблер
+  // (иконка + название + выключенный круглешок, свой цвет на режим) и «Пропустить»
+  assert(/case 'mode_request'/.test(js) && /mc-switch/.test(js) &&
+    /mc-skip/.test(js) && /mc-sw-track/.test(js) && /MODE_META/.test(js) &&
     /case 'mode_changed'/.test(js) &&
-    /dispatchEvent\(new Event\('change'\)\)/.test(js) &&
     js.includes("api('/api/questions/answer'"),
-  'mode requests render a small real button UNDER the text with a tiny skip');
+  'mode requests render a NAMED toggle (icon+title+off knob) under the text');
+  assert(/\.mc-switch\{[^}]*display:flex[^}]*cursor:pointer/s.test(css) &&
+    /\.mc-sw-track\{[^}]*width:38px/s.test(css) &&
+    /\.mode-card\.m-agent\{--mc:#b8afff\}/.test(css) &&
+    /\.mode-card\.m-camera\{--mc:var\(--teal\)\}/.test(css) &&
+    /\.mode-card\.m-computer\{--mc:var\(--gold\)\}/.test(css),
+  'each mode lights its own color; the off-knob reads as «can activate»');
   assert(/\.mc-row\{display:flex;flex-direction:column/.test(css) &&
     !/transform:scale\(1\.55\)/.test(css),
-  'mode card: text on top, button below at natural size (no 1.55 zoom)');
-  // КАМЕРА и КОМПЬЮТЕР — тот же тумблер, что AGENT: обёртки agent-switch,
-  // иконки на круглешке, чекбоксы, единый звук
-  assert(/id="swCamera"/.test(html) && /id="swComputer"/.test(html) &&
-    /id="swAgent"/.test(html) &&
-    /class="agent-switch cam-switch" id="swCamera"/.test(html) &&
-    /class="agent-switch pc-switch" id="swComputer"/.test(html) &&
-    /aria-label="Камера"/.test(html) && /aria-label="Компьютер"/.test(html),
-  'camera and computer are agent-style checkbox switches with icons');
-  assert(/function setSwitch/.test(js) &&
-    /\$\('#tgCamera'\)\.addEventListener\('change'/.test(js) &&
-    /\$\('#tgComputer'\)\.addEventListener\('change'/.test(js) &&
+  'mode card: text on top, toggle below at natural size');
+  // КАМЕРА и КОМПЬЮТЕР — прежние кнопки-тумблеры со СВОИМИ цветами и звуком
+  assert(/<button class="toggle" id="tgCamera"/.test(html) &&
+    /<button class="toggle" id="tgComputer"/.test(html) &&
+    /#tgCamera\.on\{[^}]*rgba\(47,156,146/s.test(css) &&
+    /\.toggle#tgComputer\.on\{[^}]*rgba\(221,85,102/s.test(css),
+  'camera/computer are back to their colored toggle buttons');
+  assert(/\$\('#tgCamera'\)\.addEventListener\('click'/.test(js) &&
+    /\$\('#tgComputer'\)\.addEventListener\('click'/.test(js) &&
     /beep\(S\.cameraOn \? 760 : 420, 0\.1\)/.test(js) &&
     /beep\(S\.computerUse \? 760 : 420, 0\.1\)/.test(js),
-  'camera/computer switches beep exactly like the agent switch');
-  assert(/\$\$\('\.agent-switch'\)\.forEach\(\(sw\) =>/.test(js) &&
-    /\$\('#swAgent'\), computer: \$\('#swComputer'\)/.test(js) &&
-    /camera: \$\('#swCamera'\)/.test(js),
-  'proactive cards clone the whole switch wrappers (agent/camera/computer)');
+  'camera/computer buttons beep exactly like the agent switch');
   // шаги плана не пролетают: каждый шаг живёт на экране минимум 950мс
   assert(/const PLAN_STEP_MS = 950/.test(js),
   'plan steps hold on screen long enough not to flash by');
@@ -1577,6 +1581,11 @@ function testProactiveModesBudgetAndAbortContracts() {
     /if \(!pendingPanel\) addMsgActions/.test(js),
   'ui-panel answers continue the same message card instead of a new reply');
   // результат инструмента — человеческая выжимка, а не сырой JSON
+  // computer-use: при провале самопроверки — кнопки открыть нужные панели прав
+  assert(js.includes("api('/api/computer/permissions'") &&
+    /permAcc/.test(js) && /permScr/.test(js) &&
+    /Открыть «Универсальный доступ»/.test(js) && /Открыть «Запись экрана»/.test(js),
+  'a failed self-check offers direct links to the macOS permission panes');
   assert(/function toolResultText/.test(js) &&
     !/else txt = JSON\.stringify\(r, null, 1\)/.test(js) &&
     /'HTTP ' \+ r\.status \+ ' · получено '/.test(js),
@@ -1585,6 +1594,11 @@ function testProactiveModesBudgetAndAbortContracts() {
   const scrollFn = extractFunction(js, 'scrollDown');
   assert(/pin-instant/.test(scrollFn),
     'scrollDown pins instantly so the screen keeps up with fast code');
+  // ГЛАВНОЕ: программная прокрутка не снимает follow-интент. Раньше scroll-
+  // событие от НАШЕГО ЖЕ pin-а при подросшем контенте (>150px) гасило
+  // followOutput — ответ «улетал вниз», страница не скроллилась следом.
+  assert(!/else if \(distance > 150\) run\.followOutput = false/.test(js),
+    'programmatic scroll no longer cancels follow intent (wheel/touch only)');
   // прерванный ответ не оставляет открытых панелей
   const stopBranch = extractFunction(js, 'stopStream');
   const abortClose = /foldCodeBlocks\(ui\.mdEl, true\)/.test(extractFunction(js, 'send')) ||

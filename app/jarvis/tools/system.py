@@ -178,6 +178,30 @@ def accessibility_ok() -> bool:
     return res.get("out") == "yes"
 
 
+def open_permissions(which: str = "accessibility") -> Dict[str, Any]:
+    """Открыть нужную панель прав macOS прямо в Системных настройках.
+
+    «Ноль результатов» computer-use почти всегда = права, а пользователь
+    ищет нужный пункт в настройках вслепую. Здесь — прямой deep-link:
+    accessibility -> «Универсальный доступ», screen -> «Запись экрана».
+    """
+    panes = {
+        "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        "screen": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+    }
+    if not IS_MAC:
+        return {"ok": False, "error": "поддержано для macOS"}
+    pane = panes.get(which, panes["accessibility"])
+    try:
+        subprocess.run(["open", pane], timeout=15, check=True)
+    except Exception as exc:
+        return {"ok": False, "error": "не удалось открыть Системные настройки: %s" % exc}
+    return {"ok": True, "opened": which,
+            "note": "Панель открыта. Включи приложение, из которого запущен JARVIS "
+                    "(Терминал), и ПЕРЕЗАПУСТИ JARVIS — права вступают только после "
+                    "перезапуска."}
+
+
 def computer_status() -> Dict[str, Any]:
     """Самопроверка режима «Компьютер»: OS, права, скриншот, зрение.
 

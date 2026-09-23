@@ -1594,6 +1594,7 @@ class Agent:
         # Управление компьютером без разрешения системы невозможно: macOS
         # молча гасит клики, и агент бесконечно «нажимает» впустую. Проверяем
         # ДО работы и честно говорим, что включить, — одним сообщением.
+        computer_blocked = False
         if self.computer_use:
             from .tools import system as _sys
             if not _sys.IS_MAC:
@@ -1607,12 +1608,29 @@ class Agent:
                 yield {"type": "done", "content": denied, "files": [], "tools": []}
                 return
             if not _sys.accessibility_ok():
-                yield {"type": "delta", "text": _sys._NO_ACCESS_HINT}
-                yield {"type": "done", "content": _sys._NO_ACCESS_HINT,
-                       "files": [], "tools": []}
-                return
+                # НЕТ ПРАВ — прогон больше не умирает на месте. Раньше здесь был
+                # голый отказ: пользователь просил «нажми кнопку», а получить
+                # помощь с правами было нельзя. Теперь экранные инструменты
+                # убираются (чтобы модель не долбилась в стену), но open_permissions
+                # остаётся — агент может сам открыть нужную панель настроек.
+                computer_blocked = True
+                yield {"type": "delta", "text":
+                       "Управление экраном заблокировано правами macOS. "}
 
         available = tools.schemas(_tool_groups(self.computer_use))
+        if computer_blocked:
+            blocked = {"screenshot", "ui_tree", "screen_info", "mouse_click",
+                       "mouse_move", "mouse_scroll", "mouse_drag", "type_text",
+                       "press_key"}
+            available = [schema for schema in available
+                         if (schema.get("function") or {}).get("name") not in blocked]
+            messages = list(messages) + [{"role": "system", "content":
+                "[Система] Права computer-use НЕ выданы: инструменты экрана в этом "
+                "прогоне отключены. Доступен open_permissions — он открывает панель "
+                "прав macOS. Если пользователь хочет починить управление экраном, "
+                "вызови open_permissions(which='accessibility') и коротко объясни, "
+                "что включить и что нужен перезапуск JARVIS. Если задача не про "
+                "экран — просто выполни её остальными инструментами."}]
         # Автопамять имеет ровно одного владельца: локальный грамматический
         # extractor на входе сообщения. Раньше та же реплика одновременно
         # отдавалась модели с remember — она успевала добавить «кстати»,

@@ -556,28 +556,52 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    стоит на карточке ДО insertion, поэтому градиент виден в самом первом paint.
    Текст больше не перекрашивается — именно двойной border+glyph эффект делал
    инструмент чрезмерно заметным. */
-/* ИНСТРУМЕНТ РАБОТАЕТ: ОДНА вертикальная полоса цветного света пробегает
-   слева направо по ВСЕЙ карточке — заголовок, аргументы и тело подсвечиваются
-   одним лучом в одной фазе (полоса — один слой поверх содержимого, поэтому
-   она ровная по всей высоте). Рамка полосится в той же фазе. Свечение —
-   ТОЛЬКО ВНУТРИ карточки: наружного ореола нет, снаружи остаётся обычная
-   тень карточки. Полоса цветная, но НЕ яркая: обычный alpha-градиент без
-   mix-blend (screen обесцвечивал и выжигал текст). Темп 2.2с. */
+/* ИНСТРУМЕНТ РАБОТАЕТ: насыщенный цвет ЖИВЁТ НА БУКВАХ и на рамке —
+   по всем текстам карточки бежит одна цветная полоса (заголовок, иконка,
+   аргументы, тело). ФОН при этом почти не тронут: еле заметная,
+   ОБЕСЦВЕЧЕННАЯ (сероголубая) дымка дышит медленно — цвета на порядок
+   меньше, чем на буквах. Свечение — только внутри карточки. Темп 2.2с. */
 .tool-card.tool-wait{position:relative;isolation:isolate;border-color:rgba(91,185,197,.30);
   animation:toolSweepGlow 2.2s linear infinite}
 .tool-card.tool-wait > *{position:relative;z-index:1}
-/* ПОЛОСА: цветной луч поверх всего текста + медленное дыхание фона —
-   две анимации одного слоя без конфликта свойств */
-.tool-card.tool-wait::before{content:'';position:absolute;inset:0;z-index:2;
-  pointer-events:none;border-radius:inherit;
+/* ФОН: еле видно, но заметно — обесцвеченные тона, не яркие. Дышит 3.6с. */
+.tool-card.tool-wait::before{content:'';position:absolute;inset:0;z-index:0;
+  pointer-events:none;border-radius:inherit;opacity:.05;
   background:linear-gradient(100deg,
-    rgba(0,0,0,0) 0%,rgba(0,0,0,0) 37%,
-    rgba(45,212,228,.10) 45%,rgba(64,196,255,.17) 50%,rgba(158,124,255,.12) 55%,
-    rgba(0,0,0,0) 63%,rgba(0,0,0,0) 100%);
+    rgba(126,158,172,0) 0%,rgba(126,158,172,.6) 30%,rgba(150,160,185,.7) 50%,
+    rgba(126,158,172,.6) 70%,rgba(126,158,172,0) 100%);
+  background-size:200% 100%;
+  animation:toolSweep 3.6s linear infinite}
+/* БУКВЫ: насыщенная цветная полоса — та же, что на рамке, в той же фазе.
+   Градиент клипается ровно по тексту, поэтому цвет лежит только на буквах. */
+.tool-card.tool-wait .card-head .k,
+.tool-card.tool-wait .card-head .t,
+.tool-card.tool-wait .kv,
+.tool-card.tool-wait .card-inner{
+  background:linear-gradient(90deg,
+    rgba(140,170,186,.95) 0%,rgba(140,170,186,.95) 40%,
+    rgba(45,212,228,1) 47%,rgba(64,196,255,1) 50%,rgba(158,124,255,1) 53%,
+    rgba(140,170,186,.95) 60%,rgba(140,170,186,.95) 100%);
   background-size:250% 100%;background-position:120% 0;
-  animation:toolSweep 2.2s linear infinite,toolBgBreathe 3.2s ease-in-out infinite}
-/* рамка: тот же луч, в той же фазе — здесь цвета смелее, 1px кольцо
-   не мешает читать и даёт «больше цвета» */
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;color:transparent;
+  animation:toolSweep 2.2s linear infinite}
+.tool-card.tool-wait .card-head .t{font-weight:600}
+/* ЗАЩИТА ВЛОЖЕННЫХ БЛОКОВ: code/pre/ссылки живут внутри .card-inner и
+   наследуют прозрачную заливку — именно это раньше делало открытый код
+   «тёмным». Возвращаем им плотный цвет, полоса на них не заезжает. */
+.tool-card.tool-wait .card-inner pre,
+.tool-card.tool-wait .card-inner code,
+.tool-card.tool-wait .card-inner .think-stream,
+.tool-card.tool-wait .card-inner a{
+  -webkit-background-clip:border-box;background-clip:border-box;
+  -webkit-text-fill-color:initial}
+.tool-card.tool-wait .card-inner pre,
+.tool-card.tool-wait .card-inner code{color:#a9e6ff}
+.tool-card.tool-wait .card-inner pre *{color:inherit;-webkit-text-fill-color:inherit}
+.tool-card.tool-wait .card-inner a{color:var(--cy)}
+.tool-card.tool-wait .card-inner .term-line{color:#7ce8b5}
+/* РАМКА: та же насыщенная полоса, в той же фазе — цвет смелый, кольцо тонкое */
 .tool-card.tool-wait::after{content:'';position:absolute;z-index:3;inset:-1px;padding:1px;
   pointer-events:none;border-radius:inherit;
   background:linear-gradient(90deg,
@@ -592,15 +616,12 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 /* СВЕЧЕНИЕ — только ВНУТРИ карточки: внутренняя подсветка пульсирует в фазе
    полосы, наружного ореола нет (снаружи остаётся родная тень карточки) */
 @keyframes toolSweepGlow{
-  0%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 10px rgba(64,196,255,.07)}
-  46%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 14px rgba(64,196,255,.12)}
-  50%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 20px rgba(64,196,255,.19),inset 0 0 38px rgba(158,124,255,.10)}
-  54%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 14px rgba(158,124,255,.12)}
-  100%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 10px rgba(64,196,255,.07)}}
-/* медленное «дыхание» фона: область чуть светится изнутри, темп 3.2с */
-@keyframes toolBgBreathe{
-  0%,100%{box-shadow:inset 0 0 16px rgba(45,212,228,.05),inset 0 0 34px rgba(158,124,255,.03)}
-  50%{box-shadow:inset 0 0 22px rgba(45,212,228,.10),inset 0 0 44px rgba(158,124,255,.06)}}
+  0%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 10px rgba(64,196,255,.06)}
+  46%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 13px rgba(64,196,255,.10)}
+  50%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 18px rgba(64,196,255,.16),inset 0 0 34px rgba(158,124,255,.08)}
+  54%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 13px rgba(158,124,255,.10)}
+  100%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 10px rgba(64,196,255,.06)}}
+
 @keyframes toolSweep{
   0%{background-position:120% 0}
   100%{background-position:-130% 0}}
@@ -880,7 +901,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .comp-btn.rec{background:rgba(221,85,102,.22);border-color:var(--red);color:#fff;animation:recPulse 1.2s infinite}
 .comp-btn.rec .mic-wave{display:flex}
 @keyframes recPulse{50%{box-shadow:0 0 0 8px rgba(221,85,102,.14)}}
-.send-btn{width:48px;height:38px;border-radius:12px;border:0;flex-shrink:0;cursor:pointer;display:grid;place-items:center;
+.send-btn{width:42px;height:38px;border-radius:12px;border:0;flex-shrink:0;cursor:pointer;display:grid;place-items:center;
   background:linear-gradient(135deg,var(--cy),#0a8fc4);transition:.25s;box-shadow:0 5px 18px rgba(0,212,255,.3)}
 .send-btn svg{width:18px;height:18px;fill:#03151f}
 .send-btn:hover{transform:translateY(-2px) scale(1.05);box-shadow:0 9px 26px rgba(0,212,255,.45)}
@@ -907,7 +928,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   font:11.5px/1 var(--f);letter-spacing:0;cursor:default;position:relative;
   transition:color .22s;flex:0 0 auto}
 /* Именно внутренний label-track кликабелен; AGENT рядом — обычная подпись. */
-.agent-switch-track{box-sizing:border-box;width:48px;height:28px;border-radius:15px;cursor:pointer;
+.agent-switch-track{box-sizing:border-box;width:42px;height:28px;border-radius:15px;cursor:pointer;
   border:1px solid var(--line);background:transparent;position:relative;
   box-shadow:inset 0 1px 5px rgba(0,0,0,.42);transition:.24s}
 .agent-switch-track input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
@@ -920,14 +941,10 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch-track:hover{border-color:var(--line2)}
 .agent-switch:has(input:checked){color:#e0dbff}
 .agent-switch-track:has(input:checked){background:rgba(143,134,207,.18);border-color:rgba(168,159,242,.62)}
-.agent-switch-track input:checked + i{transform:translateX(20px);background:#b8afff;
+.agent-switch-track input:checked + i{transform:translateX(16px);background:#b8afff;
   box-shadow:0 0 9px rgba(168,159,242,.9);color:#17112e}
 .agent-switch-track:has(input:focus-visible){outline:2px solid rgba(168,159,242,.48);outline-offset:2px}
 .agent-switch:focus-within{z-index:50}
-/* Иконка на круглешке (камера/компьютер): тот же тумблер, что AGENT с «A»,
-   только вместо буквы — значок. svg наследует currentColor круглешка. */
-.agent-switch-track i:has(svg){display:grid;place-items:center;line-height:1}
-.agent-switch-track i svg{width:11px;height:11px;display:block}
 /* Tooltip не участвует в геометрии composer. После выбора tip-dismissed гасит
    его до mouseleave, а не оставляет висеть из-за фокуса checkbox. */
 .toggle[data-tip]:is(:hover,:focus-visible)::after,
@@ -2226,11 +2243,34 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .mc-title{font-size:13px;font-weight:600;color:#e4e0ff;margin-bottom:3px}
 .mc-reason{font-size:11.5px;color:var(--tx3);line-height:1.5}
 .mc-actions{display:flex;align-items:center;gap:16px}
-.mc-btn{cursor:pointer;padding:6px 10px;border-radius:12px;transition:.18s;flex-shrink:0}
-.mc-btn:hover{background:rgba(143,134,207,.1);transform:scale(1.05)}
-.mc-btn .agent-switch,.mc-btn .toggle,.mc-btn .budget-btn{
-  transform:none;transform-origin:center;pointer-events:none}
-.mc-btn .budget-pop{display:none}
+/* ИМЕНОВАННЫЙ ТУМБЛЕР: сразу видно, ЧТО это (иконка + название) и что оно
+   ВЫКЛЮЧЕНО (круглешок слева) — кнопкой это читалось хуже. Клик = включить.
+   Каждый режим светится своим цветом. */
+.mc-switch{display:flex;align-items:center;gap:12px;padding:8px 12px 8px 9px;
+  border:1px solid var(--line);border-radius:13px;cursor:pointer;transition:.18s;
+  background:transparent;text-align:left;font-family:inherit}
+.mc-switch:hover{border-color:var(--mc,var(--violet));background:rgba(143,134,207,.07);
+  transform:translateY(-1px)}
+.mc-sw-ico{width:28px;height:28px;border-radius:9px;display:grid;place-items:center;
+  font-weight:800;font-size:13px;line-height:1;flex-shrink:0;
+  background:color-mix(in srgb,var(--mc,var(--violet)) 14%,transparent);
+  color:var(--mc,var(--violet))}
+.mc-sw-ico svg{width:14px;height:14px;display:block}
+.mc-sw-text{flex:1;min-width:0}
+.mc-sw-text b{display:block;font-size:12.5px;color:var(--tx);font-weight:600}
+.mc-sw-text small{display:block;font-size:10.5px;color:var(--tx3);margin-top:1px}
+.mc-sw-track{width:38px;height:22px;border-radius:12px;border:1px solid var(--line);
+  position:relative;flex-shrink:0;box-shadow:inset 0 1px 5px rgba(0,0,0,.42);transition:.2s}
+.mc-sw-track i{position:absolute;width:16px;height:16px;left:2px;top:2px;border-radius:50%;
+  background:var(--tx3);transition:.2s cubic-bezier(.2,.8,.3,1)}
+.mc-switch:hover .mc-sw-track{border-color:var(--mc,var(--violet))}
+.mc-switch:hover .mc-sw-track i{background:var(--mc,var(--violet));
+  box-shadow:0 0 8px var(--mc,var(--violet));transform:translateX(14px)}
+/* каждый режим — свой цвет: функция видна без чтения */
+.mode-card.m-agent{--mc:#b8afff}
+.mode-card.m-camera{--mc:var(--teal)}
+.mode-card.m-computer{--mc:var(--gold)}
+.mode-card.m-budget{--mc:#f0be46}
 .mc-skip{padding:5px 14px;border:none;border-radius:9px;
   background:transparent;color:var(--tx3);font-size:11px;font-family:inherit;
   cursor:pointer;transition:.15s}
