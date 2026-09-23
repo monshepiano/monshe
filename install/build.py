@@ -12,7 +12,6 @@ import gzip
 import io
 import os
 import re
-import sys
 import tarfile
 import zipfile
 from pathlib import Path
@@ -150,6 +149,7 @@ def build_bundle() -> None:
     когда меняется реальное содержимое, а не время локальной пересборки.
     """
     entries = ((OUT, "JARVIS.command", 0o755),
+               (ROOT / "install" / "JARVIS-Live.command", "JARVIS-Live.command", 0o755),
                (QUICKSTART, "ЧИТАЙ-МЕНЯ.txt", 0o644))
     with zipfile.ZipFile(BUNDLE, "w", compression=zipfile.ZIP_DEFLATED,
                          compresslevel=9) as archive:

@@ -97,6 +97,13 @@ CREATE TABLE IF NOT EXISTS usage (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, next_run);
+CREATE TABLE IF NOT EXISTS scenarios (
+    id TEXT PRIMARY KEY,
+    title TEXT,
+    emoji TEXT,
+    steps TEXT,
+    created_at REAL
+);
 """
 
 
@@ -123,6 +130,14 @@ with _LOCK:
 
 def now() -> float:
     return time.time()
+
+
+def _loads(raw: Any, default: Any) -> Any:
+    """Разобрать JSON-поле строки БД; битое значение молча даёт пустой default."""
+    try:
+        return json.loads(raw) if raw else default
+    except Exception:
+        return default
 
 
 def uid(prefix: str = "") -> str:
@@ -201,10 +216,7 @@ def get_messages(chat_id: str, limit: int = 200) -> List[Dict[str, Any]]:
 def get_message(msg_id: str) -> Optional[Dict[str, Any]]:
     row = query_one("SELECT * FROM messages WHERE id=?", (msg_id,))
     if row:
-        try:
-            row["meta"] = json.loads(row.get("meta") or "{}")
-        except Exception:
-            row["meta"] = {}
+        row["meta"] = _loads(row.get("meta"), {})
     return row
 
 
@@ -308,17 +320,22 @@ def switch_message_version(msg_id: str, index: int) -> Optional[Dict[str, Any]]:
 
 
 def delete_messages_after(chat_id: str, msg_id: str) -> int:
-    """Убрать всё, что шло после отредактированного сообщения: ответы устарели."""
+    """Убрать всё, что шло после отредактированного сообщения: ответы устарели.
+
+    Одна SQL-команда вместо N удалений с отдельным commit: правка в длинном
+    диалоге больше не порождает десяток транзакций и не может оборваться
+    посередине, оставив полусостояние.
+    """
     msg = get_message(msg_id)
     if not msg:
         return 0
-    rows = query(
-        "SELECT id FROM messages WHERE chat_id=? AND (created_at>? OR (created_at=? AND id>?))",
-        (chat_id, msg["created_at"], msg["created_at"], msg_id),
-    )
-    for row in rows:
-        execute("DELETE FROM messages WHERE id=?", (row["id"],))
-    return len(rows)
+    with _LOCK:
+        cur = _CONN.execute(
+            "DELETE FROM messages WHERE chat_id=? AND (created_at>? OR (created_at=? AND id>?))",
+            (chat_id, msg["created_at"], msg["created_at"], msg_id),
+        )
+        _CONN.commit()
+        return cur.rowcount
 
 
 def create_task(title: str, prompt: str, mode: str = "auto", schedule: str = "", chat_id: str = "") -> Dict[str, Any]:
@@ -340,6 +357,48 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
         except Exception:
             row["events"] = []
     return row
+
+
+def list_scenarios() -> List[Dict[str, Any]]:
+    rows = query("SELECT * FROM scenarios ORDER BY created_at DESC")
+    for row in rows:
+        try:
+            row["steps"] = json.loads(row.get("steps") or "[]")
+        except Exception:
+            row["steps"] = []
+    return rows
+
+
+def create_scenario(title: str, steps: List[str], emoji: str = "") -> Dict[str, Any]:
+    sid = uid("sc_")
+    steps = [str(x).strip() for x in (steps or []) if str(x).strip()][:12]
+    execute(
+        "INSERT INTO scenarios(id,title,emoji,steps,created_at) VALUES(?,?,?,?,?)",
+        (sid, str(title or "").strip()[:80] or "Сценарий", str(emoji or "")[:8][:4],
+         json.dumps(steps, ensure_ascii=False), now()))
+    return {"id": sid, "title": title, "emoji": emoji, "steps": steps}
+
+
+def delete_scenario(sid: str) -> bool:
+    execute("DELETE FROM scenarios WHERE id=?", (sid,))
+    return True
+
+
+def active_tasks(limit: int = 60) -> List[Dict[str, Any]]:
+    """Только незавершённые задачи — то, что тикает worker AUTO.
+
+    Раньше worker звал несуществующую функцию: AttributeError глотался
+    общим except, и задачи не запускались ВООБЩЕ — ни очередь, ни расписание.
+    """
+    rows = query(
+        "SELECT * FROM tasks WHERE status IN ('queued','running','scheduled','paused') "
+        "ORDER BY COALESCE(next_run, 0) ASC, updated_at ASC LIMIT ?", (limit,))
+    for row in rows:
+        try:
+            row["events"] = json.loads(row.get("events") or "[]")
+        except Exception:
+            row["events"] = []
+    return rows
 
 
 def list_tasks(limit: int = 100) -> List[Dict[str, Any]]:
@@ -386,6 +445,7 @@ def delete_completed_tasks() -> int:
 
 
 # --------------------------------------------------------------- memory
+_MEMORY_COMPACTED = False
 # Модель и локальный extractor могут назвать один факт по-разному: «Город»,
 # «city», «location». Сравнивать сырые строки нельзя — это и порождало две
 # карточки одного факта. На единственной границе записи алиасы получают одну
@@ -618,20 +678,14 @@ def create_approval(tool: str, args: Dict, risk: str, reason: str, chat_id: str 
 def get_approval(app_id: str) -> Optional[Dict[str, Any]]:
     row = query_one("SELECT * FROM approvals WHERE id=?", (app_id,))
     if row:
-        try:
-            row["args"] = json.loads(row.get("args") or "{}")
-        except Exception:
-            row["args"] = {}
+        row["args"] = _loads(row.get("args"), {})
     return row
 
 
 def list_approvals(status: str = "pending") -> List[Dict[str, Any]]:
     rows = query("SELECT * FROM approvals WHERE status=? ORDER BY created_at DESC LIMIT 50", (status,))
     for row in rows:
-        try:
-            row["args"] = json.loads(row.get("args") or "{}")
-        except Exception:
-            row["args"] = {}
+        row["args"] = _loads(row.get("args"), {})
     return rows
 
 
@@ -657,10 +711,7 @@ def create_question(chat_id: str, question: str, options: List[str]) -> Dict[str
 def get_question(qid: str) -> Optional[Dict[str, Any]]:
     row = query_one("SELECT * FROM questions WHERE id=?", (qid,))
     if row:
-        try:
-            row["options"] = json.loads(row.get("options") or "[]")
-        except Exception:
-            row["options"] = []
+        row["options"] = _loads(row.get("options"), [])
     return row
 
 

@@ -1,6 +1,7 @@
 """Реестр инструментов JARVIS: схемы для function-calling + диспетчер вызовов."""
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from typing import Any, Callable, Dict, List, Tuple
@@ -167,6 +168,13 @@ register("press_key", system.press_key,
 register("open_app", system.open_app,
          "Открыть приложение или ссылку на компьютере пользователя (Safari, Telegram, ozon.ru).",
          {"name": S("имя приложения или URL", True)}, "danger", "computer", "Открыть приложение")
+
+register("ui_tree", system.ui_tree,
+         "Дерево элементов активного окна с ТОЧНЫМИ координатами (дешевле и точнее "
+         "скриншота). Вызывай ПЕРВЫМ в режиме Компьютер: роли, подписи и рамки "
+         "[x,y ширинаxвысота] всех кнопок/полей. Скриншот нужен только для графики "
+         "и содержимого, которого нет в дереве.",
+         {}, "caution", "computer", "Дерево интерфейса", silent=True)
 
 register("screen_info", system.screen_info, "Узнать размер экрана (нужно перед кликами).",
          {}, "safe", "computer", "Параметры экрана", silent=True)
@@ -339,11 +347,15 @@ def call(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     if not tool:
         return {"ok": False, "error": "неизвестный инструмент: " + name}
     fn = tool["fn"]
+    clean = {k: v for k, v in (args or {}).items() if v is not None}
+    # Несовпадение сигнатуры проверяем ДО вызова: раньше TypeError из тела
+    # самого инструмента маскировался неверным диагнозом «неверные аргументы».
     try:
-        clean = {k: v for k, v in (args or {}).items() if v is not None}
-        return fn(**clean)
+        inspect.signature(fn).bind(**clean)
     except TypeError as exc:
         return {"ok": False, "error": "неверные аргументы (%s): %s" % (name, exc)}
+    try:
+        return fn(**clean)
     except Exception as exc:
         return {"ok": False, "error": "ошибка инструмента %s: %s" % (name, exc)}
 

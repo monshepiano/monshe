@@ -184,43 +184,49 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   pointer-events:none;opacity:0;background-size:240% 100%!important;
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude}
-/* Glow живёт на самой вкладке, не на mask-composite кольце. Safari обрезал
-   filter/drop-shadow маски до её bounding box, поэтому прошлые усиления были
-   математически в CSS, но визуально почти отсутствовали. Обычный box-shadow
-   проходит compositor без маски и действительно светится вокруг вкладки. */
+/* СВЕЧЕНИЕ ИСХОДИТ ОТ ГРАДИЕНТА: полоса бежит по контуру, тень-ореол
+   окрашивается её цветом в её фазе. Сама область вкладки чуть подсвечена
+   изнутри — еле заметно, но вкладка «горит изнутри», а не только по краю. */
 .nav-item[data-view="auto"].auto-running{
-  animation:autoTabGlow 2.4s ease-in-out infinite alternate;
-  box-shadow:0 0 9px rgba(74,215,197,.34),0 0 22px rgba(83,203,224,.25),
-             0 0 38px rgba(145,123,238,.18),0 0 56px rgba(74,215,197,.10)}
-@keyframes autoTabGlow{
-  0%{box-shadow:0 0 8px rgba(74,215,197,.3),0 0 19px rgba(83,203,224,.22),
-                0 0 34px rgba(145,123,238,.15),0 0 50px rgba(74,215,197,.08)}
-  100%{box-shadow:0 0 13px rgba(105,225,211,.48),0 0 29px rgba(98,210,234,.34),
-                  0 0 49px rgba(158,137,248,.24),0 0 68px rgba(98,210,234,.13)}}
+  background:linear-gradient(90deg,rgba(47,156,146,.13),rgba(151,132,255,.07));
+  box-shadow:inset 0 0 16px rgba(47,156,146,.10),inset 0 0 30px rgba(151,132,255,.05);
+  animation:autoTabHalo 3.2s linear infinite}
+/* ОРЕОЛ ВКЛАДКИ — НАСТОЯЩИЙ box-shadow на самой вкладке. drop-shadow на
+   замаскированном кольце контура маска срезала: свечение просто не было
+   видно. Тень вкладки не маскируется и светится всегда, окрашиваясь
+   цветом полосы в её текущей фазе. */
+@keyframes autoTabHalo{
+  0%{box-shadow:inset 0 0 16px rgba(47,156,146,.10),inset 0 0 30px rgba(151,132,255,.05),
+    0 0 10px rgba(92,218,235,.42)}
+  33%{box-shadow:inset 0 0 16px rgba(47,156,146,.10),inset 0 0 30px rgba(151,132,255,.05),
+    0 0 13px rgba(151,132,255,.48)}
+  66%{box-shadow:inset 0 0 16px rgba(47,156,146,.10),inset 0 0 30px rgba(151,132,255,.05),
+    0 0 13px rgba(225,132,218,.44)}
+  100%{box-shadow:inset 0 0 16px rgba(47,156,146,.10),inset 0 0 30px rgba(151,132,255,.05),
+    0 0 10px rgba(255,179,118,.38)}}
 .nav-item[data-view="auto"].auto-running .nav-outline{
-  /* Сам border остаётся спокойным, но четыре разнесённых тени дают настоящее
-     мягкое свечение далеко за контуром. Раньше два слабых shadow терялись на
-     тёмном sidebar и градиент выглядел просто цветной линией. */
   background:linear-gradient(105deg,
-    rgba(78,224,204,0) 0%,rgba(78,224,204,.08) 14%,rgba(92,218,235,.34) 27%,
-    rgba(108,188,255,.43) 36%,rgba(151,132,255,.44) 46%,rgba(190,130,240,.39) 55%,
-    rgba(225,132,218,.34) 64%,rgba(255,179,118,.28) 73%,rgba(166,205,153,.12) 84%,
+    rgba(78,224,204,0) 0%,rgba(78,224,204,.12) 14%,rgba(92,218,235,.58) 27%,
+    rgba(108,188,255,.68) 36%,rgba(151,132,255,.70) 46%,rgba(190,130,240,.62) 55%,
+    rgba(225,132,218,.56) 64%,rgba(255,179,118,.48) 73%,rgba(166,205,153,.20) 84%,
     rgba(78,224,204,0) 100%);
   background-size:390% 100%!important;
-  filter:drop-shadow(0 0 6px rgba(105,213,211,.52))
-         drop-shadow(0 0 15px rgba(92,218,235,.36))
-         drop-shadow(0 0 28px rgba(151,132,255,.25))
-         drop-shadow(0 0 44px rgba(105,213,211,.16));
-  animation:autoOutlineFlow 3.8s cubic-bezier(.45,0,.55,1) infinite alternate}
+  animation:autoOutlineFlow 3.2s linear infinite}
 .nav-item[data-view="auto"].auto-running .nav-ico{
-  filter:drop-shadow(0 0 7px rgba(105,213,211,.72)) drop-shadow(0 0 18px rgba(151,132,255,.38))}
+  animation:autoIcoGlow 3.2s linear infinite}
+/* тень-ореол вкладки окрашивается цветом ПОЛОСЫ в её текущей фазе */
 @keyframes autoOutlineFlow{
-  0%{opacity:.44;background-position:108% 0;
-    filter:drop-shadow(0 0 6px rgba(113,196,255,.48)) drop-shadow(0 0 15px rgba(105,213,211,.33)) drop-shadow(0 0 28px rgba(151,132,255,.22)) drop-shadow(0 0 44px rgba(105,213,211,.14))}
-  50%{opacity:.68;
-    filter:drop-shadow(0 0 8px rgba(163,137,255,.58)) drop-shadow(0 0 19px rgba(92,218,235,.42)) drop-shadow(0 0 34px rgba(151,132,255,.29)) drop-shadow(0 0 52px rgba(92,218,235,.18))}
-  100%{opacity:.48;background-position:-145% 0;
-    filter:drop-shadow(0 0 7px rgba(235,145,211,.5)) drop-shadow(0 0 17px rgba(151,132,255,.37)) drop-shadow(0 0 31px rgba(92,218,235,.23)) drop-shadow(0 0 47px rgba(151,132,255,.15))}}
+  0%{opacity:.85;background-position:108% 0;
+    filter:drop-shadow(0 0 9px rgba(92,218,235,.55))}
+  33%{filter:drop-shadow(0 0 11px rgba(151,132,255,.6))}
+  66%{filter:drop-shadow(0 0 11px rgba(225,132,218,.55))}
+  100%{opacity:.85;background-position:-145% 0;
+    filter:drop-shadow(0 0 9px rgba(255,179,118,.45))}}
+@keyframes autoIcoGlow{
+  0%{filter:drop-shadow(0 0 7px rgba(92,218,235,.6))}
+  33%{filter:drop-shadow(0 0 8px rgba(151,132,255,.65))}
+  66%{filter:drop-shadow(0 0 8px rgba(225,132,218,.6))}
+  100%{filter:drop-shadow(0 0 7px rgba(255,179,118,.5))}}
 .nav-item.save-glint .nav-outline{
   background:linear-gradient(100deg,transparent 2%,#8fb35a 18%,#43dec6 44%,#42d9ff 68%,#9d7aed 86%,transparent 98%);
   animation:fileSaveOutline .72s cubic-bezier(.16,.78,.25,1) both}
@@ -365,6 +371,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .panel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:22px 26px 14px}
 .panel-head h2{margin:0;font-size:20px;font-weight:600;letter-spacing:.4px}
 .view-auto .panel-head h2{color:#a9f5ea}
+.view-scenarios .panel-head h2{color:#9df0dc}
+/* общий контейнер контента вкладки: те же поля, что у сетки задач AUTO */
+.view-pad{flex:1 1 auto;min-height:0;overflow-y:auto;padding:6px 26px 26px}
 .view-files .panel-head h2{color:#dcf5a8}
 .view-memory .panel-head h2{color:#ddd2ff}
 .view-settings .panel-head h2{color:#ffe6b0}
@@ -377,7 +386,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   padding:24px 26px 24px;scroll-behavior:smooth}
 /* История и догрузившиеся изображения используют pinToBottom(): его запись
    scrollTop не должна наследовать глобальную плавную прокрутку. */
-.stream.pin-instant{scroll-behavior:auto!important}
+.stream.pin-instant,.cam-chat.pin-instant{scroll-behavior:auto!important}
 .stream.history-rendering{visibility:hidden;scroll-behavior:auto!important}
 .welcome{max-width:660px;margin:6vh auto 0;text-align:center;animation:viewIn .6s both}
 .hello{font-size:30px;font-weight:300;margin:0 0 8px;letter-spacing:.5px}
@@ -547,23 +556,77 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    стоит на карточке ДО insertion, поэтому градиент виден в самом первом paint.
    Текст больше не перекрашивается — именно двойной border+glyph эффект делал
    инструмент чрезмерно заметным. */
-.tool-card.tool-wait{position:relative;isolation:isolate;border-color:rgba(91,185,197,.18);
-  box-shadow:0 6px 22px rgba(0,0,0,.3)}
+/* ИНСТРУМЕНТ РАБОТАЕТ: ОДНА вертикальная полоса цветного света пробегает
+   слева направо по ВСЕЙ карточке — заголовок, аргументы и тело подсвечиваются
+   одним лучом в одной фазе (полоса — один слой поверх содержимого, поэтому
+   она ровная по всей высоте). Рамка полосится в той же фазе. Свечение —
+   ТОЛЬКО ВНУТРИ карточки: наружного ореола нет, снаружи остаётся обычная
+   тень карточки. Полоса цветная, но НЕ яркая: обычный alpha-градиент без
+   mix-blend (screen обесцвечивал и выжигал текст). Темп 2.2с. */
+.tool-card.tool-wait{position:relative;isolation:isolate;border-color:rgba(91,185,197,.30);
+  animation:toolSweepGlow 2.2s linear infinite}
 .tool-card.tool-wait > *{position:relative;z-index:1}
-.tool-card.tool-wait::before{display:none}
-.tool-card.tool-wait::after{content:'';position:absolute;z-index:3;inset:-1px;padding:1px;
+/* ПОЛОСА: цветной луч поверх всего текста + медленное дыхание фона —
+   две анимации одного слоя без конфликта свойств */
+.tool-card.tool-wait::before{content:'';position:absolute;inset:0;z-index:2;
   pointer-events:none;border-radius:inherit;
   background:linear-gradient(100deg,
-    rgba(87,194,207,.10) 0%,rgba(91,177,209,.22) 23%,rgba(139,113,190,.21) 46%,
-    rgba(191,139,91,.18) 67%,rgba(82,177,145,.20) 84%,rgba(87,194,207,.09) 100%);
-  background-size:145% 100%;background-position:50% 0;
+    rgba(0,0,0,0) 0%,rgba(0,0,0,0) 37%,
+    rgba(45,212,228,.10) 45%,rgba(64,196,255,.17) 50%,rgba(158,124,255,.12) 55%,
+    rgba(0,0,0,0) 63%,rgba(0,0,0,0) 100%);
+  background-size:250% 100%;background-position:120% 0;
+  animation:toolSweep 2.2s linear infinite,toolBgBreathe 3.2s ease-in-out infinite}
+/* рамка: тот же луч, в той же фазе — здесь цвета смелее, 1px кольцо
+   не мешает читать и даёт «больше цвета» */
+.tool-card.tool-wait::after{content:'';position:absolute;z-index:3;inset:-1px;padding:1px;
+  pointer-events:none;border-radius:inherit;
+  background:linear-gradient(90deg,
+    rgba(45,212,228,0) 0%,rgba(45,212,228,0) 35%,
+    rgba(45,212,228,.85) 46%,rgba(64,196,255,1) 50%,rgba(158,124,255,.9) 54%,
+    rgba(45,212,228,0) 65%,rgba(45,212,228,0) 100%);
+  background-size:250% 100%;background-position:120% 0;
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude;
-  opacity:.42;will-change:background-position;
-  animation:toolWaitFlow 1.55s linear infinite}
-@keyframes toolWaitFlow{
-  0%{background-position:50% 0}
-  100%{background-position:-82% 0}}
+  will-change:background-position;
+  animation:toolSweep 2.2s linear infinite}
+/* СВЕЧЕНИЕ — только ВНУТРИ карточки: внутренняя подсветка пульсирует в фазе
+   полосы, наружного ореола нет (снаружи остаётся родная тень карточки) */
+@keyframes toolSweepGlow{
+  0%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 10px rgba(64,196,255,.07)}
+  46%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 14px rgba(64,196,255,.12)}
+  50%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 20px rgba(64,196,255,.19),inset 0 0 38px rgba(158,124,255,.10)}
+  54%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 14px rgba(158,124,255,.12)}
+  100%{box-shadow:0 6px 22px rgba(0,0,0,.3),inset 0 0 10px rgba(64,196,255,.07)}}
+/* медленное «дыхание» фона: область чуть светится изнутри, темп 3.2с */
+@keyframes toolBgBreathe{
+  0%,100%{box-shadow:inset 0 0 16px rgba(45,212,228,.05),inset 0 0 34px rgba(158,124,255,.03)}
+  50%{box-shadow:inset 0 0 22px rgba(45,212,228,.10),inset 0 0 44px rgba(158,124,255,.06)}}
+@keyframes toolSweep{
+  0%{background-position:120% 0}
+  100%{background-position:-130% 0}}
+@keyframes toolWaitGlow{
+  0%{box-shadow:0 6px 22px rgba(0,0,0,.3),0 0 10px rgba(87,194,207,.16)}
+  100%{box-shadow:0 6px 22px rgba(0,0,0,.3),0 0 6px rgba(87,194,207,.07)}}
+/* Ход мыслей — тоже процесс: тот же мягкий перелив по контуру, ещё тише.
+   Карточка существует только пока ответ пишется — сворачивается вместе с ним. */
+.think-card{position:relative;isolation:isolate}
+/* ход мыслей — та же узкая полоса, что у инструментов, но в 2 раза тише
+   и мягче: процесс второго плана */
+.think-card::after{content:'';position:absolute;z-index:3;inset:-1px;padding:1px;
+  pointer-events:none;border-radius:inherit;
+  background:linear-gradient(90deg,
+    rgba(143,134,207,0) 0%,rgba(143,134,207,0) 40%,
+    rgba(139,113,190,.5) 48%,rgba(87,194,207,.45) 52%,
+    rgba(143,134,207,0) 60%,rgba(143,134,207,0) 100%);
+  background-size:250% 100%;background-position:120% 0;
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  will-change:background-position;
+  animation:toolSweep 4.4s linear infinite}
+/* Память — НЕ процесс: никакого градиента и свечения, только перелёт
+   карточки во вкладку «Память» (та же анимация, что у файлов). */
+.tool-card.memory-tool{box-shadow:none}
+.tool-card.memory-tool::after{display:none!important;animation:none!important}
 /* Thinking остаётся спокойным текстовым потоком без цветного контура. */
 .think-card .card-head .k{animation:blink 1.1s infinite}
 /* Курсора в мыслях больше нет: это не печать, а прокрутка потока. */
@@ -654,6 +717,15 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 /* Незаконченный code fence не растягивает весь чат: окно следует за новыми
    строками само, а после visual done обычный foldCodeBlocks сворачивает код. */
 .md pre.live-code{max-height:min(42vh,360px);overflow:auto;overscroll-behavior:contain}
+/* ДОПИСАННЫЙ код сворачивается в строку СРАЗУ после написания — не ждём
+   конца ответа. Одна строка с эллипсисом + «развернуть» справа; клик
+   возвращает блок до конца ответа, дальше строится настоящая вкладка. */
+.md pre.pre-folded{max-height:30px;overflow:hidden;cursor:pointer;position:relative;
+  padding:7px 74px 7px 12px;white-space:nowrap;text-overflow:ellipsis;
+  color:var(--tx3);border-color:var(--line);font-size:10.5px;line-height:16px}
+.md pre.pre-folded::after{content:'развернуть';position:absolute;right:12px;top:50%;
+  transform:translateY(-50%);font-size:10px;color:var(--cy);font-family:var(--f)}
+.md pre.pre-folded:hover{color:var(--tx2);border-color:rgba(0,212,255,.35)}
 .md blockquote{margin:10px 0;padding:8px 14px;border-left:2.5px solid var(--cy);background:rgba(0,212,255,.06);
   border-radius:0 9px 9px 0;color:var(--tx2)}
 .md table{width:100%;border-collapse:collapse;margin:11px 0;font-size:12.5px;display:block;overflow-x:auto}
@@ -840,18 +912,26 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   box-shadow:inset 0 1px 5px rgba(0,0,0,.42);transition:.24s}
 .agent-switch-track input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .agent-switch-track i{position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;
-  background:var(--tx3);transition:transform .24s cubic-bezier(.2,.8,.3,1),background .22s,box-shadow .22s}
+  background:var(--tx3);transition:transform .24s cubic-bezier(.2,.8,.3,1),background .22s,box-shadow .22s;
+  /* буква A живёт НА самом круглешке: тумблер подписан собой, без соседних слов */
+  font-style:normal;font-weight:800;font-size:11px;line-height:20px;text-align:center;
+  color:var(--panel2);font-family:inherit;user-select:none}
 .agent-switch:hover{color:var(--tx2)}
 .agent-switch-track:hover{border-color:var(--line2)}
 .agent-switch:has(input:checked){color:#e0dbff}
 .agent-switch-track:has(input:checked){background:rgba(143,134,207,.18);border-color:rgba(168,159,242,.62)}
 .agent-switch-track input:checked + i{transform:translateX(20px);background:#b8afff;
-  box-shadow:0 0 9px rgba(168,159,242,.9)}
+  box-shadow:0 0 9px rgba(168,159,242,.9);color:#17112e}
 .agent-switch-track:has(input:focus-visible){outline:2px solid rgba(168,159,242,.48);outline-offset:2px}
 .agent-switch:focus-within{z-index:50}
+/* Иконка на круглешке (камера/компьютер): тот же тумблер, что AGENT с «A»,
+   только вместо буквы — значок. svg наследует currentColor круглешка. */
+.agent-switch-track i:has(svg){display:grid;place-items:center;line-height:1}
+.agent-switch-track i svg{width:11px;height:11px;display:block}
 /* Tooltip не участвует в геометрии composer. После выбора tip-dismissed гасит
    его до mouseleave, а не оставляет висеть из-за фокуса checkbox. */
 .toggle[data-tip]:is(:hover,:focus-visible)::after,
+.budget-btn[data-tip]:is(:hover,:focus-visible)::after,
 .agent-switch[data-tip]:not(.tip-dismissed):hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%);
   background:rgba(6,14,24,.98);border:1px solid rgba(0,200,240,.42);padding:7px 11px;border-radius:8px;font-size:11px;
   white-space:nowrap;z-index:60;color:var(--tx2);box-shadow:0 12px 30px rgba(0,0,0,.7),0 0 16px rgba(0,200,240,.1);animation:popIn .18s both;
@@ -1156,7 +1236,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   .stream{padding:16px 14px 8px}
   .scroll-date{top:16px}
   .composer-wrap{padding:8px 12px 14px}
-  .panel-head,.task-grid,.file-grid,.mem-grid,.settings-grid{padding-left:14px;padding-right:14px}
+  .panel-head,.task-grid,.file-grid,.mem-grid,.settings-grid,.view-pad{padding-left:14px;padding-right:14px}
   .auto-bar{margin-left:14px;margin-right:14px;padding:11px 12px}
   .auto-stats{gap:13px}.auto-bar-actions{margin-left:auto}
   .chat-card{margin-left:0}
@@ -1906,8 +1986,11 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   font-family:var(--fm);font-size:9.5px;font-style:normal;flex-shrink:0;
   border:1px solid rgba(217,164,65,.4);color:rgba(217,164,65,.75);
   background:rgba(20,16,6,.9);transition:.25s;position:relative;z-index:1}
-.pd-cap{font-size:9px;line-height:1.25;color:var(--tx3);overflow:hidden;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
+.pd-cap{font-size:9px;line-height:1.3;color:var(--tx3);overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;word-break:break-word}
+/* длинная подпись этапа растягивает золотую рамку вниз, а не обрезается */
+.pd-steps{align-items:stretch}
+.pd-s{min-height:100%}
 /* выполненный шаг */
 .pd-s.done .pd-dot{background:rgba(217,164,65,.9);color:#1a1305;border-color:var(--gold)}
 .pd-s.done .pd-cap{color:rgba(217,164,65,.7);text-decoration:line-through;
@@ -2037,3 +2120,118 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   .toggle{padding:0 8px;font-size:10.5px}
   .agent-switch{padding:0;gap:5px;font-size:10px}
 }
+/* Пауза без задач: мутная и некликабельная — ставить паузу нечему */
+#autoPauseBtn.idle{opacity:.32;cursor:default;filter:saturate(.3)}
+#autoPauseBtn.idle:hover{transform:none}
+/* AGENT: буква A стоит на самом круглешке (см. .agent-switch-track i) */
+
+/* ================= лимит ₽ ================= */
+.budget-btn{position:relative;width:34px;height:28px;border-radius:20px;border:1px solid var(--line);
+  background:transparent;cursor:pointer;color:var(--tx3);display:flex;align-items:center;
+  justify-content:center;padding:0;transition:all .2s ease}
+.budget-btn:hover{border-color:var(--line2);color:var(--tx2)}
+.budget-coin{font-weight:800;font-size:14px;line-height:1}
+/* активный лимит: жёлтая монета — заметно, но не кричит */
+.budget-btn.on{border-color:rgba(240,190,70,.55);color:#f0be46;
+  box-shadow:0 0 8px rgba(240,190,70,.25),inset 0 0 6px rgba(240,190,70,.12);
+  animation:budgetPulse 2.6s ease-in-out infinite}
+@keyframes budgetPulse{
+  0%,100%{box-shadow:0 0 6px rgba(240,190,70,.20),inset 0 0 5px rgba(240,190,70,.10)}
+  50%{box-shadow:0 0 11px rgba(240,190,70,.34),inset 0 0 8px rgba(240,190,70,.16)}}
+/* Панель лимита — ТОТ ЖЕ стиль, что панель уведомлений: плотный тёмный фон,
+   шапка-полоса с заголовком и действием, те же радиус и тень. Золотой
+   остаётся только акцентом монеты и сумм.
+   [hidden] обязан гасить display:flex — без этого правила панель висела
+   всегда, и закрыть её было невозможно. */
+.budget-pop[hidden]{display:none}
+.budget-pop{position:absolute;right:0;bottom:calc(100% + 10px);z-index:120;width:250px;
+  display:flex;flex-direction:column;overflow:hidden;
+  background:#0a1420;border:1px solid var(--line2);border-radius:15px;
+  box-shadow:0 22px 60px rgba(0,0,0,.75),0 0 0 1px rgba(0,0,0,.4);
+  transform-origin:bottom right;
+  animation:budgetPopIn .26s cubic-bezier(.2,.9,.3,1.2) both}
+@keyframes budgetPopIn{
+  0%{opacity:0;transform:scale(.6) translateY(8px)}
+  100%{opacity:1;transform:scale(1) translateY(0)}}
+.bp-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:11px 14px;border-bottom:1px solid var(--line);font-size:12px;color:var(--tx2);
+  background:#0c1826}
+.bp-head b{color:#f0be46;font-weight:700;letter-spacing:.3px}
+.bp-off{border:1px solid var(--line);background:transparent;color:var(--tx3);cursor:pointer;
+  border-radius:8px;padding:3px 9px;font-size:10.5px;font-family:inherit;transition:.18s}
+.bp-off:hover{color:var(--red);border-color:rgba(221,85,102,.5);background:rgba(221,85,102,.1)}
+.bp-body{padding:12px}
+.bp-hint{font-size:10.5px;color:var(--tx3);margin:0 0 9px}
+.bp-variants{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:10px}
+.bp-v{border:1px solid var(--line);background:transparent;color:var(--tx2);border-radius:9px;
+  padding:8px 0;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+.bp-v:hover{border-color:rgba(240,190,70,.5);color:#f0be46}
+.bp-v.on{border-color:rgba(240,190,70,.55);color:#f0be46;background:rgba(240,190,70,.10)}
+.bp-row{display:flex;gap:8px}
+.bp-input{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:20px;
+  color:var(--tx);padding:7px 10px;font-size:13px;outline:none}
+.bp-input:focus{border-color:rgba(240,190,70,.5)}
+/* Лимит ₽: та же карточка-вопрос, что и все вопросы Джарвиса (ask-card),
+   только жёлтый значок и жёлтая полоса на контуре — цвет денег. */
+.budget-card{border-color:rgba(240,190,70,.38)!important}
+.budget-card .ask-i{background:rgba(240,190,70,.14);color:#f0be46;
+  border:1px solid rgba(240,190,70,.4)}
+.budget-card::after{content:'';position:absolute;z-index:3;inset:-1px;padding:1px;
+  pointer-events:none;border-radius:inherit;
+  background:linear-gradient(90deg,
+    rgba(240,190,70,0) 0%,rgba(240,190,70,0) 40%,
+    rgba(240,190,70,.65) 48%,rgba(255,214,130,.8) 52%,
+    rgba(240,190,70,0) 60%,rgba(240,190,70,0) 100%);
+  background-size:250% 100%;background-position:120% 0;
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  animation:toolSweep 1.7s linear infinite}
+.budget-spent{padding:0 15px 2px;font-size:12px;color:var(--tx3)}
+.budget-card .ask-opt{border-radius:10px}
+.budget-card .ask-opt.good{border-color:rgba(240,190,70,.5);color:#f5d78e;
+  background:rgba(240,190,70,.10)}
+.budget-card .ask-opt.good:hover{background:rgba(240,190,70,.2);border-color:var(--gold)}
+/* Решение по лимиту сворачивается в миниатюру — чуть КРУПНЕЕ обычных
+   строк инструментов (ход мыслей и т.д.): деньги заслуживают лишний вес. */
+.thumb.th-budget{padding:8px 12px;font-size:12.5px;background:rgba(240,190,70,.07);
+  border:1px solid rgba(240,190,70,.28);border-radius:12px}
+.thumb.th-budget .th-ico{width:15px;height:15px;color:#f0be46;font-weight:800}
+.thumb.th-budget .th-t{font-size:12.5px}
+.thumb.th-budget .th-tag{border-color:rgba(240,190,70,.4);color:#f5d78e}
+.thumb.th-budget:hover{background:rgba(240,190,70,.12);border-color:rgba(240,190,70,.45)}
+
+/* ================= сценарии ================= */
+/* Сценарии — ТОЧНО тот же канон, что вкладка AUTO: та же служебная полоса
+   (auto-bar) со статистикой под заголовком, та же сетка task-grid, те же
+   .task-card с .tc-*. Отличие только в цвете: violet вместо teal. */
+.scenario-bar{border-color:rgba(143,134,207,.22)}
+.scenario-bar .auto-stat b{color:#cfc4f5}
+.scenario-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));
+  gap:14px;align-content:start}
+.scenario-card.task-card{cursor:default}
+.scenario-card.task-card::before{background:var(--violet)}
+.scenario-card.task-card:hover{transform:none}
+.scenario-card .tc-run{width:100%;margin:2px 0 6px}
+.scenario-card .tc-steps{font-size:11.5px;color:var(--tx3);line-height:1.65;margin:2px 0 10px;
+  max-height:58px;overflow:hidden;
+  -webkit-mask-image:linear-gradient(180deg,#000 55%,transparent);
+  mask-image:linear-gradient(180deg,#000 55%,transparent)}
+
+/* карточка «включить режим»: короткое «зачем» сверху, ПОД ним —
+   небольшая настоящая кнопка включения и мелкая «Пропустить».
+   Клик по кнопке = согласие; карточка сворачивается в строку. */
+.mode-card{border-color:rgba(143,134,207,.42)!important}
+.mc-row{display:flex;flex-direction:column;gap:12px;padding:14px 16px 12px}
+.mc-text{min-width:0}
+.mc-title{font-size:13px;font-weight:600;color:#e4e0ff;margin-bottom:3px}
+.mc-reason{font-size:11.5px;color:var(--tx3);line-height:1.5}
+.mc-actions{display:flex;align-items:center;gap:16px}
+.mc-btn{cursor:pointer;padding:6px 10px;border-radius:12px;transition:.18s;flex-shrink:0}
+.mc-btn:hover{background:rgba(143,134,207,.1);transform:scale(1.05)}
+.mc-btn .agent-switch,.mc-btn .toggle,.mc-btn .budget-btn{
+  transform:none;transform-origin:center;pointer-events:none}
+.mc-btn .budget-pop{display:none}
+.mc-skip{padding:5px 14px;border:none;border-radius:9px;
+  background:transparent;color:var(--tx3);font-size:11px;font-family:inherit;
+  cursor:pointer;transition:.15s}
+.mc-skip:hover{color:var(--tx2);background:rgba(255,255,255,.05)}

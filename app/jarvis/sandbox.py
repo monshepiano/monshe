@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import contextvars
+import itertools
 import json
 import re
 import shutil
@@ -106,7 +107,9 @@ def rename(new_name: str, chat_id: Optional[str] = None) -> Dict[str, Any]:
 def listing(chat_id: Optional[str] = None, limit: int = 400) -> List[Dict[str, Any]]:
     base = root(chat_id)
     out: List[Dict[str, Any]] = []
-    for item in sorted(base.rglob("*"))[:limit]:
+    # сортируем только первые limit путей: rglob по огромной песочнице
+    # не должен целиком попадать в sort до обрезки
+    for item in sorted(itertools.islice(base.rglob("*"), limit * 2))[:limit]:
         if item.is_file():
             rel = str(item.relative_to(base))
             out.append({

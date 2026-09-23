@@ -383,7 +383,11 @@ function testImportantHeadingCaretAndTrail() {
   );
   assert(/const TYPE_MS\s*=\s*20/.test(js), 'DOM typing is capped at 50 renders per second');
   assert(/const CPS_TALK\s*=\s*125/.test(js) && /const CPS_TALK_MAX\s*=\s*245/.test(js));
-  assert(/const CPS_CODE\s*=\s*420/.test(js) && /const CPS_SMOOTH_MS\s*=\s*340/.test(js));
+  // код: 470 базово (быстрее старых 420, медленнее спорных 560), хвост —
+  // до 2000 симв/с: выше автопрокрутка перестаёт поспевать (near-зона 420px)
+  assert(/const CPS_CODE\s*=\s*470/.test(js) && /const CPS_SMOOTH_MS\s*=\s*340/.test(js) &&
+    /Math\.min\(2000, 700 \+ left \* 0\.18\)/.test(js) &&
+    /box\.scrollHeight - box\.scrollTop - box\.clientHeight < 420/.test(js));
   assert(!/CPS_IMPORTANT/.test(js), 'headings must not have a separate speed');
   assert(!/function importantLine|function headingEndedSince/.test(js),
     'headings must not add a hidden rate or pause branch');
@@ -400,7 +404,10 @@ function testImportantHeadingCaretAndTrail() {
     'elapsed-time CPS must survive delayed timer frames');
   assert(/Math\.min\(32,\s*now\s*-\s*lastTick\)/.test(typer),
     'a delayed browser frame must not be paid back as a visible character burst');
-  assert(/step\s*=\s*Math\.min\(step,\s*left,\s*code\s*\?\s*10\s*:\s*4\)/.test(typer));
+  assert(/step\s*=\s*Math\.min\(step,\s*left,\s*code\s*\?\s*\(ui\.fastFinish\s*\?\s*26\s*:\s*10\)\s*:\s*4\)/.test(typer),
+    'step limit must stay 4 for prose (always) and rise for dense content only after done');
+  assert(/if\s*\(code\s*&&\s*ui\.fastFinish\)\s*want\s*=/.test(typer),
+    'the after-done speed boost must apply to dense content only, never to prose');
   assert(!/left\s*>|boost|mult/i.test(typer),
     'typing acceleration must be smooth rather than a discrete backlog branch');
   assert(/ui\.cps\s*=\s*0[\s\S]*ui\.acc\s*=\s*0/.test(typer),
@@ -755,8 +762,13 @@ function testRepeatedPlanEventReplacesOwnership() {
   assert.strictEqual(removedDocks.length, 2);
 
   ctx.handleEvent({ type: 'done', content: 'готово' }, ui);
-  assert.deepStrictEqual(completionOrder, ['status', 'plan', 'typing'],
-    'server completion must paint the plan before waiting for local response typing');
+  // План НЕ завершается по сетевому done: dock остаётся живым, пока ответ
+  // допечатывается. undockPlan вызывается из финала typer (onTyped), а не здесь.
+  assert.deepStrictEqual(completionOrder, ['status', 'typing'],
+    'server done must NOT complete the plan; typing finish does');
+  const finish = extractFunction(js, 'queueResponseFinish');
+  assert(/if\s*\(success\)\s*\{[\s\S]*?undockPlan\(ui\)/.test(finish),
+    'undockPlan lives inside the onTyped callback, after the response is fully typed');
 }
 
 function makeMedia() {
@@ -794,7 +806,8 @@ async function testCameraLifecycleOwnershipAndLateResults() {
     camRun: 0, camStream: null, camNode: card, cameraOn: true,
     camTimer: null, camPrevPix: null, camBusy: false,
   };
-  const ctx = loadFunctions(['camPart', 'startCam', 'stopCam'], {
+  const ctx = loadFunctions(['camPart', 'startCam', 'stopCam',
+    'adoptRunIntoCam', 'releaseRunFromCam'], {
     S, CAM_TICK: 2500, ICO: { cam: '' },
     navigator: { mediaDevices: { async getUserMedia() { requests += 1; return nextMedia; } } },
     showView() {}, killWelcome() {}, buildCamCard() { throw new Error('unexpected rebuild'); },
@@ -929,6 +942,7 @@ async function testCameraLifecycleOwnershipAndLateResults() {
     watchRunFollow() {},
     camFrame() { return 'data:image/jpeg;base64,frame'; },
     typerStop() {}, dropStatus() {},
+    stopRunForReal() {},
     cancelPlanGate() { stoppedPlans += 1; },
     async waitForPlanGate() {},
     discardPlan() {},
@@ -937,6 +951,10 @@ async function testCameraLifecycleOwnershipAndLateResults() {
       ui.visualDone = true;
       if (ui.resolveVisualDone) ui.resolveVisualDone();
     },
+    saveDraft() {},
+    maybeOfferScenario() {},
+    foldCodeBlocks() {}, thinkFlush() { return null; }, collapseSoon() {},
+    ICO: {}, fmtSize() { return ''; },
     queueResponseFinish() { throw new Error('aborted upload must not finalize as a response'); },
     loadChats() {}, refreshState() {}, fetchReplies() {},
   });
@@ -1094,8 +1112,13 @@ function testRussianImageAndHudFollowupContract() {
   assert(togglesAt >= 0 && cameraAt < computerAt && computerAt < spacerAt &&
     spacerAt < agentAt && agentAt < togglesEnd,
   'AGENT must occupy the right edge of the footer directly below Send');
-  assert(/<div class="agent-switch"[^>]*>[\s\S]{0,120}<span class="agent-switch-label">AGENT<\/span>\s*<label class="agent-switch-track">\s*<input id="tgAgent" type="checkbox" role="switch"/.test(html),
-    'AGENT caption must sit outside the only clickable checkbox track');
+  // AGENT: буква «A» стоит НА САМОМ круглешке тумблера (внутри <i>), рядом нет подписей
+  assert(/<label class="agent-switch-track">\s*<input id="tgAgent" type="checkbox" role="switch"[^>]*>\s*<i aria-hidden="true">A<\/i>\s*<\/label>/.test(html),
+    'the A letter must live ON the switch knob itself');
+  assert(!/agent-switch-label/.test(html), 'no caption floats beside the AGENT track anymore');
+  const budgetAt = html.indexOf('id="tgBudget"', togglesAt);
+  assert(budgetAt > 0 && budgetAt < agentAt,
+    'the ruble-limit button sits left of the AGENT switch');
   assert(!/<button[^>]+id="tgAgent"/.test(html));
   assert(/\.toggle\s*\{[^}]*height:28px[^}]*padding:0 12px/s.test(css));
   assert(/\.agent-switch\s*\{[^}]*height:28px[^}]*display:flex[^}]*border:0[^}]*background:transparent/s.test(css) &&
@@ -1103,7 +1126,7 @@ function testRussianImageAndHudFollowupContract() {
     /\.send-btn\s*\{[^}]*width:48px[^}]*height:38px/s.test(css),
     'AGENT track stays 28px high and its 48px width aligns with the widened Send control');
   assert(/#tgAgent'\)\.addEventListener\('change'[\s\S]*S\.agentMode\s*=\s*this\.checked[\s\S]*tip-dismissed/.test(js));
-  assert(/\.agent-switch'\)\.addEventListener\('mouseleave'[\s\S]*tip-dismissed/.test(js));
+  assert(/\$\$\('\.agent-switch'\)\.forEach\(\(sw\) => sw\.addEventListener\('mouseleave'[\s\S]*tip-dismissed/.test(js));
   const tipRule = css.match(/\.agent-switch\[data-tip\]:not\(\.tip-dismissed\):hover::after\s*\{([^}]*)\}/s);
   assert(/\.composer\s*\{[^}]*overflow:visible/s.test(css) && tipRule &&
     /z-index:60/.test(tipRule[1]) && /white-space:nowrap/.test(tipRule[1]),
@@ -1117,8 +1140,8 @@ function testRussianImageAndHudFollowupContract() {
   assert(/\.nav-item\[data-view="auto"\]\.auto-running \.nav-outline/.test(css) &&
     /animation:autoOutlineFlow/.test(css));
   assert(!/auto-running::after/.test(css), 'AUTO gradient must not fill the tab area');
-  assert((html.match(/class="nav-outline"/g) || []).length === 5,
-    'every navigation tab must own the same outline-only effect layer');
+  assert((html.match(/class="nav-outline"/g) || []).length === 6,
+    'every navigation tab (включая Сценарии) must own the same outline-only effect layer');
 
   const events = extractFunction(js, 'handleEvent');
   assert(/case 'memory_saved':[\s\S]*memoryTraceCard\(facts\)[\s\S]*collapseSoon\(card[\s\S]*pulseNav\('memory', true\)/.test(events),
@@ -1230,9 +1253,14 @@ function testReadinessFollowHistoryAndLiveCodeContracts() {
   assert(/livePre\.classList\.add\('live-code'\)/.test(typer) &&
     /livePre\.scrollTop = livePre\.scrollHeight/.test(typer));
   const finish = extractFunction(js, 'queueResponseFinish');
-  assert(/pre\.live-code/.test(finish) && /classList\.remove\('live-code'\)/.test(finish) &&
-    /foldCodeBlocks\(ui\.mdEl\)/.test(finish),
-    'completed code leaves live mode and enters the existing fold/large-tab lifecycle');
+  // live-code больше не снимается заранее (это распахивало блок на кадр);
+  // foldCodeBlocks съёживает блок ОТ ВИДИМОЙ высоты и лишь потом снимает класс
+  assert(/foldCodeBlocks\(ui\.mdEl,\s*true\)/.test(finish),
+    'completed code folds with the animate path, never expanding to full height first');
+  const fold = extractFunction(js, 'foldCodeBlocks');
+  assert(/classList\.remove\('live-code'\)/.test(fold) &&
+    /getBoundingClientRect\(\)\.height/.test(fold),
+    'folding measures the visible height before removing the live-code cap');
   assert(/\.md pre\.live-code\s*\{[^}]*max-height:min\(42vh,360px\)[^}]*overflow:auto/s.test(css),
     'typing code remains in a bounded internally scrolling viewport');
 }
@@ -1335,35 +1363,86 @@ async function testAutoPollingReconciliationAndBulkControls() {
 }
 
 function testThinkingGradientContract() {
+  // Дизайн обновлён по просьбе: ход мыслей — тоже процесс, у него тот же
+  // мягкий перелив по контуру. Запрещено лишь второе яркое усиление.
   assert(!/\.think-card\.live|\.panel-card\.live/.test(css + js),
-    'thinking must remain a calm stream with no loading gradient');
+    'thinking must not grow a loud second gradient class');
+  assert(/\.think-card::after\s*\{[^}]*toolSweep 4\.4s/s.test(css),
+    'thinking card carries the same sweep-stripe as tools, much calmer');
 
+  // Инструмент работает: ОДНА вертикальная полоса света — слой ПОВЕРХ всего
+  // содержимого карточки, поэтому заголовок/аргументы/тело подсвечиваются
+  // ровно и в одной фазе. Рамка — та же полоса; фон дышит медленнее (3с).
   const toolFrame = css.match(/\.tool-card\.tool-wait::after\s*\{([^}]*)\}/s);
-  assert(toolFrame && /rgba\(87,194,207,\.10\)/.test(toolFrame[1]) &&
-    /rgba\(139,113,190,\.21\)/.test(toolFrame[1]) &&
-    /background-size:145% 100%/.test(toolFrame[1]) && /background-position:50% 0/.test(toolFrame[1]) &&
-    /opacity:\.42/.test(toolFrame[1]) && /toolWaitFlow 1\.55s/.test(toolFrame[1]),
-  'wait contour is present from its first frame and substantially dimmer');
+  assert(toolFrame && /background-size:250% 100%/.test(toolFrame[1]) &&
+    /toolSweep 2\.2s/.test(toolFrame[1]) &&
+    /rgba\(45,212,228,0\) 35%/.test(toolFrame[1]),
+  'a narrow colorful vertical stripe sweeps the contour (slower, 2.2s)');
+  const toolBand = css.match(/\.tool-card\.tool-wait::before\s*\{([^}]*)\}/s);
+  assert(toolBand && !/mix-blend-mode/.test(toolBand[1]) &&
+    /inset:0/.test(toolBand[1]) && /z-index:2/.test(toolBand[1]) &&
+    /rgba\(64,196,255,\.17\) 50%/.test(toolBand[1]) &&
+    /toolSweep 2\.2s linear infinite,toolBgBreathe 3\.2s/.test(toolBand[1]),
+  'ONE alpha-color band sweeps the whole card (no bleach blend); bg breathes slower');
+  // ЗАПРЕЩЁН gradient-text на содержимом tool-wait: у каждого текста своя
+  // ширина, полосы ехали вразнобой, а text-fill-color:transparent делал
+  // развёрнутые блоки кода (python и др.) тёмными/невидимыми.
+  const toolWaitBlock = css.slice(css.indexOf('.tool-card.tool-wait::before'),
+    css.indexOf('@keyframes toolSweepGlow'));
+  assert(!/background-clip:text/.test(toolWaitBlock) &&
+    !/-webkit-text-fill-color:transparent/.test(toolWaitBlock),
+  'no per-element gradient text inside tool-wait: one shared band instead');
+  assert(/@keyframes toolBgBreathe/.test(css) &&
+    /inset 0 0 22px rgba\(45,212,228,\.10\)/.test(css),
+  'the card interior breathes slowly (toolBgBreathe)');
+  // СВЕЧЕНИЕ — ТОЛЬКО ВНУТРИ карточки: inset-подсветка в фазе полосы,
+  // наружного ореола нет
+  const glowKf = css.match(/@keyframes toolSweepGlow\s*\{([^@]*)\}/s);
+  assert(glowKf && /toolSweepGlow 2\.2s/.test(css) &&
+    /inset 0 0 20px rgba\(64,196,255,\.19\)/.test(glowKf[1]) &&
+    !/\) 0 0 2[02]px rgba\(6[45],19[26],2(?:35|55),/.test(glowKf[1]),
+  'the glow lives INSIDE the card only (inset), no outer halo');
+  // AUTO-вкладка: ореол — box-shadow на самой вкладке (drop-shadow на
+  // замаскированном кольце маска срезала — свечения не было видно)
+  assert(/@keyframes autoTabHalo/.test(css) &&
+    /0 0 13px rgba\(151,132,255,\.48\)/.test(css),
+  'AUTO tab glows via an unmasked box-shadow halo');
+  assert(!/toolWaitBurst|toolWaitFlow/.test(css),
+  'old full-contour gradient is gone');
   const finishWait = extractFunction(js, 'finishToolWait');
   assert(/TOOL_WAIT_AFTER_PAINT_MS/.test(finishWait) &&
-    /const TOOL_WAIT_AFTER_PAINT_MS = 560/.test(js) &&
+    /const TOOL_WAIT_AFTER_PAINT_MS = 800/.test(js) &&
     /'tool-card' \+ \(waitVisual \? ' tool-wait' : ''\)/.test(js) &&
     /node\.body\.insertBefore\(card, ui\.statusEl\);\s*markBorn\(card\)/.test(js),
     'wait class exists before DOM insertion and survives a verified first paint');
-  assert(!/\.tool-card\.(?:live|tool-wait) \.card-head/.test(css) &&
-    !/liveTextFlow/.test(css),
-    'tool and thinking glyphs never receive the conspicuous second gradient');
+  // Дизайн по просьбе пользователя: градиент живёт ИМЕННО на буквах заголовка
+  // (gradient text) и на контуре. Запрещён лишь второй яркий «live»-класс.
+  assert(!/\.tool-card\.live/.test(css) && !/liveTextFlow/.test(css),
+    'no loud second live-gradient class on top of tool-wait');
   assert(!/\.think-stream::(?:before|after)[^{]*\{[^}]*caret/s.test(css),
     'thinking stays a masked scrolling stream, not a cursor animation');
 
+  // AUTO: свечение исходит ОТ градиента — тень-ореол окрашивается цветом
+  // бегущей полосы в её фазе (autoOutlineFlow), отдельного box-shadow нет
   const autoOutline = css.match(/\.nav-item\[data-view="auto"\]\.auto-running \.nav-outline\s*\{([^}]*)\}/s);
   assert(autoOutline && /background-size:390% 100%/.test(autoOutline[1]) &&
-    /autoOutlineFlow 3\.8s cubic-bezier\(\.45,0,\.55,1\) infinite alternate/.test(autoOutline[1]),
-    'running AUTO keeps its border-only gradient');
-  const autoTab = css.match(/\.nav-item\[data-view="auto"\]\.auto-running\s*\{([^}]*)\}/s);
-  assert(autoTab && /animation:autoTabGlow 2\.4s/.test(autoTab[1]) &&
-    (autoTab[1].match(/0 0/g) || []).length >= 4 && /@keyframes autoTabGlow/.test(css),
-    'AUTO glow lives on the unmasked tab box so Safari cannot clip it away');
+    /autoOutlineFlow 3\.2s linear infinite/.test(autoOutline[1]) &&
+    /rgba\(151,132,255,\.70\)/.test(autoOutline[1]),
+    'running AUTO keeps its border-only gradient, brighter than before');
+  const flowAt = css.indexOf('@keyframes autoOutlineFlow');
+  const flowBlock = css.slice(flowAt, css.indexOf('@keyframes', flowAt + 10));
+  assert(flowAt >= 0 && /background-position/.test(flowBlock) &&
+    /drop-shadow\(0 0 1[01]px/.test(flowBlock) && /rgba\(151,132,255/.test(flowBlock),
+    'the outline glow is coloured by the stripe phase and clearly visible');
+  // сама область вкладки чуть подсвечена изнутри
+  const autoTabArea = css.match(/\.nav-item\[data-view="auto"\]\.auto-running\s*\{([^}]*)\}/s);
+  assert(autoTabArea && /inset 0 0 16px/.test(autoTabArea[1]) &&
+    /linear-gradient\(90deg,rgba\(47,156,146,\.13\)/.test(autoTabArea[1]),
+  'the AUTO tab area itself is faintly lit from inside');
+  assert(!/autoTabGlow/.test(css),
+    'no independent tab glow: light comes from the moving gradient');
+  assert(/@keyframes autoIcoGlow/.test(css),
+    'the AUTO icon glow follows the same stripe phase');
   const memoryOutline = css.match(/\.nav-item\.save-glint-strong \.nav-outline\s*\{([^}]*)\}/s);
   assert(memoryOutline && /#b477ff/.test(memoryOutline[1]) && /#ef79cf/.test(memoryOutline[1]) &&
     /memorySaveOutline 1\.35s/.test(memoryOutline[1]),
@@ -1380,6 +1459,140 @@ function testThinkingGradientContract() {
     'the AGENT tint appears only on its inner track after the switch is enabled');
 }
 
+function testBudgetScenariosDraftsAndTailRaceContracts() {
+  // ₽-лимит: кнопка слева от AGENT, активная — жёлтая; панель ожидания —
+  // в каноне ask-card (те же кнопки-варианты), с жёлтой полосой на контуре
+  assert(/id="tgBudget"/.test(html) && /\.budget-btn\.on\{[^}]*#f0be46/s.test(css) &&
+    /case 'budget_wait'/.test(js) && /budget-card/.test(js) &&
+    /budget_rub: S\.budgetRub \|\| 0/.test(js) &&
+    /\.budget-card\s*\{[^}]*rgba\(240,190,70/s.test(css) &&
+    /\.budget-card \.ask-opt\.good/.test(css),
+  'the ruble limit ships end-to-end: button, yellow state, ask-card panel, body field');
+  // ₽-панель = стиль панели уведомлений: плотный фон, шапка-полоса,
+  // «Снять»; варианты — ИСТОРИЯ сумм пользователя (последние 4 разных)
+  assert(/\.budget-pop\{[^}]*#0a1420/s.test(css) && /\.bp-head\{[^}]*#0c1826/s.test(css) &&
+    /id="budgetOff"/.test(html) && /id="budgetVariants"/.test(html) &&
+    /function budgetHistory/.test(js) && /function budgetSuggestions/.test(js) &&
+    /function rememberBudget/.test(js) && /jarvis\.budgetHistory/.test(js) &&
+    /budgetSuggestions\(\)\.forEach/.test(js),
+  'budget popup uses the notifications-panel style and the users own amounts');
+  // ПАНЕЛЬ ЗАКРЫВАЕТСЯ: display:flex обязан уступать атрибуту hidden —
+  // без этого правила лимит «висел всегда» и не снимался
+  assert(/\.budget-pop\[hidden\]\{display:none\}/.test(css),
+  'the budget popup actually closes ([hidden] beats display:flex)');
+  // звук лимита — тот же тон, что у агента: включение и ручное снятие
+  const setBudgetFn = extractFunction(js, 'setBudget');
+  assert(/beep\(value \? 760 : 420, 0\.1\)/.test(setBudgetFn),
+  'the ruble coin beeps like the agent switch (on=760, off=420)');
+  // кнопка ₽ имеет подпись при наведении — как остальные кнопки поля ввода
+  assert(/\.budget-btn\[data-tip\]:is\(:hover,:focus-visible\)::after/.test(css),
+  'the ruble button carries the same hover tooltip as the other toggles');
+  // решение по лимиту сворачивается в миниатюру чуть крупнее инструментов
+  assert(/cls: 'th-budget'/.test(js) && /\.thumb\.th-budget\{[^}]*rgba\(240,190,70/s.test(css),
+  'a picked budget decision collapses into a slightly larger golden thumb');
+  // сценарии: вкладка, сетка, запуск шагами, подсказка на третий повтор
+  assert(/data-view="scenarios"/.test(html) && /loadScenarios\(\)/.test(js) &&
+    /function runScenario/.test(js) && /api\/scenarios\/new/.test(js) &&
+    /maybeOfferScenario/.test(js),
+  'scenarios tab ships with step runner, storage API and repeat suggestion');
+  // черновик не теряется: сохранение на input, восстановление на старте
+  assert(/function saveDraft/.test(js) && /function loadDraft/.test(js) &&
+    /jarvis\.draft/.test(js),
+  'unsent input survives reload via localStorage draft');
+  // ГОНКА ПЛАНА: хвост канонического done допечатывается, а не обрывается
+  const finish = extractFunction(js, 'queueResponseFinish');
+  assert(/doneContent\.startsWith\(ui\.buffer\)/.test(finish) &&
+    /ui\.buffer = doneContent/.test(finish),
+  'a longer canonical done extends the buffer instead of finishing early');
+}
+
+function testProactiveModesBudgetAndAbortContracts() {
+  // проактивные режимы: короткое «зачем» сверху, НЕБОЛЬШАЯ настоящая кнопка
+  // ПОД текстом + мелкая «Пропустить»; сворачивание в строку
+  assert(/case 'mode_request'/.test(js) && /mc-btn/.test(js) &&
+    /mc-skip/.test(js) && /removeAttribute\('id'\)/.test(js) &&
+    /mc-actions/.test(js) &&
+    /case 'mode_changed'/.test(js) &&
+    /dispatchEvent\(new Event\('change'\)\)/.test(js) &&
+    js.includes("api('/api/questions/answer'"),
+  'mode requests render a small real button UNDER the text with a tiny skip');
+  assert(/\.mc-row\{display:flex;flex-direction:column/.test(css) &&
+    !/transform:scale\(1\.55\)/.test(css),
+  'mode card: text on top, button below at natural size (no 1.55 zoom)');
+  // КАМЕРА и КОМПЬЮТЕР — тот же тумблер, что AGENT: обёртки agent-switch,
+  // иконки на круглешке, чекбоксы, единый звук
+  assert(/id="swCamera"/.test(html) && /id="swComputer"/.test(html) &&
+    /id="swAgent"/.test(html) &&
+    /class="agent-switch cam-switch" id="swCamera"/.test(html) &&
+    /class="agent-switch pc-switch" id="swComputer"/.test(html) &&
+    /aria-label="Камера"/.test(html) && /aria-label="Компьютер"/.test(html),
+  'camera and computer are agent-style checkbox switches with icons');
+  assert(/function setSwitch/.test(js) &&
+    /\$\('#tgCamera'\)\.addEventListener\('change'/.test(js) &&
+    /\$\('#tgComputer'\)\.addEventListener\('change'/.test(js) &&
+    /beep\(S\.cameraOn \? 760 : 420, 0\.1\)/.test(js) &&
+    /beep\(S\.computerUse \? 760 : 420, 0\.1\)/.test(js),
+  'camera/computer switches beep exactly like the agent switch');
+  assert(/\$\$\('\.agent-switch'\)\.forEach\(\(sw\) =>/.test(js) &&
+    /\$\('#swAgent'\), computer: \$\('#swComputer'\)/.test(js) &&
+    /camera: \$\('#swCamera'\)/.test(js),
+  'proactive cards clone the whole switch wrappers (agent/camera/computer)');
+  // шаги плана не пролетают: каждый шаг живёт на экране минимум 950мс
+  assert(/const PLAN_STEP_MS = 950/.test(js),
+  'plan steps hold on screen long enough not to flash by');
+  // дописанный код сворачивается в строку СРАЗУ, не дожидаясь конца ответа
+  assert(/pre-folded/.test(js) && /ui\.codeExpanded/.test(js) &&
+    /\.md pre\.pre-folded\{[^}]*max-height:30px/s.test(css) &&
+    /развернуть'/.test(css),
+  'a finished code block folds into a slim row immediately while typing continues');
+  // режим включили ПОСЛЕ отправки — текущий run обязан увидеть план
+  assert(/if \(ui\) ui\.agentMode = true;/.test(js) &&
+    /\(ui\.agentMode \|\| S\.agentMode\)/.test(js),
+  'a mode_changed mid-run unblocks plan rendering for the live stream');
+  // сценарии: та же служебная полоса и сетка, что в AUTO; карточки = task-card
+  assert(/task-card scenario-card/.test(js) && /tc-head/.test(js) &&
+    /scenarioStats/.test(js) && /auto-bar scenario-bar/.test(html) &&
+    /class="task-grid scenario-grid"/.test(html) &&
+    /badge\.style\.display = active > 0 \? '' : 'none'/.test(js) &&
+    !/cont-sep/.test(js) && !/cont-sep/.test(css),
+  'scenarios reuse the AUTO bar/grid/task-card canon; zero badge hidden; no separator');
+  // ответ продолжается В камере, когда её включили во время стрима
+  assert(/function adoptRunIntoCam/.test(js) && /function releaseRunFromCam/.test(js) &&
+    /if \(S\.streaming && S\.followUi\) adoptRunIntoCam\(\);/.test(js) &&
+    /releaseRunFromCam\(\);/.test(js),
+  'opening the camera mid-answer adopts the live reply into the cam chat');
+  // request_mode доступен модели, но не параллелится и не заменяет разрешение
+  // лимит на лету: смена во время стрима уходит на сервер и гаснет после ответа
+  assert(/S\.streaming && S\.chatId/.test(js) &&
+    js.includes("api('/api/budget'") &&
+    js.includes('budget_rub: value || 0'),
+  'budget changes during a live run are pushed to the server');
+  assert(/if \(S\.budgetRub\) \{/.test(js) && /budgetBtn\.classList\.remove\('on'\)/.test(js),
+    'the ruble button goes dark as soon as the answer finishes');
+  // продолжение ответа после интерактивной панели: та же карточка, БЕЗ
+  // разделителя, кнопки действий — только на полностью законченном ответе
+  assert(js.includes("send({ silent: true, continue: true })") &&
+    /S\.lastUi/.test(js) && /requestHost\.contains\(S\.lastUi\.node\.root\)/.test(js) &&
+    /ui-panel:not\(\.ui-sent\)/.test(js) &&
+    /if \(!pendingPanel\) addMsgActions/.test(js),
+  'ui-panel answers continue the same message card instead of a new reply');
+  // результат инструмента — человеческая выжимка, а не сырой JSON
+  assert(/function toolResultText/.test(js) &&
+    !/else txt = JSON\.stringify\(r, null, 1\)/.test(js) &&
+    /'HTTP ' \+ r\.status \+ ' · получено '/.test(js),
+  'tool cards render a human digest, never a raw JSON envelope');
+  // экран успевает за печатью: pin без smooth-интерполяции
+  const scrollFn = extractFunction(js, 'scrollDown');
+  assert(/pin-instant/.test(scrollFn),
+    'scrollDown pins instantly so the screen keeps up with fast code');
+  // прерванный ответ не оставляет открытых панелей
+  const stopBranch = extractFunction(js, 'stopStream');
+  const abortClose = /foldCodeBlocks\(ui\.mdEl, true\)/.test(extractFunction(js, 'send')) ||
+    /foldCodeBlocks\(ui\.mdEl, true\)/.test(js);
+  assert(abortClose && /collapseSoon\(ui\.thinkCard/.test(js),
+    'an aborted answer folds code blocks and collapses the thinking card');
+}
+
 (async () => {
   testLiveStatusHasNoSpinner();
   testTelegramDateHudAndTimeOnlyMeta();
@@ -1394,7 +1607,9 @@ function testThinkingGradientContract() {
   testReadinessFollowHistoryAndLiveCodeContracts();
   await testAutoPollingReconciliationAndBulkControls();
   testThinkingGradientContract();
-  console.log('package28_frontend_runtime: 13 regression groups passed');
+  testBudgetScenariosDraftsAndTailRaceContracts();
+  testProactiveModesBudgetAndAbortContracts();
+  console.log('package28_frontend_runtime: 15 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

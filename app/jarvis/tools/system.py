@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import base64
-import io
-import json
 import os
 import platform
 import re
@@ -12,12 +10,11 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.parse
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from ..config import WORKSPACE, CONFIG
+from ..config import CONFIG
 from .. import sandbox
 
 IS_MAC = platform.system() == "Darwin"
@@ -181,6 +178,67 @@ def accessibility_ok() -> bool:
     return res.get("out") == "yes"
 
 
+def computer_status() -> Dict[str, Any]:
+    """Самопроверка режима «Компьютер»: OS, права, скриншот, зрение.
+
+    Раньше при «не работает» пользователь видел только молчаливое бездействие
+    агента или общие отговорки. Одна проверка называет конкретную причину и
+    что сделать, а не просит угадывать.
+    """
+    from .. import llm
+
+    out: Dict[str, Any] = {"os": platform.system(), "is_mac": IS_MAC,
+                           "accessibility": False, "screenshot": False,
+                           "vision": False, "ok": False, "error": ""}
+    if not IS_MAC:
+        out["error"] = ("Управление компьютером поддерживается только на macOS. "
+                        "На этой системе (%s) агент не может двигать курсор и "
+                        "нажимать клавиши." % platform.system())
+        return out
+    if not accessibility_ok():
+        out["error"] = _NO_ACCESS_HINT
+        return out
+    out["accessibility"] = True
+    shot = screenshot()
+    out["screenshot"] = bool(shot.get("ok"))
+    if not out["screenshot"]:
+        out["error"] = "Снимок экрана не получается: %s" % shot.get("error", "?")
+        return out
+    # «ПУСТОЙ» КАДР. Без «Записи экрана» screencapture выходит с кодом 0,
+    # но снимает только обои: файл крошечный. Такая самопроверка раньше
+    # говорила «всё готово», а агент потом «видел» пустой стол.
+    shot_size = 0
+    try:
+        shot_size = (sandbox.root() / str(shot.get("path") or "")).stat().st_size
+    except Exception:
+        pass
+    # кадр самопроверки — мусор: не оставляем его в песочнице диалога
+    try:
+        (sandbox.root() / str(shot.get("path") or "")).unlink(missing_ok=True)
+    except Exception:
+        pass
+    if 0 < shot_size < 12_000:
+        out["screenshot"] = False
+        out["error"] = (
+            "Снимок экрана получается пустым — только обои, без окон. "
+            "Открой Системные настройки → Конфиденциальность и безопасность → "
+            "«Запись экрана», разреши приложение, из которого запущен JARVIS "
+            "(Терминал), и перезапусти JARVIS. Без этого агент будет «слепым»."
+        )
+        return out
+    try:
+        seeing = any(llm.vision_models(p) for p in llm.active_providers())
+    except Exception:
+        seeing = False
+    out["vision"] = seeing
+    if not seeing:
+        out["error"] = ("Экран снимается, но зрительная модель недоступна: агент "
+                        "будет «слепым». Проверь API-ключ Cloud.ru в Настройках.")
+        return out
+    out["ok"] = True
+    return out
+
+
 def _cursor_pos() -> tuple:
     """Где сейчас курсор — по этому проверяем, что действие ДЕЙСТВИТЕЛЬНО прошло."""
     res = _jxa(_JXA_PRELUDE +
@@ -222,9 +280,9 @@ def screenshot(scale: float = 0.0) -> Dict[str, Any]:
     """scale=0 → берём значение из конфига (computer_use.screenshot_scale)."""
     if not scale:
         try:
-            scale = float(CONFIG.get("computer_use.screenshot_scale", 0.4)) or 0.4
+            scale = float(CONFIG.get("computer_use.screenshot_scale", 0.55)) or 0.55
         except Exception:
-            scale = 0.4
+            scale = 0.55
     """Снимок экрана. Возвращает data-url (для vision-модели) и файл в песочнице."""
     out = _ws() / ("screen_%d.png" % int(time.time()))
     try:
@@ -359,15 +417,26 @@ def mouse_click(x: int = -1, y: int = -1, button: str = "left", double: bool = F
         cx, cy = _cursor_pos()
         if abs(cx - x) <= 2 and abs(cy - y) <= 2:
             return {"ok": True, "x": x, "y": y, "button": button, "double": double}
-    elif res.get("ok"):
+        # Курсор не сдвинулся — событие ПОГАШЕНО системой. System Events
+        # fallback здесь лгал бы «ok» точно так же: без прав он тоже молчит.
+        # Говорим правду сразу, а не после цепочки фиктивных успехов.
+        if not accessibility_ok():
+            return _no_access(x=x, y=y)
+        return {"ok": False, "x": x, "y": y,
+                "error": "клик не дошёл до системы: курсор остался на месте "
+                         "(%.0f, %.0f). Проверь «Универсальный доступ» для "
+                         "приложения, из которого запущен JARVIS, и перезапусти."
+                         % (cx, cy)}
+    if res.get("ok"):
         return {"ok": True, "x": x, "y": y, "button": button, "double": double}
-    # запасной путь — System Events (тоже требует «Универсальный доступ»)
+    # основной путь упал с ошибкой — сначала права, потом запасной путь
+    if not accessibility_ok():
+        return _no_access(x=x, y=y)
     if x >= 0 and y >= 0:
         fallback = _osa('tell application "System Events" to click at {%d, %d}' % (x, y))
         if fallback.get("ok") and not fallback.get("err"):
-            return {"ok": True, "x": x, "y": y, "button": button, "via": "System Events"}
-    if not accessibility_ok():
-        return _no_access(x=x, y=y)
+            return {"ok": True, "x": x, "y": y, "via": "System Events",
+                    "button": button, "double": double}
     return {"ok": False, "x": x, "y": y,
             "error": (res.get("err") or "не удалось выполнить клик")[:300]}
 
@@ -470,6 +539,88 @@ def open_app(name: str) -> Dict[str, Any]:
         return {"ok": True, "opened": name}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+# JXA-обход дерева доступности активного окна: текст+координаты вместо пикселей.
+# A11y-дерево — то, на чём держится Agent Mode у больших игроков: ~5–20 КБ
+# текста против 500 КБ–2 МБ на скриншот, координаты точные из самой системы,
+# читается даже слепой (дешёвой) моделью.
+_JXA_UI_TREE = r"""
+function run() {
+  const se = Application('System Events');
+  const list = se.processes.whose({frontmost: true});
+  if (!list || list.length === 0) return 'NO_FRONT_APP';
+  const proc = list[0];
+  const lines = [];
+  let budget = 320;
+  const pad = '  ';
+  function rect(e) {
+    try {
+      const p = e.position(), s = e.size();
+      if (!p || !s) return '';
+      return '[' + Math.round(p[0]) + ',' + Math.round(p[1]) + ' ' +
+             Math.round(s[0]) + 'x' + Math.round(s[1]) + ']';
+    } catch (x) { return ''; }
+  }
+  function label(e) {
+    const tries = [function () { return e.description(); },
+                   function () { return e.title(); },
+                   function () { return e.value(); }];
+    for (const t of tries) {
+      try {
+        const v = t();
+        if (v && String(v) !== 'missing value') {
+          return String(v).replace(/[\n\r\t]+/g, ' ').slice(0, 60);
+        }
+      } catch (x) {}
+    }
+    return '';
+  }
+  function walk(e, depth) {
+    if (budget <= 0 || depth > 9) return;
+    let role = '';
+    try { role = String(e.role() || ''); } catch (x) { return; }
+    if (!role || role === 'missing value') return;
+    budget -= 1;
+    const text = label(e);
+    lines.push(pad.repeat(depth) + role + (text ? ' "' + text + '"' : '') +
+               ' ' + rect(e));
+    let kids = [];
+    try { kids = e.uiElements(); } catch (x) { return; }
+    if (!kids) return;
+    for (let i = 0; i < kids.length && budget > 0; i += 1) walk(kids[i], depth + 1);
+  }
+  let win = null;
+  try { win = proc.windows[0]; } catch (x) {}
+  const appName = proc.name();
+  if (!win) return 'NO_WINDOW app:' + appName;
+  let winName = '';
+  try { winName = String(win.name() || ''); } catch (x) {}
+  lines.push('window "' + winName + '" ' + rect(win) + ' app:' + appName);
+  walk(win, 1);
+  return lines.join('\n');
+}"""
+
+
+def ui_tree() -> Dict[str, Any]:
+    """Дерево элементов активного окна с точными координатами (a11y).
+
+    Дешёвая и точная альтернатива скриншоту: System Events отдаёт роли,
+    подписи и рамки элементов. ~килобайты текста, ноль картинок, координаты
+    не надо угадывать по пикселям. Скриншот остаётся для графики и canvas."""
+    if not IS_MAC:
+        return {"ok": False, "error": "поддержано для macOS"}
+    res = _jxa(_JXA_UI_TREE, timeout=25)
+    out = (res.get("out") or "").strip()
+    if res.get("ok") and out and not out.startswith("NO_"):
+        return {"ok": True, "tree": out[:14000], "truncated": len(out) > 14000}
+    if out == "NO_FRONT_APP":
+        return {"ok": False, "error": "нет активного приложения"}
+    if out == "NO_WINDOW" or "NO_WINDOW" in out:
+        return {"ok": False,
+                "error": "у активного приложения нет открытых окон"}
+    return {"ok": False,
+            "error": "дерево недоступно: %s" % (res.get("err") or "пусто")[:160]}
 
 
 def screen_info() -> Dict[str, Any]:

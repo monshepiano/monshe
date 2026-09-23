@@ -413,7 +413,7 @@ let BOOT_DONE = null;
    сразу и срезал заставку на середине — поэтому она «мелькала». Теперь ранний
    ответ сервера не гасит экран раньше BOOT_MIN_MS, а поздний по-прежнему
    ничего не задерживает. */
-const BOOT_MIN_MS = 2300;
+const BOOT_MIN_MS = 900;
 (function boot() {
   const log = $('#bootLog');
   const t0 = Date.now();
@@ -450,10 +450,12 @@ const BOOT_MIN_MS = 2300;
 function showView(name) {
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + name));
   $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
-  const titles = { chat: 'Диалог', auto: 'AUTO · фоновые задачи', files: 'Файлы', memory: 'Память', settings: 'Настройки' };
+  const titles = { chat: 'Диалог', auto: 'AUTO · фоновые задачи', files: 'Файлы',
+    memory: 'Память', settings: 'Настройки', scenarios: 'Сценарии' };
   $('#topTitle').textContent = titles[name] || '';
   $('#app').classList.remove('nav-open');
   if (name === 'auto') loadTasks();
+  if (name === 'scenarios') loadScenarios();
   if (name === 'files') {
     // Вход во вкладку всегда начинается с широкой сетки. Терминал — не
     // постоянная нижняя панель, а прямой предпросмотр выбранного файла.
@@ -497,6 +499,15 @@ try {
    (см. разделы «камера в диалоге» и «санкции / уведомления в диалоге» ниже). */
 
 /* ============================ переключатели ============================ */
+/* Тумблеры камеры/компьютера — ТОТ ЖЕ контрол, что AGENT: настоящий
+   checkbox-switch. Единая точка установки состояния + тот же звук. */
+function setSwitch(id, on) {
+  const t = $(id);
+  if (!t || !!t.checked === !!on) return;
+  t.checked = !!on;
+  t.dispatchEvent(new Event('change'));
+}
+
 $('#tgAgent').addEventListener('change', function () {
   // Настоящий checkbox-switch: состояние принадлежит самому control, а не
   // декоративному классу кнопки. Подпись лежит вне <label>, поэтому она не
@@ -510,19 +521,38 @@ $('#tgAgent').addEventListener('change', function () {
     : 'Сообщение для JARVIS…';
   if (S.agentMode) toast('Агентский режим включён: планирую и выполняю сам.', 'info', 'AGENT');
 });
-$('.agent-switch').addEventListener('mouseleave', function () {
+$$('.agent-switch').forEach((sw) => sw.addEventListener('mouseleave', function () {
   this.classList.remove('tip-dismissed');
-});
-$('#tgCamera').addEventListener('click', function () {
-  S.cameraOn = !S.cameraOn; this.classList.toggle('on', S.cameraOn);
+}));
+$('#tgCamera').addEventListener('change', function () {
+  S.cameraOn = this.checked;
+  beep(S.cameraOn ? 760 : 420, 0.1);
   if (S.cameraOn) startCam(); else stopCam();
 });
-$('#tgComputer').addEventListener('click', function () {
-  S.computerUse = !S.computerUse; this.classList.toggle('on', S.computerUse);
-  if (S.computerUse) {
-    toast('Управление мышью и клавиатурой разрешено. Каждое действие спрошу отдельно.', 'warn', 'COMPUTER-USE');
-    sfx('error');
-  }
+$('#tgComputer').addEventListener('change', function () {
+  S.computerUse = this.checked;
+  beep(S.computerUse ? 760 : 420, 0.1);
+  if (!S.computerUse) return;
+  // Самопроверка при включении: раньше «не работает» выглядело как молчаливое
+  // бездействие агента. Теперь тумблер сразу называет конкретную причину —
+  // права macOS, скриншот или зрительную модель.
+  api('/api/computer/status').then((r) => {
+    // формат: {ok: <запрос дошёл>, computer: {ok: <режим готов>, error: ...}}
+    const st = (r && r.computer) || {};
+    if (st.ok) {
+      toast('Готов управлять: экран вижу, права есть. Этот тумблер — само согласие: на клики и ввод во время работы спрашивать не буду.',
+        'success', 'COMPUTER-USE');
+    } else {
+      S.computerUse = false;
+      const t = $('#tgComputer');
+      if (t) t.checked = false;
+      sfx('error');
+      modal('<h3>COMPUTER-USE не готов</h3>' +
+        '<div class="sd" style="margin-bottom:10px">Проверка на этой машине не прошла:</div>' +
+        '<pre class="out" style="white-space:pre-wrap">' + esc(st.error || r.error || 'неизвестная причина') + '</pre>' +
+        '<div class="modal-acts"><button class="btn primary" onclick="document.getElementById(\'modalBack\').classList.remove(\'open\')">Понятно</button></div>');
+    }
+  });
 });
 
 /* ============================ состояние ============================ */
@@ -545,6 +575,8 @@ async function refreshState() {
   const badge = $('#autoBadge');
   badge.textContent = active;
   badge.classList.toggle('hot', active > 0);
+  // «0 задач» — не информация: без задач цифру не показываем вовсе
+  badge.style.display = active > 0 ? '' : 'none';
   const autoNav = $('.nav-item[data-view="auto"]');
   if (autoNav) autoNav.classList.toggle('auto-running', running > 0);
   setChip('#chipAuto', running > 0 ? 'warn live' : (active > 0 ? 'warn' : 'ok'),
@@ -965,8 +997,19 @@ function scrollDown(force, owner) {
   if (main && !boxes.includes(main)) boxes.push(main);
   boxes.forEach((box) => {
     const run = owner || (S.followUi && runScrollBox(S.followUi) === box ? S.followUi : null);
-    const near = box.scrollHeight - box.scrollTop - box.clientHeight < 220;
-    if (force || (run ? run.followOutput !== false : near)) box.scrollTop = box.scrollHeight;
+    // 420px «зоны прилипания»: при быстрой печати контент вырастает скачком
+    // (markdown-превращения, таблицы), и старого порога в 220px перестало
+    // хватать — прокрутка решала, что пользователь «ушёл», и бросала его вверху
+    const near = box.scrollHeight - box.scrollTop - box.clientHeight < 420;
+    if (force || (run ? run.followOutput !== false : near)) {
+      // МГНОВЕННЫЙ pin. scroll-behavior:smooth превращал каждое присваивание
+      // в анимацию: при быстрой печати кода контент рос быстрее анимации,
+      // и экран безнадёжно отставал от текста. Плавность здесь создаёт сам
+      // ритм мелких pin-ов (80мс), а не интерполяция браузера.
+      box.classList.add('pin-instant');
+      box.scrollTop = box.scrollHeight;
+      box.classList.remove('pin-instant');
+    }
   });
 }
 
@@ -1262,12 +1305,17 @@ function updateResponseMeta(ui) {
 }
 
 function addMsgActions(node, text) {
+  // Продолжение ответа (ui-панель) добавляет действия второй раз — старые
+  // кнопки не копятся: сначала снимаем предыдущий ряд.
+  if (node.body) $$('.msg-actions', node.body).forEach((a) => a.remove());
   const acts = el('div', 'msg-actions');
   // Что скопировать/озвучить, решаем в момент нажатия по живому узлу ответа:
   // если ответ перерисовали (другая версия вопроса), текст будет уже новый.
+  // Продолженный ответ состоит из нескольких .md — берём их все.
   const liveText = () => {
-    const md = node.body && node.body.querySelector('.md');
-    const t = md ? (md.innerText || md.textContent || '').trim() : '';
+    const parts = node.body ? $$('.md', node.body).map((md) =>
+      (md.innerText || md.textContent || '').trim()) : [];
+    const t = parts.join('\n\n').trim();
     return t || text;
   };
   const copy = el('button', 'act act-copy', ICO.copy + '<span>Копировать</span>');
@@ -1740,6 +1788,7 @@ const PLAN_FLY_MS = 640;        // совпадает с transition .plan-dock.f
 const PLAN_DONE_HOLD_MS = 2100; // зелёный итог не исчезает через треть секунды
 const PLAN_FOLD_MS = 680;       // dock визуально превращается в архивную строку
 const CURSOR_BREATHE_MS = 1050; // совпадает с cursorBreathe в CSS
+const PLAN_STEP_MS = 950;       // минимальное время жизни одного шага на экране
 
 /* Markdown-рендер пересобирает caret вместе с HTML ответа. Без общей фазы его
    CSS animation начиналась заново каждые 20 ms и фактически всегда стояла на
@@ -1753,6 +1802,7 @@ function syncCursorPhase(node) {
 function clearPlanTimers(ui) {
   (ui.planTimers || []).forEach((t) => clearTimeout(t));
   ui.planTimers = [];
+  ui.planPaintPending = null;
 }
 
 function planLater(ui, fn, ms) {
@@ -1876,6 +1926,9 @@ function revealPlanItems(ui, at) {
 }
 
 function finishPlanItems(ui) {
+  ui.planPaintQ = [];
+  ui.planPaintPending = null;
+  ui.planPainted = (ui.planItems || []).length;
   (ui.planItems || []).forEach((li) => {
     li.classList.remove('plan-pending', 'now');
     li.classList.add('done');
@@ -1892,7 +1945,7 @@ function paintDockStep(ui) {
   const dock = ui.planDock;
   if (!dock) return;
   const total = ui.planItems.length || 1;
-  const n = Math.max(1, Math.min(ui.planStep || 1, total));
+  const n = Math.max(1, Math.min(ui.planPainted || ui.planStep || 1, total));
   const label = dock.querySelector('.pd-step');
   if (label) label.textContent = 'шаг ' + n + ' из ' + total;
   $$('.pd-seg', dock).forEach((seg, i) => {
@@ -1903,6 +1956,34 @@ function paintDockStep(ui) {
     st.classList.toggle('done', i < n - 1);
     st.classList.toggle('now', i === n - 1);
   });
+}
+
+/* Шаги плана приезжают фактами от агента — иногда пачкой: параллельные
+   инструменты заканчиваются почти одновременно, и события plan_step
+   применяются за один кадр. visually это «план выполнился мгновенно»,
+   хотя работа шла по-настоящему. Красим шаги с минимальным ритмом
+   PLAN_STEP_MS: даже мгновенная работа видна как последовательный
+   прогресс. Логическое состояние (ui.planStep) обновляется сразу, а
+   очередь покраски сбрасывается только в finishPlanItems. */
+function paintPlanStepNow(ui, n) {
+  ui.planPainted = Math.max(ui.planPainted || 0, n);
+  ui.planItems.forEach((li, i) => {
+    li.classList.toggle('done', i < n - 1);
+    li.classList.toggle('now', i === n - 1);
+  });
+  if (ui.planDock) paintDockStep(ui);
+}
+
+function paintPlanStepSoon(ui) {
+  if (ui.planPaintPending) return;
+  ui.planPaintPending = planLater(ui, () => {
+    ui.planPaintPending = null;
+    const queue = ui.planPaintQ || [];
+    const n = queue.shift();
+    if (!n) return;
+    paintPlanStepNow(ui, n);
+    if ((ui.planPaintQ || []).length) paintPlanStepSoon(ui);
+  }, (ui.planPainted || 0) ? PLAN_STEP_MS : 0);
 }
 
 function dockPlan(ui, arrived) {
@@ -2125,7 +2206,7 @@ function markBorn(card) {
   }
 }
 
-const TOOL_WAIT_AFTER_PAINT_MS = 560;
+const TOOL_WAIT_AFTER_PAINT_MS = 800;
 
 function finishToolWait(card) {
   if (!card || !card.classList.contains('tool-wait')) return;
@@ -2474,7 +2555,8 @@ function mountUiPanels(root) {
       box.classList.remove('ui-arm');
       box.classList.add('ui-sent');
       $$('input,button,textarea', box).forEach((c) => { c.disabled = true; });
-      $('#input').value = summary().join('\n'); autoGrow(); send({ silent: true });
+      $('#input').value = summary().join('\n'); autoGrow();
+      send({ silent: true, continue: true });
       sfx('send');
     };
 
@@ -2680,7 +2762,8 @@ function mountUiPanels(root) {
           box.dataset.sent = '1';
           box.classList.add('ui-sent');
           $$('input,button,textarea', box).forEach((c) => { c.disabled = true; });
-          $('#input').value = it.label; autoGrow(); send({ silent: true });
+          $('#input').value = it.label; autoGrow();
+          send({ silent: true, continue: true });
           sfx('send');
         });
         row.appendChild(b);
@@ -2734,7 +2817,7 @@ function mountUiPanels(root) {
   });
 }
 
-function foldCodeBlocks(root) {
+function foldCodeBlocks(root, animate) {
   if (!root) return;
   $$('pre', root).forEach((pre) => {
     if (pre.dataset.folded === '1' || pre.closest('.code-block')) return;
@@ -2755,11 +2838,26 @@ function foldCodeBlocks(root) {
     });
     bar.appendChild(cp);
     wrap.insertBefore(bar, pre);
-    collapseToThumb(wrap, {
+    const fold = () => collapseToThumb(wrap, {
       instant: true, cls: 'th-code inline-thumb', icon: ICO.code,
       title: lang ? 'Код · ' + lang : 'Код',
       sub: lines + ' стр. · ' + fmtSize(code.length), tag: 'развернуть',
     });
+    if (!animate) { fold(); return; }
+    // БАГ «перед сворачиванием разворачивается во весь рост»: раньше у pre
+    // снимали класс live-code (его max-height держал высоту), и на кадр код
+    // распахивался полностью. Сворачиваемся ровно от ВИДИМОЙ высоты: замер
+    // до любых изменений, фиксация на обёртке и плавное съёживание в ноль.
+    const visible = wrap.getBoundingClientRect().height;
+    pre.classList.remove('live-code');
+    wrap.style.overflow = 'hidden';
+    wrap.style.height = Math.max(visible, 24) + 'px';
+    requestAnimationFrame(() => {
+      wrap.style.transition = 'height .34s cubic-bezier(.3,.7,.3,1), opacity .3s ease';
+      wrap.style.height = '0px';
+      wrap.style.opacity = '.25';
+    });
+    setTimeout(() => { wrap.style.transition = ''; fold(); scrollDown(false); }, 360);
   });
 }
 
@@ -2788,9 +2886,109 @@ $('#input').addEventListener('blur', () => $('#composer').classList.remove('focu
 $('#input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 });
+
+/* ============================ лимит ₽ ============================ */
+S.budgetRub = null;
+const budgetBtn = $('#tgBudget');
+const budgetPop = $('#budgetPop');
+
+/* Суммы пользователя — его привычки, а не наши догадки. Каждая введённая
+   сумма (кнопкой или вручную) запоминается; варианты предлагают ПОСЛЕДНИЕ
+   4 РАЗНЫХ суммы. Живёт в localStorage — переживает перезагрузку. */
+function budgetHistory() {
+  try { return (JSON.parse(localStorage.getItem('jarvis.budgetHistory') || '[]') || [])
+    .filter((x) => typeof x === 'number' && x > 0); } catch (e) { return []; }
+}
+function rememberBudget(value) {
+  const v = parseFloat(value);
+  if (!(v > 0)) return;
+  const rest = budgetHistory().filter((x) => Math.abs(x - v) > 0.001);
+  try { localStorage.setItem('jarvis.budgetHistory', JSON.stringify([v].concat(rest).slice(0, 8))); } catch (e) {}
+  renderBudgetVariants();
+}
+function budgetSuggestions() {
+  const hist = budgetHistory();
+  return (hist.length ? hist : [10, 25, 50, 100]).slice(0, 4);
+}
+function renderBudgetVariants() {
+  const box = $('#budgetVariants');
+  if (!box) return;
+  const cur = S.budgetRub;
+  box.replaceChildren();
+  budgetSuggestions().forEach((v) => {
+    const b = el('button', 'bp-v' + (cur && Math.abs(cur - v) < 0.001 ? ' on' : ''), v + ' ₽');
+    b.addEventListener('click', () => setBudget(v));
+    box.appendChild(b);
+  });
+  const off = $('#budgetOff');
+  if (off) off.hidden = !S.budgetRub;
+  const hint = $('#budgetHint');
+  if (hint) {
+    hint.textContent = S.budgetRub
+      ? 'Сейчас: ' + S.budgetRub + ' ₽ на один ответ'
+      : (budgetHistory().length ? 'Твои обычные суммы' : 'Сколько можно потратить на один ответ');
+  }
+}
+
+function setBudget(value) {
+  S.budgetRub = value;
+  budgetBtn.classList.toggle('on', !!value);
+  budgetPop.hidden = true;
+  rememberBudget(value);
+  // звук — как у агента: монета «завелась» высоким тоном, ручное снятие — низким
+  beep(value ? 760 : 420, 0.1);
+  // Идёт ответ — лимит меняется НА ЛЕТУ: сервер применит его к текущему
+  // прогону с учётом уже потраченного. «Отключить» тоже работает сразу.
+  if (S.streaming && S.chatId) {
+    api('/api/budget', { chat_id: S.chatId, budget_rub: value || 0 });
+    if (value) toast('Лимит ' + value + ' ₽ применён к текущему ответу', 'success', 'Лимит');
+    else toast('Лимит снят — текущий ответ идёт без ограничений', 'info', 'Лимит');
+    return;
+  }
+  if (value) toast('Лимит ' + value + ' ₽ на ответ включён', 'success', 'Лимит');
+  else toast('Лимит снят', 'info', 'Лимит');
+}
+
+budgetBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  // Во время ответа клик по активной монетке НЕ выключает лимит молча —
+  // открываем окошко: можно поднять, можно отключить осознанно.
+  if (S.budgetRub && !S.streaming) { setBudget(null); return; }
+  if (budgetPop.hidden) renderBudgetVariants();
+  budgetPop.hidden = !budgetPop.hidden;
+});
+document.addEventListener('click', (e) => {
+  if (budgetPop && !budgetPop.hidden && !budgetPop.contains(e.target) && e.target !== budgetBtn) {
+    budgetPop.hidden = true;
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && budgetPop && !budgetPop.hidden) budgetPop.hidden = true;
+});
+const budgetOffBtn = $('#budgetOff');
+if (budgetOffBtn) budgetOffBtn.addEventListener('click', () => setBudget(null));
+$('#budgetApply').addEventListener('click', () => {
+  const v = parseFloat($('#budgetInput').value);
+  if (v > 0) setBudget(v); else toast('Введите сумму больше нуля', 'warn');
+});
+
+/* Черновик живёт в localStorage: случайная перезагрузка страницы больше не
+   съедает недописанное сообщение. Отправка и очистка поля стирают черновик. */
+function saveDraft() {
+  try { localStorage.setItem('jarvis.draft', $('#input').value); } catch (e) {}
+}
+function loadDraft() {
+  try {
+    const d = localStorage.getItem('jarvis.draft');
+    if (d) { $('#input').value = d; autoGrow(); updateSendBtn(); }
+  } catch (e) {}
+}
+$('#input').addEventListener('input', saveDraft);
+loadDraft();
 $('#sendBtn').addEventListener('click', () => {
   // стоп — только когда поле пустое; если текст набран, отправляем (прервав старый поток)
   if (S.streaming && !$('#input').value.trim() && !S.attachments.length) {
+    stopRunForReal();
     if (S.abort) S.abort.abort();
     setStreaming(false);
     return;
@@ -2798,10 +2996,29 @@ $('#sendBtn').addEventListener('click', () => {
   send();
 });
 
+/* Полная остановка прогона: сначала серверная отмена работы (инструменты,
+   санкции, computer-use), потом обрыв SSE. Только abort оставлял агент
+   работать по-настоящему: он продолжал двигать мышью и спрашивать
+   разрешения уже «в никуда». keepalive переживает закрытие страницы. */
+function stopRunForReal() {
+  const token = S.runToken;
+  if (!token) return;
+  S.runToken = '';
+  try {
+    fetch('/api/chat/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_token: token }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch (e) { /* уже остановлен */ }
+}
+
 /* Прервать текущий поток и дождаться, пока интерфейс освободится. */
 function stopStream() {
   return new Promise((resolve) => {
     if (!S.streaming) { resolve(); return; }
+    stopRunForReal();
     try { if (S.abort) S.abort.abort(); } catch (e) { /* уже закрыт */ }
     let waited = 0;
     const t = setInterval(() => {
@@ -2835,13 +3052,15 @@ function updateSendBtn() {
 async function send(opts) {
   opts = opts || {};
   const input = $('#input');
-  if (!input.value.trim() && !S.attachments.length) return;
+  // сценарий присылает готовый текст: поле ввода пользователя не трогаем
+  const overrideText = typeof opts.text === 'string' ? opts.text.trim() : '';
+  if (!overrideText && !input.value.trim() && !S.attachments.length) return;
   // Предыдущий ответ ещё идёт — аккуратно прерываем и только ПОСЛЕ ожидания
   // снимаем новый текст/вложения. Иначе символы, набранные за эти миллисекунды,
   // стирались, а запрос уходил со старой копией поля.
   if (S.streaming) { await stopStream(); }
   if (S.streaming) return;
-  const text = input.value.trim();
+  const text = overrideText || input.value.trim();
   if (!text && !S.attachments.length) return;
   S.lastPrompt = text;
   // старые варианты ответа относились к прошлой реплике — убираем сразу
@@ -2875,8 +3094,13 @@ async function send(opts) {
   renderAttachments();
   const editing = S.editing && S.editing.id ? S.editing : null;
   S.editing = null;
-  input.value = '';
-  autoGrow();
+  if (!overrideText) {
+    input.value = '';
+    autoGrow();
+    saveDraft();
+    // ручная отправка: копим повторы — на третий предложим сценарий
+    maybeOfferScenario(text);
+  }
 
   // правка: подменяем текст на месте и убираем устаревший ответ ниже
   let userMsgNode = null;
@@ -2897,8 +3121,26 @@ async function send(opts) {
     userMsgNode = addUserMsg(text, atts, null, requestHost);
   }
 
-  const node = addAiMsg(null, requestHost);
+  // ПРОДОЛЖЕНИЕ ОТВЕТА: ответ на интерактивную панель — не новый ответ, а
+  // продолжение того же. Карточка, время и имя остаются прежними; печать
+  // продолжается ниже тонкого разделителя. Пользователь читает ОДИН ответ.
+  let node = null;
+  const contUi = (opts.continue && S.lastUi && S.lastUi.node &&
+                  S.lastUi.node.root && S.lastUi.node.root.isConnected &&
+                  requestHost && requestHost.contains(S.lastUi.node.root) &&
+                  !requestIsolatedCam) ? S.lastUi : null;
+  if (contUi) {
+    // полностью единый ответ: та же карточка, никакого разделителя
+    node = contUi.node;
+  } else {
+    node = addAiMsg(null, requestHost);
+  }
   const runId = ++S.streamRun;
+  // Уникальный токен прогона: по нему сервер гасит РАБОТУ при Stop
+  // (инструменты, санкции, computer-use), а не только SSE-соединение.
+  const runToken = 'r_' + Date.now().toString(36) + '_' +
+    Math.random().toString(36).slice(2, 10);
+  S.runToken = runToken;
   setStreaming(true);
   sfx('send');
 
@@ -2921,6 +3163,9 @@ async function send(opts) {
     planGate: false,
     planDeferred: [],
     planIntroPromise: null,
+    planPaintQ: [],
+    planPainted: 0,
+    planPaintPending: null,
     verbose: true,
     mdEl: null,
     buffer: '',
@@ -2971,6 +3216,8 @@ async function send(opts) {
       signal: controller.signal,
       body: JSON.stringify({
         chat_id: requestChatId, kind: requestKind, text,
+        run_token: runToken,
+        budget_rub: S.budgetRub || 0,
         edit_of: editing ? editing.id : '',
         agent_mode: requestAgentMode,
         computer_use: requestComputerUse,
@@ -3023,6 +3270,17 @@ async function send(opts) {
       }
       dropStatus(ui);
       discardPlan(ui);
+      // ПРЕРВАННЫЙ ОТВЕТ НЕ ОСТАВЛЯЕТ ОТКРЫТЫХ ПАНЕЛЕЙ: код-блоки сворачиваются,
+      // ход мыслей складывается в строку — иначе после Stop ответ выглядел
+      // «недозакрытым»: развёрнутый код и раскрытые карточки висели открытыми.
+      foldCodeBlocks(ui.mdEl, true);
+      if (ui.thinkCard && ui.thinkCard.isConnected) {
+        const ts = thinkFlush(ui.thinkCard);
+        collapseSoon(ui.thinkCard, {
+          cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
+          sub: ts ? fmtSize((ts.textContent || '').length) : '',
+        });
+      }
       node.body.appendChild(el('div', 'muted', 'Остановлено.'));
       settleVisualDone(ui);
     }
@@ -3040,6 +3298,16 @@ async function send(opts) {
     if (S.streamRun === runId) {
       setStreaming(false);
       if (S.abort === controller) S.abort = null;
+      if (S.runToken === runToken) S.runToken = '';
+      // Лимит ₽ живёт ровно один ответ: ответ дописан — монетка гаснет сама
+      if (S.budgetRub) {
+        S.budgetRub = null;
+        if (budgetBtn) budgetBtn.classList.remove('on');
+      }
+      // недавний ответ можно продолжить после ui-панели (opts.continue)
+      if (!requestIsolatedCam && node.root && node.root.isConnected) {
+        S.lastUi = { node };
+      }
     }
   }
   loadChats();
@@ -3223,25 +3491,6 @@ function thinkType(el, chunk) {
   return;
 }
 
-function thinkTypeOld(el, chunk) {
-  if (!el) return;
-  el._buf = (el._buf || el.textContent || '') + chunk;
-  if (el._t) return;
-  el._t = setInterval(() => {
-    const shown = el.textContent.length;
-    const left = el._buf.length - shown;
-    if (left <= 0) { clearInterval(el._t); el._t = null; return; }
-    // Ход мыслей — служебный поток, а не текст для чтения: его проматывают
-    // глазами, чтобы видеть, что агент занят делом. Попытка «дать вчитаться»
-    // (шаг max(3, left/10) при 16 мс) сделала его вязким — это была ошибка.
-    // Здесь верный ориентир один: успевать за моделью, чтобы блок никогда не
-    // выглядел отстающим. Отставание всегда добираем целиком.
-    const step = Math.max(8, Math.ceil(left / 3));
-    el.textContent = el._buf.slice(0, shown + step);
-    const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
-    if (atEnd) el.scrollTop = el.scrollHeight;
-  }, 12);
-}
 
 function thinkMode(ui, first) {
   const lines = first ? [first].concat(THINK_QUIPS) : THINK_QUIPS.slice();
@@ -3319,7 +3568,7 @@ const TYPE_MS = 20;              // не чаще 50 DOM-render/с: кадры �
    сглаживается, поэтому переходы не видны, а темп ровный. */
 const CPS_TALK = 125;            // естественный разговор при короткой очереди
 const CPS_TALK_MAX = 245;        // длинный готовый хвост не держит интерфейс
-const CPS_CODE = 420;            // код и таблицы: быстро, но без пачечных выстрелов
+const CPS_CODE = 470;            // код: быстрее прежнего, но страница успевает ехать
 const CPS_SMOOTH_MS = 340;        // заметно мягче старых ступеней скорости
 
 function talkTargetCps(left) {
@@ -3387,17 +3636,21 @@ function inCodeBlock(text) {
   return fences % 2 === 1;
 }
 
-/* Строка похожа на таблицу или технический блок? Смотрим не только уже
+/* Строка похожа на таблицу, список или технический блок? Смотрим не только уже
    показанный prefix, а полную текущую строку в buffer. Иначе каждый новый ряд
    таблицы начинался на разговорной скорости, после первого `|` резко ускорялся
-   и снова тормозил на переводе строки. */
+   и снова тормозил на переводе строки. Списки (-, *, 1.) — та же плотная
+   информация: они читаются глазами, а не «проговариваются», и печатаются
+   быстро. Живая строка текста маркером не становится: `- ` без пробела после
+   маркера или `**жирный**` не совпадают. */
 function fastLine(text, at) {
   const pos = at == null ? text.length : Math.max(0, Math.min(text.length, at));
   const start = text.lastIndexOf('\n', Math.max(0, pos - 1)) + 1;
   const foundEnd = text.indexOf('\n', pos);
   const end = foundEnd < 0 ? text.length : foundEnd;
   const line = text.slice(start, end);
-  return /^\s*\|/.test(line) || /^ {4}/.test(line);
+  return /^\s*\|/.test(line) || /^ {4}/.test(line)
+      || /^\s*(?:[-*+•]\s|\d+[.)]\s)/.test(line);
 }
 
 /* У заголовков больше нет отдельного класса скорости: markdown влияет только
@@ -3463,6 +3716,24 @@ function renderTyped(ui) {
     livePre.classList.add('live-code');
     livePre.scrollTop = livePre.scrollHeight;
   }
+  // ДОПИСАННЫЙ БЛОК КОДА СХЛОПЫВАЕТСЯ В СТРОКУ СРАЗУ — не ждём конца всего
+  // ответа. DOM здесь каждый тик перерисовывается целиком, поэтому «вкладку»
+  // нельзя построить один раз: класс вешается при каждом рендере, а клик
+  // запоминает номер блока в ui.codeExpanded и держит его развёрнутым.
+  // Настоящая вкладка-миниатюра строится в конце ответа (foldCodeBlocks).
+  typedPres.forEach((pre, idx) => {
+    if (pre === livePre && inCodeBlock(text)) return;
+    const code = pre.textContent || '';
+    if (code.split('\n').length < 4 && code.length < 200) return; // короткие не прячем
+    if (ui.codeExpanded && ui.codeExpanded.has(idx)) return;
+    pre.classList.add('pre-folded');
+    pre.title = 'Развернуть код';
+    pre.addEventListener('click', () => {
+      (ui.codeExpanded || (ui.codeExpanded = new Set())).add(idx);
+      pre.classList.remove('pre-folded');
+      scrollSoon(ui);
+    });
+  });
   if (measure) {
     ui.lastHeightCheck = now;
     const after = ui.mdEl.offsetHeight;
@@ -3628,6 +3899,14 @@ function typerStart(ui) {
     // темп. Размер очереди меняет только мягкую целевую скорость, не размер
     // очередного DOM-шага и не скорость скачком.
     let want = code ? CPS_CODE : talkTargetCps(left);
+    // После done ускоряется ТОЛЬКО плотный контент (код, таблицы, списки):
+    // его хвост не должен «досматриваться» минуту. Разговорный текст держит
+    // живой темп и паузы препинания до самого конца — скорость печати
+    // отвечает за характер ответа, а не за пропускную способность.
+    // Большой хвост кода добивается быстрее: чем длиннее очередь, тем выше
+    // темп (до 2000 симв/с). Выше нельзя: автопрокрутка перестаёт поспевать,
+    // и ответ уезжает вниз без читателя.
+    if (code && ui.fastFinish) want = Math.max(want, Math.min(2000, 700 + left * 0.18));
     if (!ui.cps) ui.cps = want;
     const blend = 1 - Math.exp(-elapsed / CPS_SMOOTH_MS);
     ui.cps += (want - ui.cps) * blend;
@@ -3636,7 +3915,7 @@ function typerStart(ui) {
     let step = Math.floor(ui.acc);
     if (step < 1) return;
     // Дополнительный предел страхует от пачек и при нетипичном timer jitter.
-    step = Math.min(step, left, code ? 10 : 4);
+    step = Math.min(step, left, code ? (ui.fastFinish ? 26 : 10) : 4);
 
     // Не перепрыгиваем через знак препинания пачкой: заканчиваем этот render
     // прямо на нём, а остаток времени переносим на следующий кадр.
@@ -3798,6 +4077,11 @@ function settleVisualDone(ui) {
 function queueResponseFinish(ui, content, success) {
   if (ui.doneReceived) return;
   ui.doneReceived = true;
+  // Ответ уже ПОЛУЧИСТ целиком. Хвост из кода, таблиц и списков не должен
+  // «досматриваться» в медленном темпе — плотный контент ускоряется.
+  // Разговорный текст после done печатается как живой: с прежним темпом
+  // и паузами, иначе ответ «выстреливает» и теряет характер.
+  ui.fastFinish = true;
   const doneContent = String(content || '');
   if (!ui.mdEl) {
     ui.mdEl = el('div', 'md');
@@ -3811,6 +4095,17 @@ function queueResponseFinish(ui, content, success) {
   // права откатывать показанное. doneContent используется лишь для действительно
   // непроточного ответа, когда ни одного delta не было.
   if (!ui.buffer) ui.buffer = doneContent;
+  // ГОНКА ПЛАНА. Дельты могли прийти не все: стрим сетевого события done —
+  // канонический текст ответа, и он бывает ДЛИННЕЕ накопленного buffer
+  // (последний сегмент не стримился дельтами). Раньше печать завершалась на
+  // обрыве, план зеленел и уезжал — «выполнен до конца печати». Теперь:
+  // если done-текст НАЧИНАЕТСЯ с напечатанного буфера, допечатываем хвост
+  // (план завершится только по-настоящему последнего символа). Если текст
+  // иной природы — показанное не откатываем, как и раньше.
+  if (doneContent.length > ui.buffer.length &&
+      doneContent.startsWith(ui.buffer)) {
+    ui.buffer = doneContent;
+  }
   content = ui.buffer;
   ui.onTyped = () => {
     if (ui.visualDone) return;
@@ -3842,8 +4137,9 @@ function queueResponseFinish(ui, content, success) {
       // во время печати имеет display:none и затем вырастает за нижней кромкой.
       // Геометрия ПОСЛЕ роста уже ничего не говорит о намерении пользователя,
       // поэтому решение хранится на run с момента wheel/touch/scroll-away.
-      $$('pre.live-code', ui.mdEl).forEach((pre) => pre.classList.remove('live-code'));
-      foldCodeBlocks(ui.mdEl);
+      // live-code здесь НЕ снимается: именно это распахивало блок на кадр
+      // перед сворачиванием. foldCodeBlocks съёживает от видимой высоты.
+      foldCodeBlocks(ui.mdEl, true);
       mountUiPanels(ui.mdEl);
       if (ui.replyLive && ui.replyLive.isConnected) mountUiPanels(ui.replyLive);
       $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click',
@@ -3867,8 +4163,15 @@ function queueResponseFinish(ui, content, success) {
         discardPlan(ui);
       }
       if (success) {
-        addMsgActions(ui.node, content);
-        if (S.streamRun === ui.runId && ui.node.isConnected) {
+        // Кнопки «Копировать/Озвучить» — только на ПОЛНОСТЬЮ законченном
+        // ответе. Если в ответе ждёт выбора интерактивная панель — это
+        // пауза, а не финал: продолжение допишет ответ, и кнопки встанут
+        // один раз, в самом конце.
+        const pendingPanel = $$('.ui-panel:not(.ui-sent)', ui.mdEl).length ||
+          (ui.replyLive && ui.replyLive.isConnected &&
+           $$('.ui-panel:not(.ui-sent)', ui.replyLive).length);
+        if (!pendingPanel) addMsgActions(ui.node, content);
+        if (S.streamRun === ui.runId && ui.node.isConnected && !pendingPanel) {
           speakReply(content);
           sfx('done');
         }
@@ -3893,6 +4196,50 @@ const TIER_LABEL = {
   nano: 'простой запрос', base: 'обычный запрос', smart: 'сложный запрос',
   coder: 'работа с кодом', vision: 'работа со зрением',
 };
+
+/* ЧЕЛОВЕЧЕСКИЙ ВИД РЕЗУЛЬТАТА ИНСТРУМЕНТА. Раньше всё, что не подходило
+   под известные ключи, печаталось сырым JSON.stringify — пользователь видел
+   `{"ok": true, "status": 200, "body": …}` вместо «HTTP 200 · получено
+   1 842 символа». JSON — служебный формат для модели, человеку — выжимка. */
+function toolResultText(r) {
+  if (!r) return '';
+  if (r.error) return '⚠ ' + r.error;
+  if (r.stdout != null || r.stderr != null) {
+    return ((r.stdout || '') + (r.stderr ? '\n' + r.stderr : '')).slice(0, 4000);
+  }
+  if (r.results) {
+    return (r.results || []).map((x) => '• ' + (x.title || '') + '\n  ' + (x.url || '') + '\n  ' + (x.snippet || '')).join('\n');
+  }
+  if (r.status != null && r.body != null) {
+    let body = '';
+    try {
+      const parsed = JSON.parse(r.body);
+      body = Object.keys(parsed).slice(0, 6).map((k) => {
+        const v = parsed[k];
+        return k + ': ' + (typeof v === 'object' ? '…' : String(v).slice(0, 60));
+      }).join(' · ');
+    } catch (e) {
+      body = String(r.body).replace(/\s+/g, ' ').slice(0, 140);
+    }
+    return 'HTTP ' + r.status + ' · получено ' + String(r.body || '').length.toLocaleString('ru-RU') +
+      ' симв.' + (body ? '\n' + body : '');
+  }
+  if (r.content) return String(r.content).slice(0, 4000);
+  if (r.text) return String(r.text).slice(0, 4000);
+  if (r.path) return (r.title ? r.title + '\n' : '') + r.path;
+  if (r.url) return (r.title || r.url) + '\n' + r.url;
+  // общий случай: короткая выжимка скалярных полей, БЕЗ сырого JSON
+  const keys = Object.keys(r).filter((k) => k !== 'ok');
+  const lines = keys.slice(0, 8).map((k) => {
+    const v = r[k];
+    if (v == null) return null;
+    if (typeof v === 'string') return k + ': ' + v.slice(0, 200);
+    if (typeof v === 'number' || typeof v === 'boolean') return k + ': ' + v;
+    if (Array.isArray(v)) return k + ': ' + v.length + ' шт.';
+    return null;
+  }).filter(Boolean);
+  return (r.ok ? '' : '') + (lines.join('\n') || 'готово');
+}
 
 function dispatchStreamEvent(ev, ui) {
   if (ui.planGate) {
@@ -3919,16 +4266,6 @@ function handleEvent(ev, ui) {
       // id относится к пузырю ЭТОГО запроса. Поиск «последнего .msg-user во
       // всей ленте» ломался при двух поколениях camera card и гонке ответов.
       if (ui.userMsgNode && !ui.userMsgNode.dataset.msgId) ui.userMsgNode.dataset.msgId = ev.id;
-      break;
-    }
-
-    case 'chat_title': {
-      // название диалога придумал сам JARVIS
-      loadChats();
-      const cur = S.chats.find((c) => c.id === ev.chat_id);
-      if (!cur || cur.title !== ev.title) {
-        toast('Диалог назван: ' + ev.title, 'info');
-      }
       break;
     }
 
@@ -3985,7 +4322,11 @@ function handleEvent(ev, ui) {
 
     case 'plan': {
       // Вторая граница после backend: plan виден только реальному AGENT-run.
-      if (!ui.agentMode || !(ev.steps || []).length) break;
+      // Режим могли включить ПОСЛЕ отправки (карточка-разрешение, mode_changed
+      // на лету) — тогда ui.agentMode ещё false, но S.agentMode уже true.
+      // Старая проверка только по ui молча выбрасывала план: агент работал
+      // «без плана», хотя сервер его честно присылал.
+      if (!(ui.agentMode || S.agentMode) || !(ev.steps || []).length) break;
       beginPlanGate(ui);
       // Агент может составить план дважды за прогон (уточнил задачу — сделал
       // новый). Прежнюю панель и прежнюю карточку убираем, иначе первая так и
@@ -3998,8 +4339,15 @@ function handleEvent(ev, ui) {
         if (ui.planHome && ui.planHome.isConnected) ui.planHome.remove();
         ui.planHome = null;
         ui.planItems = [];
+        ui.planPaintQ = [];
+        ui.planPainted = 0;
       }
       ui.planFinished = false;
+      // Новый план (и первый, и заменивший старый) начинает покраску с нуля:
+      // значения предыдущего плана не должны блокировать шаги нового.
+      ui.planPaintQ = [];
+      ui.planPainted = 0;
+      ui.planPaintPending = null;
       ui.planCard = makeCard('☰', 'План · ' + ev.steps.length + ' шаг(ов)', 'plan-card', true);
       markBorn(ui.planCard);
       const list = el('ul', 'plan-list');
@@ -4087,11 +4435,143 @@ function handleEvent(ev, ui) {
       const n = ev.step | 0;
       const total = ui.planItems.length || 1;
       ui.planStep = Math.max(1, Math.min(n || 1, total));
-      ui.planItems.forEach((li, i) => {
-        li.classList.toggle('done', i < n - 1);
-        li.classList.toggle('now', i === n - 1);
+      // Покраска — с ритмом: пачка фактов не должна проскочить экран
+      // за один кадр и изобразить «мгновенное» выполнение плана.
+      if (ui.planStep > (ui.planPainted || 0)) {
+        (ui.planPaintQ || (ui.planPaintQ = [])).push(ui.planStep);
+        paintPlanStepSoon(ui);
+      }
+      break;
+    }
+
+    case 'budget_wait': {
+      // Лимит исчерпан: тихая карточка в каноне вопросов Джарвиса — та же
+      // типографика, те же кнопки-варианты, только жёлтый акцент.
+      reactor('wait');
+      busyMode(ui, ['Лимит исчерпан', 'жду решения'], 1500);
+      const card = el('div', 'panel-card ask-card budget-card');
+      card.innerHTML =
+        '<div class="ask-h"><span class="ask-i rub">₽</span>Лимит ' +
+        esc(String(ev.limit || '?')) + ' ₽ исчерпан</div>' +
+        '<div class="budget-spent">потрачено ' + esc(String(ev.spent || '?')) +
+        ' ₽ — продолжаем?</div>' +
+        '<div class="ask-opts"></div>';
+      const box = card.querySelector('.ask-opts');
+      // Суммы докладываем из ПРИВЫЧЕК пользователя (последние разные суммы,
+      // которые он сам вводил), а не из фиксированного списка сервера.
+      const pick = (answer) => {
+        if (card.dataset.done === '1') return;
+        card.dataset.done = '1';
+        api('/api/questions/answer', { id: ev.id, answer });
+        // Решение принято — карточка сворачивается в миниатюру чуть крупнее
+        // обычных строк инструментов: деньги видны и после сворачивания.
+        collapseToThumb(card, {
+          cls: 'th-budget', icon: '₽',
+          title: 'Лимит ' + ev.limit + ' ₽',
+          sub: answer.replace(/^Увеличить на /, '+').replace(/^Отключить лимит$/, 'лимит снят')
+            .replace(/^Остановить$/, 'остановлено'),
+          tag: 'решено',
+        });
+        reactor('busy');
+      };
+      budgetSuggestions().forEach((v) => {
+        const b = el('button', 'ask-opt good', '+' + v + ' ₽');
+        b.addEventListener('click', () => pick('Увеличить на ' + v + ' ₽'));
+        box.appendChild(b);
       });
-      if (ui.planDock) paintDockStep(ui);
+      const off = el('button', 'ask-opt', 'Отключить лимит');
+      off.addEventListener('click', () => pick('Отключить лимит'));
+      const stop = el('button', 'ask-opt bad', 'Остановить');
+      stop.addEventListener('click', () => pick('Остановить'));
+      box.appendChild(off);
+      box.appendChild(stop);
+      node.body.insertBefore(card, ui.statusEl);
+      sfx('notify');
+      scrollDown(true);
+      break;
+    }
+
+    case 'budget_off': {
+      // лимит отключён из ответа агента: гасим кнопку и в поле ввода
+      S.budgetRub = null;
+      if (budgetBtn) budgetBtn.classList.remove('on');
+      toast('Лимит отключён — работаю без ограничений', 'info', 'Лимит');
+      break;
+    }
+
+    case 'budget_update': {
+      S.budgetRub = ev.limit || S.budgetRub;
+      toast('Лимит увеличен до ' + ev.limit + ' ₽', 'success', 'Лимит');
+      break;
+    }
+
+    case 'mode_request': {
+      // Джарвис просит включить режим: короткое «зачем» сверху, ПОД текстом —
+      // небольшая настоящая кнопка из поля ввода (в натуральную величину) и
+      // мелкая «Пропустить». Нажал кнопку — согласие; карточка сворачивается.
+      reactor('wait');
+      busyMode(ui, ['Жду разрешения', 'режим «' + ev.label + '»'], 1500);
+      const src = { agent: $('#swAgent'), computer: $('#swComputer'),
+                    camera: $('#swCamera'), budget: budgetBtn }[ev.mode];
+      let cloneHtml = '';
+      try {
+        if (src) {
+          const wrap = el('div');
+          wrap.innerHTML = src.outerHTML;
+          wrap.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+          wrap.querySelectorAll('.budget-pop').forEach((n) => n.remove());
+          cloneHtml = wrap.innerHTML;
+        }
+      } catch (e) { cloneHtml = ''; }
+      const card = el('div', 'panel-card mode-card');
+      card.innerHTML =
+        '<div class="mc-row">' +
+          '<div class="mc-text">' +
+            '<div class="mc-title">Включить «' + esc(ev.label || 'режим') + '»?</div>' +
+            '<div class="mc-reason">' + esc(ev.reason ||
+              'Для этой задачи режим сильно упростит работу.') + '</div>' +
+          '</div>' +
+          '<div class="mc-actions">' +
+            '<div class="mc-btn" title="Нажми, чтобы включить">' + cloneHtml + '</div>' +
+            '<button class="mc-skip">Пропустить</button>' +
+          '</div>' +
+        '</div>';
+      const done = (answer) => {
+        if (card.dataset.done === '1') return;
+        card.dataset.done = '1';
+        api('/api/questions/answer', { id: ev.id, answer });
+        collapseToThumb(card, {
+          cls: 'th-ask', icon: '⚡', title: 'Разрешение: ' + (ev.label || ''),
+          sub: ev.reason || '',
+          tag: answer === 'Включить' ? 'включено' : 'пропущено',
+        });
+      };
+      card.querySelector('.mc-btn').addEventListener('click', () => done('Включить'));
+      card.querySelector('.mc-skip').addEventListener('click', () => done('Не нужно'));
+      node.body.insertBefore(card, ui.statusEl);
+      sfx('notify');
+      scrollDown(true);
+      break;
+    }
+
+    case 'mode_changed': {
+      // Разрешение получено: включаем настоящий тумблер у поля ввода —
+      // тот самый, копия которого стояла в карточке.
+      if (ev.mode === 'agent') {
+        // Текущий run стартовал БЕЗ агентского режима: его объект ui ещё не
+        // знает, что режим включили. Без этого план прогона молча
+        // выбрасывался — «агент работает без плана».
+        if (ui) ui.agentMode = true;
+        const t = $('#tgAgent');
+        if (t && !t.checked) { t.checked = true; t.dispatchEvent(new Event('change')); }
+      } else if (ev.mode === 'computer') {
+        setSwitch('#tgComputer', true);
+      } else if (ev.mode === 'camera') {
+        setSwitch('#tgCamera', true);
+      } else if (ev.mode === 'budget') {
+        if (budgetPop) budgetPop.hidden = false;
+      }
+      toast('Режим включён', 'success', 'Разрешение');
       break;
     }
 
@@ -4153,10 +4633,6 @@ function handleEvent(ev, ui) {
       break;
     }
 
-    case 'replies':          // старый путь, оставлен для совместимости
-      showReplies(ev.items || []);
-      break;
-
     case 'tool_result': {
       if (ui.silent[ev.id || ev.name]) {
         delete ui.silent[ev.id || ev.name];
@@ -4175,13 +4651,7 @@ function handleEvent(ev, ui) {
         }
         const r = ev.result || {};
         const pre = el('pre', 'out');
-        let txt = '';
-        if (r.error) txt = '⚠ ' + r.error;
-        else if (r.stdout != null || r.stderr != null) txt = (r.stdout || '') + (r.stderr ? '\n' + r.stderr : '');
-        else if (r.content) txt = String(r.content).slice(0, 4000);
-        else if (r.results) txt = (r.results || []).map((x) => '• ' + (x.title || '') + '\n  ' + (x.url || '') + '\n  ' + (x.snippet || '')).join('\n');
-        else txt = JSON.stringify(r, null, 1).slice(0, 4000);
-        pre.textContent = txt || '(пусто)';
+        pre.textContent = toolResultText(r) || '(пусто)';
         card.inner.appendChild(pre);
         finishToolWait(card);
         // отработал — сворачиваем в миниатюру, но не раньше, чем карточку
@@ -4205,15 +4675,18 @@ function handleEvent(ev, ui) {
 
     case 'memory_saved': {
       // Локальный writer — настоящий инструментальный факт, хотя сетевого tool
-      // call больше нет. Показываем его в trace явно, но без wait-gradient:
-      // сохранение уже завершилось и не должно притворяться загрузкой.
+      // call больше нет. Без градиентов и «процесса»: сохранение уже завершилось.
+      // Вместо этого — та же анимация, что у файла: карточка перелетает
+      // во вкладку «Память», и вкладка коротко мерцает.
       const facts = ev.facts || [];
       const card = memoryTraceCard(facts);
       markBorn(card);
       node.body.insertBefore(card, ui.statusEl);
+      const summary = facts.map((fact) => fact.value || '').filter(Boolean).join(', ').slice(0, 80);
+      flyToNav(card, '🧠 ' + (summary || 'запомнено'), 'memory');
       collapseSoon(card, {
         cls: 'th-ok', icon: '✓', title: 'Запомнить',
-        sub: facts.map((fact) => fact.value || '').filter(Boolean).join(', ').slice(0, 80),
+        sub: summary,
         tag: 'готово',
       });
       pulseNav('memory', true);
@@ -4287,6 +4760,7 @@ function handleEvent(ev, ui) {
       // сервер понял, что модель напечатала вызов инструмента текстом,
       // и просит стереть уже показанное — начинаем ответ заново
       typerStop(ui);
+      ui.fastFinish = false;
       ui.buffer = ''; ui.shown = ''; ui.frozen = null;
       ui.replyUiSpec = '';
       ui.pendingReplyUi = '';
@@ -4306,10 +4780,10 @@ function handleEvent(ev, ui) {
       if (ev.tier) ui.routeTier = ev.tier;
       if (ev.model) ui.modelName = ev.model;
       updateResponseMeta(ui);
-      // Выполнение завершено на сервере: dock сразу зеленеет, а в сообщении
-      // остаётся открываемая вкладка с полным планом. Повторный вызов из финала
-      // typer безопасен — undockPlan идемпотентен.
-      undockPlan(ui);
+      // План НЕ завершается здесь: dock остаётся живым, пока ответ
+      // допечатывается. Зеленеет и уезжает во вкладку только из финала
+      // typer (queueResponseFinish → onTyped) — иначе план «выполнен»
+      // раньше, чем прочитан сам ответ. undockPlan идемпотентен.
       queueResponseFinish(ui, ev.content || ui.buffer, true);
       break;
     }
@@ -4498,14 +4972,19 @@ async function serverASR(btn, silentStart) {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     S.recChunks = [];
-    const rec = new MediaRecorder(stream);
+    // Safari пишет audio/mp4, Chrome — audio/webm. Раньше кодекс был
+    // захардкожен webm: на Safari блоб врал о своём формате, сервер
+    // сохранял mp4-байты как .wav, и микрофон «не работал».
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+      .find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
     S.recorder = rec;
     rec.ondataavailable = (e) => S.recChunks.push(e.data);
     rec.onstop = async () => {
       stream.getTracks().forEach((t) => t.stop());
       S.recorder = null;
       btn.classList.remove('rec');
-      const blob = new Blob(S.recChunks, { type: 'audio/webm' });
+      const blob = new Blob(S.recChunks, { type: rec.mimeType || mime || 'audio/webm' });
       const fr = new FileReader();
       fr.onload = async () => {
         micHint('Распознаю речь…');
@@ -4625,6 +5104,8 @@ async function startCam() {
     addFoldButton(S.camNode, { cls: 'th-cam', icon: ICO.cam, title: 'Камера', tag: 'свёрнута' });
     scrollDown(true);
   }
+  // Идёт ответ — он продолжится В камере, а не позади её карточки
+  if (S.streaming && S.followUi) adoptRunIntoCam();
 
   const run = ++S.camRun;
   camState('включаю камеру…', false);
@@ -4653,7 +5134,7 @@ async function startCam() {
       S.camPrevPix = null;
       S.cameraOn = false;
       const toggle = $('#tgCamera');
-      if (toggle) toggle.classList.remove('on');
+      if (toggle) toggle.checked = false;
       camState('трансляция остановлена · включи снова', false);
     }));
     camState('трансляция · смотрю', true);
@@ -4668,7 +5149,7 @@ async function startCam() {
     S.camStream = null;
     S.cameraOn = false;
     const toggle = $('#tgCamera');
-    if (toggle) toggle.classList.remove('on');
+    if (toggle) toggle.checked = false;
     camState('нет доступа к камере · можно повторить', false);
     camSay('Не получилось включить камеру: браузер не дал доступ. Разреши камеру для этого сайта и включи её снова.', 'err');
     toast('Нет доступа к камере', 'error');
@@ -4680,6 +5161,9 @@ function stopCam() {
   ++S.camRun;
   if (S.camTimer) { clearInterval(S.camTimer); S.camTimer = null; }
   if (S.camStream) { S.camStream.getTracks().forEach((t) => t.stop()); S.camStream = null; }
+  // Ответы, принятые камерой, возвращаются в основную ленту ДО сворачивания
+  // карточки — иначе они исчезли бы вместе с ней.
+  releaseRunFromCam();
   const node = S.camNode;
   const v = node && node.querySelector('.cam-video');
   if (v) v.srcObject = null;
@@ -4698,7 +5182,7 @@ function stopCam() {
   S.camBusy = false;
   S.cameraOn = false;
   const toggle = $('#tgCamera');
-  if (toggle) toggle.classList.remove('on');
+  if (toggle) toggle.checked = false;
 }
 
 function camState(text, live) {
@@ -4723,6 +5207,48 @@ function camSay(text, kind) {
   const old = feed.querySelector('[data-slot="' + slot + '"]');
   if (old) feed.replaceChild(line, old); else feed.appendChild(line);
   scrollDown();
+}
+
+/* ОТВЕТ ПРОДОЛЖАЕТСЯ В КАМЕРЕ. Джарвис предложил включить камеру (или
+   пользователь включил её сам), и ответ печатается дальше — но в основной
+   ленте, которую закрыла карточка камеры: человек физически не видит, что
+   агент пишет. Берём ЖИВОЙ ответ (и его вопрос) и переносим в диалог
+   камеры: печать, инструменты и статус продолжаются там, где их видно. */
+function adoptRunIntoCam() {
+  try {
+    const chat = camPart('.cam-chat');
+    const run = S.followUi;
+    if (!chat || !run || !run.node || !run.node.root || !run.node.root.isConnected) return;
+    const root = run.node.root;
+    if (root.closest('.cam-chat')) return;            // уже живёт в камере
+    if (!stream() || !stream().contains(root)) return; // чужой host не трогаем
+    const userNode = root.previousElementSibling;
+    if (userNode && userNode.classList.contains('msg') && userNode.classList.contains('msg-user')) {
+      chat.appendChild(userNode);
+    }
+    chat.appendChild(root);
+    // follow-слушатель колёсика был повешен на старый box: в камере свой
+    // скролл-контейнер, вешаем и на него (дубль по box не случится — guard)
+    watchRunFollow(run);
+    scrollDown(true, run);
+  } catch (e) { /* перенос ответа не должен ломать камеру */ }
+}
+
+/* Камера выключается: принятые в неё сообщения возвращаются в основную
+   ленту — карточка камеры сворачивается в строку, и ответ не должен
+   исчезнуть вместе с ней. */
+function releaseRunFromCam() {
+  try {
+    const card = S.camNode && S.camNode.isConnected ? S.camNode : null;
+    const chat = card ? card.querySelector('.cam-chat') : null;
+    if (!chat || !stream()) return;
+    let anchor = card.parentNode ? card.nextSibling : null;
+    Array.from(chat.children).forEach((child) => {
+      if (!child.classList || !child.classList.contains('msg')) return; // cam-строки остаются
+      stream().insertBefore(child, anchor);
+      anchor = child.nextSibling;
+    });
+  } catch (e) { /* возврат не должен ломать сворачивание камеры */ }
 }
 
 /* текущий кадр как data-url (для отправки модели) */
@@ -5015,16 +5541,18 @@ function noteDock() { return $('#noteDock'); }
 /* C. Готовый файл летит к пункту «Файлы» в меню и там растворяется — не
    приземляется, а тает: пользователь понимает, куда файл ушёл, но экран не
    получает лишнего объекта. Летит копия, оригинальная плашка остаётся в чате. */
-function flyToFiles(chip, name) {
-  const target = document.querySelector('.nav-item[data-view="files"]');
-  if (!chip || !target || !chip.getBoundingClientRect) { toast((name || 'файл') + ' готов', 'success', 'Файл'); return; }
+/* Общий перелёт «из ответа во вкладку»: файлы летят в «Файлы», запомненные
+   факты — в «Память». Одна механика, один визуальный язык. */
+function flyToNav(chip, label, view, fallbackToast) {
+  const target = document.querySelector('.nav-item[data-view="' + view + '"]');
+  if (!chip || !target || !chip.getBoundingClientRect) { if (fallbackToast) toast(fallbackToast, 'success', 'Файл'); return; }
   const a = chip.getBoundingClientRect();
   const b = target.getBoundingClientRect();
-  if (!a.width || !b.width) { toast((name || 'файл') + ' готов', 'success', 'Файл'); return; }
+  if (!a.width || !b.width) { if (fallbackToast) toast(fallbackToast, 'success', 'Файл'); return; }
 
   sfx('fly');
   const fly = el('div', 'file-fly');
-  fly.textContent = '📄 ' + (name || 'файл');
+  fly.textContent = label;
   fly.style.left = a.left + 'px';
   fly.style.top = a.top + 'px';
   fly.style.width = Math.min(a.width, 260) + 'px';
@@ -5063,6 +5591,10 @@ function flyToFiles(chip, name) {
       setTimeout(() => target.classList.remove('nav-lit'), 900);
     };
   };
+}
+
+function flyToFiles(chip, name) {
+  flyToNav(chip, '📄 ' + (name || 'файл'), 'files', (name || 'файл') + ' готов');
 }
 
 /* Пользователь заговорил — уведомления не должны загораживать разговор:
@@ -5175,6 +5707,174 @@ function renderNotes() {
 }
 
 /* ============================ AUTO ============================ */
+/* ============================ сценарии ============================ */
+/* Запуск сценария: новый диалог и последовательная отправка шагов.
+   Каждый шаг ждёт полного завершения предыдущего (и печати) — сценарий
+   это запись разговора, а не пачка параллельных вопросов. */
+async function runScenario(sc) {
+  switchView('chat');
+  const r = await api('/api/chats/new', { title: sc.title || 'Сценарий' });
+  if (r.ok && r.chat && r.chat.id) {
+    S.chatId = r.chat.id;
+    loadChats();
+  }
+  const steps = sc.steps || [];
+  for (let i = 0; i < steps.length; i++) {
+    if (S.abortedScenario) break;
+    toast('Шаг ' + (i + 1) + ' из ' + steps.length, 'info', sc.title || 'Сценарий');
+    await sendScenarioStep(steps[i]);
+    if (S.abortedScenario) break;
+    if (i < steps.length - 1) await sleep(700);
+  }
+  S.abortedScenario = false;
+}
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+/* send() не отдаёт promise завершения — ждём окончания стрима поллингом.
+   Stop прерывает сценарий целиком (S.abortedScenario). */
+function sendScenarioStep(text) {
+  return new Promise(async (resolve) => {
+    await send({ text, scenario: true });
+    const t0 = Date.now();
+    const poll = setInterval(() => {
+      if (!S.streaming && !wasStreaming) { clearInterval(poll); resolve(); return; }
+      if (!S.streaming || Date.now() - t0 > 600000) {
+        clearInterval(poll); resolve();
+      }
+    }, 250);
+  });
+}
+
+async function loadScenarios() {
+  const grid = $('#scenarioGrid');
+  if (!grid) return;
+  const r = await api('/api/scenarios');
+  const list = (r.ok && r.scenarios) || [];
+  // Служебная полоса — ровно как в AUTO: слева статистика, справа действия.
+  const stats = $('#scenarioStats');
+  if (stats) {
+    const stepsTotal = list.reduce((acc, sc) => acc + (sc.steps || []).length, 0);
+    const statHtml = [
+      ['всего', list.length, ''],
+      ['шагов', stepsTotal, 'active'],
+    ].map(([label, value, cls]) => '<span class="auto-stat ' + cls + '"><i>' +
+      label + '</i><b>' + value + '</b></span>').join('');
+    if (stats.innerHTML !== statHtml) stats.innerHTML = statHtml;
+  }
+  if (!list.length) {
+    const empty = el('div', 'empty task-empty',
+      '<span class="e-ico">⚡️</span>Сценариев пока нет.<br>' +
+      'Нажмите «+ Новый сценарий» — или сохраните частый запрос из диалога.');
+    grid.replaceChildren(empty);
+    empty.style.gridColumn = '1/-1';
+    return;
+  }
+  grid.replaceChildren();
+  list.forEach((sc) => {
+    // карточка сценария = карточка задачи AUTO: та же структура .tc-*,
+    // те же кнопки .btn.sm. Один язык интерфейса, без самодеятельности.
+    const steps = sc.steps || [];
+    const card = el('div', 'task-card scenario-card done');
+    card.innerHTML =
+      '<div class="tc-head">' +
+        '<div class="tc-title">' + esc((sc.emoji ? sc.emoji + ' ' : '') + (sc.title || 'Сценарий')) + '</div>' +
+        '<div class="tc-state done">' + steps.length + ' шаг' + (steps.length === 1 ? '' : 'ов') + '</div>' +
+      '</div>' +
+      '<div class="tc-steps">' + steps.map((x) => '• ' + esc(String(x).slice(0, 110))).join('<br>') + '</div>' +
+      '<div class="tc-actions"></div>';
+    const acts = card.querySelector('.tc-actions');
+    acts.style.cssText = 'display:flex;gap:8px;margin-top:4px';
+    const run = el('button', 'btn sm primary', 'Запустить');
+    run.addEventListener('click', (e) => { e.stopPropagation(); runScenario(sc); });
+    const del = el('button', 'btn sm danger', 'Удалить');
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await api('/api/scenarios/delete', { id: sc.id });
+      loadScenarios();
+    });
+    acts.appendChild(run);
+    acts.appendChild(del);
+    grid.appendChild(card);
+  });
+}
+
+/* Кнопка «Пример» на служебной полосе: один готовый сценарий, чтобы пустая
+   вкладка не требовала сразу что-то придумывать. */
+$('#scDemoBtn').addEventListener('click', async () => {
+  const r = await api('/api/scenarios/new', {
+    title: 'Утренний дайджест',
+    emoji: '☀️',
+    steps: [
+      'Дай короткую сводку главных новостей России и мира за сегодня',
+      'Погода в моём городе на сегодня: что надеть',
+      'Собери всё в один компактный дайджест на 5 строк',
+    ],
+  });
+  if (r.ok) { toast('Пример добавлен — можно запустить', 'success', 'Сценарии'); loadScenarios(); }
+});
+
+$('#addScenarioBtn').addEventListener('click', () => {
+  modal(
+    '<h3>Новый сценарий</h3>' +
+    '<div class="sd" style="margin-bottom:10px">Каждая строка — отдельное сообщение Джарвису. ' +
+    'Шаги выполняются по очереди в новом диалоге.</div>' +
+    '<input id="scTitle" class="bp-input" style="width:100%;margin-bottom:10px" placeholder="Название (например: Дайджест утра)">' +
+    '<input id="scEmoji" class="bp-input" style="width:100%;margin-bottom:10px" placeholder="Эмодзи (необязательно)">' +
+    '<textarea id="scSteps" class="bp-input" style="width:100%;min-height:120px;resize:vertical" ' +
+    'placeholder="Новости технологий за вчера\nПогода в Стокгольме\nСобери всё в короткий дайджест"></textarea>' +
+    '<div class="modal-acts"><button class="btn primary" id="scSave">Сохранить</button></div>');
+  $('#scSave').addEventListener('click', async () => {
+    const steps = $('#scSteps').value.split('\n').map((x) => x.trim()).filter(Boolean);
+    if (!steps.length) { toast('Нужен хотя бы один шаг', 'warn'); return; }
+    const r = await api('/api/scenarios/new', {
+      title: $('#scTitle').value.trim() || 'Сценарий',
+      emoji: $('#scEmoji').value.trim(),
+      steps,
+    });
+    closeModal();
+    if (r.ok) { toast('Сценарий сохранён', 'success'); loadScenarios(); }
+  });
+});
+
+/* Предложение сохранить сценарий: третий раз тот же запрос — значит это рутина.
+   Ключ — первые слова сообщения: точного совпадения достаточно. */
+function maybeOfferScenario(text) {
+  try {
+    const key = 'sc:' + String(text || '').toLowerCase().split(/\s+/).slice(0, 4).join(' ');
+    if (key.length < 8) return;
+    const counts = JSON.parse(localStorage.getItem('jarvis.scenarioHints') || '{}');
+    counts[key] = (counts[key] || 0) + 1;
+    Object.keys(counts).forEach((k) => { if (counts[k] === 0) delete counts[k]; });
+    const keys = Object.keys(counts);
+    if (keys.length > 40) delete counts[keys[0]];
+    localStorage.setItem('jarvis.scenarioHints', JSON.stringify(counts));
+    if (counts[key] === 3) {
+      toast('Частый запрос — сохранить как сценарий?', 'info', 'Сценарии');
+      setTimeout(() => {
+        modal(
+          '<h3>Сделать сценарий?</h3>' +
+          '<div class="sd" style="margin-bottom:10px">Вы уже третий раз отправляете похожий запрос. ' +
+          'Сохранить его как сценарий — потом один клик, и Джарвис всё сделает.</div>' +
+          '<div class="modal-acts">' +
+          '<button class="btn primary" id="scYes">Сохранить</button>' +
+          '<button class="btn" onclick="document.getElementById(\'modalBack\').classList.remove(\'open\')">Не надо</button></div>');
+        $('#scYes').addEventListener('click', async () => {
+          const r = await api('/api/scenarios/new', {
+            title: String(text || '').split(/\s+/).slice(0, 5).join(' '), emoji: '⚡️', steps: [text],
+          });
+          closeModal();
+          if (r.ok) {
+            counts[key] = -999; // больше не предлагаем
+            localStorage.setItem('jarvis.scenarioHints', JSON.stringify(counts));
+            toast('Сценарий сохранён — вкладка «Сценарии»', 'success');
+          }
+        });
+      }, 900);
+    }
+  } catch (e) { /* localStorage недоступен — молча пропускаем */ }
+}
+
 async function loadTasks() {
   const ticket = ++S.taskLoadRun;
   const r = await api('/api/tasks');
@@ -5268,7 +5968,12 @@ function renderTasks() {
   if (pause) {
     pause.classList.toggle('play', S.autoPaused);
     pause.innerHTML = S.autoPaused ? ICO.play : ICO.pause;
-    const label = S.autoPaused ? 'Продолжить все актуальные задачи' : 'Поставить все актуальные задачи на паузу';
+    // Задач нет — паузе нечего ставить: кнопка мутнеет и не нажимается
+    const idle = S.tasks.length === 0;
+    pause.disabled = idle;
+    pause.classList.toggle('idle', idle);
+    const label = idle ? 'Задач нет'
+      : S.autoPaused ? 'Продолжить все актуальные задачи' : 'Поставить все актуальные задачи на паузу';
     pause.title = label;
     pause.setAttribute('aria-label', label);
   }

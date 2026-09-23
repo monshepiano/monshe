@@ -5,11 +5,13 @@
 """
 from __future__ import annotations
 
+import concurrent.futures
+import contextvars
 import json
 import re
 import threading
 import time
-from typing import Any, Callable, Dict, Generator, Iterable, List, Optional
+from typing import Any, Callable, Dict, Generator, List, Optional
 
 from . import db, llm, orchestrator, sandbox, telemetry, tools
 from .config import CONFIG
@@ -30,8 +32,21 @@ def _now_str() -> str:
     return time.strftime("%d.%m.%Y %H:%M")
 
 
+# Вводные слова — не факт. «Люблю кстати» раньше превращалось в
+# «нравится: кстати»: regex цеплялся за глаголом, а модель не была подключена.
+_MEMORY_STOPVALUE = re.compile(
+    r"^(?:кстати|впрочем|вообще|просто|очень|сильно|так|слишком|немного|"
+    r"действительно|точно|прямо|совсем|ещё|еще|уже|тут|здесь|сейчас|"
+    r"наверное|кажется|казалось|вроде|типа|как\s+бы)$", re.IGNORECASE)
+
+
 def _fact_value(value: str, limit: int = 120) -> str:
-    return re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n,.;:!?—–-")[:limit]
+    cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n,.;:!?—–-")[:limit]
+    # значение из одних вводных слов — мусор, а не факт
+    if _MEMORY_STOPVALUE.match(cleaned):
+        return ""
+    # «кстати, стейки» — вводное слово в начале не должно попадать в значение
+    return re.sub(r"^(?:кстати|впрочем|вообще|просто)\s+", "", cleaned, flags=re.IGNORECASE)
 
 
 _MEMORY_SECRET = re.compile(
@@ -71,6 +86,8 @@ def extract_obvious_memories(text: str) -> List[Dict[str, str]]:
 
     preferences = (
         ("Нравится", r"\b(?:я\s+)?(?:люблю|обожаю|предпочитаю)\s+([^,.!?]{2,100})"),
+        # русский часто ставит объект раньше глагола: «Я стейки люблю»
+        ("Нравится", r"\bя\s+([^,.!?]{2,60}?)\s+(?:люблю|обожаю|предпочитаю)\b"),
         ("Нравится", r"\bмне\s+нрав(?:ится|ятся)\s+([^,.!?]{2,100})"),
         ("Не нравится", r"\b(?:я\s+)?(?:не\s+люблю|не\s+переношу|избегаю)\s+([^,.!?]{2,100})"),
         ("Нравится", r"\b(?:i\s+)?(?:love|prefer|like)\s+([^,.!?]{2,100})"),
@@ -78,6 +95,11 @@ def extract_obvious_memories(text: str) -> List[Dict[str, str]]:
     )
     for relation, pattern in preferences:
         for found in re.finditer(pattern, raw, re.IGNORECASE):
+            # Инверсный шаблон («я X люблю») не имеет права поймать отрицание:
+            # «я не люблю стейки» иначе превращается в «нравится: не».
+            if re.search(r"\b(?:не|совсем\s+не|вообще\s+не)$",
+                         str(found.group(1) or "").strip(), re.IGNORECASE):
+                continue
             # Положительный шаблон способен начать совпадение внутри «не люблю».
             before = raw[max(0, found.start() - 12):found.start()].casefold()
             if relation == "Нравится" and re.search(r"\b(?:не|not)\s*$", before):
@@ -134,6 +156,80 @@ def remember_obvious_facts(text: str) -> List[Dict[str, Any]]:
     for fact in extract_obvious_memories(text):
         saved.append(db.remember(fact["kind"], fact["key"], fact["value"], 1.15))
     return saved
+
+
+def _parse_memory_json(content: str) -> Optional[List[Dict[str, str]]]:
+    """Разобрать JSON-массив фактов из ответа модели.
+
+    None — ответ не разобрался (ошибка модели → откат на локальный вариант);
+    [] — модель осознанно ответила «запоминать нечего» — верим ей."""
+    raw = str(content or "").strip()
+    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE).strip()
+    start, end = raw.find("["), raw.rfind("]")
+    if start < 0 or end <= start:
+        return None
+    try:
+        data = json.loads(raw[start:end + 1])
+    except Exception:
+        return None
+    if not isinstance(data, list):
+        return None
+    facts: List[Dict[str, str]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("type") or item.get("kind") or "").strip()[:60]
+        value = str(item.get("value") or "").strip()[:200]
+        if kind and value:
+            facts.append({"type": kind, "value": value})
+    return facts[:6]
+
+
+def remember_smart_facts(text: str) -> List[Dict[str, Any]]:
+    """Сохранить личные факты после анализа маленькой моделью.
+
+    Локальные regex остаются черновым фильтром «есть ли ЧТО запоминать» —
+    реплика без фактов не платит за лишний вызов. Но структуру решает модель:
+    «я люблю кошек» раньше превращалось в «тип: я люблю, факт: кошек», а
+    должно стать «любимое животное: кошки». Модель может и справедливо
+    отклонить запись ([]): секреты и настроение не принадлежат памяти.
+    Любая ошибка сети/парсинга — откат на локальный verbatim-вариант.
+    """
+    draft = extract_obvious_memories(text)
+    if not draft:
+        return []
+    system = (
+        "Ты — экстрактор долговременной памяти персонального ассистента. "
+        "Из реплики пользователя выдели устойчивые личные факты, которые стоит "
+        "помнить месяцами: предпочтения и вкусы, имя, город, работа, устройства, "
+        "привычки, важные обстоятельства. "
+        "Ответь ТОЛЬКО JSON-массивом объектов {\"type\": \"...\", \"value\": \"...\"} "
+        "без markdown и пояснений. "
+        "type — короткая категория по-русски в нормальной форме: «любимое "
+        "животное», «город», «имя», «работа», «любимая еда», «не нравится». "
+        "value — только само значение, чтобы фраза «type: value» читалась целиком: "
+        "«кошки», а не «я люблю кошек» и не «кошек». "
+        "Ничего не выдумывай: только то, что прямо сказано. Не сохраняй секреты "
+        "(пароли, ключи, коды, номера карт), настроение и временные состояния. "
+        "Запоминать нечего — верни []."
+    )
+    try:
+        result = llm.chat([
+            {"role": "system", "content": system},
+            {"role": "user", "content": "Реплика: %s" % str(text or "")[:1200]},
+        ], tier="nano", max_tokens=300, temperature=0.1, timeout=8,
+           operation="memory")
+        facts = _parse_memory_json(result.get("content", ""))
+        if facts is not None:
+            saved = []
+            for fact in facts:
+                key = fact["type"][0].upper() + fact["type"][1:]
+                saved.append(db.remember(fact["type"], key, fact["value"], 1.15))
+            return saved
+    except Exception:
+        pass
+    # сеть/модель подвели — локальный verbatim-вариант лучше, чем потеря факта
+    return remember_obvious_facts(text)
 
 
 def remember_semantic_facts(text: str) -> List[Dict[str, Any]]:
@@ -483,7 +579,8 @@ def contextual_choice_fallback(text: str = "") -> str:
             "```ui\ntiles Стиль: " + " | ".join(options[:4]) + "\n```")
 
 
-def build_system_prompt(agent_mode: bool = False, computer_use: bool = False) -> str:
+def build_system_prompt(agent_mode: bool = False, computer_use: bool = False,
+                        vision_direct: bool = False) -> str:
     user = CONFIG.get("user", {}) or {}
     memories = db.recall(limit=40)
     mem_lines = "\n".join("- [%s] %s: %s" % (m["kind"], m["key"], m["value"]) for m in memories[:30])
@@ -594,6 +691,18 @@ JSON-описание вызова прямо в тексте. Любые их �
 человеческий ответ по этому результату. Пустой ответ недопустим: если инструмент
 не сработал, скажи об этом словами.
 
+РЕЖИМЫ И РАЗРЕШЕНИЯ (это важно для совместной работы):
+У пользователя есть кнопки-режимы: AGENT (автономный агент с планом), КОМПЬЮТЕР
+(управление экраном), КАМЕРА (живое видео) и ЛИМИТ ₽. Их текущее состояние:
+• AGENT: {{agent_state}}
+• КОМПЬЮТЕР: {{computer_state}}
+Если задача СУЩЕСТВЕННО выигрывает от выключенного режима (многошаговая работа —
+AGENT, действия в приложениях — КОМПЬЮТЕР, «посмотри на это» — КАМЕРА), НЕ работай
+вслепую и не отказывайся: ПЕРВЫМ ДЕЛОМ вызови инструмент request_mode с mode
+(agent|computer|camera|budget) и короткой reason — пользователь получит окошко
+с этой кнопкой и решит сам. Получив отказ — продолжай без режима, не выпрашивай
+второй раз. Разрешение обязательно: включать режим молча запрещено.
+
 ФОН И AUTO:
 Ты никогда не решаешь сам, что задача «слишком долгая» для текущего диалога,
 и не пытаешься поставить её в AUTO. Явные напоминания, расписания, мониторинг
@@ -614,23 +723,39 @@ JSON-описание вызова прямо в тексте. Любые их �
 РЕЖИМ УПРАВЛЕНИЯ КОМПЬЮТЕРОМ — ЖЕЛЕЗНОЕ ПРАВИЛО:
 Курсор и клавиатура двигаются ТОЛЬКО вызовом инструментов. Текст ответа ничего не делает.
 
+СТРАТЕГИЯ (это про скорость и цену):
+1) СНАЧАЛА ui_tree: дерево элементов активного окна с ТОЧНЫМИ координатами
+   [x,y ширинаxвысота]. Это в разы дешевле и точнее скриншота. Клики делай
+   по центру рамки нужного элемента из дерева.
+2) screenshot — ТОЛЬКО если дерева не хватает (пустое окно, графика, canvas,
+   нужно увидеть картинку). Не запрашивай его для каждого шага.
+3) ПРОСТЫЕ ДЕЙСТВИЯ ОБЪЕДИНЯЙ: несколько кликов/вводов в одном ходе выполнятся
+   подряд без лишних обращений. Например: click по полю → type_text → click
+   «Отправить» — это ОДИН ход, а не три.
+4) После действий проверяй результат: ui_tree снова (дёшево) или screenshot,
+   если важна графика.
+{vision_block}
 ЗАПРЕЩЕНО писать «сейчас перемещу курсор», «нажал», «открыл», «кликнул», если ты
 не вызвал соответствующий инструмент и не увидел его результат. Это ложь, а не работа.
-Никогда не описывай содержимое экрана по памяти или догадке — только по свежему скриншоту.
-Ты не видишь картинки сам: единственный источник правды об экране — поле screen
-в результате screenshot. Нет screenshot — нет знания об экране.
+Никогда не описывай содержимое экрана по памяти или догадке — только по свежему
+дереву или скриншоту. Нет ui_tree и нет screenshot — нет знания об экране.
 
-ПОРЯДОК ДЕЙСТВИЙ:
-1. screen_info — узнать размер экрана.
-2. screenshot — вернёт поле screen: словесную карту экрана с координатами
-   элементов. Это твои глаза, читай её внимательно.
-3. Взять из карты координаты нужного элемента. Если сказано, что снимок
-   уменьшен, — пересчитать координаты, как там указано.
-4. Вызвать mouse_move / mouse_click / type_text / press_key / open_app.
-5. Снова screenshot — убедиться, что получилось. Не получилось — поправить и повторить.
-
-Каждый шаг — отдельный вызов инструмента. Между шагами коротко говори, что видишь.
-Итог сообщай только после того, как последний скриншот подтвердил результат.
+РАБОТАЙ БЫСТРО И МОЛЧА:
+1. screenshot — в поле screen словесная карта экрана с координатами. Это твои
+   глаза. Если сказано, что снимок уменьшен, пересчитай координаты по масштабу.
+2. Один ответ = ВСЯ цепочка действий, не требующих нового взгляда на экран:
+   mouse_move → mouse_click → type_text → press_key вызывай ПОДРЯД, несколькими
+   вызовами инструментов в одном ответе. Не растягивай простую цепочку на много
+   ходов и не описывай промежуточные шаги словами.
+3. screenshot нужен ТОЛЬКО когда следующий шаг зависит от нового состояния
+   экрана: после клика, открывшего меню или переключившего окно; чтобы найти
+   элемент. После цепочки «навести-кликнуть-напечатать», где результат очевиден,
+   новый кадр не делай — это трата времени, а не проверка.
+4. Промежуточные реплики между инструментами запрещены: пользователь просил
+   действие, а не трансляцию каждого шага. Итог — одна короткая фраза в конце,
+   после подтверждённого результата.
+5. Не получилось — сделай кадр, поправь координаты, повтори. После трёх неудачных
+   попыток честно скажи, что именно не выходит, вместо бесконечных повторов.
 Если инструмент вернул ошибку (нет прав, не macOS) — честно скажи об этом
 и объясни, что включить в Системных настройках, вместо выдуманного успеха.
 """
@@ -651,6 +776,18 @@ JSON-описание вызова прямо в тексте. Любые их �
 """
     if mem_lines:
         base += "\nЧТО ТЫ ЗНАЕШЬ О ПОЛЬЗОВАТЕЛЕ:\n" + mem_lines + "\n"
+    # плейсхолдеры подставляем в самом конце: computer-блоки дописываются позже
+    base = base.format(
+        agent_state="ВКЛЮЧЁН" if agent_mode else "выключен",
+        computer_state="ВКЛЮЧЁН" if computer_use else "выключен",
+        vision_block=(
+            "Ты ВИДИШЬ экран сам: каждый screenshot прикладывает тебе свежий кадр "
+            "КАРТИНКОЙ — читай его напрямую, координаты бери из самой картинки "
+            "(масштаб пересчёта указан в подписи кадра)."
+            if vision_direct else
+            "Экран ты не видишь: единственный источник правды — поле screen в результате "
+            "screenshot (зрячая модель уже перевела кадр в слова с координатами)."))
+
     return base
 
 
@@ -735,7 +872,11 @@ def needs_approval(tool_name: str, args: Optional[Dict[str, Any]] = None,
     # Вне явно включённого режима «Компьютер» любое внешнее окно принадлежит
     # пользователю. Проверяем до dispatch — приложение не успеет мелькнуть.
     if opens_terminal(tool_name, args):
-        return "открытие приложения «Терминал»"
+        # Тумблер «Компьютер» — это и есть согласие управлять машиной: в режиме
+        # терминал открывается молча. Без режима — только с разрешения.
+        if not computer_use:
+            return "открытие приложения «Терминал»"
+        return None
     if not computer_use and opens_external_ui(tool_name, args):
         return "открытие окна или приложения вне режима «Компьютер»"
     risk = tools.risk_of(tool_name)
@@ -761,6 +902,17 @@ def needs_approval(tool_name: str, args: Optional[Dict[str, Any]] = None,
     flag, reason = mapping.get(tool_name, ("", "потенциально опасное действие"))
     if flag and not safety.get(flag, True):
         return None
+    # Включённый режим «Компьютер» — это и есть согласие управлять мышью и
+    # клавиатурой: пользователь уже нажал тумблер и видел самопроверку. Раньше
+    # каждый клик и каждая буква останавливали работу вопросом «управление
+    # мышью на твоём компьютере» — из режима нельзя было ничего сделать.
+    # Согласие не распространяется на остальную карту: удаление, шелл и
+    # отправку сообщений система по-прежнему ставит на подтверждение.
+    if computer_use and flag in ("confirm_computer_use", "confirm_shell"):
+        # В режиме «Компьютер» шелл-команды управления машиной — часть работы,
+        # на которую уже дано согласие тумблером. Удаления и отправка
+        # сообщений по-прежнему спрашивают отдельно.
+        return None
     if risk == "caution" and safety.get("auto_approve_readonly", True) and tool_name not in mapping:
         return None
     if risk == "danger" or flag:
@@ -785,8 +937,10 @@ def _describe_screen(data_url: str, shot: Dict[str, Any]) -> str:
     prompt = (
         "Снимок экрана, %sx%s px. Ответь ТЕЛЕГРАФНО, без вступлений.\n"
         "Строка 1: активное окно.\n"
-        "Далее — только строки вида «Подпись — (x, y)» для кликабельных "
-        "элементов и пунктов списков. Максимум 25 строк, самое важное.\n"
+        "Далее — только строки вида «Подпись — (x, y)». СНАЧАЛА кнопки, поля "
+        "ввода, ссылки, пункты меню и кликабельные иконки (включая мелкие "
+        "и боковые панели — по ним чаще всего и нужно кликать), затем прочие "
+        "важные надписи. Максимум 35 строк.\n"
         "Координаты — центр элемента в пикселях снимка от левого верхнего угла. "
         "Не выдумывай то, чего не видишь."
     ) % (w or "?", h or "?")
@@ -962,6 +1116,214 @@ def parse_plan_steps(text: str) -> List[str]:
     return []
 
 
+TIER_RU = {
+    "nano": "простая модель", "base": "обычная модель", "coder": "модель для кода",
+    "smart": "модель для сложных задач", "vision": "зрячая модель",
+}
+
+# Проактивные режимы: реплики, где выключенный режим ОЧЕВИДНО нужен. Модель
+# может попросить сама (request_mode), но слабая модель молчит — этот локальный
+# триггер срабатывает ДО запуска модели и предлагает режим мгновенно.
+_COMPUTER_HINT_RE = re.compile(
+    r"\b(?:нажми|кликни|щёлкни|щёлк|клик\w*|открой приложение|закрой окно|"
+    r"сверни окно|разверни окно|перетащи|выдели мышью|поставь курсор|"
+    r"напиши в (?:окне|приложении|чате)|сделай скриншот)\b", re.IGNORECASE)
+_CAMERA_HINT_RE = re.compile(
+    r"\b(?:как я выгляжу|как выгляд\w+|посмотри на меня|что у меня|"
+    r"что в моих руках|включи камер\w+|покажи мне себ\w+|что видишь)\b",
+    re.IGNORECASE)
+_AGENT_HINT_RE = re.compile(
+    r"\b(?:напиши|создай|сделай|собери|разработай|спроектируй|сделаем)\b"
+    r".{0,48}\b(?:игр\w+|сайт|приложени\w+|программ\w+|бот\w*|скрипт\w*|"
+    r"сервис|дашборд|лендинг|расширени\w+|макет\w+|демк\w+|симулятор\w+)\b",
+    re.IGNORECASE)
+
+
+def suggest_mode(text: str, agent_mode: bool, computer_use: bool) -> Optional[Dict[str, str]]:
+    """Реплика явно требует выключенного режима — предложить его до модели.
+
+    Возвращает {"mode", "reason"} или None. Приоритет: конкретное действие
+    (компьютер) важнее обзора (камера) и сборки (агент)."""
+    t = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not t:
+        return None
+    if not computer_use and _COMPUTER_HINT_RE.search(t):
+        return {"mode": "computer",
+                "reason": "нужно управлять мышью и клавиатурой на экране"}
+    if not agent_mode and _AGENT_HINT_RE.search(t):
+        return {"mode": "agent",
+                "reason": "многошаговая сборка: план и несколько шагов работы"}
+    # камеру сервер включает только как фронтовую кнопку — предложение уместно
+    if _CAMERA_HINT_RE.search(t):
+        return {"mode": "camera", "reason": "нужно посмотреть на вас камерой"}
+    return None
+
+
+_REQUEST_MODE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "request_mode",
+        "description": (
+            "Попросить пользователя включить режим (кнопку у поля ввода). "
+            "Используй, если задача существенно выигрывает от режима, а он "
+            "выключен: agent — многошаговая автономная работа, computer — "
+            "действия в приложениях/на экране, camera — посмотреть на что-то "
+            "живое, budget — ограничить расходы. Ответ придёт в результате."),
+        "parameters": {"type": "object", "properties": {
+            "mode": {"type": "string",
+                     "enum": ["agent", "computer", "camera", "budget"]},
+            "reason": {"type": "string",
+                       "description": "коротко, зачем нужен режим"},
+        }, "required": ["mode", "reason"]},
+    },
+}
+
+
+def _timed_call(name: str, args: Dict[str, Any]) -> tuple:
+    """Исполнить инструмент и вернуть (result, elapsed) — общее для обоих путей."""
+    started = time.time()
+    result = tools.call(name, args)
+    return result, round(time.time() - started, 2)
+
+
+TOOL_KEEP_FULL = 6          # сколько последних результатов инструментов читать целиком
+TOOL_STUB_CHARS = 280       # длина сжатой версии старого результата
+RESULT_CAP_CHARS = 9000     # потолок одного свежего результата в контексте
+
+
+def is_tool_payload_answer(text: str) -> bool:
+    """Ответ модели — сырой JSON-конверт результата инструмента?
+
+    Слабые модели делают две ошибки: ВЫДУМАВАЮТ «результат инструмента»
+    (печатают `{"ok": true, "query": …}` вместо настоящего вызова) или
+    ДОСЛОВНО ПОВТОРЯЮТ служебный JSON, который им вернул инструмент.
+    В обоих случаях человек видит `{"ok": true, …}` вместо ответа.
+    Ловим только вырожденный случай: ответ ЦЕЛИКОМ является таким конвертом.
+    """
+    t = (text or "").strip()
+    if len(t) < 24 or not (t.startswith("{") or t.startswith("```")):
+        return False
+    fence = re.search(r"```(?:json)?\s*(\{.*\})\s*```", t, re.S)
+    if fence:
+        t = fence.group(1).strip()
+    if not (t.startswith("{") and t.endswith("}")):
+        return False
+    try:
+        obj = json.loads(t)
+    except Exception:
+        # недорезанный хвост модель всё равно выдаёт за готовый ответ
+        return '"ok"' in t[:400] or '"results"' in t[:400]
+    return isinstance(obj, dict) and ("ok" in obj or "results" in obj)
+
+
+def local_answer_from_results(convo: List[Dict[str, Any]]) -> str:
+    """Локальный человеческий пересказ результатов инструментов.
+
+    Последний рубеж, когда модель отказывается отвечать текстом и повторяет
+    сырой JSON: собираем короткую выжимку из реальных результатов, чтобы
+    человек получил данные, а не служебный конверт.
+    """
+    parts: List[str] = []
+    for msg in reversed(convo):
+        if msg.get("role") != "tool" or len(parts) >= 3:
+            continue
+        try:
+            data = json.loads(msg.get("content") or "{}")
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        name = msg.get("name") or "инструмент"
+        if data.get("error"):
+            parts.append("%s — ошибка: %s" % (name, str(data["error"])[:160]))
+        elif isinstance(data.get("results"), list) and data["results"]:
+            titles = [str((r or {}).get("title") or "")[:100]
+                      for r in data["results"][:6] if isinstance(r, dict)]
+            titles = [t for t in titles if t]
+            if titles:
+                parts.append("%s нашёл: %s" % (name, "; ".join(titles)))
+        elif isinstance(data.get("body"), str):
+            try:
+                inner = json.loads(data["body"])
+                flat = "; ".join("%s=%s" % (k, v)
+                                 for k, v in list(inner.items())[:4]
+                                 if not isinstance(v, (dict, list)))
+                parts.append("%s: HTTP %s — %s" % (name, data.get("status"), flat[:280]))
+            except Exception:
+                parts.append("%s: получил %d символов данных" % (name, len(data["body"])))
+        elif isinstance(data.get("text"), str) and data["text"].strip():
+            parts.append("%s: %s" % (name, data["text"][:200]))
+    if not parts:
+        return ""
+    return ("Вот данные, которые я достал по запросу:\n- " +
+            "\n- ".join(parts[:3]) +
+            "\n\n(Модель дважды пыталась ответить сырым JSON — пересказ собрал локально.)")
+
+
+def _compact_convo(convo: List[Dict[str, Any]]) -> None:
+    """Сжать старые результаты инструментов в контексте прогона.
+
+    Каждый шаг агента отправлял ВСЕ предыдущие tool-результаты целиком
+    (до 14k символов каждый): на пятнадцатом шаге префилл измерялся десятками
+    тысяч токенов, и стоило это как полноценный «большой» запрос. Модельу для
+    работы нужны свежие результаты; старым достаточно заглушки-выжимки.
+    Идемпотентно: уже сжатые сообщения не трогаем (по маркеру)."""
+    tool_idx = [i for i, m in enumerate(convo)
+                if m.get("role") == "tool" and isinstance(m.get("content"), str)]
+    for i in tool_idx[:-TOOL_KEEP_FULL] if len(tool_idx) > TOOL_KEEP_FULL else []:
+        content = convo[i]["content"]
+        if len(content) <= TOOL_STUB_CHARS or content.endswith("…(сжато)"):
+            continue
+        convo[i]["content"] = content[:TOOL_STUB_CHARS] + " …(сжато)"
+
+
+def _closing_convo(convo: List[Dict[str, Any]], tier: str) -> List[Dict[str, Any]]:
+    """Лёгкий контекст для итогового ответа.
+
+    Раньше «Подведи итог» отправлял полный convo повторно: системный промпт,
+    вся история и все результаты инструментов оплачивались второй раз, хотя
+    для короткого итога хватает выжимки выполненных шагов."""
+    parts: List[str] = []
+    for msg in convo:
+        role = msg.get("role")
+        if role == "user":
+            c = str(msg.get("content") or "")
+            if c and not c.startswith("[Система]"):
+                parts.append("Задача: " + c[:500])
+        elif role == "tool":
+            try:
+                data = json.loads(msg.get("content") or "{}")
+            except Exception:
+                data = {}
+            ok = "ок" if isinstance(data, dict) and data.get("ok") else "ошибка"
+            brief = str((data or {}).get("error") or (data or {}).get("summary")
+                        or (data or {}).get("path") or (data or {}).get("title")
+                        or (data or {}).get("query") or "")[:160]
+            parts.append("- %s (%s)%s" % (msg.get("name") or "?", ok,
+                                          ": " + brief if brief else ""))
+        elif role == "assistant" and msg.get("content"):
+            parts.append("Промежуточно: " + str(msg["content"])[:200])
+    digest = "\n".join(parts)[-6000:]
+    return [
+        {"role": "system", "content":
+            "Ты JARVIS, персональный ИИ-агент. Отвечай кратко, по-русски, markdown."},
+        {"role": "user", "content":
+            "Журнал выполненной работы:\n%s\n\n"
+            "Подведи итог выполненной работы для пользователя: что сделано и результат. "
+            "Кратко, markdown, по-русски. Не печатай вызовы инструментов." % digest},
+    ]
+
+
+def _file_info_of(result: Any) -> Optional[Dict[str, Any]]:
+    """Файловая карточка из результата инструмента, если тот создал файл."""
+    if not (isinstance(result, dict) and result.get("download_url")):
+        return None
+    return {"name": result.get("path") or result.get("name"),
+            "url": result["download_url"], "size": result.get("size", 0),
+            "kind": "image" if str(result.get("path", "")).lower().endswith(
+                (".png", ".jpg", ".jpeg", ".gif", ".webp")) else "file"}
+
+
 class Agent:
     """Один прогон агента (чат-ответ или фоновая задача)."""
 
@@ -978,12 +1340,25 @@ class Agent:
         # равно создавал отдельный облачный запрос перед каждым заданием.
         self.visible_plan = visible_plan
         self.cancel_check = cancel_check
+        # Смена модели по ходу ответа (switch_model): применяется в начале шага
+        self._tier_override: Optional[str] = None
+        # Бюджет прогона в рублях (None = без лимита). Проверяется перед каждым
+        # платным ходом модели; при исчерпании агент спрашивает, продолжать ли.
+        self.budget_rub: Optional[float] = None
+        self._spent_rub = 0.0
+        # ПРЯМОЕ ЗРЕНИЕ: в режиме «Компьютер» управляющей моделью становится
+        # зрячая, и кадр уходит ей картинкой. Раньше каждый шаг стоил ДВА
+        # запроса (зрячая описывает кадр словами + слепая решает) — вдвое
+        # дороже и медленнее, а точность терялась в пересказе.
+        self._vision_direct = bool(computer_use and any(
+            llm.vision_models(prov) for prov in (llm.active_providers() or [])))
         self.sandbox_id = chat_id or ""
         self.created_files: List[Dict[str, Any]] = []
         self.used_tools: List[str] = []
         self.model_used = ""
         self.plan_len = 0          # сколько шагов в плане (0 — плана нет)
         self.plan_at = 0           # какой шаг идёт сейчас
+        self._plan_marked = False  # модель уже помечала шаги через [ШАГ N]
         self.plan_steps: List[str] = []   # формулировки шагов для prompt/UI
         self.show_thinking = False # показывать ли ход мыслей (решается по ходу)
 
@@ -1043,19 +1418,70 @@ class Agent:
 
     # ---------------------------------------------------- результат вызова
     @staticmethod
-    def _append_tool_result(convo: List[Dict[str, Any]], call: Dict[str, Any], name: str,
+    def _sanitize_frame(result: Dict[str, Any]) -> str:
+        """Вычистить тяжёлые поля кадра; вернуть data_url (пустой, если не было).
+
+        Кадр — рабочие данные агента: в событиях браузера не должно быть ни
+        base64, ни ссылки на файл (картинка в чате = не результат работы),
+        а сам файл не должен копиться в песочнице диалога."""
+        data_url = str(result.pop("data_url", "") or "")
+        rel = str(result.pop("path", "") or "")
+        result.pop("download_url", None)
+        result.pop("bytes", None)
+        if rel:
+            try:
+                (sandbox.root() / rel).unlink(missing_ok=True)
+            except Exception:
+                pass
+        return data_url
+
+    def _append_tool_result(self, convo: List[Dict[str, Any]], call: Dict[str, Any], name: str,
                             result: Any, from_text: bool) -> None:
-        # Скриншот — картинка, а модель, которая умеет вызывать инструменты,
-        # обычно не умеет смотреть. Поэтому кадр сначала «переводит в слова»
-        # зрительная модель, и управляющая модель получает готовые координаты.
         if name == "screenshot" and isinstance(result, dict) and result.get("ok"):
-            data_url = result.pop("data_url", "")
-            if data_url:
+            data_url = self._sanitize_frame(result)
+            if self._vision_direct and data_url:
+                # ПРЯМОЕ ЗРЕНИЕ: кадр уходит управляющей модели картинкой.
+                # Отдельный describe-запрос не нужен: в 2 раза дешевле и быстрее
+                # прежней связки «зрячая опишет — слепая решит».
+                scale = result.get("scale")
+                note = ("[СИСТЕМА] Актуальный кадр экрана приложен картинкой. "
+                        "Координаты считай по самой картинке: %d×%d px."
+                        % (result.get("width") or 0, result.get("height") or 0))
+                if scale and scale != 1:
+                    note += (" Кадр уменьшен: реальные координаты экрана = "
+                             "координаты картинки × %.4g." % (1.0 / float(scale)))
+                # в контексте живёт только последний кадр: старые картинки
+                # заменяем текстом, префилл не растёт с числом шагов
+                for msg in convo:
+                    if (msg.get("role") == "user" and isinstance(msg.get("content"), list)
+                            and msg["content"] and isinstance(msg["content"][0], dict)
+                            and str(msg["content"][0].get("text") or "").startswith("[КАДР]")):
+                        msg["content"] = "[КАДР] Предыдущий кадр устарел — сделай свежий screenshot."
+                convo.append({"role": "user", "content": [
+                    {"type": "text", "text": note.replace("[СИСТЕМА]", "[КАДР]", 1)},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ]})
+            elif data_url:
+                # управляющая модель слепа: кадр переводит в слова зрячая
                 result["screen"] = _describe_screen(data_url, result)
+            # в контексте остаётся только последняя словесная карта экрана
+            for msg in convo:
+                if (msg.get("role") == "tool" and msg.get("name") == "screenshot"
+                        and isinstance(msg.get("content"), str)):
+                    try:
+                        old = json.loads(msg["content"])
+                    except Exception:
+                        continue
+                    if isinstance(old, dict) and old.get("screen"):
+                        old["screen"] = "(карта предыдущего кадра опущена: сделай свежий screenshot)"
+                        try:
+                            msg["content"] = json.dumps(old, ensure_ascii=False)
+                        except Exception:
+                            pass
 
         payload = json.dumps(result, ensure_ascii=False)
-        if len(payload) > 14000:
-            payload = payload[:14000] + "…(обрезано)"
+        if len(payload) > RESULT_CAP_CHARS:
+            payload = payload[:RESULT_CAP_CHARS] + "…(обрезано)"
         if from_text:
             convo.append({
                 "role": "user",
@@ -1084,34 +1510,78 @@ class Agent:
         if not text:
             return []
         tools_hint = ", ".join(str(x) for x in (starting_tools or []) if x) or "не указан"
-        try:
-            result = llm.chat([
-                {"role": "system", "content":
-                 "Ты лаконичный планировщик автономного AI-агента. Разбей именно "
-                 "эту задачу на 3–6 конкретных, различимых и проверяемых шагов на "
-                 "русском. Называй предмет и результат задачи, не используй общие "
-                 "заглушки вроде «разобрать задачу», «выполнить действия», "
-                 "«представить итог». Не выдумывай уже полученные результаты. "
-                 "Ответь ТОЛЬКО JSON-массивом строк без markdown и пояснений."},
-                {"role": "user", "content":
-                 "Задача: %s\nПервый выбранный агентом инструмент: %s" % (text, tools_hint)},
-            ], tier="nano", max_tokens=320, temperature=0.2, timeout=5,
-               operation="planner")
-            steps = parse_plan_steps(result.get("content", ""))
-            return steps if 3 <= len(steps) <= 6 else []
-        except Exception:
-            return []
+        # ПЛАН В AGENT — ВСЕГДА. Планировщик — дешёвая nano-модель, но и она
+        # способна ответить ошибкой или мусором. Раньше это означало «плана
+        # нет вообще» и пользователь смотрел, как агент работает вслепую.
+        # Теперь: вторая попытка с запасом времени, затем честный локальный
+        # план с предметом задачи — не идеальный, но всегда есть.
+        for attempt in (1, 2):
+            try:
+                result = llm.chat([
+                    {"role": "system", "content":
+                     "Ты лаконичный планировщик автономного AI-агента. Разбей именно "
+                     "эту задачу на 3–6 конкретных, различимых и проверяемых шагов на "
+                     "русском. Называй предмет и результат задачи, не используй общие "
+                     "заглушки вроде «разобрать задачу», «выполнить действия», "
+                     "«представить итог». Не выдумывай уже полученные результаты. "
+                     "ОСНОВНУЮ работу распредели РАВНОМЕРНО по средним шагам: каждый "
+                     "шаг — законченная часть результата, а не подготовка; последний "
+                     "шаг — только финальная проверка и сдача. Каждый шаг — ёмкая "
+                     "фраза до 6 слов. "
+                     "Ответь ТОЛЬКО JSON-массивом строк без markdown и пояснений."},
+                    {"role": "user", "content":
+                     "Задача: %s\nПервый выбранный агентом инструмент: %s" % (text, tools_hint)},
+                ], tier="nano", max_tokens=320, temperature=0.2,
+                   timeout=5 if attempt == 1 else 9, operation="planner")
+                steps = parse_plan_steps(result.get("content", ""))
+                if 3 <= len(steps) <= 6:
+                    return steps
+            except Exception:
+                continue
+        subject = text[:64].rstrip() + ("…" if len(text) > 64 else "")
+        return [
+            "%s: собрать вводные и материалы" % subject,
+            "%s: выполнить основную часть (%s)" % (subject, tools_hint),
+            "%s: проверить результат и исправить детали" % subject,
+        ]
 
     # ------------------------------------------------------------------ run
     def run(self, messages: List[Dict[str, Any]], user_text: str = "",
             has_image: bool = False, require_ui_choice: bool = False,
             preflight_resolved: bool = False) -> Generator[Dict[str, Any], None, None]:
+        # Лимит ₽ видит КАЖДЫЙ платный вызов прогона: sink в llm собирает
+        # usage со стрима, обычных chat, vision, планировщика и сводок.
+        # Контекст-переменная переживает и потоки параллельных инструментов.
+        token = llm._USAGE_SINK.set(self._sink_usage)
+        try:
+            yield from self._run_body(messages, user_text, has_image,
+                                      require_ui_choice, preflight_resolved)
+        finally:
+            llm._USAGE_SINK.reset(token)
+
+    def _sink_usage(self, model: str, prompt_tokens: int, completion_tokens: int) -> None:
+        try:
+            if prompt_tokens or completion_tokens:
+                self._spent_rub += llm.estimate_cost(
+                    str(model or self.model_used or ""),
+                    int(prompt_tokens), int(completion_tokens))
+        except Exception:
+            pass
+
+    def _run_body(self, messages: List[Dict[str, Any]], user_text: str = "",
+                  has_image: bool = False, require_ui_choice: bool = False,
+                  preflight_resolved: bool = False) -> Generator[Dict[str, Any], None, None]:
         # каждый диалог работает в своей песочнице
         sandbox.set_chat(self.sandbox_id)
         route = orchestrator.choose_tier(
             user_text, has_image=has_image, agent_mode=self.agent_mode, has_tools=True,
             computer_use=self.computer_use)
         tier = route["tier"]
+        # В режиме «Компьютер» управляющая модель обязана ВИДЕТЬ: кадров больше
+        # не описывает отдельная зрячая — картинка идёт прямо в контекст.
+        if self._vision_direct and tier != "vision":
+            tier = "vision"
+            route = dict(route, tier=tier, reason="управление компьютером: зрячая модель")
         social_only = orchestrator.is_social_only(user_text)
         # Социальный gate сильнее положения AGENT-тумблера. «Привет» остаётся
         # одной обычной репликой: без плана, кухни и последующего reply UI.
@@ -1126,7 +1596,17 @@ class Agent:
         # ДО работы и честно говорим, что включить, — одним сообщением.
         if self.computer_use:
             from .tools import system as _sys
-            if _sys.IS_MAC and not _sys.accessibility_ok():
+            if not _sys.IS_MAC:
+                # На Windows/Linux каждый инструмент по одному отвечал бы
+                # «поддержано для macOS», и агент бессмысленно тратил шаги.
+                denied = ("Управление компьютером сейчас поддерживается только на "
+                          "macOS — на этой системе я не могу двигать курсор и "
+                          "нажимать клавиши. Всё остальное (поиск, файлы, код, "
+                          "картинки) работает как обычно.")
+                yield {"type": "delta", "text": denied}
+                yield {"type": "done", "content": denied, "files": [], "tools": []}
+                return
+            if not _sys.accessibility_ok():
                 yield {"type": "delta", "text": _sys._NO_ACCESS_HINT}
                 yield {"type": "done", "content": _sys._NO_ACCESS_HINT,
                        "files": [], "tools": []}
@@ -1148,6 +1628,27 @@ class Agent:
             # этот tool физически не выдаётся модели; ожидание завершает turn.
             available = [schema for schema in available
                          if (schema.get("function") or {}).get("name") != "ask_user"]
+        # request_mode — не инструмент работы, а диалог о режимах: доступен
+        # всегда, когда модель вообще видит инструменты (дешёвой болтовне
+        # предлагать режимы незачем).
+        if route.get("offer_tools", True):
+            available = available + [_REQUEST_MODE_SCHEMA, {
+                "type": "function",
+                "function": {
+                    "name": "switch_model",
+                    "description": (
+                        "Сменить модель ДЛЯ СЛЕДУЮЩИХ ходов этого ответа. Вызывай, "
+                        "когда задача изменилась: понадобился код — coder, сложные "
+                        "рассуждения — smart, смотреть картинку — vision, "
+                        "простая болтовня — base."),
+                    "parameters": {"type": "object", "properties": {
+                        "tier": {"type": "string",
+                                 "enum": ["nano", "base", "coder", "smart", "vision"]},
+                        "reason": {"type": "string",
+                                   "description": "коротко, зачем"},
+                    }, "required": ["tier", "reason"]},
+                },
+            }]
         if not route.get("offer_tools", True):
             # оркестратор отдал реплику дешёвой модели именно потому, что
             # инструменты тут не нужны — не суём их ей в руки
@@ -1182,6 +1683,19 @@ class Agent:
             self.plan_len = len(plan)
             self.plan_steps = list(plan)
             self.plan_at = 1
+            # ПЛАН ВИДИТ И МОДЕЛЬ, а не только интерфейс. Раньше шаги уходили
+            # только событием в браузер: модель о плане не знала, «шла» по нему
+            # счётчиком ходов, и вся реальная работа сваливалась в последний
+            # шаг. Теперь план лежит в контексте с честным правилом pacing-а.
+            convo.append({"role": "system", "content":
+                "ПЛАН РАБОТЫ (уже показан пользователю, обязательный):\n" +
+                "\n".join("%d. %s" % (i + 1, st) for i, st in enumerate(plan)) +
+                "\nСледуй плану ЧЕСТНО: каждый шаг — законченная часть работы. "
+                "Начало реальной работы над шагом N помечай строкой [ШАГ N] "
+                "в начале ответа. Запрещено отмечать шаги подряд «для галочки» "
+                "и делать всю работу одним последним шагом: содержимое шага — "
+                "суть, а не заголовок. Последний шаг — проверка и сдача "
+                "результата, а не основная работа."})
             return [
                 {"type": "plan", "steps": list(plan)},
                 {"type": "plan_step", "step": 1},
@@ -1208,6 +1722,9 @@ class Agent:
         final_text = ""
         reply_ui_sent = False
         retried_claim = False          # ловушку вранья взводим один раз за прогон
+        payload_guard_used = False     # сырой JSON вместо ответа — один retry за прогон
+        plan_nudged = False            # напоминание про [ШАГ N] — не чаще одного раза
+        advanced_this_turn = False     # шаг плана за ход продвигается максимум один раз
         preflight_retry = False        # после общей панели цепочка вопросов запрещена
         choice_failures = 0            # максимум одна перепроверка model output
         seen_calls: Dict[str, int] = {}   # защита от зацикливания на одном вызове
@@ -1225,6 +1742,18 @@ class Agent:
         for step in range(max_steps):
             if self._cancelled():
                 return
+            # Лимит рублей: проверка ДО следующего платного хода. Исчерпан —
+            # агент спрашивает: увеличить, отключить или остановиться.
+            if self.budget_rub and self._spent_rub >= self.budget_rub:
+                decision = yield from self._budget_gate()
+                if decision == "stop":
+                    final_text = (final_text or
+                                  "Остановлено: лимит %.0f ₽ на этот ответ исчерпан "
+                                  "(потрачено %.2f ₽)." % (self.budget_rub, self._spent_rub))
+                    break
+            # модель сменили по ходу ответа — следующие ходы на новом тарифе
+            if self._tier_override and tier != self._tier_override:
+                tier = self._tier_override
             # phase="think" — это то самое ожидание перед первым словом ответа.
             # Фронт по нему показывает мигающий курсор вместо крутилки; угадывать
             # состояние по тексту статуса он не должен.
@@ -1234,7 +1763,10 @@ class Agent:
                 # Новый модельный ход после инструмента — естественная граница
                 # проверки результата. План двигается здесь, но дополнительный
                 # облачный вызов только ради смены сегмента не создаётся.
-                if self.used_tools and self.plan_at and self.plan_at < self.plan_len:
+                # до первой пометки модели счётчик едет по ходам (fallback),
+                # чтобы план не «завис» на первом шаге у слабой модели
+                if (self.used_tools and self.plan_at and self.plan_at < self.plan_len
+                        and not self._plan_marked):
                     for progress in self._advance_plan(self.plan_at + 1):
                         yield progress
                 # дошли до второго хода — значит одним ответом не обошлось:
@@ -1242,9 +1774,15 @@ class Agent:
                 self.show_thinking = True
                 yield {"type": "status", "text": "Проверяю результат" if self.used_tools
                        else "Продолжаю работу"}
+                # Экономия префилла: старые результаты инструментов сжимаются.
+                # Полными остаются последние TOOL_KEEP_FULL — для контекста
+                # «что я только что сделал» их хватает; десятый шаг больше не
+                # перечитывает все девять предыдущих результатов целиком.
+                _compact_convo(convo)
             acc_text: List[str] = []
             tool_calls: List[Dict[str, Any]] = []
             stream_failed = None
+            advanced_this_turn = False
             # «шлюз»: пока начало ответа похоже на текстовый вызов инструмента,
             # ничего не показываем пользователю — иначе в чат попадёт мусор
             # вида function schedule_task({...}). Пока plan ещё не объявлен,
@@ -1255,7 +1793,8 @@ class Agent:
 
             for event in llm.chat_stream(
                     convo, tier=tier, tools=available,
-                    operation="auto_model" if self.task_id else "foreground_model"):
+                    operation="auto_model" if self.task_id else "foreground_model",
+                    should_stop=self.cancel_check):
                 if self._cancelled():
                     return
                 etype = event.get("type")
@@ -1294,9 +1833,14 @@ class Agent:
                         # если она обогнала наш счётчик
                         for mark in re.finditer(r"\[\s*ШАГ\s*(\d+)\s*\]", "".join(acc_text)):
                             n = int(mark.group(1))
-                            if 0 < n <= self.plan_len and n > self.plan_at:
-                                for progress in self._advance_plan(n):
-                                    yield progress
+                            if 0 < n <= self.plan_len:
+                                # пометки модели — ФАКТ её реальной работы.
+                                # Сама первая пометка выключает автопродвижение:
+                                # дальше счётчик едет только по её пометкам.
+                                self._plan_marked = True
+                                if n > self.plan_at:
+                                    for progress in self._advance_plan(n):
+                                        yield progress
                     if gate_open:
                         if not defer_plan_decision:
                             yield {"type": "delta", "text": event["text"]}
@@ -1316,12 +1860,19 @@ class Agent:
                            "group": tools.group_of(event.get("name", ""))}
                 elif etype == "done":
                     tool_calls = event.get("tool_calls") or []
-                    if event.get("reasoning") and not acc_text:
-                        pass
                 elif etype == "error":
                     stream_failed = event.get("error")
 
             if stream_failed and not acc_text and not tool_calls:
+                # Прямое зрение не принял провайдер (картинка в контексте)?
+                # Один раз честно переключаемся на прежний путь «кадр → слова»
+                # и повторяем ход, вместо того чтобы сдаться ошибкой.
+                if self._vision_direct and not getattr(self, "_vision_fell_back", False):
+                    self._vision_direct = False
+                    self._vision_fell_back = True
+                    yield {"type": "status",
+                           "text": "Кадр картинкой не прошёл — переключаюсь на описание словами"}
+                    continue
                 higher = orchestrator.escalate(tier)
                 if higher:
                     tier = higher
@@ -1586,6 +2137,29 @@ class Agent:
                 gate_open = True
 
             if not tool_calls:
+                # СЫРОЙ JSON ВМЕСТО ОТВЕТА. Слабая модель либо выдумала
+                # «результат инструмента» (json с ok/query/engine, хотя вызова
+                # не было), либо дословно повторила служебной JSON, который ей
+                # вернул инструмент. Пользователь видит `{"ok": true, …}` —
+                # это не ответ. Один раз возвращаем модель к работе; повтор —
+                # честный локальный пересказ реальных результатов.
+                if text_piece and is_tool_payload_answer(text_piece) and not payload_guard_used:
+                    payload_guard_used = True
+                    if gate_open:
+                        yield {"type": "reset"}
+                        gate_open = False
+                    convo.append({"role": "assistant", "content": text_piece})
+                    convo.append({"role": "user", "content":
+                                  "Ты ответил СЫРЫМ JSON-результатом инструмента — "
+                                  "так ответ пользователю не показывают. Если "
+                                  "инструмент реально не был вызван — вызови его "
+                                  "сейчас штатным function calling. Если результат "
+                                  "уже есть — перескажи его обычным русским текстом, "
+                                  "кратко и по делу. Пользователь просил именно "
+                                  "JSON-файл — создай его инструментом и скажи "
+                                  "словами, что он готов."})
+                    yield {"type": "status", "text": "Готовлю нормальный ответ"}
+                    continue
                 # Текстовый результат закрывает оставшиеся фазы одним
                 # естественным model turn. Сегменты всё равно проходят по порядку,
                 # но мы больше не платим за пустые «перейди к шагу N» запросы.
@@ -1593,163 +2167,377 @@ class Agent:
                     for progress in self._advance_plan(self.plan_len):
                         yield progress
                 final_text = text_piece
+                if is_tool_payload_answer(final_text):
+                    # модель УПОРНО повторяет конверт даже после замечания
+                    final_text = (local_answer_from_results(convo)
+                                  or ("Не получилось выполнить запрос: модель "
+                                      "дважды ответила служебным JSON вместо "
+                                      "вызова инструментов. Попробуй ещё раз."))
+                    yield {"type": "reset"}
+                    yield {"type": "delta", "text": final_text}
                 break
 
             # Первый реальный вызов инструмента означает переход от разбора к
             # выполнению. Это честная граница второго сегмента без model turn.
-            if self.plan_at and self.plan_at < min(2, self.plan_len):
+            if self.plan_at and self.plan_at < min(2, self.plan_len) and not self._plan_marked:
                 for progress in self._advance_plan(2):
                     yield progress
 
-            # модель решила вызвать инструменты
-            if from_text:
-                # вызов был напечатан текстом: у модели нет полноценного tool-протокола,
-                # поэтому результаты вернём обычным системным сообщением
-                convo.append({"role": "assistant",
-                              "content": text_piece or "Вызываю инструменты."})
-            else:
-                convo.append({
-                    "role": "assistant",
-                    "content": text_piece or None,
-                    "tool_calls": tool_calls,
-                })
-            if text_piece.strip():
-                final_text = text_piece
-
+            # ---------- подготовка и исполнение вызовов ----------
+            parsed_calls: List[Dict[str, Any]] = []
             for call in tool_calls:
+                fn = call.get("function", {})
+                cname = fn.get("name", "")
+                try:
+                    cargs = json.loads(fn.get("arguments") or "{}")
+                except Exception:
+                    cargs = {}
+                if not isinstance(cargs, dict):
+                    cargs = {}
+                parsed_calls.append({"call": call, "name": cname, "args": cargs})
+
+            def _parallel_safe(item: Dict[str, Any]) -> bool:
+                """Можно ли исполнять вызов без участия человека и без порядка на экране."""
+                pname, pargs = item["name"], item["args"]
+                if pname not in allowed_tool_names or \
+                        pname in ("ask_user", "request_mode", "switch_model"):
+                    return False
+                if tools.group_of(pname) == "computer":
+                    return False   # действия на экране строго последовательны
+                if needs_approval(pname, pargs, computer_use=self.computer_use):
+                    return False   # подтверждение — диалог с человеком
+                return True
+
+            if len(parsed_calls) > 1 and all(_parallel_safe(it) for it in parsed_calls):
+                # НЕЗАВИСИМЫЕ ВЫЗОВЫ ОДНОГО ХОДА ИДУТ ПАРАЛЛЕЛЬНО. Модель
+                # нередко просит сразу поискать в двух источниках и прочитать
+                # страницу; последовательный запуск складывал задержки, хотя
+                # результаты друг от друга не зависят. Песочница диалога живёт
+                # в contextvars — каждый worker получает копию контекста этого
+                # потока, поэтому файлы по-прежнему ложатся в нужный каталог.
+                jobs: List[Dict[str, Any]] = []
+                for item in parsed_calls:
+                    jname, jargs = item["name"], item["args"]
+                    jsig = jname + "|" + json.dumps(jargs, sort_keys=True, ensure_ascii=False)
+                    if jname == "generate_image" and jsig in completed_calls:
+                        jobs.append({**item, "kind": "cached", "sig": jsig,
+                                     "result": completed_calls[jsig]})
+                        continue
+                    seen_calls[jsig] = seen_calls.get(jsig, 0) + 1
+                    if seen_calls[jsig] > 2:
+                        jobs.append({**item, "kind": "dup", "sig": jsig, "result": {
+                            "ok": False,
+                            "error": "Этот вызов с теми же аргументами уже повторялся. "
+                                     "Результат не изменится. Смени подход или дай ответ."}})
+                        continue
+                    jobs.append({**item, "kind": "run", "sig": jsig})
+
+                run_jobs = [job for job in jobs if job["kind"] == "run"]
+                for job in run_jobs:
+                    self.used_tools.append(job["name"])
+                    yield {"type": "tool_start", "id": job["call"].get("id"), "name": job["name"],
+                           "label": tools.label_of(job["name"]), "args": job["args"],
+                           "group": tools.group_of(job["name"]),
+                           "risk": tools.risk_of(job["name"]),
+                           "wait_visual": tools.has_wait_visual(job["name"])}
+
+                with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=min(4, len(run_jobs)),
+                        thread_name_prefix="jarvis-tools") as pool:
+                    futures = {
+                        pool.submit(contextvars.copy_context().run,
+                                    _timed_call, job["name"], job["args"]): job
+                        for job in run_jobs}
+                    for future in concurrent.futures.as_completed(futures):
+                        if self._cancelled():
+                            return
+                        job = futures[future]
+                        result, elapsed = future.result()
+                        job["result"] = result
+                        # кадр sanitized ДО события: base64 и ссылки не ходят
+                        # по SSE (сотни КБ на каждый скриншот)
+                        if job["name"] == "screenshot" and isinstance(result, dict):
+                            self._sanitize_frame(result)
+                        if (job["name"] == "generate_image" and isinstance(result, dict)
+                                and result.get("ok")):
+                            completed_calls[job["sig"]] = dict(result)
+                        # Служебные «глаза» (screenshot) не создают пользовательских
+                        # файлов: кадр — рабочие данные агента, а не результат,
+                        # и картинкой в чат он не отправляется.
+                        if not tools.is_silent(job["name"]):
+                            info = _file_info_of(result)
+                            if info:
+                                self.created_files.append(info)
+                                yield {"type": "file", **info}
+                        yield {"type": "tool_result", "id": job["call"].get("id"),
+                               "name": job["name"], "result": result, "elapsed": elapsed}
+                        # План двигается ФАКТОМ работы, но НЕ чаще одного шага
+                        # за ход: параллельные результаты приходят почти
+                        # одновременно, и продвижение на каждый из них
+                        # «простреливало» весь план за один ход — вся работа
+                        # визуально сваливалась в последний шаг. Если модель
+                        # помечает шаги сама — верим только её пометкам.
+                        if not self._plan_marked and not advanced_this_turn:
+                            advanced_this_turn = True
+                            for progress in self._advance_plan(min(self.plan_at + 1,
+                                                                   self.plan_len)):
+                                yield progress
                 if self._cancelled():
                     return
-                fn = call.get("function", {})
-                name = fn.get("name", "")
-                try:
-                    args = json.loads(fn.get("arguments") or "{}")
-                except Exception:
-                    args = {}
-                if not isinstance(args, dict):
-                    args = {}
+                # в convo результаты ложатся строго в исходном порядке вызовов:
+                # для модели порядок наблюдений стабилен и воспроизводим
+                for job in jobs:
+                    self._append_tool_result(convo, job["call"], job["name"],
+                                             job.get("result"), from_text)
+            else:
+                for call in tool_calls:
+                    if self._cancelled():
+                        return
+                    fn = call.get("function", {})
+                    name = fn.get("name", "")
+                    try:
+                        args = json.loads(fn.get("arguments") or "{}")
+                    except Exception:
+                        args = {}
+                    if not isinstance(args, dict):
+                        args = {}
 
-                # Function-calling и распознавание текстовых вызовов сходятся
-                # здесь. Никакой из этих путей не вправе обойти набор схем,
-                # реально выданный модели в данном прогоне.
-                if name not in allowed_tool_names:
-                    self._append_tool_result(convo, call, name, {
-                        "ok": False,
-                        "error": "Этот инструмент недоступен в текущем диалоге.",
-                    }, from_text)
-                    continue
-
-                # Модель может залипнуть, повторяя один и тот же вызов с теми же
-                # аргументами. Для генерации повтор нельзя даже dispatch-ить:
-                # это не только лишняя цена, но и второй файл в одном ответе.
-                # Полная canonical JSON-строка: обрезка до 300 знаков делала два
-                # разных длинных промпта «одним вызовом» и ошибочно съедала второй.
-                sig = name + "|" + json.dumps(args, sort_keys=True, ensure_ascii=False)
-                if name == "generate_image" and sig in completed_calls:
-                    self._append_tool_result(convo, call, name, completed_calls[sig], from_text)
-                    continue
-                seen_calls[sig] = seen_calls.get(sig, 0) + 1
-                if seen_calls[sig] > 2:
-                    self._append_tool_result(convo, call, name, {
-                        "ok": False,
-                        "error": "Этот вызов с теми же аргументами уже повторялся. "
-                                 "Результат не изменится. Смени подход или дай ответ.",
-                    }, from_text)
-                    continue
-
-                # Уточняющий вопрос исполняет сам агент: инструменту нужно
-                # остановиться и дождаться нажатия кнопки, а не вернуть значение.
-                if name == "ask_user":
-                    options = [o.strip() for o in
-                               str(args.get("options") or "").split("|") if o.strip()]
-                    question = str(args.get("question") or "").strip()
-                    if not question or len(options) < 2:
+                    # Function-calling и распознавание текстовых вызовов сходятся
+                    # здесь. Никакой из этих путей не вправе обойти набор схем,
+                    # реально выданный модели в данном прогоне.
+                    if name not in allowed_tool_names:
                         self._append_tool_result(convo, call, name, {
                             "ok": False,
-                            "error": "нужен непустой question и минимум два варианта "
-                                     "в options через |",
+                            "error": "Этот инструмент недоступен в текущем диалоге.",
                         }, from_text)
                         continue
-                    self.used_tools.append(name)
-                    record = self._wait_answer(question, options[:5])
-                    yield {"type": "question", "id": record["id"],
-                           "question": question, "options": options[:5],
-                           "answer": record.get("answer", ""),
-                           "status": record.get("status")}
-                    answered = record.get("status") == "answered"
-                    self._append_tool_result(convo, call, name, {
-                        "ok": answered,
-                        "answer": record.get("answer", ""),
-                    } if answered else {
-                        "ok": False,
-                        "error": "Пользователь не ответил. Действуй по самому "
-                                 "разумному варианту и скажи, какой выбрал.",
-                    }, from_text)
-                    continue
 
-                self.used_tools.append(name)
-                yield {"type": "tool_start", "id": call.get("id"), "name": name,
-                       "label": tools.label_of(name), "args": args,
-                       "group": tools.group_of(name),
-                       "risk": tools.risk_of(name),
-                       "wait_visual": tools.has_wait_visual(name)}
-
-                external_without_computer = bool(
-                    not self.computer_use and opens_external_ui(name, args))
-                reason = needs_approval(name, args, computer_use=self.computer_use)
-                # approvals_auto используется у headless AUTO для обычных
-                # серверных шагов, но не является тайным разрешением выводить
-                # GUI на Mac. Внешнее окно без включённого «Компьютера» всегда
-                # проходит через видимый вопрос до dispatch.
-                if reason and (external_without_computer or not self.approvals_auto):
-                    style = approval_style(name, args, computer_use=self.computer_use)
-                    yield {"type": "status", "text": "Жду твоего разрешения"
-                           if style == "permission" else "Жду твоего подтверждения"}
-                    yield {"type": "approval_wait", "tool": name, "label": tools.label_of(name),
-                           "args": args, "reason": reason, "style": style}
-                    decision = self._wait_approval(name, args, reason, style=style)
-                    yield {"type": "approval_done", "status": decision.get("status")}
-                    if decision.get("status") != "approved":
-                        result: Dict[str, Any] = {
+                    # Модель может залипнуть, повторяя один и тот же вызов с теми же
+                    # аргументами. Для генерации повтор нельзя даже dispatch-ить:
+                    # это не только лишняя цена, но и второй файл в одном ответе.
+                    # Полная canonical JSON-строка: обрезка до 300 знаков делала два
+                    # разных длинных промпта «одним вызовом» и ошибочно съедала второй.
+                    sig = name + "|" + json.dumps(args, sort_keys=True, ensure_ascii=False)
+                    if name == "generate_image" and sig in completed_calls:
+                        self._append_tool_result(convo, call, name, completed_calls[sig], from_text)
+                        continue
+                    seen_calls[sig] = seen_calls.get(sig, 0) + 1
+                    if seen_calls[sig] > 2:
+                        self._append_tool_result(convo, call, name, {
                             "ok": False,
-                            "error": "Пользователь отклонил действие" if decision.get("status") == "rejected"
-                            else "Время ожидания подтверждения истекло",
-                        }
-                        self._append_tool_result(convo, call, name, result, from_text)
-                        yield {"type": "tool_result", "id": call.get("id"), "name": name, "result": result}
+                            "error": "Этот вызов с теми же аргументами уже повторялся. "
+                                     "Результат не изменится. Смени подход или дай ответ.",
+                        }, from_text)
                         continue
 
-                started = time.time()
-                result = tools.call(name, args)
+                    # СМЕНА МОДЕЛИ НА ЛЕТУ: задача изменилась — следующий ход
+                    # идёт на подходящий тариф. Мгновенно и локально.
+                    if name == "switch_model":
+                        want_tier = str(args.get("tier") or "").strip().lower()
+                        why = str(args.get("reason") or "").strip()[:200]
+                        if want_tier not in ("nano", "base", "coder", "smart", "vision"):
+                            self._append_tool_result(convo, call, name, {
+                                "ok": False, "error": "tier: nano|base|coder|smart|vision",
+                            }, from_text)
+                            continue
+                        tier = want_tier
+                        self._tier_override = want_tier
+                        yield {"type": "route", "tier": tier,
+                               "reason": why or "смена модели по ходу работы"}
+                        yield {"type": "status",
+                               "text": "Переключаюсь: %s" % (TIER_RU.get(tier, tier))}
+                        self._append_tool_result(convo, call, name, {
+                            "ok": True, "tier": want_tier,
+                            "note": "следующие ходы пойдут на %s" % want_tier,
+                        }, from_text)
+                        continue
 
-                # Генерация изображения теперь целиком выполняется backend-инструментом
-                # через официальный GigaChat API. Поэтому file/tool_result не могут
-                # обогнать скачивание и сохранение JPG даже в AUTO-задаче.
-                elapsed = round(time.time() - started, 2)
-                if self._cancelled():
-                    return
+                    # РЕЖИМ ПО РАЗРЕШЕНИЮ: модель просит включить кнопку-режим.
+                    # Сама она этого сделать не может — только вопрос с кнопкой.
+                    if name == "request_mode":
+                        mode = str(args.get("mode") or "").strip().lower()
+                        reason = str(args.get("reason") or "").strip()[:400]
+                        labels = {"agent": "AGENT", "computer": "Компьютер",
+                                  "camera": "Камера", "budget": "Лимит ₽"}
+                        if mode not in labels:
+                            self._append_tool_result(convo, call, name, {
+                                "ok": False,
+                                "error": "mode должен быть agent|computer|camera|budget",
+                            }, from_text)
+                            continue
+                        if (mode == "agent" and self.agent_mode) or \
+                           (mode == "computer" and self.computer_use):
+                            self._append_tool_result(convo, call, name, {
+                                "ok": True, "enabled": True,
+                                "note": "Режим %s уже включён — работай." % labels[mode],
+                            }, from_text)
+                            continue
+                        question = ("Включить режим «%s»? Причина: %s"
+                                    % (labels[mode], reason or "не указана"))
+                        record = self._wait_answer(question, ["Включить", "Не нужно"])
+                        yield {"type": "mode_request", "id": record["id"], "mode": mode,
+                               "label": labels[mode], "reason": reason,
+                               "question": question,
+                               "answer": record.get("answer", ""),
+                               "status": record.get("status")}
+                        enabled = (record.get("status") == "answered"
+                                   and str(record.get("answer") or "").startswith("Включить"))
+                        if enabled:
+                            # Разрешение получено: режим действует с этого же прогона
+                            if mode == "agent":
+                                self.agent_mode = True
+                                # Прогон стартовал без AGENT — плана ещё нет.
+                                # Раз пользователь включил агентский режим,
+                                # план составится при первом же рабочем вызове
+                                # этого же прогона, а не со следующего сообщения.
+                                if user_text and not social_only and not plan_announced:
+                                    plan_pending = True
+                            elif mode == "computer":
+                                self.computer_use = True
+                                # инструменты экрана появляются в этом же прогоне
+                                available = tools.schemas(_tool_groups(True))
+                                if route.get("offer_tools", True):
+                                    available = available + [_REQUEST_MODE_SCHEMA]
+                                allowed_tool_names = {
+                                    (t.get("function") or {}).get("name") for t in available
+                                    if (t.get("function") or {}).get("name")}
+                            yield {"type": "mode_changed", "mode": mode, "on": True}
+                            result: Dict[str, Any] = {
+                                "ok": True, "enabled": True,
+                                "note": "Пользователь включил режим «%s». Пользуйся." % labels[mode],
+                            }
+                        else:
+                            yield {"type": "mode_declined", "mode": mode}
+                            result = {
+                                "ok": False,
+                                "error": "Пользователь не включил режим «%s». "
+                                         "Продолжай без него и не проси второй раз."
+                                         % labels[mode],
+                            }
+                        self._append_tool_result(convo, call, name, result, from_text)
+                        continue
 
-                if (name == "generate_image" and isinstance(result, dict) and result.get("ok")):
-                    completed_calls[sig] = dict(result)
+                    # Уточняющий вопрос исполняет сам агент: инструменту нужно
+                    # остановиться и дождаться нажатия кнопки, а не вернуть значение.
+                    if name == "ask_user":
+                        options = [o.strip() for o in
+                                   str(args.get("options") or "").split("|") if o.strip()]
+                        question = str(args.get("question") or "").strip()
+                        if not question or len(options) < 2:
+                            self._append_tool_result(convo, call, name, {
+                                "ok": False,
+                                "error": "нужен непустой question и минимум два варианта "
+                                         "в options через |",
+                            }, from_text)
+                            continue
+                        self.used_tools.append(name)
+                        record = self._wait_answer(question, options[:5])
+                        yield {"type": "question", "id": record["id"],
+                               "question": question, "options": options[:5],
+                               "answer": record.get("answer", ""),
+                               "status": record.get("status")}
+                        answered = record.get("status") == "answered"
+                        self._append_tool_result(convo, call, name, {
+                            "ok": answered,
+                            "answer": record.get("answer", ""),
+                        } if answered else {
+                            "ok": False,
+                            "error": "Пользователь не ответил. Действуй по самому "
+                                     "разумному варианту и скажи, какой выбрал.",
+                        }, from_text)
+                        continue
 
-                if isinstance(result, dict) and result.get("download_url"):
-                    file_info = {"name": result.get("path") or result.get("name"),
-                                 "url": result["download_url"],
-                                 "size": result.get("size", 0),
-                                 "kind": "image" if str(result.get("path", "")).lower().endswith(
-                                     (".png", ".jpg", ".jpeg", ".gif", ".webp")) else "file"}
-                    self.created_files.append(file_info)
-                    yield {"type": "file", **file_info}
+                    self.used_tools.append(name)
+                    yield {"type": "tool_start", "id": call.get("id"), "name": name,
+                           "label": tools.label_of(name), "args": args,
+                           "group": tools.group_of(name),
+                           "risk": tools.risk_of(name),
+                           "wait_visual": tools.has_wait_visual(name)}
 
-                yield {"type": "tool_result", "id": call.get("id"), "name": name,
-                       "result": result, "elapsed": elapsed}
+                    external_without_computer = bool(
+                        not self.computer_use and opens_external_ui(name, args))
+                    reason = needs_approval(name, args, computer_use=self.computer_use)
+                    # approvals_auto используется у headless AUTO для обычных
+                    # серверных шагов, но не является тайным разрешением выводить
+                    # GUI на Mac. Внешнее окно без включённого «Компьютера» всегда
+                    # проходит через видимый вопрос до dispatch.
+                    if reason and (external_without_computer or not self.approvals_auto):
+                        style = approval_style(name, args, computer_use=self.computer_use)
+                        yield {"type": "status", "text": "Жду твоего разрешения"
+                               if style == "permission" else "Жду твоего подтверждения"}
+                        yield {"type": "approval_wait", "tool": name, "label": tools.label_of(name),
+                               "args": args, "reason": reason, "style": style}
+                        decision = self._wait_approval(name, args, reason, style=style)
+                        yield {"type": "approval_done", "status": decision.get("status")}
+                        if decision.get("status") != "approved":
+                            result: Dict[str, Any] = {
+                                "ok": False,
+                                "error": "Пользователь отклонил действие" if decision.get("status") == "rejected"
+                                else "Время ожидания подтверждения истекло",
+                            }
+                            self._append_tool_result(convo, call, name, result, from_text)
+                            yield {"type": "tool_result", "id": call.get("id"), "name": name, "result": result}
+                            continue
 
-                self._append_tool_result(convo, call, name, result, from_text)
+                    result, elapsed = _timed_call(name, args)
+                    if self._cancelled():
+                        return
+
+                    if (name == "generate_image" and isinstance(result, dict) and result.get("ok")):
+                        completed_calls[sig] = dict(result)
+
+                    # Служебные «глаза» (screenshot) не создают пользовательских
+                    # файлов: кадр — рабочие данные агента, а не результат.
+                    if not tools.is_silent(name):
+                        info = _file_info_of(result)
+                        if info:
+                            self.created_files.append(info)
+                            yield {"type": "file", **info}
+
+                    # Сначала _append_tool_result: для screenshot он «переводит»
+                    # кадр в словесную карту и выкидывает тяжёлый data_url из
+                    # результата. Событие в браузер уходит уже лёгким — раньше
+                    # каждый кадр тащил по SSE сотни килобайт base64, которые
+                    # фронт всё равно не показывал.
+                    self._append_tool_result(convo, call, name, result, from_text)
+                    yield {"type": "tool_result", "id": call.get("id"), "name": name,
+                           "result": result, "elapsed": elapsed}
+                    # План двигается фактом работы, но не чаще одного шага за
+                    # ход (см. параллельную ветку): цепочка вызовов в одном
+                    # ответе — это ОДНА фаза работы, а не пять шагов плана.
+                    # Если модель помечает шаги сама — верим только её пометкам.
+                    if not self._plan_marked and not advanced_this_turn:
+                        advanced_this_turn = True
+                        for progress in self._advance_plan(min(self.plan_at + 1,
+                                                               self.plan_len)):
+                            yield progress
 
             # Следующий естественный ход модели получит результаты этих
             # инструментов и переведёт UI к фазе проверки в начале цикла.
 
+            # ПОМЕТКА ШАГОВ — ДОГОВОР, А НЕ НАДЕЖДА. Модель ни разу не
+            # написала [ШАГ N] за целый ход работы — один раз напоминаем
+            # (без платного запроса, просто сообщение в контексте). Без
+            # напоминания слабая модель «делает всю работу в последнем
+            # шаге», а счётчик приходится двигать за неё.
+            if (self.plan_len and not self._plan_marked and not plan_nudged
+                    and self.used_tools and step >= 1):
+                plan_nudged = True
+                convo.append({"role": "user", "content":
+                              "[Система] Напоминание плана: начало реальной работы "
+                              "над очередным шагом помечай строкой [ШАГ N] в начале "
+                              "ответа. Распределяй работу по шагам равномерно и не "
+                              "помечай шаги «для галочки»."})
+
         if self._cancelled():
             return
+
+        # Финальная сводка — тоже платный ход: лимит проверяется и здесь
+        if self.budget_rub and self._spent_rub >= self.budget_rub:
+            decision = yield from self._budget_gate()
+            if decision == "stop":
+                final_text = ("Остановлено: лимит %.0f ₽ на этот ответ исчерпан "
+                              "(потрачено %.2f ₽)." % (self.budget_rub, self._spent_rub))
 
         if not final_text:
             if plan and not plan_announced:
@@ -1763,12 +2551,10 @@ class Agent:
                     yield progress
             yield {"type": "status", "text": "Формулирую ответ"}
             try:
-                closing = llm.chat(convo + [{
-                    "role": "user",
-                    "content": "Подведи итог выполненной работы для пользователя: что сделано и результат. "
-                               "Кратко, markdown, по-русски. Не печатай вызовы инструментов.",
-                }], tier=tier, max_tokens=1400,
-                   operation="auto_final" if self.task_id else "foreground_final")
+                closing = llm.chat(_closing_convo(convo, tier), tier=tier,
+                                   max_tokens=1400,
+                                   operation="auto_final" if self.task_id else "foreground_final")
+
                 final_text = closing.get("content", "")
             except Exception as exc:
                 yield {"type": "error", "error": str(exc)}
@@ -1776,6 +2562,11 @@ class Agent:
             # итог тоже может прийти с напечатанным вызовом — вычищаем
             if final_text:
                 final_text = tools.parse_text_calls(final_text)[0]
+            # итог может оказаться и сырым JSON-конвертом инструмента —
+            # в чате человек должен видеть ответ, а не служебные данные
+            if is_tool_payload_answer(final_text):
+                final_text = (local_answer_from_results(convo)
+                              or self._fallback_summary())
             if final_text:
                 yield {"type": "delta", "text": final_text}
 
@@ -1819,7 +2610,71 @@ class Agent:
         # Теперь ответ завершается немедленно, а подсказки браузер запрашивает
         # отдельно (/api/replies) — они не могут задержать или сорвать ответ.
         yield {"type": "done", "content": final_text, "files": self.created_files,
-               "tools": self.used_tools, "model": self.model_used, "tier": tier}
+               "tools": self.used_tools, "model": self.model_used, "tier": tier,
+               "budget_spent": round(self._spent_rub, 2),
+               "budget_limit": (round(self.budget_rub, 2)
+                                if self.budget_rub is not None else None)}
+
+    def _add_spent(self, usage: Any, model: str,
+                   approx_prompt_chars: int = 0, approx_completion_chars: int = 0) -> None:
+        """Прибавить стоимость завершившегося вызова к счётчику прогона.
+
+        Не все провайдеры возвращают usage в стриме — тогда лимит ₽ «не видел»
+        расходов и молчал. Оценка по символам груба (≈3 символа на токен), но
+        для границы «пора спросить пользователя» её хватает с запасом."""
+        try:
+            if isinstance(usage, dict) and (usage.get("prompt_tokens")
+                                            or usage.get("completion_tokens")):
+                pt = int(usage.get("prompt_tokens") or 0)
+                ct = int(usage.get("completion_tokens") or 0)
+            else:
+                pt = int(approx_prompt_chars / 3)
+                ct = int(approx_completion_chars / 3)
+            if pt or ct:
+                self._spent_rub += llm.estimate_cost(
+                    str(model or self.model_used or ""), pt, ct)
+        except Exception:
+            pass
+
+    def _budget_gate(self) -> Generator[Dict[str, Any], None, str]:
+        """Лимит исчерпан: спросить, продолжать ли. Возвращает 'go' | 'stop'."""
+        question = ("Лимит %.0f ₽ на этот ответ исчерпан — потрачено %.2f ₽. "
+                    "Продолжаем?" % (self.budget_rub, self._spent_rub))
+        options = ["Увеличить на 10 ₽", "Увеличить на 25 ₽", "Увеличить на 50 ₽",
+                   "Отключить лимит", "Остановить"]
+        record = db.create_question(self.chat_id, question, options)
+        # событие ДО ожидания: фронт рисует жёлтую панель, пока мы ждём клика
+        yield {"type": "budget_wait", "id": record["id"], "question": question,
+               "options": options, "spent": round(self._spent_rub, 2),
+               "limit": round(self.budget_rub, 2)}
+        deadline = time.time() + 120   # без ответа — честно останавливаемся
+        answer = ""
+        while time.time() < deadline:
+            if self._cancelled():
+                db.answer_question(record["id"], "cancelled")
+                return "stop"
+            fresh = db.get_question(record["id"])
+            if fresh and fresh.get("status") == "answered":
+                answer = str(fresh.get("answer") or "")
+                break
+            time.sleep(0.5)
+        # Пользователь мог вместо кнопок панели поменять лимит монеткой ₽:
+        # ручное изменение важнее текста ответа.
+        if self.budget_rub is None:
+            return "go"
+        if self._spent_rub < self.budget_rub:
+            return "go"
+        m = re.search(r"(\d+)", answer)
+        if "увеличить" in answer.lower() and m:
+            self.budget_rub = (self.budget_rub or 0) + float(m.group(1))
+            yield {"type": "budget_update",
+                   "limit": round(self.budget_rub, 2), "spent": round(self._spent_rub, 2)}
+            return "go"
+        if "отключить" in answer.lower():
+            self.budget_rub = None
+            yield {"type": "budget_off"}
+            return "go"
+        return "stop"
 
     def _fallback_summary(self) -> str:
         """Что показать, если модель не выдала ни слова."""

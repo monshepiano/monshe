@@ -7,7 +7,6 @@ import mimetypes
 import os
 import re
 import socket
-import socketserver
 import threading
 import time
 import urllib.parse
@@ -20,9 +19,63 @@ from . import (__version__, agent, auto, billing, db, ideas, llm, orchestrator,
                sandbox, telemetry, tools)
 from .config import CONFIG, WORKSPACE, HOME
 from .tools import media
+from .tools import system as system_tools
 
 WEB_DIR = Path(__file__).parent / "web"
 VERSION = __version__
+
+# Верхний предел POST-тела: вложение до 25 МБ в base64 (~33 МБ) + JSON-обвязка.
+MAX_BODY_BYTES = 48 * 1024 * 1024
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+# Активные foreground-прогоны. Раньше Stop рвал только SSE-соединение, а сам
+# агент продолжал жить до конца: спрашивал санкции, двигал мышью, доводил
+# «молчальную» генерацию. Теперь каждый прогон регистрирует здесь свой
+# stop-флаг, и /api/chat/stop гасит его — агент видит отмену в своих
+# контрольных точках (цикл шагов, ожидание санкции/ответа, стрим).
+_RUN_STOPS: Dict[str, threading.Event] = {}
+_ACTIVE_RUNS: Dict[str, "agent.Agent"] = {}
+_RUN_LOCK = threading.Lock()
+
+
+def _stop_run(token: str) -> bool:
+    """Поставить прогону флаг отмены. True — прогон был найден и жив."""
+    with _RUN_LOCK:
+        event = _RUN_STOPS.get(token)
+    if event is None:
+        return False
+    event.set()
+    return True
+
+
+
+def _origin_allowed(origin: str, host: str) -> bool:
+    """Пропускать только same-origin и localhost.
+
+    Раньше все ответы несли ``Access-Control-Allow-Origin: *``: любая страница
+    в браузере пользователя могла прочитать локальный API (историю, память,
+    конфиг) и отправить сообщение от его имени. Теперь CORS выдаётся только
+    браузерному же источнику этого приложения (Origin совпадает с Host, что
+    покрывает и работу за обратным прокси с proxy_set_header Host $host) и
+    localhost; запросы без Origin (curl, тесты) не ограничиваются.
+
+    Origin «null» (песочница iframe на чужой странице) отвергается: отражать
+    его в ACAO значило бы дать чужой странице читать ответы.
+    """
+    if not origin:
+        return True
+    if origin.lower() == "null":
+        return False
+    try:
+        parsed = urllib.parse.urlparse(origin)
+        origin_loc = parsed.netloc.lower()
+        if not origin_loc:
+            return True
+        if parsed.hostname in ("localhost", "127.0.0.1", "::1"):
+            return True
+        return origin_loc == (host or "").lower()
+    except ValueError:
+        return False
 
 
 def _json_bytes(data: Any) -> bytes:
@@ -68,13 +121,42 @@ class Handler(BaseHTTPRequestHandler):
             super().log_message(fmt, *args)
 
     # ------------------------------------------------------------- helpers
+    def _origin_ok(self) -> bool:
+        return _origin_allowed(self.headers.get("Origin") or "",
+                               self.headers.get("Host") or "")
+
+    def _reject_origin(self) -> bool:
+        """Чужой Origin — отказать ДО выполнения логики запроса.
+
+        Проверка в момент отправки ответа была бы бесполезна: POST уже успел
+        бы удалить диалог или отправить сообщение. Сторонняя страница в
+        браузере пользователя не должна ни читать локальный API, ни действовать
+        через него.
+        """
+        if self._origin_ok():
+            return False
+        try:
+            self.send_response(403)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        except Exception:
+            pass
+        self.close_connection = True
+        return True
+
     def _send(self, code: int, body: bytes, ctype: str = "application/json; charset=utf-8",
               extra: Optional[Dict[str, str]] = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        if self._origin_ok():
+            # CORS-заголовок нужен только браузерному же источнику приложения
+            # (same-origin POST и SSE); без Origin заголовок не обязателен.
+            origin = self.headers.get("Origin")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
         for key, value in (extra or {}).items():
             self.send_header(key, value)
         self.end_headers()
@@ -86,10 +168,21 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, data: Any, code: int = 200) -> None:
         self._send(code, _json_bytes(data))
 
-    def _body(self) -> Dict[str, Any]:
-        length = int(self.headers.get("Content-Length") or 0)
+    def _body(self) -> Optional[Dict[str, Any]]:
+        """Прочитать JSON-тело; None означает «уже отвечено, запрос прервать»."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
         if not length:
             return {}
+        if length > MAX_BODY_BYTES:
+            # тело не читаем: нарушивший лимит запрос не должен попадать в
+            # память целиком; соединение закрываем, чтобы не рассинхронизировать
+            # поток с непрочитанными байтами
+            self.close_connection = True
+            self._json({"ok": False, "error": "тело запроса слишком большое"}, 413)
+            return None
         raw = self.rfile.read(length)
         try:
             return json.loads(raw.decode("utf-8"))
@@ -105,7 +198,11 @@ class Handler(BaseHTTPRequestHandler):
         # оконченным (кнопка «Стоп» висит до таймаута)
         self.send_header("Connection", "close")
         self.send_header("X-Accel-Buffering", "no")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        if self._origin_ok():
+            origin = self.headers.get("Origin")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
         self.end_headers()
         self.close_connection = True
 
@@ -132,13 +229,20 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------------ GET
     def do_OPTIONS(self) -> None:  # noqa: N802
+        if self._reject_origin():
+            return
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self.headers.get("Origin")
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
+        if self._reject_origin():
+            return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         params = urllib.parse.parse_qs(parsed.query)
@@ -155,6 +259,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health":
             return self._json({"ok": True, "version": VERSION, "providers": llm.health(),
                                "usage": db.usage_summary()})
+        if path == "/api/computer/status":
+            # Самопроверка режима «Компьютер» до его включения: фронт показывает
+            # конкретную причину (не macOS / нет прав / слепая модель), а не
+            # молчаливое бездействие после. Ошибка проверки — тоже ответ, не 500.
+            try:
+                status = system_tools.computer_status()
+            except Exception as exc:  # pragma: no cover - защита полосы
+                status = {"ok": False, "error": "Самопроверка не удалась: %s" % exc}
+            return self._json({"ok": True, "computer": status})
         if path == "/api/models":
             provider = (params.get("provider") or ["cloudru"])[0]
             return self._json({"ok": True, "models": llm.list_models(provider, force=True),
@@ -175,6 +288,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/memory":
             agent.repair_legacy_automatic_memories()
             return self._json({"ok": True, "memory": db.recall()})
+        if path == "/api/scenarios":
+            return self._json({"ok": True, "scenarios": db.list_scenarios()})
         if path == "/api/ideas":
             # только готовое: считать здесь нельзя — экран ждать не должен
             return self._json({"ok": True, "ideas": ideas.current()})
@@ -207,11 +322,45 @@ class Handler(BaseHTTPRequestHandler):
 
     # ----------------------------------------------------------------- POST
     def do_POST(self) -> None:  # noqa: N802
+        if self._reject_origin():
+            return
         path = urllib.parse.urlparse(self.path).path
         body = self._body()
+        if body is None:
+            return
 
         if path == "/api/chat/stream":
             return self._chat_stream(body)
+        if path == "/api/scenarios/new":
+            steps = [str(x).strip() for x in (body.get("steps") or [])
+                     if str(x).strip()]
+            if len(steps) < 1:
+                return self._json({"ok": False, "error": "нужен хотя бы один шаг"})
+            return self._json({"ok": True,
+                               "scenario": db.create_scenario(body.get("title") or "",
+                                                              steps,
+                                                              body.get("emoji") or "")})
+        if path == "/api/scenarios/delete":
+            return self._json({"ok": True, "deleted": db.delete_scenario(body.get("id", ""))})
+        if path == "/api/budget":
+            # Лимит ₽ на лету: работает и до отправки (просто состояние),
+            # и во время ответа — активный прогон подхватывает новый лимит
+            # с учётом уже потраченного.
+            try:
+                limit = float(body.get("budget_rub") or 0)
+            except (TypeError, ValueError):
+                limit = 0.0
+            with _RUN_LOCK:
+                runner = _ACTIVE_RUNS.get(str(body.get("chat_id") or ""))
+                if runner is not None:
+                    runner.budget_rub = (limit if limit > 0 else None)
+            return self._json({"ok": True, "budget_rub": limit if limit > 0 else None,
+                               "applied_to_run": runner is not None})
+        if path == "/api/chat/stop":
+            # Stop = стоп ВСЕЙ работы прогона, а не только SSE-картинки:
+            # инструментам, санкциям и computer-use приходит отмена.
+            token = str(body.get("run_token") or "")
+            return self._json({"ok": True, "stopped": _stop_run(token)})
         if path == "/api/chats/new":
             return self._json({"ok": True, "chat": db.create_chat(body.get("title") or "Новый диалог")})
         if path == "/api/chats/rename":
@@ -344,7 +493,8 @@ class Handler(BaseHTTPRequestHandler):
     # -------------------------------------------------------------- статика
     def _serve_static(self, rel: str) -> None:
         target = (WEB_DIR / rel).resolve()
-        if not str(target).startswith(str(WEB_DIR.resolve())) or not target.exists():
+        # иерархическая проверка: строковый префикс пропускал соседние каталоги
+        if not target.is_relative_to(WEB_DIR.resolve()) or not target.exists():
             return self._json({"ok": False, "error": "not found"}, 404)
         ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
         if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
@@ -380,6 +530,9 @@ class Handler(BaseHTTPRequestHandler):
             raw = base64.b64decode(data_url)
         except Exception:
             return {"ok": False, "error": "не удалось прочитать файл"}
+        # клиентский лимит 25 МБ легко обходится прямым POST — проверяем факт
+        if len(raw) > MAX_UPLOAD_BYTES:
+            return {"ok": False, "error": "файл больше 25 МБ"}
         chat_id = body.get("chat_id") or ""
         dest = sandbox.root(chat_id) / name
         dest.write_bytes(raw)
@@ -480,12 +633,11 @@ class Handler(BaseHTTPRequestHandler):
             # без id фронтенд не может превратить правку в новую версию
             self._sse({"type": "user_msg", "id": saved["id"]})
 
-        # Очевидные факты первого лица сохраняются на входной границе, а не по
-        # доброй воле модели. Это локальные regex, поэтому ни задержки, ни
-        # расхода токенов у обычной реплики не появляется. Отдельное событие
-        # запускает видимый border-pass у «Памяти»; модель больше не получает
-        # второй writer и не может добавить пересказ или вводное слово.
-        saved_facts = agent.remember_obvious_facts(text)
+        # Очевидные факты первого лица сохраняются на входной границе. Черновой
+        # фильтр локален (обычная реплика без фактов не платит за вызов), а
+        # структуру решает nano-модель: «я люблю кошек» должно стать
+        # «любимое животное: кошки», а не «я люблю: кошек».
+        saved_facts = agent.remember_smart_facts(text)
         memory_facts = [{"kind": item.get("kind", "fact"),
                          "key": item.get("key", ""),
                          "value": item.get("value", "")} for item in saved_facts]
@@ -531,7 +683,10 @@ class Handler(BaseHTTPRequestHandler):
         # сборка контекста
         history = orchestrator.summarize_history([
             {"role": m["role"], "content": m["content"]}
-            for m in history_all if m["role"] in ("user", "assistant") and m["content"]
+            for m in history_all
+            if m["role"] in ("user", "assistant") and m["content"]
+            # прерванные ответы — не ответы: обрывок в контексте путал модель
+            and not (m.get("meta") or {}).get("interrupted")
         ][:-1])
 
         content_parts: List[Any] = []
@@ -552,13 +707,21 @@ class Handler(BaseHTTPRequestHandler):
         else:
             user_message = {"role": "user", "content": text_for_model}
 
-        messages = [{"role": "system", "content": agent.build_system_prompt(agent_mode, computer_use)}]
+        runner = agent.Agent(chat_id=chat_id, agent_mode=agent_mode, computer_use=computer_use,
+                             cancel_check=lambda: False)
+        messages = [{"role": "system", "content": agent.build_system_prompt(
+            agent_mode, computer_use, vision_direct=runner._vision_direct)}]
         messages.extend(history)
         # Один короткий nearby-контракт ставится перед КАЖДЫМ актуальным user
         # turn. Раньше напоминание было только рядом с изображением, поэтому
         # следующий текст «давай уточним» снова терял controls. Vision-добавка
         # объединяется здесь же: один источник протокола и всё тот же LLM-call.
-        messages.append({"role": "system", "content": agent.turn_ui_contract(has_image)})
+        # Экономия префилла: контракт нужен там, где реально возможен выбор —
+        # агентский ход, входной кадр или вежливость не в счёт. Обычная реплика
+        # без инструментов уже несёт полный протокол в системном промпте
+        # (правило 10), и ~340 токенам рядом с ней делать нечего.
+        if (agent_mode or has_image) and not orchestrator.is_social_only(text):
+            messages.append({"role": "system", "content": agent.turn_ui_contract(has_image)})
         if agent_mode and body.get("silent"):
             # Ответ панели — продолжение того же AGENT preflight, а не повод
             # открыть новую анкету. Детерминированная turn-граница сильнее
@@ -572,7 +735,80 @@ class Handler(BaseHTTPRequestHandler):
                 "сразу продолжай автономное выполнение инструментами."})
         messages.append(user_message)
 
-        runner = agent.Agent(chat_id=chat_id, agent_mode=agent_mode, computer_use=computer_use)
+        # Регистрация прогона для Stop: флаг отмены + контрольная функция.
+        # Обрыв соединения отменяет только computer-use (кликать по экрану без
+        # зрителя нельзя); обычный чат по-прежнему доигрывается молча и
+        # сохраняется в переписку — это осознанное поведение, а не утечка.
+        run_token = str(body.get("run_token") or "")
+        stop_event = threading.Event()
+        if run_token:
+            with _RUN_LOCK:
+                _RUN_STOPS[run_token] = stop_event
+        # Живой прогон этого диалога: монетка ₽ меняет лимит на лету
+        with _RUN_LOCK:
+            _ACTIVE_RUNS[chat_id] = runner
+        alive_box = [True]
+
+        def _run_cancelled() -> bool:
+            return stop_event.is_set() or (computer_use and not alive_box[0])
+
+        runner.cancel_check = _run_cancelled
+        runner.agent_mode = agent_mode
+        runner.computer_use = computer_use
+
+        try:
+            budget_rub = float(body.get("budget_rub") or 0)
+        except (TypeError, ValueError):
+            budget_rub = 0.0
+
+        # ПРОАКТИВНЫЙ РЕЖИМ ДО МОДЕЛИ: реплика явно требует выключенной кнопки
+        # («нажми…», «напиши игру…», «как я выгляжу…»). Слабая модель молчит —
+        # локальный триггер предлагает режим мгновенно, пользователь решает,
+        # и прогон сразу стартует в правильном режиме.
+        mode_hint = agent.suggest_mode(text, agent_mode=agent_mode,
+                                       computer_use=computer_use)
+        if mode_hint:
+            labels = {"agent": "AGENT", "computer": "Компьютер",
+                      "camera": "Камера", "budget": "Лимит ₽"}
+            label = labels.get(mode_hint["mode"], mode_hint["mode"])
+            question = ("Включить режим «%s»? Причина: %s"
+                        % (label, mode_hint["reason"]))
+            record = db.create_question(chat_id, question, ["Включить", "Не нужно"])
+            self._sse({"type": "mode_request", "id": record["id"],
+                       "mode": mode_hint["mode"], "label": label,
+                       "reason": mode_hint["reason"], "question": question})
+            # ждём именно ЭТОТ вопрос: _wait_answer создал бы свой id,
+            # и ответ пользователя уходил бы мимо
+            decided = record
+            deadline = time.time() + 300
+            while time.time() < deadline:
+                if _run_cancelled():
+                    db.answer_question(record["id"], "cancelled")
+                    break
+                fresh = db.get_question(record["id"])
+                if fresh and fresh.get("status") == "answered":
+                    decided = fresh
+                    break
+                time.sleep(0.4)
+            if (decided.get("status") == "answered"
+                    and str(decided.get("answer") or "").startswith("Включить")):
+                self._sse({"type": "mode_changed", "mode": mode_hint["mode"], "on": True})
+                if mode_hint["mode"] == "agent":
+                    agent_mode = True
+                elif mode_hint["mode"] == "computer":
+                    agent_mode = True
+                    computer_use = True
+                # промпт уже собран с прошлыми режимами — пересобираем честно
+                messages[0] = {"role": "system", "content": agent.build_system_prompt(
+                    agent_mode, computer_use, vision_direct=runner._vision_direct)}
+                runner = agent.Agent(chat_id=chat_id, agent_mode=agent_mode,
+                                     computer_use=computer_use,
+                                     cancel_check=_run_cancelled)
+                runner.budget_rub = budget_rub
+            else:
+                self._sse({"type": "mode_declined", "mode": mode_hint["mode"]})
+        if budget_rub > 0:
+            runner.budget_rub = budget_rub
         # Prompt просит дождаться выбора, а этот флаг делает ожидание границей
         # исполнения: generate_image не будет dispatch-нут для неопределённой
         # творческой обработки кадра, даже если конкретная модель проигнорирует
@@ -631,22 +867,34 @@ class Handler(BaseHTTPRequestHandler):
                     selected_tier = str(event.get("tier") or selected_tier)
                 if alive:
                     alive = self._sse(event)
+                    alive_box[0] = alive
                 # Если пользователь ушёл из диалога, соединение рвётся. Раньше мы
                 # прекращали работу и ответ пропадал. Теперь генерация доводится
                 # до конца молча, а результат сохраняется в переписку.
+                # (computer-use — исключение: обрыв там означает полную отмену)
         except Exception as exc:
             run_error = type(exc).__name__
             if alive:
                 self._sse({"type": "error", "error": str(exc)})
         finally:
+            if run_token:
+                with _RUN_LOCK:
+                    _RUN_STOPS.pop(run_token, None)
+            with _RUN_LOCK:
+                if _ACTIVE_RUNS.get(chat_id) is runner:
+                    _ACTIVE_RUNS.pop(chat_id, None)
             if not final_text:
                 final_text = _canonical_response_content(partial, "")
             if final_text:
                 # Ход мыслей и список действий сохраняем вместе с ответом: раньше
                 # они жили только в браузере и пропадали, стоило выйти из диалога.
+                # Прерванный пользователем ответ помечается: обрывок кода не должен
+                # прикидываться полноценным ответом в контексте следующего запроса
+                # (модель продолжала «дописывать» несуществующий ответ).
                 db.add_message(chat_id, "assistant", final_text,
                                {"files": files, "tools": used_tools, "model": runner.model_used,
                                 "tier": selected_tier,
+                                "interrupted": bool(stop_event.is_set()),
                                 "thinking": "".join(thinking)[:20000], "trace": trace[:60]})
             if alive:
                 self._sse({"type": "end"})

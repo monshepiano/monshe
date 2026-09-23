@@ -460,6 +460,37 @@ def _audio_mime(path: Path) -> tuple:
     return ext, mimes.get(ext, "application/octet-stream")
 
 
+def _asr_via_transcriptions(conf: Dict[str, Any], model: str, path: Path,
+                            language: str, timeout: int = 180) -> Dict[str, Any]:
+    """Стандартный OpenAI-совместимый /audio/transcriptions (multipart).
+
+    Аудиомодели провайдера (whisper и родня) живут именно на этом эндпоинте:
+    раньше аудио отправлялось в chat/completions — провайдер отвечал 404,
+    и микрофон не работал вовсе."""
+    fmt, mime = _audio_mime(path)
+    boundary = "----jarvisasr%d" % int(time.time() * 1000)
+    fields = [("model", model), ("language", language or "ru"),
+              ("response_format", "json")]
+    parts = [("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
+              % (boundary, k, v)).encode() for k, v in fields]
+    parts += [
+        ("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
+         "Content-Type: %s\r\n\r\n" % (boundary, path.name, mime)).encode(),
+        path.read_bytes(),
+        ("\r\n--%s--\r\n" % boundary).encode(),
+    ]
+    url = conf["base_url"].rstrip("/") + "/audio/transcriptions"
+    try:
+        req = urllib.request.Request(url, data=b"".join(parts), method="POST", headers={
+            "Authorization": "Bearer " + conf["api_key"],
+            "Content-Type": "multipart/form-data; boundary=" + boundary})
+        with urllib.request.urlopen(req, timeout=timeout, context=_CTX) as resp:
+            body = json.loads(resp.read().decode("utf-8", "replace"))
+        return {"http_ok": True, "text": (body.get("text") or "").strip()}
+    except Exception as exc:
+        return {"http_ok": False, "error": str(exc)[:200]}
+
+
 def _asr_via_chat(conf: Dict[str, Any], model: str, path: Path,
                   language: str, timeout: int = 180) -> Dict[str, Any]:
     """Распознать речь моделью-«ушами» через обычный chat/completions.
@@ -540,7 +571,11 @@ def _asr_routes() -> list:
         prefs = [p for p in (CONFIG.get("model_tiers.audio", []) or []) if p]
         catalog = llm.models_of_type("cloudru", "audio")
         for name in prefs + [m for m in catalog if m not in prefs]:
-            routes.append(("cloudru:" + name,
+            # стандартный transcriptions-эндпоинт — основной путь для аудиомоделей
+            routes.append(("cloudru-ts:" + name,
+                           lambda p, l, m=name, c=conf: _asr_via_transcriptions(c, m, p, l)))
+            # запасной: некоторые «ушки» принимают аудио прямо в chat
+            routes.append(("cloudru-chat:" + name,
                            lambda p, l, m=name, c=conf: _asr_via_chat(c, m, p, l)))
     routes.append(("free:whisper-large-v3", _asr_free))
     return routes
@@ -556,8 +591,21 @@ def transcribe_audio(path_or_data_url: str, language: str = "ru") -> Dict[str, A
             raw = base64.b64decode(b64)
         except Exception:
             return {"ok": False, "error": "не удалось прочитать запись"}
-        ext = "webm" if "webm" in header else (
-            "mp3" if "mpeg" in header else ("ogg" if "ogg" in header else "wav"))
+        # Safari пишет audio/mp4, Chrome — audio/webm; раньше mp4-байты
+        # сохранялись как .wav, и распознавание падало на первом же шаге
+        low = header.lower()
+        if "webm" in low:
+            ext = "webm"
+        elif "mp4" in low or "m4a" in low:
+            ext = "mp4"
+        elif "mpeg" in low or "mp3" in low:
+            ext = "mp3"
+        elif "ogg" in low or "opus" in low:
+            ext = "ogg"
+        elif "wav" in low:
+            ext = "wav"
+        else:
+            ext = "webm"
         src = _ws() / ("voice_%d.%s" % (int(time.time()), ext))
         src.write_bytes(raw)
     else:
@@ -587,8 +635,11 @@ def transcribe_audio(path_or_data_url: str, language: str = "ru") -> Dict[str, A
             return {"ok": False, "error": "Тишина — слов не разобрал. Скажи ещё раз."}
         errors.append("%s: %s" % (label, res.get("error", "")))
     _ASR_ROUTE = None
+    # Человеческое сообщение вместо стека технических ошибок: пользователь
+    # не должен читать про 404 и чужие unauthorized.
     return {"ok": False,
-            "error": "Распознавание речи сейчас недоступно: %s" % ("; ".join(errors)[:200])}
+            "error": "Не получилось распознать речь — сервисы распознавания "
+                     "сейчас недоступны. Попробуй ещё раз или набери текст."}
 
 
 def analyze_image(image_ref: str, question: str = "Что на изображении? Опиши подробно.") -> Dict[str, Any]:

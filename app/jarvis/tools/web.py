@@ -8,7 +8,6 @@ from __future__ import annotations
 import concurrent.futures
 import gzip
 import html as html_mod
-import io
 import json
 import re
 import ssl

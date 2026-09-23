@@ -5,19 +5,39 @@
 """
 from __future__ import annotations
 
+import contextvars
+import http.client
 import json
 import ssl
 import threading
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
 from .config import CONFIG, LOG_DIR
 from . import db, telemetry
 
+# Счётчик расходов прогона: agent ставит сюда приёмник, и КАЖДЫЙ вызов
+# (стрим, обычный chat, vision, планировщик, сводки, подсказки) капает в
+# лимит ₽. Раньше лимит видел только основной стрим — остальные запросы
+# были для него невидимы, и бюджет «не срабатывал».
+_USAGE_SINK = contextvars.ContextVar("jarvis_usage_sink", default=None)
+
+
+def _report_usage(model: str, pt: int, ct: int) -> None:
+    sink = _USAGE_SINK.get()
+    if sink is not None:
+        try:
+            sink(model, pt, ct)
+        except Exception:
+            pass
+
+
 _SSL_CTX = ssl.create_default_context()
-_MODELS_CACHE: Dict[str, Tuple[float, List[str]]] = {}
+# Единственный кэш каталога моделей (полные метаданные провайдера).
+# Прежде здесь жил второй, производный кэш одних имён (_MODELS_CACHE) —
+# две сущности одной истины, которые приходилось писать синхронно.
 _META_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
 _CACHE_LOCK = threading.RLock()
 # Параметры OpenAI-compatible API на практике различаются даже у моделей
@@ -61,6 +81,113 @@ def _request(url: str, api_key: str, payload: Optional[Dict] = None, method: str
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, headers=_headers(api_key), method=method)
     return urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX)
+
+
+# ------------------------------------------------------------- keep-alive
+# urllib открывает новое TCP+TLS-соединение на каждый запрос. На нестримовых
+# вызовах (chat, каталог моделей) соединение можно переиспользовать: это
+# убирает рукопожатие (~50–150 мс) с каждого запроса к провайдеру. Пул
+# поток-локальный: соединение никогда не делится между потоками. Стриминг
+# остаётся на urllib — там соединение живёт весь ответ и до EOF не дочитывается.
+_POOL_TLS = threading.local()
+_POOL_PER_KEY = 4
+
+
+def _pool_take(key: tuple, timeout: float) -> http.client.HTTPConnection:
+    pool = getattr(_POOL_TLS, "pool", None)
+    if pool is None:
+        pool = _POOL_TLS.pool = {}
+    conns = pool.get(key)
+    if conns:
+        return conns.pop()
+    scheme, host, port = key
+    if scheme == "https":
+        return http.client.HTTPSConnection(host, port, timeout=timeout, context=_SSL_CTX)
+    return http.client.HTTPConnection(host, port, timeout=timeout)
+
+
+def _pool_return(key: tuple, conn: http.client.HTTPConnection) -> None:
+    pool = getattr(_POOL_TLS, "pool", None)
+    if pool is None:
+        pool = _POOL_TLS.pool = {}
+    conns = pool.setdefault(key, [])
+    if len(conns) < _POOL_PER_KEY:
+        conns.append(conn)
+        return
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+class _PooledResponse:
+    """Ответ поверх http.client: после ПОЛНОГО чтения соединение возвращается в пул."""
+
+    def __init__(self, key: tuple, conn: http.client.HTTPConnection,
+                 resp: http.client.HTTPResponse) -> None:
+        self._key = key
+        self._conn = conn
+        self._resp = resp
+        self.headers = resp.headers
+        self.status = resp.status
+
+    def read(self, n: int = -1) -> bytes:
+        # read(-1) у http.client значит «до EOF» и вечно висит на keep-alive
+        # сокете; «всё тело» — это read(None) (ровно Content-Length байт).
+        return self._resp.read(None if n is None or n < 0 else n)
+
+    def close(self) -> None:
+        try:
+            # переиспользовать можно только полностью прочитанное соединение,
+            # на котором сервер не объявил Connection: close
+            if self._resp.isclosed() and not self._resp.will_close:
+                _pool_return(self._key, self._conn)
+                return
+        except Exception:
+            pass
+        try:
+            self._resp.close()
+        except Exception:
+            pass
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
+    def __enter__(self) -> "_PooledResponse":
+        return self
+
+    def __exit__(self, *exc: Any) -> bool:
+        self.close()
+        return False
+
+
+def _request_pooled(url: str, api_key: str, payload: Optional[Dict] = None,
+                    method: str = "POST", timeout: int = 180):
+    """Keep-alive запрос; при любой проблеме молча возвращаем None -> urllib-путь."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return None
+    key = (parsed.scheme, parsed.hostname,
+           parsed.port or (443 if parsed.scheme == "https" else 80))
+    target = parsed.path + (("?" + parsed.query) if parsed.query else "")
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
+    headers = dict(_headers(api_key))
+    try:
+        conn = _pool_take(key, timeout)
+        try:
+            conn.request(method, target, body=data, headers=headers)
+            resp = conn.getresponse()
+        except Exception:
+            # соединение из пула могло протухнуть: закрываем и уходим в urllib
+            try:
+                conn.close()
+            except Exception:
+                pass
+            return None
+        return _PooledResponse(key, conn, resp)
+    except Exception:
+        return None
 
 
 def provider_conf(name: str) -> Dict[str, Any]:
@@ -107,14 +234,17 @@ def list_models_meta(provider: str, force: bool = False) -> List[Dict[str, Any]]
     try:
         # таймаут короткий: каталог — вспомогательные данные, а не ответ
         # пользователю. Не дождались — уйдём на предпочтения из настроек.
-        with _request(conf["base_url"].rstrip("/") + "/models", conf["api_key"], None, "GET", timeout=6) as resp:
+        models_url = conf["base_url"].rstrip("/") + "/models"
+        mresp = _request_pooled(models_url, conf["api_key"], None, "GET", timeout=6)
+        if mresp is None:
+            mresp = _request(models_url, conf["api_key"], None, "GET", timeout=6)
+        with mresp as resp:
             body = json.loads(resp.read().decode("utf-8"))
         items = [m for m in body.get("data", []) if m.get("id")]
     except Exception:
         items = []
     with _CACHE_LOCK:
         _META_CACHE[provider] = (time.time(), items)
-        _MODELS_CACHE[provider] = (time.time(), [m["id"] for m in items])
     return items
 
 
@@ -148,15 +278,8 @@ def models_of_type(provider: str, *needles: str) -> List[str]:
 
 
 def list_models(provider: str, force: bool = False) -> List[str]:
-    """Список моделей провайдера с кэшем на 10 минут."""
-    with _CACHE_LOCK:
-        cached = _MODELS_CACHE.get(provider)
-        if cached and not force and time.time() - cached[0] < 600:
-            return cached[1]
-    models = [m["id"] for m in list_models_meta(provider, force=force)]
-    with _CACHE_LOCK:
-        _MODELS_CACHE[provider] = (time.time(), models)
-    return models
+    """Имена моделей провайдера; TTL и фоновое обновление — в list_models_meta."""
+    return [m["id"] for m in list_models_meta(provider, force=force)]
 
 
 def vision_models(provider: str) -> List[str]:
@@ -229,7 +352,7 @@ def pick_model(tier: str, provider: str = "cloudru") -> str:
     # а если модель вдруг исчезла, провайдер ответит ошибкой и сработает
     # обычный запасной путь.
     with _CACHE_LOCK:
-        have_cache = bool(_MODELS_CACHE.get(provider) or _META_CACHE.get(provider))
+        have_cache = bool(_META_CACHE.get(provider))
     if not have_cache and prefs and tier != "vision":
         if not _META_BUSY.get(provider):
             _META_BUSY[provider] = True
@@ -435,14 +558,20 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
             if remaining <= 0:
                 break
             try:
-                with _request(conf["base_url"].rstrip("/") + "/chat/completions", conf["api_key"],
-                              payload, timeout=max(0.1, remaining)) as resp:
+                url = conf["base_url"].rstrip("/") + "/chat/completions"
+                resp = _request_pooled(url, conf["api_key"], payload, "POST",
+                                       timeout=max(0.1, remaining))
+                if resp is None:
+                    resp = _request(url, conf["api_key"], payload,
+                                    timeout=max(0.1, remaining))
+                with resp:
                     body = json.loads(resp.read().decode("utf-8"))
                 span.first_token()
                 usage = body.get("usage") or {}
                 pt = int(usage.get("prompt_tokens") or 0)
                 ct = int(usage.get("completion_tokens") or 0)
                 db.log_usage(prov, model, tier, pt, ct, estimate_cost(model, pt, ct))
+                _report_usage(model, pt, ct)
                 choice = (body.get("choices") or [{}])[0]
                 message = choice.get("message") or {}
                 span.finish("ok", provider=prov, model=model)
@@ -485,7 +614,8 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
 def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] = None,
                       temperature: Optional[float] = None, max_tokens: Optional[int] = None,
                       provider: Optional[str] = None, operation: str = "llm_stream",
-                      _span: Optional[telemetry.Span] = None) -> Generator[Dict[str, Any], None, None]:
+                      _span: Optional[telemetry.Span] = None,
+                      should_stop: Optional[Callable[[], bool]] = None) -> Generator[Dict[str, Any], None, None]:
     """Внутренняя реализация; публичная обёртка гарантирует закрытие span."""
     providers = [provider] if provider else (active_providers() or ["cloudru"])
     span = _span or telemetry.Span(operation, tier=tier)
@@ -505,7 +635,8 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
             started_output = False
             saw_done = False
             try:
-                with _request(conf["base_url"].rstrip("/") + "/chat/completions", conf["api_key"], payload) as resp:
+                with _request(conf["base_url"].rstrip("/") + "/chat/completions",
+                              conf["api_key"], payload, timeout=75) as resp:
                     acc_content: List[str] = []
                     acc_reasoning: List[str] = []
                     tool_acc: Dict[int, Dict[str, Any]] = {}
@@ -516,6 +647,12 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
                     # безопасно продолжить — пользователю нечего дублировать.
                     yield {"type": "model", "model": model, "provider": prov, "tier": tier}
                     for raw in resp:
+                        if should_stop is not None:
+                            try:
+                                if should_stop():
+                                    break
+                            except Exception:
+                                pass
                         line = raw.decode("utf-8", "ignore").strip()
                         if not line or not line.startswith("data:"):
                             continue
@@ -566,6 +703,7 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
                 ct = int((usage or {}).get("completion_tokens") or 0)
                 if pt or ct:
                     db.log_usage(prov, model, tier, pt, ct, estimate_cost(model, pt, ct))
+                    _report_usage(model, pt, ct)
                 calls = []
                 for idx in sorted(tool_acc):
                     slot = tool_acc[idx]
@@ -622,13 +760,19 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
 def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] = None,
                 temperature: Optional[float] = None, max_tokens: Optional[int] = None,
                 provider: Optional[str] = None,
-                operation: str = "llm_stream") -> Generator[Dict[str, Any], None, None]:
-    """Стриминг с telemetry success/error/cancel даже при досрочном close()."""
+                operation: str = "llm_stream",
+                should_stop: Optional[Callable[[], bool]] = None) -> Generator[Dict[str, Any], None, None]:
+    """Стриминг с telemetry success/error/cancel даже при досрочном close().
+
+    ``should_stop`` проверяется на КАЖДОЙ строке провайдера: Stop пользователя
+    обязан рвать чтение немедленно, не дожидаясь конца потока или таймаута —
+    иначе «остановленный» агент продолжал платить за генерацию."""
     span = telemetry.Span(operation, tier=tier)
     try:
         yield from _chat_stream_impl(messages, tier=tier, tools=tools,
                                      temperature=temperature, max_tokens=max_tokens,
-                                     provider=provider, operation=operation, _span=span)
+                                     provider=provider, operation=operation, _span=span,
+                                     should_stop=should_stop)
     except GeneratorExit:
         span.finish("cancelled")
         raise
@@ -667,20 +811,6 @@ def vision(prompt: str, image_data_url: str, tier: str = "vision") -> str:
         except Exception as exc:
             last = exc
     raise LLMError("зрение не ответило: %s" % last)
-
-
-def embed(texts: List[str]) -> List[List[float]]:
-    conf = provider_conf("cloudru")
-    if not conf.get("api_key"):
-        return []
-    model = pick_model("embed", "cloudru")
-    try:
-        with _request(conf["base_url"].rstrip("/") + "/embeddings", conf["api_key"],
-                      {"model": model, "input": texts}, timeout=60) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-        return [item.get("embedding", []) for item in body.get("data", [])]
-    except Exception:
-        return []
 
 
 def health() -> Dict[str, Any]:

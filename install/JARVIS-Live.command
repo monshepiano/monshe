@@ -1,18 +1,24 @@
 #!/bin/bash
 # ============================================================================
 #  J A R V I S  —  персональный AI-агент
-#  Установщик · Открыватор · Обновлятор  (всё в одном файле)
+#  ПОСТОЯННЫЙ установщик · скачивается ОДИН раз
 #
-#  Просто дважды кликните по этому файлу. Он сам:
-#   1) скачает самую свежую версию с GitHub (без интернета — распакует
-#      встроенную копию из этого же файла)
-#   2) пропишет ключи нейросетей
+#  Этот файл не содержит самой программы — он всегда скачивает и
+#  запускает самую свежую версию с GitHub. Дважды кликните по нему:
+#   1) определит самую свежую ветку репозитория и скачает её
+#   2) сохранит ваши ключи и чаты (они лежат отдельно, в ~/JARVIS)
 #   3) запустит сервер и откроет интерфейс в браузере
-#  Повторный запуск = обновление + открытие. Данные и чаты не теряются.
+#  Повторный запуск = обновление (если вышло что-то новое) + открытие.
+#  Нужен интернет. Офлайн-вариант — JARVIS.command из JARVIS.zip.
+#
+#  Зафиксировать ветку можно так:  JARVIS_BRANCH=main ./JARVIS-Live.command
 # ============================================================================
 set -u
 
-VERSION="__VERSION__"
+REPO="monshepiano/monshe"
+BRANCH="${JARVIS_BRANCH:-}"
+VERSION=""
+
 # путь к самому себе нужно вычислить ДО любых cd
 SELF="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
 HOME_DIR="$HOME/JARVIS"
@@ -21,6 +27,7 @@ LOG_DIR="$HOME_DIR/logs"
 LOG_FILE="$LOG_DIR/server.log"
 PORT_FILE="$HOME_DIR/.port"
 PID_FILE="$HOME_DIR/.pid"
+SOURCE_FILE="$HOME_DIR/.source"
 DEFAULT_PORT=8765
 
 C_CYAN=$'\033[38;5;51m'; C_DIM=$'\033[2m'; C_OK=$'\033[38;5;46m'
@@ -41,7 +48,7 @@ cat <<'BANNER'
  ██   ██ ██   ██ ██   ██  ██  ██  ██      ██
   █████  ██   ██ ██   ██   ████   ██ ███████
 BANNER
-printf "${C_OFF}${C_DIM}      персональный AI-агент · версия %s${C_OFF}\n\n" "$VERSION"
+printf "${C_OFF}${C_DIM}      персональный AI-агент · всегда свежая версия с GitHub${C_OFF}\n\n"
 
 # --------------------------------------------------------------- 1. Python
 info "Проверяю Python…"
@@ -76,23 +83,28 @@ if [ -f "$PID_FILE" ]; then
   rm -f "$PID_FILE"
 fi
 
-# ---------------------------------------------------------- 3. Распаковка
+# ------------------------------------------ 3. Какую ветку брать с GitHub
 FIRST_RUN=0
 [ -d "$APP_DIR" ] || FIRST_RUN=1
-if [ "$FIRST_RUN" = "1" ]; then info "Устанавливаю Джарвиса в $HOME_DIR…"; else info "Проверяю обновления…"; fi
+if [ "$FIRST_RUN" = "1" ]; then info "Устанавливаю Джарвиса в $HOME_DIR…"; else info "Проверяю обновления с GitHub…"; fi
 
 mkdir -p "$HOME_DIR" "$LOG_DIR" "$HOME_DIR/workspace" "$HOME_DIR/data" "$HOME_DIR/skills"
-
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/jarvis.XXXXXX")"
 
-# --- 3а. Сначала GitHub: свежая версия из репозитория, если есть интернет.
-# Встроенная ниже копия программы — офлайн-запас того же установщика.
-# Раньше каждый запуск переустанавливал застывшую копию изнутри файла, и
-# при обновлении проекта установщик приходилось скачивать заново.
-GH_BRANCH=""
-GH_SHA=""
-if [ "${JARVIS_OFFLINE:-0}" != "1" ]; then
-  RESOLVED="$("$PY" - "monshepiano/monshe" <<'PYBRANCH'
+COMMIT_SHA=""
+COMMIT_DATE=""
+
+# Самая свежая ветка = ветка с самым поздним коммитом. Так установщик
+# следит за тем, что реально пушится в репозиторий, а не за застывшей
+# main. JARVIS_BRANCH выше фиксирует выбор вручную.
+CANDIDATES=""
+if [ -n "$BRANCH" ]; then
+  info "Ветка зафиксирована вручную: $BRANCH"
+  CANDIDATES="$BRANCH"
+else
+  # ВАЖНО: скрипт ниже читается из heredoc, поэтому список веток он
+  # скачивает сам (urllib), а не приходит по конвейеру в stdin.
+  RESOLVED="$("$PY" - "$REPO" <<'PYBRANCH'
 import json, sys, urllib.parse, urllib.request
 repo = sys.argv[1]
 def _get(url, timeout):
@@ -121,80 +133,113 @@ if best:
 PYBRANCH
 )"
   if [ -n "${RESOLVED:-}" ]; then
-    GH_BRANCH="$(printf '%s' "$RESOLVED" | cut -f1)"
-    GH_SHA="$(printf '%s' "$RESOLVED" | cut -f3)"
-    info "Самая свежая ветка на GitHub: $GH_BRANCH"
+    BRANCH="$(printf '%s' "$RESOLVED" | cut -f1)"
+    COMMIT_DATE="$(printf '%s' "$RESOLVED" | cut -f2)"
+    COMMIT_SHA="$(printf '%s' "$RESOLVED" | cut -f3)"
+    info "Самая свежая ветка: $BRANCH (коммит от ${COMMIT_DATE:-?})"
+    CANDIDATES="$BRANCH main"
+  else
+    warn "Не удалось узнать самую свежую ветку — пробую запасные."
+    CANDIDATES="main arena/01a0c9e8-monshe"
+    BRANCH="main"
+  fi
+fi
+
+# Быстрый путь: тот же коммит уже стоит, сервер просто запускается заново
+NEED_DOWNLOAD=1
+if [ -n "$COMMIT_SHA" ] && [ -f "$SOURCE_FILE" ] && [ -f "$APP_DIR/jarvis/server.py" ]; then
+  MARKED="$(cat "$SOURCE_FILE" 2>/dev/null || true)"
+  if [ "$MARKED" = "$BRANCH $COMMIT_SHA" ]; then
+    NEED_DOWNLOAD=0
+    ok "Установлена уже самая свежая версия — скачивание не нужно"
   fi
 fi
 
 APP_SRC=""
-SOURCE_FILE="$HOME_DIR/.source"
-NEED_INSTALL=1
-if [ -n "$GH_SHA" ] && [ -f "$SOURCE_FILE" ] && [ -f "$APP_DIR/jarvis/server.py" ]; then
-  MARKED="$(cat "$SOURCE_FILE" 2>/dev/null || true)"
-  if [ "$MARKED" = "$GH_BRANCH $GH_SHA" ]; then
-    # уже стоит тот же коммит, что и на GitHub: не трогаем ни код,
-    # ни встроенную копию (она старше и не должна ничего перезаписывать)
-    NEED_INSTALL=0
-    ok "Установлена уже самая свежая версия с GitHub"
-  fi
-fi
-if [ "$NEED_INSTALL" = "1" ] && [ -n "$GH_BRANCH" ]; then
-  for cand in "$GH_BRANCH" main; do
-    info "Скачиваю обновление с GitHub (ветка $cand)…"
+if [ "$NEED_DOWNLOAD" = "1" ]; then
+  for cand in $CANDIDATES; do
+    info "Скачиваю программу с GitHub (ветка $cand)…"
     if ! curl -fsSL --retry 2 --max-time 180 \
          -o "$TMP_DIR/src.tar.gz" \
-         "https://codeload.github.com/monshepiano/monshe/tar.gz/refs/heads/$cand" 2>/dev/null; then
+         "https://codeload.github.com/$REPO/tar.gz/refs/heads/$cand" 2>/dev/null; then
       continue
     fi
     tar -xzf "$TMP_DIR/src.tar.gz" -C "$TMP_DIR" 2>/dev/null || true
-    FOUND="$(find "$TMP_DIR" -maxdepth 2 -type d -name app -print -quit 2>/dev/null || true)"
-    if [ -n "$FOUND" ] && [ -f "$FOUND/jarvis/server.py" ]; then
-      APP_SRC="$FOUND"
+    APP_SRC="$(find "$TMP_DIR" -maxdepth 2 -type d -name app -print -quit 2>/dev/null || true)"
+    if [ -n "$APP_SRC" ] && [ -f "$APP_SRC/jarvis/server.py" ]; then
+      BRANCH="$cand"
       break
     fi
+    APP_SRC=""
   done
-  if [ -n "$APP_SRC" ]; then
-    printf '%s %s\n' "$GH_BRANCH" "$GH_SHA" > "$SOURCE_FILE"
-    ok "Обновление с GitHub скачано"
-  else
-    warn "GitHub недоступен — использую встроенную копию (версия $VERSION)."
+  if [ -z "$APP_SRC" ]; then
+    err "Не удалось скачать программу с GitHub."
+    say "     Проверьте интернет и запустите файл ещё раз."
+    rm -rf "$TMP_DIR"
+    read -r -p "  Нажмите Enter, чтобы закрыть окно… " _ || true
+    exit 1
   fi
-fi
-
-# --- 3б. Офлайн-запас: программа, зашитая в этот файл.
-if [ "$NEED_INSTALL" = "1" ] && [ -z "$APP_SRC" ]; then
-  LINE="$(awk '/^__JARVIS_PAYLOAD_BELOW__$/{print NR+1; exit 0;}' "$0")"
-  if [ -z "${LINE:-}" ]; then err "Файл установщика повреждён (нет данных)."; read -r -p "  Enter… " _ || true; exit 1; fi
-
-  tail -n "+$LINE" "$0" | base64 --decode 2>/dev/null | tar -xzf - -C "$TMP_DIR" 2>/dev/null
-  if [ ! -f "$TMP_DIR/jarvis/server.py" ]; then
-    # запасной путь: base64 без -d / другой формат флага
-    tail -n "+$LINE" "$0" | base64 -D 2>/dev/null | tar -xzf - -C "$TMP_DIR" 2>/dev/null
-  fi
-  if [ ! -f "$TMP_DIR/jarvis/server.py" ]; then
-    err "Не удалось распаковать программу."
-    say "     Попробуйте скачать установщик заново."
-    rm -rf "$TMP_DIR"; read -r -p "  Enter… " _ || true; exit 1
-  fi
-  APP_SRC="$TMP_DIR"
-  # встроенная копия могла оказаться старее той, что стоит с GitHub:
-  # сбрасываем маркер, чтобы следующий онлайн-запуск не счёл её свежей
-  rm -f "$SOURCE_FILE"
-fi
-
-if [ "$NEED_INSTALL" = "1" ]; then
   rm -rf "$APP_DIR"
   mkdir -p "$APP_DIR"
   cp -R "$APP_SRC/." "$APP_DIR/"
   find "$APP_DIR" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
-  ok "Программа распакована: $APP_DIR"
+  VERSION="$("$PY" - "$APP_DIR/jarvis/__init__.py" <<'PYVER'
+import re, sys
+try:
+    text = open(sys.argv[1], encoding="utf-8").read()
+except OSError:
+    sys.exit(0)
+m = re.search(r"(?:__version__|VERSION)\s*=\s*[\"']([^\"']+)", text)
+print(m.group(1) if m else "")
+PYVER
+)"
+  if [ -n "$COMMIT_SHA" ]; then
+    printf '%s %s\n' "$BRANCH" "$COMMIT_SHA" > "$SOURCE_FILE"
+  fi
+  ok "Программа установлена: версия ${VERSION:-?} → $APP_DIR"
+else
+  VERSION="$("$PY" - "$APP_DIR/jarvis/__init__.py" <<'PYVER'
+import re, sys
+try:
+    text = open(sys.argv[1], encoding="utf-8").read()
+except OSError:
+    sys.exit(0)
+m = re.search(r"(?:__version__|VERSION)\s*=\s*[\"']([^\"']+)", text)
+print(m.group(1) if m else "")
+PYVER
+)"
 fi
 rm -rf "$TMP_DIR"
 
 # --------------------------------------------------- 4. Ключи и настройки
+RAW_KEY_B64=""
+if [ "$FIRST_RUN" = "1" ] && [ -t 0 ] && [ -z "${JARVIS_NO_INPUT:-}" ]; then
+  NEED_KEY="$("$PY" - "$HOME_DIR" <<'PYCHECK'
+import json, os, sys
+try:
+    with open(os.path.join(sys.argv[1], "config.json"), encoding="utf-8") as fh:
+        cfg = json.load(fh)
+except Exception:
+    cfg = {}
+key = (((cfg.get("providers") or {}).get("cloudru") or {}).get("api_key")) or ""
+print("" if key else "1")
+PYCHECK
+)"
+  if [ "$NEED_KEY" = "1" ]; then
+    say ""
+    say "  Для работы нужен API-ключ Cloud.ru (foundation-models.api.cloud.ru)."
+    say "  Вставьте ключ и нажмите Enter — или просто Enter, чтобы ввести"
+    say "  его позже в самом интерфейсе: Настройки → провайдеры."
+    read -r -s -p "  Ключ Cloud.ru: " RAW_KEY || RAW_KEY=""
+    say ""
+    if [ -n "$RAW_KEY" ]; then
+      RAW_KEY_B64="$(printf '%s' "$RAW_KEY" | base64 | tr -d '\n')"
+    fi
+  fi
+fi
+
 info "Настраиваю ключи нейросетей…"
-"$PY" - "$HOME_DIR" "__CLOUDRU_KEY_B64__" "__DEEPSEEK_KEY_B64__" "__GIGACHAT_KEY_B64__" "__IMAGE_GATEWAY_URL_B64__" "__IMAGE_GATEWAY_TOKEN_B64__" <<'PYSETUP'
+"$PY" - "$HOME_DIR" "$RAW_KEY_B64" "" "" "" "" <<'PYSETUP'
 import base64, json, os, sys
 home = sys.argv[1]
 def _dec(v):
@@ -224,6 +269,7 @@ cloud.setdefault("label", "Cloud.ru Foundation Models")
 deep.setdefault("enabled", True)
 deep.setdefault("base_url", "https://api.deepseek.com/v1")
 deep.setdefault("label", "DeepSeek (резерв)")
+# уже однажды введённый ключ живёт в config.json и переживает обновления
 if not cloud.get("api_key") and CLOUD_KEY:
     cloud["api_key"] = CLOUD_KEY
 if not deep.get("api_key") and DEEP_KEY:
@@ -234,8 +280,6 @@ media.setdefault("gigachat_scope", "GIGACHAT_API_PERS")
 media.setdefault("gigachat_model", "GigaChat")
 if not media.get("gigachat_auth_key") and GIGACHAT_KEY:
     media["gigachat_auth_key"] = GIGACHAT_KEY
-# Gateway release token is revocable and deliberately replaces an older
-# release token on update. The upstream provider credential never reaches Mac.
 if IMAGE_GATEWAY_URL and IMAGE_GATEWAY_TOKEN:
     media["image_gateway_url"] = IMAGE_GATEWAY_URL
     media["image_gateway_token"] = IMAGE_GATEWAY_TOKEN
@@ -249,7 +293,7 @@ with open(path, "w", encoding="utf-8") as fh:
     json.dump(cfg, fh, ensure_ascii=False, indent=2)
 print("config ok")
 PYSETUP
-ok "Ключи на месте (их можно поменять в интерфейсе → Настройки)"
+ok "Ключи на месте (вводятся и меняются в интерфейсе → Настройки)"
 
 # ------------------------------------------------------------- 5. Порт
 PORT="$DEFAULT_PORT"
@@ -257,11 +301,11 @@ port_busy() { "$PY" - "$1" <<'PYPORT'
 import socket, sys
 s = socket.socket()
 try:
-    s.bind(("127.0.0.1", int(sys.argv[1]))); print("free")
+  s.bind(("127.0.0.1", int(sys.argv[1]))); print("free")
 except OSError:
-    print("busy")
+  print("busy")
 finally:
-    s.close()
+  s.close()
 PYPORT
 }
 for try_port in 8765 8766 8767 8768 8790; do
@@ -295,6 +339,8 @@ fi
 ok "Сервер работает: $URL"
 
 # --------------------------------------------------- 7. Ярлык на рабочий стол
+# Ярлык — копия этого же постоянного установщика: клик по нему всегда
+# ставит самую свежую версию, файл никогда не устаревает.
 KEEP="$HOME_DIR/Джарвис.command"
 if [ -f "$SELF" ] && [ "$SELF" != "$KEEP" ]; then
   cp -f "$SELF" "$KEEP" 2>/dev/null && chmod +x "$KEEP" 2>/dev/null
@@ -323,15 +369,18 @@ fi
 say ""
 printf "${C_OK}${C_B}  Джарвис запущен.${C_OFF}\n"
 say ""
+say "  Версия:         ${VERSION:-?}  (ветка $BRANCH)"
 say "  Интерфейс:      $URL"
 say "  Папка данных:   $HOME_DIR"
 say "  Журнал:         $LOG_FILE"
 say ""
-say "  Чтобы открыть снова — дважды кликните «Джарвис» на рабочем столе."
+say "  Этот установщик не устаревает: при каждом запуске он сам"
+say "  скачивает самую свежую версию с GitHub. Скачивать что-то"
+say "  вручную больше не нужно."
+say ""
 say "  Чтобы остановить — закройте это окно и выполните:  kill $SRV_PID"
 say ""
 printf "${C_DIM}  Это окно можно закрыть — Джарвис продолжит работать.${C_OFF}\n"
 say ""
 read -r -p "  Нажмите Enter, чтобы закрыть окно… " _ || true
 exit 0
-__JARVIS_PAYLOAD_BELOW__

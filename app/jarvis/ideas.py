@@ -12,7 +12,7 @@ import time
 from typing import Any, Dict, List
 
 from . import db
-from .config import CONFIG, DATA_DIR
+from .config import DATA_DIR
 
 COUNT = 6                      # две ровные строки по три карточки
 _REFRESH = 6 * 3600            # как часто обновлять
@@ -95,8 +95,8 @@ def current() -> List[Dict[str, str]]:
     return out
 
 
-def refresh(force: bool = False, _reserved: bool = False) -> List[Dict[str, str]]:
-    """Refresh the tiny local cache; never compete with a foreground provider."""
+def refresh(force: bool = False) -> List[Dict[str, str]]:
+    """Обновить крошечный локальный кэш; сети и LLM здесь нет by design."""
     data = _read()
     if not force and time.time() - float(data.get("at") or 0) < _REFRESH:
         return current()
@@ -104,10 +104,9 @@ def refresh(force: bool = False, _reserved: bool = False) -> List[Dict[str, str]
     _write({"at": time.time(), "items": items})
     return current()
 
+
 def refresh_async(force: bool = False) -> bool:
-    """Compatibility API: refresh is local and cheap enough to finish inline."""
-    if not CONFIG.get("auto.enabled", True):
-        return False
+    """Обновление локально и дёшево — отдельный поток не нужен."""
     data = _read()
     if not force and time.time() - float(data.get("at") or 0) < _REFRESH:
         return False

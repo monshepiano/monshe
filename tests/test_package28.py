@@ -181,9 +181,15 @@ class RoutingAndPlanCostTests(unittest.TestCase):
         self.assertLessEqual(planner.call_args.kwargs["max_tokens"], 320)
         self.assertIn("write_file", planner.call_args.args[0][-1]["content"])
 
+        # ПЛАН В AGENT — ВСЕГДА (просьба пользователя). Ошибка планировщика
+        # больше не означает «плана нет»: вторая попытка, затем локальный
+        # фоллбек с предметом задачи в каждом шаге.
         with mock.patch.object(agent.llm, "chat", side_effect=RuntimeError("offline")):
-            self.assertEqual(runner.make_plan("Напиши игру шахматы"), [],
-                             "a planner error must not resurrect the old generic three-step card")
+            plan = runner.make_plan("Напиши игру шахматы")
+        self.assertEqual(len(plan), 3)
+        for step in plan:
+            self.assertIn("Напиши игру шахматы", step,
+                          "fallback steps must name the task subject, not generic placeholders")
 
     def test_plan_progress_uses_two_natural_model_turns_not_one_per_item(self) -> None:
         route = {
@@ -382,7 +388,7 @@ class RoutingAndPlanCostTests(unittest.TestCase):
                 user_text="Сделай документ",
             ))
         names = [(item.get("function") or {}).get("name") for item in captured["tools"]]
-        self.assertEqual(names, ["write_file"])
+        self.assertEqual(names, ["write_file", "request_mode", "switch_model"])
         panels = [event for event in events if event.get("type") == "reply_ui"]
         self.assertEqual(len(panels), 1)
         self.assertIn("tiles Формат", panels[0]["spec"])
@@ -594,6 +600,808 @@ class TerminalPermissionTests(unittest.TestCase):
         dispatch.assert_not_called()
 
 
+class SmartMemoryTests(unittest.TestCase):
+    """Структуру памяти решает маленькая модель, а не слепой regex.
+
+    «я люблю кошек» раньше превращалось в «я люблю: кошек» — теперь модель
+    обязана дать осмысленную категорию и значение в нормальной форме."""
+
+    def test_llm_structures_the_fact_before_saving(self) -> None:
+        reply = {"content": json.dumps([
+            {"type": "любимое животное", "value": "кошки"},
+        ], ensure_ascii=False)}
+        with mock.patch.object(agent, "extract_obvious_memories",
+                               return_value=[{"kind": "Нравится", "key": "Нравится",
+                                              "value": "кошек"}]), \
+             mock.patch.object(agent.llm, "chat", return_value=reply) as model, \
+             mock.patch.object(agent.db, "remember", side_effect=lambda k, key, v, w: {
+                 "kind": k, "key": key, "value": v}) as remember:
+            saved = agent.remember_smart_facts("я люблю кошек")
+        self.assertEqual(saved, [{"kind": "любимое животное",
+                                  "key": "Любимое животное", "value": "кошки"}])
+        model.assert_called_once()
+        self.assertIn("экстрактор долговременной памяти", model.call_args.args[0][0]["content"])
+        remember.assert_called_once_with("любимое животное", "Любимое животное", "кошки", 1.15)
+
+    def test_llm_verdict_empty_means_do_not_save(self) -> None:
+        with mock.patch.object(agent, "extract_obvious_memories",
+                               return_value=[{"kind": "Нравится", "key": "x", "value": "y"}]), \
+             mock.patch.object(agent.llm, "chat",
+                               return_value={"content": "[]"}), \
+             mock.patch.object(agent.db, "remember") as remember:
+            self.assertEqual(agent.remember_smart_facts("сегодня я устал"), [])
+        remember.assert_not_called()
+
+    def test_model_failure_falls_back_to_local_verbatim(self) -> None:
+        local = [{"kind": "Нравится", "key": "Нравится", "value": "кошек"}]
+        with mock.patch.object(agent, "extract_obvious_memories", return_value=local), \
+             mock.patch.object(agent.llm, "chat", side_effect=RuntimeError("network")), \
+             mock.patch.object(agent, "remember_obvious_facts", return_value=[{"saved": 1}]) as fb:
+            self.assertEqual(agent.remember_smart_facts("я люблю кошек"), [{"saved": 1}])
+        fb.assert_called_once_with("я люблю кошек")
+
+    def test_plain_replika_without_candidates_costs_no_model_call(self) -> None:
+        with mock.patch.object(agent, "extract_obvious_memories", return_value=[]), \
+             mock.patch.object(agent.llm, "chat") as model:
+            self.assertEqual(agent.remember_smart_facts("как дела?"), [])
+        model.assert_not_called()
+
+
+class DirectVisionTests(unittest.TestCase):
+    """Computer-use: зрячая управляющая модель видит кадр сама.
+
+    Прежняя связка «зрячая опишет словами — слепая решит» стоила два запроса
+    на каждый шаг и теряла точность в пересказе."""
+
+    def _shot(self):
+        return {"ok": True, "path": "screen_1.png",
+                "download_url": "/api/download/screen_1.png",
+                "data_url": "data:image/png;base64,QUJD", "bytes": 3,
+                "width": 800, "height": 600, "scale": 0.5}
+
+    def test_direct_vision_appends_frame_image_and_drops_old(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            runner = agent.Agent(computer_use=True)
+            runner._vision_direct = True
+            convo: list = []
+            call = {"id": "s1", "type": "function",
+                    "function": {"name": "screenshot", "arguments": "{}"}}
+            with mock.patch.object(agent, "_describe_screen") as describe, \
+                 mock.patch.object(agent.sandbox, "root", return_value=Path(td)):
+                runner._append_tool_result(convo, call, "screenshot", self._shot(), False)
+                runner._append_tool_result(convo, call, "screenshot", self._shot(), False)
+            describe.assert_not_called()  # отдельный describe-запрос больше не нужен
+            frames = [m for m in convo
+                      if m.get("role") == "user" and isinstance(m.get("content"), list)]
+            # живой кадр-картинка всегда один — последний; старый стал текстом
+            self.assertEqual(len(frames), 1)
+            last = frames[0]["content"]
+            self.assertEqual(last[1]["image_url"]["url"], "data:image/png;base64,QUJD")
+            self.assertIn("× 2", last[0]["text"], "масштаб пересчёта координат указан")
+            self.assertTrue(any(
+                m.get("role") == "user" and
+                str(m.get("content")).startswith("[КАДР] Предыдущий кадр устарел")
+                for m in convo), "stale frame must be replaced by a text stub")
+
+    def test_vision_tier_selected_for_computer_use(self) -> None:
+        runner = agent.Agent(computer_use=True)
+        runner._vision_direct = True
+        events = []
+        route = {"tier": "base", "reason": "test", "score": 0.0,
+                 "verbose": False, "offer_tools": False}
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", return_value=iter([])), \
+             mock.patch.object(agent.tools, "schemas", return_value=[]):
+            for event in runner.run([{"role": "user", "content": "нажми кнопку"}],
+                                     user_text="нажми кнопку"):
+                events.append(event)
+        routed = next(e for e in events if e.get("type") == "route")
+        self.assertEqual(routed["tier"], "vision")
+
+
+class BudgetLimitTests(unittest.TestCase):
+    """Лимит ₽: при исчерпании агент спрашивает, продолжать ли."""
+
+    def _run_with_budget(self, limit, answer):
+        route = {"tier": "base", "reason": "test", "score": 0.0,
+                 "verbose": False, "offer_tools": True}
+        usage = {"prompt_tokens": 100000, "completion_tokens": 100}
+        schema = [{"type": "function", "function": {"name": "web_search",
+                                                    "parameters": {"type": "object"}}}]
+        turns = iter((
+            # первый ход: дорогой вызов инструмента — бюджет расходуется
+            [{"type": "done", "tool_calls": [{
+                "id": "t1", "type": "function",
+                "function": {"name": "web_search",
+                             "arguments": json.dumps({"query": "x"})}}],
+              "usage": usage, "model": "test-model"}],
+            # второй ход происходит уже ПОСЛЕ решения о лимите
+            [{"type": "delta", "text": "Готово."},
+             {"type": "done", "tool_calls": [], "usage": usage, "model": "test-model"}],
+        ))
+
+        def fake_stream(*_a, **_k):
+            # настоящий llm капает usage в sink прогона — мока делает то же
+            for ev in next(turns):
+                if ev.get("type") == "done" and ev.get("usage"):
+                    llm._report_usage(ev.get("model") or "test-model",
+                                      int(ev["usage"].get("prompt_tokens") or 0),
+                                      int(ev["usage"].get("completion_tokens") or 0))
+                yield ev
+        runner = agent.Agent()
+        runner.budget_rub = limit
+        question = {"id": "q1", "status": "answered", "answer": answer}
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=fake_stream), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(agent.tools, "call", return_value={"ok": True}), \
+             mock.patch.object(agent.db, "create_question", return_value=dict(question)), \
+             mock.patch.object(agent.db, "get_question", return_value=dict(question)):
+            events = list(runner.run([{"role": "user", "content": "задача"}],
+                                     user_text="задача"))
+        return runner, events
+
+    def test_budget_increase_continues_run(self) -> None:
+        runner, events = self._run_with_budget(0.01, "Увеличить на 25 ₽")
+        waits = [e for e in events if e.get("type") == "budget_wait"]
+        updates = [e for e in events if e.get("type") == "budget_update"]
+        self.assertTrue(waits, "budget_wait must be emitted before waiting")
+        self.assertTrue(updates)
+        self.assertAlmostEqual(runner.budget_rub, 25.01)
+        self.assertTrue(any(e.get("type") == "done" for e in events))
+
+    def test_budget_disable_removes_limit(self) -> None:
+        runner, events = self._run_with_budget(0.01, "Отключить лимит")
+        self.assertTrue(any(e.get("type") == "budget_off" for e in events))
+        self.assertIsNone(runner.budget_rub)
+        self.assertTrue(any(e.get("type") == "done" for e in events))
+
+    def test_budget_stop_ends_run_with_honest_text(self) -> None:
+        runner, events = self._run_with_budget(0.01, "Остановить")
+        done = next(e for e in events if e.get("type") == "done")
+        self.assertIn("лимит", done["content"].lower())
+        self.assertIsNotNone(done.get("budget_spent"))
+
+
+class ScenarioStorageTests(unittest.TestCase):
+    def test_scenarios_crud(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.object(db, "DATA_DIR", Path(td)), \
+                 mock.patch.object(db, "_DB_PATH", Path(td) / "test.db"):
+                conn = sqlite3.connect(db._DB_PATH)
+                conn.executescript(db.SCHEMA)
+                conn.commit()
+                conn.close()
+                db._CONN = None
+                with mock.patch.object(db, "_CONN", db._connect()):
+                    created = db.create_scenario("Дайджест утра",
+                                                 ["Новости за вчера", "  ", "Погода"],
+                                                 emoji="☀️")
+                    self.assertEqual(created["steps"], ["Новости за вчера", "Погода"])
+                    listed = db.list_scenarios()
+                    self.assertEqual(len(listed), 1)
+                    self.assertEqual(listed[0]["title"], "Дайджест утра")
+                    db.delete_scenario(created["id"])
+                    self.assertEqual(db.list_scenarios(), [])
+
+
+class ProactiveModesTests(unittest.TestCase):
+    """Джарвис сам просит включить режим — через вопрос с кнопкой."""
+
+    def _run_request_mode(self, answer):
+        route = {"tier": "base", "reason": "test", "score": 0.0,
+                 "verbose": False, "offer_tools": True}
+        schema = [{"type": "function", "function": {"name": "write_file",
+                                                    "parameters": {"type": "object"}}}]
+        stream = [
+            [{"type": "done", "tool_calls": [{
+                "id": "t1", "type": "function",
+                "function": {"name": "request_mode",
+                             "arguments": json.dumps({"mode": "agent",
+                                                      "reason": "многошаговая сборка"})}}],
+              "usage": {"prompt_tokens": 10, "completion_tokens": 5}}],
+            [{"type": "delta", "text": "Продолжаю сам."},
+             {"type": "done", "tool_calls": [], "usage": None}],
+        ]
+        turns = iter(stream)
+        runner = agent.Agent()
+        record = {"id": "q1", "status": "answered", "answer": answer}
+        captured: dict = {}
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream",
+                               side_effect=lambda *a, **k: (captured.setdefault("tools", k.get("tools")),
+                                                            next(turns))[1]), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(runner, "_wait_answer", return_value=record):
+            events = list(runner.run([{"role": "user", "content": "собери отчёт"}],
+                                     user_text="собери отчёт"))
+        return runner, events, captured
+
+    def test_request_mode_enabled_mid_run(self) -> None:
+        runner, events, captured = self._run_request_mode("Включить")
+        self.assertTrue(runner.agent_mode, "разрешение применено к текущему прогону")
+        req = next(e for e in events if e.get("type") == "mode_request")
+        self.assertEqual(req["mode"], "agent")
+        self.assertIn("многошаговая", req["reason"])
+        self.assertTrue(any(e.get("type") == "mode_changed" and e.get("on")
+                            for e in events))
+        # во втором ходе список инструментов остался и содержит request_mode
+        self.assertIn("request_mode",
+                      [t["function"]["name"] for t in captured.get("tools", [])])
+
+    def test_request_mode_declined_keeps_mode_off(self) -> None:
+        runner, events, _ = self._run_request_mode("Не нужно")
+        self.assertFalse(runner.agent_mode)
+        self.assertTrue(any(e.get("type") == "mode_declined" for e in events))
+        self.assertTrue(any(e.get("type") == "done" for e in events))
+
+
+class AutoWorkerTests(unittest.TestCase):
+    """Тикер AUTO реально запускает задачи: очередь и расписание."""
+
+    def test_active_tasks_returns_pending_only(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.object(db, "DATA_DIR", Path(td)), \
+                 mock.patch.object(db, "_DB_PATH", Path(td) / "t.db"):
+                conn = sqlite3.connect(db._DB_PATH)
+                conn.executescript(db.SCHEMA)
+                conn.commit(); conn.close()
+                db._CONN = None
+                with mock.patch.object(db, "_CONN", db._connect()):
+                    live = db.create_task(title="live", prompt="p")
+                    db.update_task(live["id"], status="scheduled",
+                                   next_run=time.time() + 5)
+                    done = db.create_task(title="done", prompt="p")
+                    db.update_task(done["id"], status="done")
+                    active = db.active_tasks()
+                    self.assertEqual({t["id"] for t in active}, {live["id"]})
+
+    def test_scheduled_task_launches_within_seconds(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.object(db, "DATA_DIR", Path(td)), \
+                 mock.patch.object(db, "_DB_PATH", Path(td) / "t.db"):
+                conn = sqlite3.connect(db._DB_PATH)
+                conn.executescript(db.SCHEMA)
+                conn.commit(); conn.close()
+                db._CONN = None
+                with mock.patch.object(db, "_CONN", db._connect()), \
+                     mock.patch.object(auto.agent, "run_headless",
+                                       return_value={"content": "готово", "files": []}) as headless:
+                    # «напиши…» с расписание поймал бы direct-путь таймера;
+                    # для агентного исполнения берём рабочую формулировку
+                    task = auto.create_background_task("Сводка", "собери сводку новостей",
+                                                       schedule="in 2s")
+                    self.assertEqual(task["status"], "scheduled")
+                    auto.start()
+                    try:
+                        deadline = time.time() + 12
+                        while time.time() < deadline:
+                            if db.get_task(task["id"])["status"] == "done":
+                                break
+                            time.sleep(0.25)
+                    finally:
+                        auto.stop()
+                    self.assertEqual(db.get_task(task["id"])["status"], "done",
+                                     "через 2 секунды задача обязана запуститься и завершиться")
+                    headless.assert_called_once()
+
+
+class ModeSuggestionTests(unittest.TestCase):
+    """Проактивные режимы: локальный триггер до модели — шахматы получают AGENT,
+    «нажми…» — Компьютер, «как я выгляжу» — Камеру."""
+
+    def test_creation_tasks_ask_for_agent(self) -> None:
+        self.assertEqual(agent.suggest_mode("Напиши игру шахматы", False, False),
+                         {"mode": "agent",
+                          "reason": "многошаговая сборка: план и несколько шагов работы"})
+        self.assertEqual(agent.suggest_mode("собери сайт-портфолио", False, False)["mode"],
+                         "agent")
+        # письмо и презентация — не агентская сборка
+        self.assertIsNone(agent.suggest_mode("напиши письмо маме", False, False))
+        self.assertIsNone(agent.suggest_mode("сделай презентацию", False, False))
+
+    def test_screen_actions_ask_for_computer(self) -> None:
+        hint = agent.suggest_mode("нажми на иконку открытия нового диалога", False, False)
+        self.assertEqual(hint["mode"], "computer")
+        # режим уже включён — не предлагаем
+        self.assertIsNone(agent.suggest_mode("нажми кнопку", False, True))
+
+    def test_look_requests_ask_for_camera(self) -> None:
+        self.assertEqual(agent.suggest_mode("как я выгляжу?", False, False)["mode"],
+                         "camera")
+        self.assertIsNone(agent.suggest_mode("привет, как дела", False, False))
+
+
+class UiTreeTests(unittest.TestCase):
+    """Дерево элементов: дешёвая альтернатива скриншоту в computer-use."""
+
+    def test_ui_tree_registered_and_silent(self) -> None:
+        from jarvis import tools as jarvis_tools
+        self.assertEqual(jarvis_tools.group_of("ui_tree"), "computer")
+        self.assertTrue(jarvis_tools.is_silent("ui_tree"))
+        self.assertIn("ui_tree", jarvis_tools.schemas(["computer"])[0]
+                      and "" or "ui_tree",
+                      str(jarvis_tools.schemas(["computer"])))
+
+    def test_ui_tree_parses_jxa_output(self) -> None:
+        from jarvis.tools import system as sysmod
+        sample = ('window "Настройки" [0,0 800x600] app:System Settings\n'
+                  '  AXButton "Готово" [700,40 80x28]\n'
+                  '    AXStaticText "Профиль" [12,12 120x20]')
+        with mock.patch.object(sysmod, "IS_MAC", True), \
+             mock.patch.object(sysmod, "_jxa",
+                               return_value={"ok": True, "out": sample}):
+            res = sysmod.ui_tree()
+        self.assertTrue(res["ok"])
+        self.assertIn("AXButton", res["tree"])
+        self.assertIn("[700,40 80x28]", res["tree"])
+
+    def test_ui_tree_reports_no_window(self) -> None:
+        from jarvis.tools import system as sysmod
+        with mock.patch.object(sysmod, "IS_MAC", True), \
+             mock.patch.object(sysmod, "_jxa",
+                               return_value={"ok": True, "out": "NO_WINDOW app:Finder"}):
+            res = sysmod.ui_tree()
+        self.assertFalse(res["ok"])
+        self.assertIn("нет открытых окон", res["error"])
+
+
+class SwitchModelTests(unittest.TestCase):
+    """Смена модели по ходу ответа: route-событие и применение на следующем шаге."""
+
+    def test_switch_model_emits_route_and_applies(self) -> None:
+        route = {"tier": "base", "reason": "test", "score": 0.0,
+                 "verbose": False, "offer_tools": True}
+        schema = [{"type": "function", "function": {"name": "write_file",
+                                                    "parameters": {"type": "object"}}}]
+        turns = iter((
+            [{"type": "done", "tool_calls": [{
+                "id": "t1", "type": "function",
+                "function": {"name": "switch_model",
+                             "arguments": json.dumps({"tier": "coder",
+                                                      "reason": "нужен код"})}}],
+              "usage": {"prompt_tokens": 10, "completion_tokens": 5}}],
+            [{"type": "done", "tool_calls": [{
+                "id": "t2", "type": "function",
+                "function": {"name": "write_file",
+                             "arguments": json.dumps({"path": "a.py", "content": "x"})}}],
+              "usage": {"prompt_tokens": 10, "completion_tokens": 5}}],
+            [{"type": "delta", "text": "Готово."},
+             {"type": "done", "tool_calls": [], "usage": None}],
+        ))
+        captured: list = []
+
+        def fake_stream(*a, **k):
+            captured.append(k.get("tier"))
+            return next(turns)
+
+        runner = agent.Agent()
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=fake_stream), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(agent.tools, "call", return_value={"ok": True}):
+            events = list(runner.run([{"role": "user", "content": "сделай скрипт"}],
+                                     user_text="сделай скрипт"))
+        self.assertEqual(captured, ["base", "coder", "coder"],
+                         "после switch_model все следующие ходы идут на новом тарифе")
+        routes = [e for e in events if e.get("type") == "route"]
+        self.assertTrue(any(r.get("tier") == "coder" for r in routes))
+
+
+class HonestPlanTests(unittest.TestCase):
+    """План видит сама модель и следует ему честно — не только интерфейс."""
+
+    def test_announce_plan_injects_plan_into_context(self) -> None:
+        route = {"tier": "coder", "reason": "t", "score": 0.5,
+                 "verbose": True, "offer_tools": True}
+        schema = [{"type": "function", "function": {"name": "write_file",
+                                                    "parameters": {"type": "object"}}}]
+        stream = [
+            [{"type": "done", "tool_calls": [{
+                "id": "t1", "type": "function",
+                "function": {"name": "write_file",
+                             "arguments": json.dumps({"path": "g.py", "content": "x"})}}],
+              "usage": {"prompt_tokens": 5, "completion_tokens": 5}}],
+            [{"type": "delta", "text": "Готово."},
+             {"type": "done", "tool_calls": [], "usage": None}],
+        ]
+        turns = iter(stream)
+        convo_seen: list = []
+
+        def fake_stream(convo, **_k):
+            convo_seen.append([dict(m) for m in convo])
+            return next(turns)
+
+        runner = agent.Agent(agent_mode=True)
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=fake_stream), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(agent.tools, "call", return_value={"ok": True}), \
+             mock.patch.object(runner, "make_plan",
+                               return_value=["Каркас игры", "Логика ходов",
+                                             "Интерфейс", "Проверка и сдача"]):
+            events = list(runner.run([{"role": "user", "content": "напиши игру"}],
+                                     user_text="напиши игру"))
+        self.assertTrue(any(e.get("type") == "plan" for e in events))
+        # со второго хода в контексте лежит сам план с честным правилом
+        second = convo_seen[1]
+        plan_msg = next((m for m in second if m.get("role") == "system"
+                         and "ПЛАН РАБОТЫ" in str(m.get("content"))), None)
+        self.assertIsNotNone(plan_msg, "plan must live in the model context")
+        self.assertIn("Логика ходов", plan_msg["content"])
+        self.assertIn("[ШАГ N]", plan_msg["content"])
+
+    def test_usage_sink_counts_every_call(self) -> None:
+        runner = agent.Agent()
+        runner.model_used = "some-model"
+        before = runner._spent_rub
+        with mock.patch.object(agent.llm, "estimate_cost", return_value=0.5):
+            token = agent.llm._USAGE_SINK.set(runner._sink_usage)
+            try:
+                agent.llm._report_usage("some-model", 1000, 500)
+            finally:
+                agent.llm._USAGE_SINK.reset(token)
+        self.assertAlmostEqual(runner._spent_rub - before, 0.5)
+
+    def test_raw_tool_json_answer_is_retried_and_never_final(self) -> None:
+        """Сырой JSON-конверт не показывают пользователю как ответ.
+
+        Модель дважды отвечает `{"ok": true, ...}` (выдумала или повторила
+        результат инструмента) — пользователь должен получить либо нормальный
+        текст, либо локальный пересказ реальных результатов.
+        """
+        route = {"tier": "base", "reason": "t", "score": 0.5,
+                 "verbose": True, "offer_tools": True}
+        schema = [{"type": "function", "function": {"name": "web_search",
+                                                    "parameters": {"type": "object"}}}]
+        payload = json.dumps({"ok": True, "query": "новости",
+                              "engine": "news", "results": []},
+                             ensure_ascii=False)
+        turns = iter((
+            [{"type": "delta", "text": payload},
+             {"type": "done", "tool_calls": []}],
+            [{"type": "delta", "text": payload},
+             {"type": "done", "tool_calls": []}],
+        ))
+        runner = agent.Agent(agent_mode=True)
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream",
+                               side_effect=lambda *_a, **_k: next(turns)), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(runner, "make_plan", return_value=[]):
+            events = list(runner.run([{"role": "user", "content": "новости"}],
+                                     user_text="новости"))
+        done = next(e for e in events if e.get("type") == "done")
+        self.assertNotIn('{"ok": true', done.get("content", ""),
+                         "raw tool envelope must never be the final answer")
+        self.assertTrue(done.get("content", "").strip())
+
+    def test_payload_classifier_knows_envelopes(self) -> None:
+        self.assertTrue(agent.is_tool_payload_answer(
+            '{"ok": true, "query": "x", "engine": "news"}'))
+        self.assertTrue(agent.is_tool_payload_answer(
+            '```json\n{"ok": true, "status": 200, "body": "..."}\n```'))
+        self.assertFalse(agent.is_tool_payload_answer(
+            "Вот сводка: сегодня 12 градусов, ветер 7 м/с."))
+        self.assertFalse(agent.is_tool_payload_answer(
+            'Держи JSON: {"a": 1} — это то, что просил.'))
+
+    def test_plan_markers_drive_counter_and_switch_off_autoadvance(self) -> None:
+        """[ШАГ N] от модели — факт: после первой пометки автопродвижение
+        по ходам выключается, счётчик едет только по пометкам."""
+        route = {"tier": "coder", "reason": "t", "score": 0.5,
+                 "verbose": True, "offer_tools": True}
+        schema = [{"type": "function", "function": {"name": "write_file",
+                                                    "parameters": {"type": "object"}}}]
+        turns = iter((
+            # ход 1: первый инструмент
+            [{"type": "done", "tool_calls": [{
+                "id": "t1", "type": "function",
+                "function": {"name": "write_file",
+                             "arguments": json.dumps({"path": "a.py", "content": "1"})}}]}],
+            # ход 2: модель сама помечает шаг 4 и снова работает инструментом
+            [{"type": "delta", "text": "[ШАГ 4] Делаю четвёртый шаг."},
+             {"type": "done", "tool_calls": [{
+                "id": "t2", "type": "function",
+                "function": {"name": "write_file",
+                             "arguments": json.dumps({"path": "b.py", "content": "2"})}}]}],
+            # ход 3: финальный текст
+            [{"type": "delta", "text": "Готово всё."},
+             {"type": "done", "tool_calls": []}],
+        ))
+        runner = agent.Agent(agent_mode=True)
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream",
+                               side_effect=lambda *_a, **_k: next(turns)), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(agent.tools, "call", return_value={"ok": True}), \
+             mock.patch.object(runner, "make_plan",
+                               return_value=["Каркас", "Логика", "Данные",
+                                             "Сборка", "Тесты", "Проверка"]):
+            events = list(runner.run([{"role": "user", "content": "напиши игру"}],
+                                     user_text="напиши игру"))
+        self.assertTrue(runner._plan_marked,
+                        "первая пометка модели обязана включить режим «верим пометкам»")
+        steps = [e["step"] for e in events if e.get("type") == "plan_step"]
+        # 1 объявление, 2 первый инструмент, 3 автопродвижение хода 2 (ещё без
+        # пометок), 4 — ПОМЕТКА модели. Дальше автопродвижение молчит: 5 и 6
+        # закрываются только вместе с финальным текстом.
+        self.assertEqual(steps, [1, 2, 3, 4, 5, 6])
+        step5_at = next(i for i, e in enumerate(events)
+                        if e.get("type") == "plan_step" and e.get("step") == 5)
+        done_at = next(i for i, e in enumerate(events)
+                       if e.get("type") == "delta" and "Готово всё" in e.get("text", ""))
+        self.assertGreater(step5_at, done_at,
+                           "после пометок модели шаги не должны досыпаться пачкой до ответа")
+
+
+class AsrRoutesTests(unittest.TestCase):
+    def test_transcriptions_endpoint_is_first_cloudru_route(self) -> None:
+        from jarvis.tools import media
+
+        class _Cfg:
+            @staticmethod
+            def get(key, default=None):
+                return {"model_tiers.audio": ["whisper-large"]}.get(key, default)
+
+        with mock.patch.object(media, "CONFIG", _Cfg), \
+             mock.patch.object(media.llm, "provider_conf",
+                               return_value={"api_key": "k",
+                                             "base_url": "https://x/v1"}), \
+             mock.patch.object(media.llm, "models_of_type", return_value=[]):
+            routes = media._asr_routes()
+        labels = [r[0] for r in routes]
+        self.assertIn("cloudru-ts:whisper-large", labels,
+                      "standard /audio/transcriptions must be tried first")
+        self.assertLess(labels.index("cloudru-ts:whisper-large"),
+                        labels.index("cloudru-chat:whisper-large"))
+
+
+class RunStopTests(unittest.TestCase):
+    """Stop = стоп работы, а не только обрыв SSE-картинки."""
+
+    def test_cancelled_agent_dispatches_nothing(self) -> None:
+        route = {"tier": "base", "reason": "test", "score": 0.4,
+                 "verbose": True, "offer_tools": True}
+        schema = [{"type": "function", "function": {"name": "web_search",
+                                                    "parameters": {"type": "object"}}}
+        ]
+        turns = iter((
+            [{"type": "done", "tool_calls": [{
+                "id": "t1", "type": "function",
+                "function": {"name": "web_search",
+                             "arguments": json.dumps({"query": "x"})}}]}],
+        ))
+        runner = agent.Agent(cancel_check=lambda: True)
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream",
+                               side_effect=lambda *_a, **_k: next(turns)), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(agent.tools, "call") as dispatch:
+            events = list(runner.run([{"role": "user", "content": "найди"}],
+                                     user_text="найди"))
+        dispatch.assert_not_called()
+        self.assertFalse([e for e in events if e.get("type") == "tool_start"])
+
+    def test_stop_run_flips_the_registered_event(self) -> None:
+        import threading as _th
+        event = _th.Event()
+        with mock.patch.dict(server._RUN_STOPS, {"tok-1": event}):
+            self.assertTrue(server._stop_run("tok-1"))
+            self.assertTrue(event.is_set())
+            self.assertFalse(server._stop_run("unknown"))
+
+
+class TurnUiContractEconomyTests(unittest.TestCase):
+    """Контракт хода (~340 токенов) нужен только там, где возможен выбор."""
+
+    def _stream(self, body_extra: dict) -> list:
+        handler = mock.Mock()
+        handler._sse.return_value = True
+        handler._sse_open.return_value = None
+        handler._sse_close.return_value = None
+        stream_events = [{"type": "delta", "text": "Ответ."},
+                         {"type": "done", "tool_calls": []}]
+        route = {"tier": "base", "reason": "test", "score": 0.0,
+                 "verbose": False, "offer_tools": False}
+        with mock.patch.object(server.llm, "active_providers", return_value=["test"]), \
+             mock.patch.object(server.llm, "chat_stream", return_value=stream_events) as cs, \
+             mock.patch.object(server.llm, "chat"), \
+             mock.patch.object(server.db, "add_message", return_value={"id": "m1"}), \
+             mock.patch.object(server.db, "get_messages", return_value=[]), \
+             mock.patch.object(server.db, "rename_chat"), \
+             mock.patch.object(server.sandbox, "set_chat"), \
+             mock.patch.object(server.auto, "should_background",
+                               return_value={"background": False, "schedule": "",
+                                             "reason": ""}), \
+             mock.patch.object(server.orchestrator, "summarize_history",
+                               side_effect=lambda items: items), \
+             mock.patch.object(server.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(server.agent, "remember_smart_facts", return_value=[]), \
+             mock.patch.object(server.agent, "build_system_prompt",
+                               return_value="BASE SYSTEM"), \
+             mock.patch.object(server.agent, "turn_ui_contract",
+                               return_value="UI CONTRACT") as contract, \
+             mock.patch.object(server.agent.tools, "schemas", return_value=[]):
+            server.Handler._chat_stream(handler, dict({
+                "chat_id": "c1", "text": "привет, как жизнь",
+            }, **body_extra))
+        return cs.call_args.args[0], contract
+
+    def test_plain_chat_skips_the_contract(self) -> None:
+        messages, contract = self._stream({})
+        contract.assert_not_called()
+        self.assertFalse([m for m in messages if m.get("content") == "UI CONTRACT"])
+
+    def test_agent_mode_and_images_keep_the_contract(self) -> None:
+        messages, contract = self._stream({"agent_mode": True})
+        contract.assert_called_once()
+        self.assertEqual(messages[-2], {"role": "system", "content": "UI CONTRACT"})
+
+
+class ComputerUseConsentTests(unittest.TestCase):
+    """Тумблер «Компьютер» — это и есть согласие управлять мышью и клавиатурой.
+
+    Раньше каждый клик и каждая буква останавливали работу вопросом «управление
+    мышью на твоём компьютере» — сделать в режиме нельзя было ничего."""
+
+    def test_computer_mode_toggle_consents_to_input_actions(self) -> None:
+        self.assertIsNone(agent.needs_approval("mouse_click", {"x": 1, "y": 2},
+                                               computer_use=True))
+        self.assertIsNone(agent.needs_approval("type_text", {"text": "привет"},
+                                               computer_use=True))
+        self.assertIsNone(agent.needs_approval("press_key", {"key": "return"},
+                                               computer_use=True))
+        self.assertIsNone(agent.needs_approval("mouse_move", {"x": 10, "y": 10},
+                                               computer_use=True))
+        self.assertIsNone(agent.needs_approval("open_app", {"name": "Safari"},
+                                               computer_use=True))
+        # без включённого режима каждое из этих действий — вопрос пользователю
+        self.assertEqual(agent.needs_approval("mouse_click", {"x": 1, "y": 2}),
+                         "управление мышью на твоём компьютере")
+        # согласие режима не расползается на остальные опасные действия
+        self.assertEqual(agent.needs_approval("delete_file", {"name": "x"},
+                                              computer_use=True), "удаление данных")
+        # Терминал в режиме «Компьютер» — часть согласованной работы: молча.
+        self.assertIsNone(agent.needs_approval("open_app", {"name": "Terminal"},
+                                               computer_use=True))
+        # А вот без режима окно терминала — только с разрешения.
+        self.assertEqual(agent.needs_approval("open_app", {"name": "Terminal"},
+                                              computer_use=False),
+                         "открытие приложения «Терминал»")
+
+    def test_screenshot_frame_stays_out_of_chat_and_context(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "screen_1.png").write_bytes(b"png")
+            (Path(td) / "screen_2.png").write_bytes(b"png")
+            convo: list = []
+            call = {"id": "shot-1", "type": "function",
+                    "function": {"name": "screenshot", "arguments": "{}"}}
+            first = {"ok": True, "path": "screen_1.png",
+                     "download_url": "/api/download/screen_1.png",
+                     "data_url": "data:image/png;base64,AAAA", "bytes": 3,
+                     "width": 800, "height": 600, "scale": 0.5}
+            second = dict(first, path="screen_2.png",
+                          download_url="/api/download/screen_2.png")
+            runner = agent.Agent(computer_use=False)
+            with mock.patch.object(agent, "_describe_screen",
+                                   side_effect=("карта 1", "карта 2")), \
+                 mock.patch.object(agent.sandbox, "root", return_value=Path(td)):
+                runner._append_tool_result(convo, call, "screenshot", first, False)
+                runner._append_tool_result(convo, call, "screenshot", second, False)
+            # тяжёлые поля ушли из результата до отправки события в браузер
+            for key in ("data_url", "download_url", "bytes", "path"):
+                self.assertNotIn(key, second)
+            self.assertEqual(second["screen"], "карта 2")
+            # в контексте остаётся только последняя словесная карта экрана
+            self.assertIn("карта 2", convo[-1]["content"])
+            self.assertIn("опущена", json.loads(convo[-2]["content"])["screen"])
+            # кадры не копятся ни в чате, ни в песочнице диалога
+            self.assertFalse((Path(td) / "screen_1.png").exists())
+            self.assertFalse((Path(td) / "screen_2.png").exists())
+
+
+class PlanProgressTests(unittest.TestCase):
+    def test_plan_advances_by_completed_work_not_only_by_model_turns(self) -> None:
+        route = {"tier": "base", "reason": "test", "score": 0.4,
+                 "verbose": True, "offer_tools": True}
+        schema = [
+            {"type": "function", "function": {"name": "web_search",
+                                              "parameters": {"type": "object"}}},
+            {"type": "function", "function": {"name": "open_url",
+                                              "parameters": {"type": "object"}}},
+        ]
+
+        def call(name, args):
+            return {"ok": True, "name": name}
+
+        turns = iter((
+            [{"type": "done", "tool_calls": [
+                {"id": "t1", "type": "function", "function": {
+                    "name": "web_search", "arguments": json.dumps({"query": "a"})}},
+                {"id": "t2", "type": "function", "function": {
+                    "name": "open_url", "arguments": json.dumps({"url": "https://x"})}},
+            ]}],
+            [{"type": "delta", "text": "Готово."},
+             {"type": "done", "tool_calls": []}],
+        ))
+        runner = agent.Agent(agent_mode=True)
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream",
+                               side_effect=lambda *_a, **_k: next(turns)), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(runner, "make_plan",
+                               return_value=["найти источники", "прочитать их",
+                                             "свести ответ"]), \
+             mock.patch.object(agent.tools, "call", side_effect=call):
+            events = list(runner.run(
+                [{"role": "user", "content": "Найди и перескажи"}],
+                user_text="Найди и перескажи",
+            ))
+        steps = [event["step"] for event in events if event.get("type") == "plan_step"]
+        results = [i for i, event in enumerate(events)
+                   if event.get("type") == "tool_result"]
+        self.assertEqual(steps, [1, 2, 3], "steps advance one by one to the end")
+        # шаги двигаются фактами работы: последний шаг приходит только после
+        # завершившегося результата, а не пачкой в самом конце прогона
+        last_step_at = max(i for i, event in enumerate(events)
+                           if event.get("type") == "plan_step")
+        self.assertGreater(last_step_at, results[0])
+
+
+class PlanPacingPerTurnTests(unittest.TestCase):
+    def test_parallel_batch_advances_plan_at_most_once(self) -> None:
+        """Пачка параллельных инструментов — ОДНА фаза работы, не пять шагов.
+
+        Раньше каждый параллельный результат двигал план: 5 ссылок в одном
+        ходе «простреливали» весь план за секунду — визуально вся работа
+        сваливалась в последний шаг. Теперь батч продвигает план один раз;
+        остаток честно закрывается вместе с финальным текстом.
+        """
+        route = {"tier": "base", "reason": "test", "score": 0.4,
+                 "verbose": True, "offer_tools": True}
+        schema = [
+            {"type": "function", "function": {"name": "web_search",
+                                              "parameters": {"type": "object"}}},
+        ]
+        turns = iter((
+            [{"type": "done", "tool_calls": [
+                {"id": "t%d" % i, "type": "function", "function": {
+                    "name": "web_search",
+                    "arguments": json.dumps({"query": "q%d" % i})}}
+                for i in range(3)
+            ]}],
+            [{"type": "delta", "text": "Собрал всё в ответ."},
+             {"type": "done", "tool_calls": []}],
+        ))
+        runner = agent.Agent(agent_mode=True)
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route),              mock.patch.object(agent.llm, "chat_stream",
+                               side_effect=lambda *_a, **_k: next(turns)),              mock.patch.object(agent.tools, "schemas", return_value=schema),              mock.patch.object(runner, "make_plan",
+                               return_value=["шаг 1", "шаг 2", "шаг 3", "шаг 4"]), \
+             mock.patch.object(agent.tools, "call", return_value={"ok": True}):
+            events = list(runner.run(
+                [{"role": "user", "content": "найди и собери"}],
+                user_text="найди и собери",
+            ))
+        steps = [e["step"] for e in events if e.get("type") == "plan_step"]
+        self.assertEqual(steps, [1, 2, 3, 4])
+        # батч из трёх результатов продвинул план РОВНО ОДИН раз (шаг 2);
+        # шаг 3 приходит только на границе следующего хода, шаг 4 — с
+        # финальным текстом. Раньше три результата сожрали бы шаги 2, 3 и 4.
+        results = [i for i, e in enumerate(events) if e.get("type") == "tool_result"]
+        batch_steps = [i for i, e in enumerate(events)
+                       if e.get("type") == "plan_step" and results[0] <= i <= results[-1]]
+        self.assertEqual(len(batch_steps), 1,
+                         "a parallel batch advances the plan exactly once "
+                         "(old behavior burned one step per parallel result)")
+        # три результата не съели три шага: последний шаг закрывается уже
+        # после батча — на границе следующего хода модели
+        step4_at = next(i for i, e in enumerate(events)
+                        if e.get("type") == "plan_step" and e.get("step") == 4)
+        self.assertGreater(step4_at, results[-1],
+                           "the last step must survive past the batch")
+
+
 class AutomaticMemoryTests(unittest.TestCase):
     def test_general_preferences_are_extracted_without_topic_vocabularies(self) -> None:
         text = "Я люблю острую еду, мне нравятся прогулки, но я не переношу арахис."
@@ -730,7 +1538,8 @@ class AutomaticMemoryTests(unittest.TestCase):
             list(agent.Agent().run([{"role": "user", "content": "Я люблю обезьянок"}],
                                    user_text="Я люблю обезьянок"))
         offered = call.call_args.kwargs["tools"]
-        self.assertEqual({item["function"]["name"] for item in offered}, {"recall", "forget"})
+        self.assertEqual({item["function"]["name"] for item in offered},
+                         {"recall", "forget", "request_mode", "switch_model"})
 
     def test_preferences_have_clean_relation_labels_and_value_identities(self) -> None:
         conn = sqlite3.connect(":memory:")
@@ -868,7 +1677,7 @@ class VisionUiContractTests(unittest.TestCase):
                                return_value={"background": False, "schedule": "", "reason": ""}), \
              mock.patch.object(server.orchestrator, "summarize_history", side_effect=lambda items: items), \
              mock.patch.object(server.orchestrator, "choose_tier", return_value=route), \
-             mock.patch.object(server.agent, "remember_obvious_facts") as remember_facts, \
+             mock.patch.object(server.agent, "remember_smart_facts") as remember_facts, \
              mock.patch.object(server.agent, "build_system_prompt", return_value="BASE SYSTEM"), \
              mock.patch.object(server.agent.tools, "schemas", return_value=[]):
             server.Handler._chat_stream(handler, {

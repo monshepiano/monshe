@@ -1,7 +1,6 @@
 """AUTO: фоновый исполнитель задач, расписания и проактивные подсказки."""
 from __future__ import annotations
 
-import json
 import re
 import threading
 import time
@@ -358,19 +357,15 @@ _PROACTIVE_BUSY = False
 _PROACTIVE_LOCK = threading.Lock()
 
 
-def proactive_tick(_reserved: bool = False) -> None:
-    """Раз в несколько часов JARVIS сам предлагает полезное действие."""
-    global _LAST_PROACTIVE
-    if not _reserved:
-        if not CONFIG.get("auto.proactive", True) or in_quiet_hours():
-            return
-        if time.time() - _LAST_PROACTIVE < 4 * 3600:
-            return
-        _LAST_PROACTIVE = time.time()
-    # Проактивность не имеет права занимать LLM-provider за спиной у
-    # пользователя. Берём последнюю реальную тему и формируем честный локальный
-    # follow-up; так немедленная новая реплика никогда не конкурирует с тайным
-    # 25-секундным запросом.
+def proactive_tick(_reserved: bool = True) -> None:
+    """Раз в несколько часов JARVIS сам предлагает вернуться к недавней задаче.
+
+    Всегда локально и без LLM: скрытый сетевой запрос не имеет права
+    конкурировать с репликой пользователя. Проверки тишины, cooldown и
+    настройки proactive уже выполнены в proactive_async до запуска потока;
+    ``_reserved`` сохранён для совместимости сигнатуры.
+    """
+    del _reserved
     recent = db.recent_user_messages(days=30, limit=5)
     if not recent:
         return
@@ -419,11 +414,15 @@ def _loop() -> None:
         try:
             if CONFIG.get("auto.enabled", True) and not is_paused():
                 now_ts = time.time()
-                for task in db.list_tasks(limit=60):
+                # лёгкий запрос без разбора JSON-логов: циклу нужны только
+                # id/status/next_run, а тикает он каждые несколько секунд
+                has_queued = False
+                for task in db.active_tasks(limit=60):
                     if _STOP.is_set():
                         break
                     status = task.get("status")
                     if status == "queued":
+                        has_queued = True
                         if not launch_task(task["id"]):
                             # Лимит занят: остальные сохраняют порядок очереди.
                             break
@@ -444,9 +443,15 @@ def _loop() -> None:
                     ideas.refresh_async()
         except Exception:
             pass
-        # тик подстраивается под ближайшую задачу: секундные напоминания не опаздывают
+        # тик подстраивается под ближайшую задачу: секундные напоминания не опаздывают.
+        # Очередь не должна ждать полного тика: слот мог освободиться только что.
         base_tick = max(2, int(CONFIG.get("auto.tick_seconds", 10)))
-        wait = base_tick if nearest is None else max(0.25, min(base_tick, nearest))
+        if has_queued:
+            wait = 0.5
+        elif nearest is None:
+            wait = base_tick
+        else:
+            wait = max(0.25, min(base_tick, nearest))
         _STOP.wait(wait)
 
 
@@ -509,24 +514,12 @@ def _unit_secs(word: str) -> Optional[int]:
     return None
 
 
-def _fmt_every(secs: int) -> str:
-    if secs % 86400 == 0:
-        return "every %dd" % (secs // 86400)
-    if secs % 3600 == 0:
-        return "every %dh" % (secs // 3600)
-    if secs % 60 == 0:
-        return "every %dm" % (secs // 60)
-    return "every %ds" % secs
-
-
-def _fmt_in(secs: int) -> str:
-    if secs % 86400 == 0:
-        return "in %dd" % (secs // 86400)
-    if secs % 3600 == 0:
-        return "in %dh" % (secs // 3600)
-    if secs % 60 == 0:
-        return "in %dm" % (secs // 60)
-    return "in %ds" % secs
+def _fmt_interval(prefix: str, secs: int) -> str:
+    """'every 30m' / 'in 2h' — человекочитаемое каноническое расписание."""
+    for div, suffix in ((86400, "d"), (3600, "h"), (60, "m")):
+        if secs % div == 0:
+            return "%s %d%s" % (prefix, secs // div, suffix)
+    return "%s %ds" % (prefix, secs)
 
 
 _NUM_WORDS = {"пол": 0.5, "один": 1, "одну": 1, "одна": 1, "два": 2, "две": 2, "три": 3,
@@ -554,20 +547,20 @@ def detect_schedule(text: str) -> str:
         secs = _unit_secs(m.group(2))
         if secs:
             value = int(m.group(1) or 1)
-            return _fmt_every(max(5, value * secs))
+            return _fmt_interval("every", max(5, value * secs))
 
     # «через N единиц» / «спустя N единиц»
     m = re.search(r"(?:через|спустя)\s+(\d+)\s*([а-яёa-z.]+)", t)
     if m:
         secs = _unit_secs(m.group(2))
         if secs:
-            return _fmt_in(max(1, int(m.group(1)) * secs))
+            return _fmt_interval("in", max(1, int(m.group(1)) * secs))
     m = re.search(r"(?:через|спустя)\s+(полчаса|полминуты|минуту|час|день|сутки|неделю)", t)
     if m:
         word = m.group(1)
         table = {"полчаса": 1800, "полминуты": 30, "минуту": 60, "час": 3600,
                  "день": 86400, "сутки": 86400, "неделю": 604800}
-        return _fmt_in(table[word])
+        return _fmt_interval("in", table[word])
 
     # «в 18:30» / «завтра в 9:00»
     m = re.search(r"\bв\s*(\d{1,2})[:.](\d{2})\b", t)

@@ -56,6 +56,10 @@
         <span class="nav-ico">◎</span><span class="nav-label">AUTO</span>
         <span class="badge" id="autoBadge">0</span>
       </button>
+      <button class="nav-item" data-view="scenarios" data-name="Сценарии">
+        <i class="nav-outline" aria-hidden="true"></i>
+        <span class="nav-ico">⚡️</span><span class="nav-label">Сценарии</span>
+      </button>
       <button class="nav-item" data-view="files" data-name="Файлы">
         <i class="nav-outline" aria-hidden="true"></i>
         <span class="nav-ico">▤</span><span class="nav-label">Файлы</span>
@@ -177,18 +181,37 @@
             </button>
           </div>
           <div class="toggles">
-            <button class="toggle" id="tgCamera" data-tip="Живое распознавание: камера прямо в диалоге">
-              <span class="tg-dot"></span>Камера
-            </button>
-            <button class="toggle" id="tgComputer" data-tip="Управление мышью и клавиатурой">
-              <span class="tg-dot"></span>Компьютер
-            </button>
+            <div class="agent-switch cam-switch" id="swCamera" data-tip="Живое распознавание: камера прямо в диалоге">
+              <label class="agent-switch-track">
+                <input id="tgCamera" type="checkbox" role="switch" aria-label="Камера">
+                <i aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></i>
+              </label>
+            </div>
+            <div class="agent-switch pc-switch" id="swComputer" data-tip="Управление мышью и клавиатурой">
+              <label class="agent-switch-track">
+                <input id="tgComputer" type="checkbox" role="switch" aria-label="Компьютер">
+                <i aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><rect x="6.5" y="3" width="11" height="18" rx="5.5"/><path d="M12 7v3.4"/></svg></i>
+              </label>
+            </div>
             <div class="spacer"></div>
-            <div class="agent-switch" data-tip="Многошаговая задача: составлю план и выполню сам">
-              <span class="agent-switch-label">AGENT</span>
+            <button class="budget-btn" id="tgBudget" data-tip="Лимит расходов на один ответ">
+              <span class="budget-coin">₽</span>
+            </button>
+            <div class="budget-pop" id="budgetPop" hidden>
+              <div class="bp-head"><b>Лимит на ответ</b><button class="bp-off" id="budgetOff" hidden>Снять</button></div>
+              <div class="bp-body">
+                <div class="bp-hint" id="budgetHint">Сколько можно потратить на один ответ</div>
+                <div class="bp-variants" id="budgetVariants"></div>
+                <div class="bp-row">
+                  <input class="bp-input" id="budgetInput" type="number" min="1" step="1" placeholder="своё, ₽">
+                  <button class="btn primary sm" id="budgetApply">Подтвердить</button>
+                </div>
+              </div>
+            </div>
+            <div class="agent-switch" id="swAgent" data-tip="AGENT — многошаговая задача: план и самостоятельное выполнение">
               <label class="agent-switch-track">
                 <input id="tgAgent" type="checkbox" role="switch" aria-label="Агентский режим">
-                <i aria-hidden="true"></i>
+                <i aria-hidden="true">A</i>
               </label>
             </div>
           </div>
@@ -218,6 +241,28 @@
       </div>
       <div class="task-grid" id="taskGrid"></div>
     </section>
+    <!-- ---------- VIEW: СЦЕНАРИИ ---------- -->
+    <!-- Разметка повторяет вкладку AUTO один в один: та же служебная полоса
+         со статистикой, та же сетка карточек. Один язык интерфейса. -->
+    <section class="view view-scenarios" id="view-scenarios">
+      <div class="panel-head">
+        <div>
+          <h2>⚡️ Сценарии</h2>
+          <p class="muted">Готовые последовательности: один клик — и Джарвис выполнит шаги
+            в новом диалоге, один за другим. Как «Команды» на iPhone.</p>
+        </div>
+        <button class="btn primary" id="addScenarioBtn">+ Новый сценарий</button>
+      </div>
+      <div class="auto-bar scenario-bar" id="scenarioBar">
+        <div class="auto-stats" id="scenarioStats"></div>
+        <div class="auto-bar-actions">
+          <button class="btn sm" id="scDemoBtn" title="Добавить пример-сценарий, чтобы попробовать">Пример</button>
+        </div>
+      </div>
+      <div class="task-grid scenario-grid" id="scenarioGrid"></div>
+    </section>
+
+
 
     <!-- ---------- VIEW: ФАЙЛЫ ---------- -->
     <section class="view view-files" id="view-files">
