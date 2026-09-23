@@ -384,6 +384,23 @@ def delete_scenario(sid: str) -> bool:
     return True
 
 
+def update_scenario(sid: str, title: str, steps: List[str],
+                    emoji: str = "") -> Optional[Dict[str, Any]]:
+    """Правка сценария на месте: шаги приросли/поменялись — не надо удалять
+    и создавать заново (id и позиция в списке остаются своими)."""
+    sid = str(sid or "").strip()
+    if not sid:
+        return None
+    clean = [str(x).strip() for x in (steps or []) if str(x).strip()][:12]
+    if not clean:
+        return None
+    title = str(title or "").strip()[:80] or "Сценарий"
+    emoji = str(emoji or "")[:4]
+    execute("UPDATE scenarios SET title=?, emoji=?, steps=? WHERE id=?",
+            (title, emoji, json.dumps(clean, ensure_ascii=False), sid))
+    return {"id": sid, "title": title, "emoji": emoji, "steps": clean}
+
+
 def active_tasks(limit: int = 60) -> List[Dict[str, Any]]:
     """Только незавершённые задачи — то, что тикает worker AUTO.
 

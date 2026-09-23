@@ -2821,5 +2821,131 @@ class AutoLifecycleRaceTests(unittest.TestCase):
         ])
 
 
+class ScenarioUpdateTests(unittest.TestCase):
+    """Правка сценария на месте: id сохраняется, шаги обновляются."""
+
+    def test_update_scenario_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.object(db, "DATA_DIR", Path(td)), \
+                 mock.patch.object(db, "_DB_PATH", Path(td) / "test.db"):
+                conn = sqlite3.connect(db._DB_PATH)
+                conn.executescript(db.SCHEMA)
+                conn.commit()
+                conn.close()
+                db._CONN = None
+                with mock.patch.object(db, "_CONN", db._connect()):
+                    created = db.create_scenario("Дайджест", ["Шаг один"], emoji="☀️")
+                    sid = created["id"]
+                    updated = db.update_scenario(sid, "Дайджест утра",
+                                                 ["Новости", "", "Погода", "Итог"], emoji="🌅")
+                    self.assertEqual(updated["id"], sid)
+                    self.assertEqual(updated["title"], "Дайджест утра")
+                    self.assertEqual(updated["steps"], ["Новости", "Погода", "Итог"])
+                    listed = db.list_scenarios()
+                    self.assertEqual(len(listed), 1)
+                    self.assertEqual(listed[0]["id"], sid)
+                    self.assertEqual(listed[0]["steps"],
+                                     ["Новости", "Погода", "Итог"])
+                    # пустой id / пустые шаги не меняют ничего
+                    self.assertIsNone(db.update_scenario("", "x", ["y"]))
+                    self.assertIsNone(db.update_scenario(sid, "x", []))
+
+
+class BareToolArgumentsTests(unittest.TestCase):
+    """Сырой JSON в чате: модель напечатала ГОЛЫЕ аргументы вызова —
+    парсер подбирает инструмент по ключам схемы и исполняет его."""
+
+    def test_bare_args_matched_to_tool(self) -> None:
+        text, calls = agent.tools.parse_text_calls(
+            '{"method":"GET","url":"https://wttr.in/Moscow?format=3"}')
+        self.assertEqual(text, "")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["name"], "http_request")
+        self.assertEqual(calls[0]["args"]["method"], "GET")
+        self.assertTrue(calls[0]["args"]["url"].startswith("https://wttr.in"))
+
+    def test_plain_text_and_foreign_dicts_untouched(self) -> None:
+        # обычная речь не трогается
+        text, calls = agent.tools.parse_text_calls("Погода отличная, 12 градусов")
+        self.assertEqual(calls, [])
+        self.assertIn("Погода", text)
+        # словарь, не совпадающий ни с одной схемой, остаётся текстом
+        text2, calls2 = agent.tools.parse_text_calls('{"ok": true}')
+        self.assertEqual(calls2, [])
+        self.assertIn("ok", text2)
+
+
+class ScheduleWordNumbersTests(unittest.TestCase):
+    """«через секунду» без цифры и «через две минуты» словами — локальный
+    парсер обязан понимать это без обращения к модели."""
+
+    def test_single_word_units(self) -> None:
+        cases = [
+            ("расскажи о погоде через секунду", "in 1s"),
+            ("напиши через минуту", "in 1m"),
+            ("скажи привет через час", "in 1h"),
+            ("через день проверь новости", "in 1d"),
+        ]
+        for text, expect in cases:
+            with self.subTest(text=text):
+                self.assertEqual(auto.detect_schedule(text), expect)
+
+    def test_word_numbers(self) -> None:
+        self.assertEqual(auto.detect_schedule("через две минуты напиши привет"), "in 2m")
+        self.assertEqual(auto.detect_schedule("через три часа покажи погоду"), "in 3h")
+
+    def test_llm_fallback_only_on_deferral_markers(self) -> None:
+        # автомат не понял, но есть маркеры срока — нано-модель решает
+        with mock.patch.object(agent.llm, "chat",
+                               return_value={"content": '{"schedule": "in 45m"}'}) as m:
+            verdict = auto.should_background(
+                "расскажи мне о погоде, как вернусь с прогулки — потом")
+            self.assertTrue(verdict["background"])
+            self.assertEqual(verdict["schedule"], "in 45m")
+            self.assertTrue(m.called)
+        # болтовня без маркеров срока модель не беспокоит
+        with mock.patch.object(agent.llm, "chat",
+                               return_value={"content": '{"schedule": "in 45m"}'}) as m:
+            verdict = auto.should_background("привет, расскажи о себе")
+            self.assertFalse(verdict["background"])
+            self.assertFalse(m.called)
+        # мусорный ответ модели не проходит каноническую валидацию
+        with mock.patch.object(agent.llm, "chat",
+                               return_value={"content": "сделаю позже"}):
+            verdict = auto.should_background(
+                "расскажи мне о погоде, как вернусь с прогулки — потом")
+            self.assertFalse(verdict["background"])
+
+
+class ClosingDigestCarriesDataTests(unittest.TestCase):
+    """Финальная сводка обязана нести САМИ ДАННЫЕ инструментов: заголовки
+    новостей, факты — иначе модель честно отвечает «детали по запросу»."""
+
+    def test_tool_results_flow_into_closing(self) -> None:
+        convo = [
+            {"role": "user", "content": "новости за сегодня"},
+            {"role": "assistant", "content": ""},
+            {"role": "tool", "name": "web_search",
+             "content": json.dumps({"ok": True, "results": [
+                 {"title": "ЦБ снизил ставку", "snippet": "до 16% годовых"},
+                 {"title": "Запуск ракеты", "snippet": "с космодрома Восточный"},
+             ]})},
+        ]
+        closing = agent._closing_convo(convo, "base")
+        self.assertIn("ЦБ снизил ставку", closing[1]["content"])
+        self.assertIn("16%", closing[1]["content"])
+        self.assertIn("Запуск ракеты", closing[1]["content"])
+
+    def test_closing_prompt_demands_content(self) -> None:
+        convo = [{"role": "user", "content": "новости"},
+                 {"role": "assistant", "content": ""},
+                 {"role": "tool", "name": "web_search",
+                  "content": json.dumps({"ok": True, "results": [
+                      {"title": "T", "snippet": "S"}]})}]
+        closing = agent._closing_convo(convo, "base")
+        self.assertIn("САМИ ДАННЫЕ", closing[1]["content"])
+        self.assertNotIn("Подведи итог выполненной работы", closing[1]["content"])
+
+
 if __name__ == "__main__":
     unittest.main()

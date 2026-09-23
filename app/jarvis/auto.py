@@ -1,6 +1,7 @@
 """AUTO: фоновый исполнитель задач, расписания и проактивные подсказки."""
 from __future__ import annotations
 
+import json
 import re
 import threading
 import time
@@ -555,12 +556,21 @@ def detect_schedule(text: str) -> str:
         secs = _unit_secs(m.group(2))
         if secs:
             return _fmt_interval("in", max(1, int(m.group(1)) * secs))
-    m = re.search(r"(?:через|спустя)\s+(полчаса|полминуты|минуту|час|день|сутки|неделю)", t)
+    # «через секунду/минуту/час…» — без числа (=1) и с половиной
+    m = re.search(r"(?:через|спустя)\s+(полчаса|полминуты)", t)
     if m:
-        word = m.group(1)
-        table = {"полчаса": 1800, "полминуты": 30, "минуту": 60, "час": 3600,
-                 "день": 86400, "сутки": 86400, "неделю": 604800}
-        return _fmt_interval("in", table[word])
+        return _fmt_interval("in", 1800 if m.group(1) == "полчаса" else 30)
+    m = re.search(r"(?:через|спустя)\s+([а-яё.]+)", t)
+    if m:
+        secs = _unit_secs(m.group(1))
+        if secs:
+            return _fmt_interval("in", secs)
+    # «через две секунды» — число словами
+    m = re.search(r"(?:через|спустя)\s+([а-яё]+)\s+([а-яё.]+)", t)
+    if m and m.group(1) in _NUM_WORDS:
+        secs = _unit_secs(m.group(2))
+        if secs and _NUM_WORDS[m.group(1)]:
+            return _fmt_interval("in", max(1, int(_NUM_WORDS[m.group(1)] * secs)))
 
     # «в 18:30» / «завтра в 9:00»
     m = re.search(r"\bв\s*(\d{1,2})[:.](\d{2})\b", t)
@@ -607,4 +617,58 @@ def should_background(text: str) -> Dict[str, Any]:
         return {"background": True, "reason": "отложенная задача", "schedule": ""}
     if any(k in t for k in _BG_WORDS):
         return {"background": True, "reason": "явная фоновая задача", "schedule": ""}
+
+    # АВТОМАТ НЕ ПОНЯЛ, НО ПОХОЖЕ НА СРОК. Распознавание сроков — работа
+    # регулярных выражений, и живая речь богаче любого словаря («расскажи
+    # через секунду», «примерно через полчасика», «как вернусь вечером»).
+    # Как и с памятью: локальный парсер первый, ИИ-модель — запасной судья.
+    # Вызывается ТОЛЬКО при явных маркерах срока, чтобы обычная болтовня
+    # не платила за лишний запрос.
+    if (_looks_like_deferral(t) and len(t) <= 300):
+        try:
+            llm_schedule = _llm_detect_schedule(text)
+        except Exception:
+            llm_schedule = ""
+        if llm_schedule and parse_schedule(llm_schedule):
+            return {"background": True, "reason": "отложенное сообщение (распознал ИИ)",
+                    "schedule": llm_schedule}
     return {"background": False, "reason": "", "schedule": ""}
+
+
+_DEFER_TIME_WORDS = ("через", "спустя", "потом", "позже", "завтра", "к вечеру",
+                     "к утру", "через некоторое время", "по прошествии")
+_DEFER_ACTION_WORDS = ("напомни", "напиши", "скажи", "расскажи", "покажи", "пришли",
+                       "сообщи", "сделай", "проверь", "дай", "выполни", "разбуди")
+
+
+def _looks_like_deferral(t: str) -> bool:
+    return (any(w in t for w in _DEFER_TIME_WORDS)
+            and any(w in t for w in _DEFER_ACTION_WORDS))
+
+
+def _llm_detect_schedule(text: str) -> str:
+    """Нано-модель достаёт срок из живой фразы. Ответ — канон или ''."""
+    from . import llm
+    result = llm.chat([
+        {"role": "system",
+         "content": "Ты извлекаешь СРОК из просьбы пользователя. Ответь ТОЛЬКО JSON "
+                    "вида {\"schedule\": \"...\"} без пояснений. Формат schedule: "
+                    "'in Ns'/'in Nm'/'in Nh'/'in Nd' — через сколько секунд/минут/"
+                    "часов/дней выполнить; 'every Nm'/'every Nh' — интервал повтора; "
+                    "'daily HH:MM' — ежедневно в время; '' (пусто) — срока нет. "
+                    "Считай аккуратно: 'через секунду' = 'in 1s', 'через полчаса' = "
+                    "'in 30m', 'каждый вечер в девять' = 'daily 21:00'."},
+        {"role": "user", "content": str(text or "")[:400]},
+    ], tier="nano", max_tokens=60, temperature=0.0, timeout=4,
+       operation="schedule_probe")
+    raw = str((result or {}).get("content") or "").strip()
+    m = re.search(r"\{[\s\S]*\}", raw)
+    if not m:
+        return ""
+    try:
+        obj = json.loads(m.group(0))
+    except Exception:
+        return ""
+    sched = str((obj or {}).get("schedule") or "").strip()
+    # доверяем только каноническому формату — модель не придумает свой
+    return sched if re.fullmatch(r"(?:in|every) \d+[smhd]|daily \d{1,2}:\d{2}", sched) else ""

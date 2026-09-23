@@ -1277,6 +1277,60 @@ def _compact_convo(convo: List[Dict[str, Any]]) -> None:
         convo[i]["content"] = content[:TOOL_STUB_CHARS] + " …(сжато)"
 
 
+def _tool_digest(data: Any, budget: int) -> str:
+    """Выжимка РЕЗУЛЬТАТА инструмента для финальной сводки.
+
+    Задача выжимки — принести в итоговый ответ сами данные: заголовки и
+    сниппеты поиска, текст прочитанных страниц, содержимое файлов. Без этого
+    сводочная модель рассказывала «что я делал» вместо «что я нашёл».
+    """
+    if not isinstance(data, dict):
+        return ""
+    if data.get("error"):
+        return str(data["error"])[:budget]
+    out: List[str] = []
+    if isinstance(data.get("results"), list):
+        for item in data["results"][:6]:
+            if not isinstance(item, dict):
+                continue
+            line = str(item.get("title") or "").strip()
+            snip = str(item.get("snippet") or "").strip()
+            if snip:
+                line += " — " + snip[:220]
+            if line:
+                out.append(line[:320])
+        if not out:
+            out.append(str(data.get("query") or "")[:120])
+    elif isinstance(data.get("documents"), list):
+        for doc in data["documents"][:4]:
+            if isinstance(doc, dict) and doc.get("text"):
+                out.append((str(doc.get("title") or "") + ": " +
+                            str(doc["text"]))[:500])
+    if isinstance(data.get("text"), str) and data["text"].strip():
+        out.append(data["text"].strip()[:budget])
+    if isinstance(data.get("body"), str) and data["body"].strip():
+        try:
+            inner = json.loads(data["body"])
+            if isinstance(inner, dict):
+                flat = "; ".join("%s=%s" % (k, v)
+                                 for k, v in list(inner.items())[:8]
+                                 if not isinstance(v, (dict, list)))
+                out.append(flat[:budget])
+            else:
+                out.append(str(inner)[:budget])
+        except Exception:
+            out.append(data["body"].strip()[:budget])
+    if data.get("content") and not out:
+        out.append(str(data["content"])[:budget])
+    if data.get("screen") and isinstance(data["screen"], str):
+        out.append(data["screen"][:400])
+    if not out:
+        fallback = str(data.get("summary") or data.get("path")
+                       or data.get("title") or data.get("query") or "")
+        return fallback[:budget]
+    return "\n    ".join(out)[:budget * 3]
+
+
 def _closing_convo(convo: List[Dict[str, Any]], tier: str) -> List[Dict[str, Any]]:
     """Лёгкий контекст для итогового ответа.
 
@@ -1298,9 +1352,11 @@ def _closing_convo(convo: List[Dict[str, Any]], tier: str) -> List[Dict[str, Any
             except Exception:
                 data = {}
             ok = "ок" if isinstance(data, dict) and data.get("ok") else "ошибка"
-            brief = str((data or {}).get("error") or (data or {}).get("summary")
-                        or (data or {}).get("path") or (data or {}).get("title")
-                        or (data or {}).get("query") or "")[:160]
+            # В ВЫЖИМКУ ИДУТ САМИ ДАННЫЕ, а не только факт успеха. Раньше
+            # сводка видела «web_search (ок): новости» — и честно отвечала
+            # «собраны сведения, детали по запросу»: самих новостей в её
+            # контексте физически не было.
+            brief = _tool_digest(data, 700 if ok == "ок" else 160)
             parts.append("- %s (%s)%s" % (msg.get("name") or "?", ok,
                                           ": " + brief if brief else ""))
         elif role == "assistant" and msg.get("content"):
@@ -1317,8 +1373,11 @@ def _closing_convo(convo: List[Dict[str, Any]], tier: str) -> List[Dict[str, Any
             "Ты JARVIS, персональный ИИ-агент. Отвечай кратко, по-русски, markdown."},
         {"role": "user", "content":
             "Журнал выполненной работы:\n%s%s\n\n"
-            "Подведи итог выполненной работы для пользователя: что сделано и результат. "
-            "Кратко, markdown, по-русски. Не печатай вызовы инструментов." % (head, digest)},
+            "Подведи итог для пользователя. В ИТОГЕ ОБЯЗАНЫ СОДЕРЖАТЬСЯ САМИ ДАННЫЕ "
+            "из журнала (заголовки новостей, факты, цифры, погода, цитаты) — "
+            "«собрал сведения, детали по запросу» запрещено: данные уже в журнале. "
+            "Отвечай именно на ТЕКУЩУЮ ЗАДАЧУ. Кратко, markdown, по-русски. "
+            "Не печатай вызовы инструментов." % (head, digest)},
     ]
 
 
@@ -2412,26 +2471,6 @@ class Agent:
                             # Разрешение получено: режим действует с этого же прогона
                             if mode == "agent":
                                 self.agent_mode = True
-                                # Прогон стартовал без AGENT — плана ещё нет.
-                                # ГЛАВНЫЙ СЛУЧАЙ: работу модель уже НАЧАЛА тем же
-                                # ходом (request_mode пришёл вместе с рабочими
-                                # вызовами или после них). Defer-гейт плана
-                                # проверяется только в начале хода — этот ход
-                                # его уже прошёл, и план «вообще не составлялся».
-                                # Строим немедленно, по фактам начатой работы.
-                                if user_text and not social_only and not plan_announced:
-                                    work_started = [t for t in dict.fromkeys(self.used_tools)
-                                                    if t != "ask_user"]
-                                    if work_started:
-                                        plan = self.make_plan(user_text, work_started)
-                                        plan_pending = False
-                                        if plan:
-                                            for plan_event in announce_plan():
-                                                yield plan_event
-                                    else:
-                                        # работы ещё не было — план создаст
-                                        # первый рабочий вызов следующего хода
-                                        plan_pending = True
                             elif mode == "computer":
                                 self.computer_use = True
                                 # инструменты экрана появляются в этом же прогоне
@@ -2441,7 +2480,29 @@ class Agent:
                                 allowed_tool_names = {
                                     (t.get("function") or {}).get("name") for t in available
                                     if (t.get("function") or {}).get("name")}
+                            # СНАЧАЛА включаем режим на фронте, ПОТОМ строим план:
+                            # фронт рисует план только при включённом AGENT, и пока
+                            # mode_changed не дошёл, plan-события молча выбрасывались
+                            # — «план просто не появился».
                             yield {"type": "mode_changed", "mode": mode, "on": True}
+                            if mode == "agent" and user_text and not social_only \
+                                    and not plan_announced:
+                                # Работу модель уже НАЧАЛА этим же ходом? Defer-гейт
+                                # плана проверяется только в начале хода — этот ход
+                                # его уже прошёл. Строим план немедленно по фактам.
+                                work_started = [t for t in dict.fromkeys(self.used_tools)
+                                                if t != "ask_user"]
+                                if work_started:
+                                    plan = self.make_plan(user_text, work_started)
+                                    plan_pending = False
+                                    if plan:
+                                        for plan_event in announce_plan():
+                                            yield plan_event
+                                else:
+                                    # работы ещё не было — план создаст первый
+                                    # рабочий вызов этого же прогона (страховка
+                                    # перед dispatch) или следующего хода
+                                    plan_pending = True
                             result: Dict[str, Any] = {
                                 "ok": True, "enabled": True,
                                 "note": "Пользователь включил режим «%s». Пользуйся." % labels[mode],

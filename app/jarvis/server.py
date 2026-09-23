@@ -342,6 +342,17 @@ class Handler(BaseHTTPRequestHandler):
                                                               body.get("emoji") or "")})
         if path == "/api/scenarios/delete":
             return self._json({"ok": True, "deleted": db.delete_scenario(body.get("id", ""))})
+        if path == "/api/scenarios/update":
+            steps = [str(x).strip() for x in (body.get("steps") or [])
+                     if str(x).strip()]
+            if len(steps) < 1:
+                return self._json({"ok": False, "error": "нужен хотя бы один шаг"})
+            updated = db.update_scenario(body.get("id", ""),
+                                         body.get("title") or "",
+                                         steps, body.get("emoji") or "")
+            if not updated:
+                return self._json({"ok": False, "error": "сценарий не найден"})
+            return self._json({"ok": True, "scenario": updated})
         if path == "/api/computer/permissions":
             # Кнопка «Открыть настройки прав» нажимается самим пользователем —
             # это и есть согласие открыть Системные настройки.

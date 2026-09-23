@@ -948,6 +948,57 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   box-shadow:0 0 9px rgba(168,159,242,.9);color:#17112e}
 .agent-switch-track:has(input:focus-visible){outline:2px solid rgba(168,159,242,.48);outline-offset:2px}
 .agent-switch:focus-within{z-index:50}
+
+/* ============ НАВЕДЕНИЕ НА ВЫКЛЮЧЕННЫЙ ПРИБОР: «просыпается» ============
+   Выбрано самим хозяином: дыхание ядра + одна негромкая искра по контуру
+   + лёгкий поворот к хозяину. Всё — ТОЛЬКО у выключенных кнопок: включённый
+   прибор уже сказал своё слово, клик по нему просто выключает.
+   Пропорции: поворот 3° и 0.24с, вдох ядра ~0.9с, искра один проход ~1с —
+   наведение длится секунду, анимация не длиннее. Цвета приглушённые:
+   каждый прибор дышит СВОИМ цветом (камера — бирюза, комп — латунь-красный,
+   лимит — золото, агент — фиолет), яркость не выше трети.
+   Тумблер агента НЕ наклоняется: только микродвижение круглешка в сторону
+   включения, вдох его ядра и та же искра по контуру трека. */
+#tgCamera{--sp:95,214,190}
+#tgComputer{--sp:224,132,140}
+#tgBudget{--sp:240,190,70}
+.agent-switch{--sp:168,159,242}
+
+/* искра по контуру: один короткий проход света по рамке (::after занят
+   тултипом, потому искра на ::before) */
+.toggle::before,.budget-btn::before,.agent-switch-track::before{
+  content:'';position:absolute;inset:-1px;padding:1px;border-radius:inherit;
+  pointer-events:none;opacity:0;
+  background:linear-gradient(105deg,transparent 38%,rgba(var(--sp),.42) 50%,transparent 62%);
+  background-size:230% 100%;
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude}
+.toggle:not(.on):hover::before,
+.budget-btn:not(.on):hover::before,
+.agent-switch-track:not(:has(input:checked)):hover::before{
+  opacity:1;animation:ibSpark 1s ease-out both}
+@keyframes ibSpark{from{background-position:130% 0}to{background-position:-130% 0}}
+
+/* поворот к хозяину — только кнопкам-таблеткам, НЕ тумблеру агента */
+.toggle:not(.on):hover{transform:rotate(-3deg)}
+.budget-btn:not(.on):hover{transform:rotate(-4deg)}
+
+/* дыхание ядра: точка/монета мягко наливаются светом изнутри, один вдох */
+.toggle:not(.on):hover .tg-dot{background:rgba(var(--sp),.85);
+  animation:ibBreath .9s ease-in-out both}
+.budget-btn:not(.on):hover .budget-coin{color:rgba(var(--sp),.95);
+  animation:ibBreath .9s ease-in-out both}
+.agent-switch-track:not(:has(input:checked)):hover i{background:var(--tx2);
+  box-shadow:0 0 7px rgba(var(--sp),.4);
+  transform:translateX(5px);            /* микродвижение в сторону включения */
+  animation:ibBreath .9s ease-in-out both}
+@keyframes ibBreath{45%{box-shadow:0 0 10px rgba(var(--sp),.5)}}
+
+/* тултип живёт на наклонённой кнопке, но показываться обязан ровно:
+   компенсируем поворот, сохраняя центровку. Только на hover — при
+   наведении с клавиатуры кнопка не наклонена и подпись прямая. */
+.toggle:not(.on):hover[data-tip]::after{transform:translateX(-50%) rotate(3deg)}
+.budget-btn:not(.on):hover[data-tip]::after{transform:translateX(-50%) rotate(4deg)}
 /* Tooltip не участвует в геометрии composer. После выбора tip-dismissed гасит
    его до mouseleave, а не оставляет висеть из-за фокуса checkbox. */
 .toggle[data-tip]:is(:hover,:focus-visible)::after,
@@ -1234,6 +1285,30 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .modal h3{margin:0 0 6px;font-size:16px}
 .modal .md-sub{font-size:12px;color:var(--tx3);margin-bottom:16px;line-height:1.5}
 .modal-acts{display:flex;gap:9px;justify-content:flex-end;margin-top:16px}
+/* Лёгкие диалоги Джарвиса (soft): фон затемняется вполсилы — лента чата под
+   окном остаётся видна, окно не «вырубает» приложение. Канонный градиент
+   живёт на РАМКЕ и иконке: цвет на контуре, фон .09 обесцвеченный. */
+.modal-back.soft{background:rgba(2,5,10,.42);backdrop-filter:blur(3px)}
+.modal.jarvis-win h3{text-align:center;margin-top:2px}
+.modal.jarvis-win .modal-acts{justify-content:center}
+.jw-ico{width:46px;height:46px;border-radius:14px;display:grid;place-items:center;
+  font-size:22px;margin:0 auto 4px;color:var(--cy2);
+  background:rgba(0,212,255,.09);border:1px solid rgba(0,212,255,.34);
+  box-shadow:inset 0 0 18px rgba(0,212,255,.14)}
+.modal.jarvis-win{border-color:transparent;position:relative}
+.modal.jarvis-win::before{content:'';position:absolute;inset:-1px;padding:1px;border-radius:inherit;
+  pointer-events:none;
+  background:linear-gradient(135deg,rgba(78,224,204,.5),rgba(66,217,255,.55) 32%,
+    rgba(151,132,255,.45) 62%,rgba(225,132,218,.35));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude}
+.sc-steps-full{display:flex;flex-direction:column;gap:8px;margin:12px 0 4px;max-height:44vh;overflow:auto}
+.sc-step-full{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;
+  border:1px solid var(--line);border-radius:12px;background:var(--panel2);
+  font-size:13px;line-height:1.5;color:var(--tx)}
+.sc-step-full i{font-style:normal;flex:0 0 22px;height:22px;border-radius:7px;
+  display:grid;place-items:center;background:rgba(0,212,255,.12);color:var(--cy2);
+  font-size:11px;font-family:var(--fm)}
 .lightbox{position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.92);display:grid;place-items:center;
   cursor:zoom-out;animation:viewIn .25s;padding:26px}
 .lightbox img{max-width:100%;max-height:100%;border-radius:12px;border:1px solid var(--line2)}
@@ -2173,11 +2248,13 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   display:flex;flex-direction:column;overflow:hidden;
   background:#0a1420;border:1px solid var(--line2);border-radius:15px;
   box-shadow:0 22px 60px rgba(0,0,0,.75),0 0 0 1px rgba(0,0,0,.4);
-  transform-origin:bottom right;
-  animation:budgetPopIn .26s cubic-bezier(.2,.9,.3,1.2) both}
-@keyframes budgetPopIn{
-  0%{opacity:0;transform:scale(.6) translateY(8px)}
-  100%{opacity:1;transform:scale(1) translateY(0)}}
+  /* РОВНО ДВИЖЕНИЕ ПАНЕЛИ УВЕДОМЛЕНИЙ (npIn/npOut): тот же короткий вылет
+     с лёгким масштабом и та же кривая — панель лимита теперь прилетает
+     из того же мира, что и колокольчик. Раньше был пружинистый scale(.6). */
+  animation:npInUp .24s cubic-bezier(.2,.9,.3,1) both}
+@keyframes npInUp{from{opacity:0;transform:translateY(10px) scale(.97)}}
+.budget-pop.bp-closing{animation:npOutUp .2s cubic-bezier(.4,0,1,1) both}
+@keyframes npOutUp{to{opacity:0;transform:translateY(10px) scale(.97)}}
 .bp-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:11px 14px;border-bottom:1px solid var(--line);font-size:12px;color:var(--tx2);
   background:#0c1826}
@@ -2282,7 +2359,12 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   box-shadow:0 0 8px var(--mc,var(--violet));transform:translateX(14px)}
 /* Развёрнутая повторно карточка — уже история: приглушена и неактивна,
    как остальные свёрнутые-развёрнутые карточки */
-.mode-card.mc-readonly{opacity:.55;pointer-events:none}
+/* Повторно развёрнутая карточка разрешения приглушена, но кликабельна:
+   pointer-events:none на ВСЕЙ карточке (так было) отрубало и кнопку
+     сворачивания — блашку становилось невозможно закрыть. Теперь неактивны
+     только тумблер и «Пропустить»: их время вышло, решение уже принято. */
+.mode-card.mc-readonly{opacity:.55}
+.mode-card.mc-readonly .mc-switch,.mode-card.mc-readonly .mc-skip{pointer-events:none}
 .mode-card.mc-readonly .mc-reason{color:var(--tx3)}
 /* каждый режим — свой цвет: функция видна без чтения */
 .mode-card.m-agent{--mc:#b8afff}

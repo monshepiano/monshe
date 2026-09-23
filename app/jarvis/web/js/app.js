@@ -354,13 +354,20 @@ const SFX = {
 };
 function sfx(name) { if (soundOn() && SFX[name]) SFX[name](); }
 
-function modal(html, onMount) {
+function modal(html, onMount, opts) {
   const m = $('#modal');
   m.innerHTML = html;
+  // soft — лёгкие диалоги Джарвиса (предложение сценария, просмотр шагов):
+  // фон затемняется вполсилы, лента под ним остаётся видна.
+  m.classList.toggle('jarvis-win', !!(opts && opts.soft));
+  $('#modalBack').classList.toggle('soft', !!(opts && opts.soft));
   $('#modalBack').classList.add('open');
   if (onMount) onMount(m);
 }
-function closeModal() { $('#modalBack').classList.remove('open'); }
+function closeModal() {
+  $('#modalBack').classList.remove('open', 'soft');
+  $('#modal').classList.remove('jarvis-win');
+}
 $('#modalBack').addEventListener('click', (e) => { if (e.target.id === 'modalBack') closeModal(); });
 
 function lightbox(src) {
@@ -1751,6 +1758,12 @@ function collapseToThumb(node, opts) {
     const reopenOpts = Object.assign({}, opts, { instant: false });
     reopenOpts.cls = String(reopenOpts.cls || '').replace(/\bplan-archive-target\b/g, '').trim();
     addFoldButton(node, reopenOpts);         // развернули — даём чем свернуть обратно
+    // Карточка разрешения режима после ответа — приглушённая: решение принято,
+    // тумблер показывает живой статус. Свернуть её по-прежнему можно.
+    if (node.dataset.readonly === '1') {
+      node.classList.add('mc-readonly');
+      if (node._syncModeSwitch) node._syncModeSwitch();
+    }
     const h1 = node.getBoundingClientRect().height;     // высота раскрытой карточки
     growHeight(node, h0, h1);
   });
@@ -2937,10 +2950,27 @@ function renderBudgetVariants() {
   }
 }
 
+/* Открытие/закрытие панели лимита — РОВНО как у панели уведомлений:
+   вылет npInUp, возврат npOutUp. Прежний пружинистый scale(.6) заменён:
+   обе панели теперь прилетают одним и тем же характером движения. */
+function hideBudgetPop() {
+  if (budgetPop.hidden || budgetPop.classList.contains('bp-closing')) return;
+  budgetPop.classList.add('bp-closing');
+  setTimeout(() => {
+    budgetPop.classList.remove('bp-closing');
+    budgetPop.hidden = true;
+  }, 200);                              // = длительность npOutUp в CSS
+}
+function openBudgetPop() {
+  budgetPop.classList.remove('bp-closing');
+  if (budgetPop.hidden) renderBudgetVariants();
+  budgetPop.hidden = false;
+}
+
 function setBudget(value) {
   S.budgetRub = value;
   budgetBtn.classList.toggle('on', !!value);
-  budgetPop.hidden = true;
+  hideBudgetPop();
   rememberBudget(value);
   // звук — как у агента: монета «завелась» высоким тоном, ручное снятие — низким
   beep(value ? 760 : 420, 0.1);
@@ -2961,16 +2991,15 @@ budgetBtn.addEventListener('click', (e) => {
   // Во время ответа клик по активной монетке НЕ выключает лимит молча —
   // открываем окошко: можно поднять, можно отключить осознанно.
   if (S.budgetRub && !S.streaming) { setBudget(null); return; }
-  if (budgetPop.hidden) renderBudgetVariants();
-  budgetPop.hidden = !budgetPop.hidden;
+  if (budgetPop.hidden) openBudgetPop(); else hideBudgetPop();
 });
 document.addEventListener('click', (e) => {
   if (budgetPop && !budgetPop.hidden && !budgetPop.contains(e.target) && e.target !== budgetBtn) {
-    budgetPop.hidden = true;
+    hideBudgetPop();
   }
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && budgetPop && !budgetPop.hidden) budgetPop.hidden = true;
+  if (e.key === 'Escape' && budgetPop && !budgetPop.hidden) hideBudgetPop();
 });
 const budgetOffBtn = $('#budgetOff');
 if (budgetOffBtn) budgetOffBtn.addEventListener('click', () => setBudget(null));
@@ -3643,21 +3672,20 @@ function inCodeBlock(text) {
   return fences % 2 === 1;
 }
 
-/* Строка похожа на таблицу, список или технический блок? Смотрим не только уже
+/* Строка похожа на таблицу или технический блок? Смотрим не только уже
    показанный prefix, а полную текущую строку в buffer. Иначе каждый новый ряд
    таблицы начинался на разговорной скорости, после первого `|` резко ускорялся
-   и снова тормозил на переводе строки. Списки (-, *, 1.) — та же плотная
-   информация: они читаются глазами, а не «проговариваются», и печатаются
-   быстро. Живая строка текста маркером не становится: `- ` без пробела после
-   маркера или `**жирный**` не совпадают. */
+   и снова тормозил на переводе строки. СПИСКИ ЗДЕСЬ БОЛЬШЕ НЕ УЧИТЫВАЮТСЯ:
+   пункты «- …» — это живая речь, Джарвис «проговаривает» их вслух, с обычной
+   скоростью и микропаузой между пунктами. Быстрыми остаются только таблицы и
+   отступ в 4 пробела (код). */
 function fastLine(text, at) {
   const pos = at == null ? text.length : Math.max(0, Math.min(text.length, at));
   const start = text.lastIndexOf('\n', Math.max(0, pos - 1)) + 1;
   const foundEnd = text.indexOf('\n', pos);
   const end = foundEnd < 0 ? text.length : foundEnd;
   const line = text.slice(start, end);
-  return /^\s*\|/.test(line) || /^ {4}/.test(line)
-      || /^\s*(?:[-*+•]\s|\d+[.)]\s)/.test(line);
+  return /^\s*\|/.test(line) || /^ {4}/.test(line);
 }
 
 /* У заголовков больше нет отдельного класса скорости: markdown влияет только
@@ -3939,7 +3967,13 @@ function typerStart(ui) {
       renderTyped(ui);
     }
     if (!code) {
-      const pause = PAUSE_AFTER[ui.shown[ui.shown.length - 1]] || 0;
+      let pause = PAUSE_AFTER[ui.shown[ui.shown.length - 1]] || 0;
+      // Микропауза между пунктами списка: перевод строки, за которым идёт
+      // новый «- » или «1. » — это смена мысли. Джарвис будто делает вдох,
+      // прежде чем озвучить следующий пункт, а не выпаливает всё разом.
+      if (ui.shown[ui.shown.length - 1] === '\n' &&
+          /^\s*(?:[-*+•]\s|\d+[.)]\s)/.test(ui.buffer.slice(ui.shown.length)))
+        pause = Math.max(pause, 300);
       if (pause) ui.holdUntil = now + pause * (CPS_TALK / Math.max(CPS_TALK, ui.cps));
     }
     scrollSoon(ui);
@@ -4579,12 +4613,12 @@ function handleEvent(ev, ui) {
           sub: ev.reason || '',
           tag: answer === 'Включить' ? 'включено' : 'пропущено',
         });
-        // Повторное разворачивание: карточка уже сыграла свою роль — гасим
-        // её как остальные свёрнутые карточки и показываем живой статус режима
-        if (thumb) thumb.addEventListener('click', () => {
-          syncSwitchState();
-          card.classList.add('mc-readonly');
-        });
+        // Повторное разворачивание: карточка уже сыграла свою роль. Метку
+        // readonly вешаем на САМУ карточку: разворачивать её можно много раз
+        // (каждый раз появляется новая миниатюра), и каждый раз карточка
+        // обязана быть приглушённой, а тумблер — показывать живой статус.
+        card._syncModeSwitch = syncSwitchState;
+        card.dataset.readonly = '1';
       };
       card.querySelector('.mc-switch').addEventListener('click', () => done('Включить'));
       card.querySelector('.mc-skip').addEventListener('click', () => done('Не нужно'));
@@ -4609,7 +4643,7 @@ function handleEvent(ev, ui) {
       } else if (ev.mode === 'camera') {
         if (!S.cameraOn) $('#tgCamera').click();
       } else if (ev.mode === 'budget') {
-        if (budgetPop) budgetPop.hidden = false;
+        if (budgetPop) openBudgetPop();
       }
       toast('Режим включён', 'success', 'Разрешение');
       break;
@@ -5752,7 +5786,7 @@ function renderNotes() {
    Каждый шаг ждёт полного завершения предыдущего (и печати) — сценарий
    это запись разговора, а не пачка параллельных вопросов. */
 async function runScenario(sc) {
-  switchView('chat');
+  showView('chat');
   const r = await api('/api/chats/new', { title: sc.title || 'Сценарий' });
   if (r.ok && r.chat && r.chat.id) {
     S.chatId = r.chat.id;
@@ -5771,18 +5805,21 @@ async function runScenario(sc) {
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
-/* send() не отдаёт promise завершения — ждём окончания стрима поллингом.
-   Stop прерывает сценарий целиком (S.abortedScenario). */
-function sendScenarioStep(text) {
-  return new Promise(async (resolve) => {
-    await send({ text, scenario: true });
+/* send() резолвится в finally, когда ответ УЖЕ допечатан (visualDonePromise),
+   поэтому шагу достаточно дождаться самого send — здесь был undefined
+   wasStreaming, из-за которого логика ожидания не работала вовсе.
+   Поллинг ниже — страховка на случай, если контракт send изменится: увидели
+   стрим — ждём его конца; не увидели за 3 с — идём дальше. Stop прерывает
+   сценарий целиком (S.abortedScenario). */
+async function sendScenarioStep(text) {
+  try { await send({ text, scenario: true }); } catch (e) { /* шаг не прошёл — идём дальше */ }
+  await new Promise((resolve) => {
     const t0 = Date.now();
+    let saw = false;
     const poll = setInterval(() => {
-      if (!S.streaming && !wasStreaming) { clearInterval(poll); resolve(); return; }
-      if (!S.streaming || Date.now() - t0 > 600000) {
-        clearInterval(poll); resolve();
-      }
-    }, 250);
+      if (S.streaming) { saw = true; return; }
+      if (!saw || Date.now() - t0 > 3000) { clearInterval(poll); resolve(); }
+    }, 200);
   });
 }
 
@@ -5823,10 +5860,14 @@ async function loadScenarios() {
       '</div>' +
       '<div class="tc-steps">' + steps.map((x) => '• ' + esc(String(x).slice(0, 110))).join('<br>') + '</div>' +
       '<div class="tc-actions"></div>';
+    // клик по карточке = полный просмотр: шаги целиком, без обрезки в 110 знаков
+    card.addEventListener('click', () => openScenario(sc));
     const acts = card.querySelector('.tc-actions');
     acts.style.cssText = 'display:flex;gap:8px;margin-top:4px';
     const run = el('button', 'btn sm primary', 'Запустить');
     run.addEventListener('click', (e) => { e.stopPropagation(); runScenario(sc); });
+    const edit = el('button', 'btn sm', 'Редактировать');
+    edit.addEventListener('click', (e) => { e.stopPropagation(); editScenario(sc); });
     const del = el('button', 'btn sm danger', 'Удалить');
     del.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -5834,25 +5875,64 @@ async function loadScenarios() {
       loadScenarios();
     });
     acts.appendChild(run);
+    acts.appendChild(edit);
     acts.appendChild(del);
     grid.appendChild(card);
   });
 }
 
-/* Кнопка «Пример» на служебной полосе: один готовый сценарий, чтобы пустая
-   вкладка не требовала сразу что-то придумывать. */
-$('#scDemoBtn').addEventListener('click', async () => {
-  const r = await api('/api/scenarios/new', {
-    title: 'Утренний дайджест',
-    emoji: '☀️',
-    steps: [
-      'Дай короткую сводку главных новостей России и мира за сегодня',
-      'Погода в моём городе на сегодня: что надеть',
-      'Собери всё в один компактный дайджест на 5 строк',
-    ],
+/* Полный просмотр сценария: все шаги целиком. То же окно Джарвиса, что и у
+   предложения сохранить — сценарий это запись разговора, её видно целиком. */
+function openScenario(sc) {
+  const steps = sc.steps || [];
+  modal(
+    '<div class="jw-ico">' + esc(sc.emoji || '⚡') + '</div>' +
+    '<h3>' + esc(sc.title || 'Сценарий') + '</h3>' +
+    '<div class="md-sub">' + steps.length + ' шаг' + (steps.length === 1 ? '' : 'ов') +
+      ' — выполняются по очереди в новом диалоге</div>' +
+    '<div class="sc-steps-full">' +
+      steps.map((x, i) => '<div class="sc-step-full"><i>' + (i + 1) + '</i>' +
+        esc(String(x)) + '</div>').join('') +
+    '</div>' +
+    '<div class="modal-acts">' +
+      '<button class="btn" id="scClose">Закрыть</button>' +
+      '<button class="btn" id="scEdit">Редактировать</button>' +
+      '<button class="btn primary" id="scRun">Запустить</button>' +
+    '</div>', null, { soft: true });
+  $('#scClose').addEventListener('click', closeModal);
+  $('#scEdit').addEventListener('click', () => editScenario(sc));
+  $('#scRun').addEventListener('click', () => { closeModal(); runScenario(sc); });
+}
+
+/* Редактирование сценария: то же окно создания, но с уже заполненными
+   полями — правка привычной формы, а не новый интерфейс. */
+function editScenario(sc) {
+  modal(
+    '<h3>Редактировать сценарий</h3>' +
+    '<div class="sd" style="margin-bottom:10px">Каждая строка — отдельное сообщение Джарвису.</div>' +
+    '<input id="scTitle" class="bp-input" style="width:100%;margin-bottom:10px" placeholder="Название">' +
+    '<input id="scEmoji" class="bp-input" style="width:100%;margin-bottom:10px" placeholder="Эмодзи (необязательно)">' +
+    '<textarea id="scSteps" class="bp-input" style="width:100%;min-height:120px;resize:vertical" ' +
+    'placeholder="Каждая строка — шаг сценария"></textarea>' +
+    '<div class="modal-acts"><button class="btn" id="scCancel">Отмена</button>' +
+    '<button class="btn primary" id="scSave">Сохранить</button></div>', null, { soft: true });
+  $('#scTitle').value = sc.title || '';
+  $('#scEmoji').value = sc.emoji || '';
+  $('#scSteps').value = (sc.steps || []).join('\n');
+  $('#scCancel').addEventListener('click', closeModal);
+  $('#scSave').addEventListener('click', async () => {
+    const steps = $('#scSteps').value.split('\n').map((x) => x.trim()).filter(Boolean);
+    if (!steps.length) { toast('Нужен хотя бы один шаг', 'warn'); return; }
+    const r = await api('/api/scenarios/update', {
+      id: sc.id,
+      title: $('#scTitle').value.trim() || 'Сценарий',
+      emoji: $('#scEmoji').value.trim(),
+      steps,
+    });
+    closeModal();
+    if (r.ok) { toast('Сценарий обновлён', 'success'); loadScenarios(); }
   });
-  if (r.ok) { toast('Пример добавлен — можно запустить', 'success', 'Сценарии'); loadScenarios(); }
-});
+}
 
 $('#addScenarioBtn').addEventListener('click', () => {
   modal(
@@ -5893,12 +5973,14 @@ function maybeOfferScenario(text) {
       toast('Частый запрос — сохранить как сценарий?', 'info', 'Сценарии');
       setTimeout(() => {
         modal(
+          '<div class="jw-ico">⚡</div>' +
           '<h3>Сделать сценарий?</h3>' +
           '<div class="sd" style="margin-bottom:10px">Вы уже третий раз отправляете похожий запрос. ' +
           'Сохранить его как сценарий — потом один клик, и Джарвис всё сделает.</div>' +
           '<div class="modal-acts">' +
           '<button class="btn primary" id="scYes">Сохранить</button>' +
-          '<button class="btn" onclick="document.getElementById(\'modalBack\').classList.remove(\'open\')">Не надо</button></div>');
+          '<button class="btn" id="scNo">Не надо</button></div>', null, { soft: true });
+        $('#scNo').addEventListener('click', closeModal);
         $('#scYes').addEventListener('click', async () => {
           const r = await api('/api/scenarios/new', {
             title: String(text || '').split(/\s+/).slice(0, 5).join(' '), emoji: '⚡️', steps: [text],

@@ -418,6 +418,16 @@ function testImportantHeadingCaretAndTrail() {
   assert.strictEqual(fast.fastLine(tableSource, tableSource.indexOf('Ячейка')), true,
     'the complete current row is classified before the first pipe is typed');
   assert.strictEqual(fast.fastLine(tableSource, 3), false);
+  // списки — живая речь: маркеры больше не включают быструю печать,
+  // а между пунктами ставится микропауза (перевод дыхания)
+  assert.strictEqual(fast.fastLine('- первый пункт списка', 1), false,
+    'list items are spoken at conversational speed, not code speed');
+  assert.strictEqual(fast.fastLine('2. нумерованный пункт', 1), false,
+    'numbered list items are spoken at conversational speed too');
+  assert(/pause = Math\.max\(pause, 300\)/.test(js) &&
+    /\^\\s\*\(\?:\[-\*\+•\]\\s\|\\d\+\[\.\)\]\\s\)/.test(js) &&
+    /ui\.buffer\.slice\(ui\.shown\.length\)/.test(js),
+    'a line break before a new list marker adds a micro-pause between items');
 
   const md = new MiniNode('div');
   const heading = new MiniNode('h2');
@@ -1494,6 +1504,31 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   'budget popup uses the notifications-panel style and the users own amounts');
   // ПАНЕЛЬ ЗАКРЫВАЕТСЯ: display:flex обязан уступать атрибуту hidden —
   // без этого правила лимит «висел всегда» и не снимался
+  // наведение на ВЫКЛЮЧЕННЫЙ прибор: дыхание ядра + одна искра по контуру +
+  // лёгкий поворот к хозяину (3–4°). Включённый — без анимаций вовсе.
+  // Тумблер агента не наклоняется: только микродвижение к включению.
+  assert(/#tgCamera\{--sp:/.test(css) && /#tgComputer\{--sp:/.test(css) &&
+    /#tgBudget\{--sp:/.test(css) && /\.agent-switch\{--sp:/.test(css) &&
+    /@keyframes ibSpark\{from\{background-position:130% 0\}to\{background-position:-130% 0\}\}/.test(css) &&
+    /@keyframes ibBreath\{45%\{box-shadow:0 0 10px rgba\(var\(--sp\),\.5\)\}\}/.test(css),
+    'each sleeping instrument breathes its own muted color');
+  assert(/\.toggle:not\(\.on\):hover\{transform:rotate\(-3deg\)\}/.test(css) &&
+    /\.budget-btn:not\(\.on\):hover\{transform:rotate\(-4deg\)\}/.test(css) &&
+    !/\.toggle\.on:hover\{transform:/.test(css) &&
+    !/\.budget-btn\.on:hover\{transform:/.test(css),
+    'only OFF instruments tilt toward the owner; ON instruments stay still');
+  assert(/\.agent-switch-track:not\(:has\(input:checked\)\):hover i\{[^}]*translateX\(5px\)/s.test(css) &&
+    !/\.agent-switch-track:has\(input:checked\):hover i\{[^}]*translateX\(5px\)/s.test(css) &&
+    !/\.agent-switch[^{]*:hover\{transform:rotate/.test(css),
+    'agent knob nudges toward ON only when OFF; the agent switch never tilts');
+  assert(/\.toggle:not\(\.on\):hover::before/.test(css) &&
+    /\.budget-btn:not\(\.on\):hover::before/.test(css) &&
+    /\.agent-switch-track:not\(:has\(input:checked\)\):hover::before/.test(css) &&
+    /animation:ibSpark 1s ease-out both/.test(css),
+    'one short contour spark per hover, never on active controls');
+  assert(/\.toggle:not\(\.on\):hover\[data-tip\]::after\{transform:translateX\(-50%\) rotate\(3deg\)\}/.test(css) &&
+    /\.budget-btn:not\(\.on\):hover\[data-tip\]::after\{transform:translateX\(-50%\) rotate\(4deg\)\}/.test(css),
+    'tooltips stay level on top of tilted buttons');
   assert(/\.budget-pop\[hidden\]\{display:none\}/.test(css),
   'the budget popup actually closes ([hidden] beats display:flex)');
   // звук лимита — тот же тон, что у агента: включение и ручное снятие
@@ -1511,6 +1546,31 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
     /function runScenario/.test(js) && /api\/scenarios\/new/.test(js) &&
     /maybeOfferScenario/.test(js),
   'scenarios tab ships with step runner, storage API and repeat suggestion');
+  // запуск сценария обязан работать: showView (switchView не существует),
+  // шаг ждёт конца печати, кнопки «Пример» больше нет
+  assert(/showView\('chat'\)/.test(extractFunction(js, 'runScenario')) &&
+    !/switchView/.test(js) && !/scDemoBtn/.test(js) && !/scDemoBtn/.test(html),
+  'runScenario navigates with the real showView and the demo button is gone');
+  const step = extractFunction(js, 'sendScenarioStep');
+  assert(!/wasStreaming/.test(step) && /await send\(\{ text, scenario: true \}\)/.test(step),
+    'scenario steps await the real send and never reference wasStreaming');
+  // карточка открывается целиком + редактирование на месте
+  assert(/function openScenario/.test(js) && /function editScenario/.test(js) &&
+    /api\/scenarios\/update/.test(js) && /sc-steps-full/.test(css) &&
+    /Редактировать/.test(js),
+  'scenario card opens full and edits in place via /api/scenarios/update');
+  // предложение сценария: мягкий фон + окно Джарвиса с градиентной рамкой
+  assert(/\.modal-back\.soft\{background:rgba\(2,5,10,\.42\)/.test(css) &&
+    /\.modal\.jarvis-win/.test(css) && /jw-ico/.test(css) &&
+    /\{ soft: true \}/.test(js) && /jw-ico/.test(js),
+  'the scenario offer uses a soft backdrop and a Jarvis-styled window');
+  // панель лимита летит движением панели уведомлений (npIn/npOut, зеркально)
+  assert(/animation:npInUp \.24s cubic-bezier\(\.2,\.9,\.3,1\) both/.test(css) &&
+    /\.budget-pop\.bp-closing\{animation:npOutUp \.2s/.test(css) &&
+    /@keyframes npInUp\{from\{opacity:0;transform:translateY\(10px\) scale\(\.97\)\}\}/.test(css) &&
+    !/budgetPopIn/.test(css) &&
+    /function hideBudgetPop/.test(js) && /function openBudgetPop/.test(js),
+    'the budget panel flies with the exact note-panel motion, spring bounce removed');
   // черновик не теряется: сохранение на input, восстановление на старте
   assert(/function saveDraft/.test(js) && /function loadDraft/.test(js) &&
     /jarvis\.draft/.test(js),
@@ -1532,9 +1592,12 @@ function testProactiveModesBudgetAndAbortContracts() {
   'mode requests render a NAMED toggle (icon+title+off knob) under the text');
   assert(/<svg viewBox="0 0 24 24"[^>]*><rect x="5" y="8" width="14" height="11" rx="3"\/>/.test(js) &&
     /const syncSwitchState = \(\) =>/.test(js) &&
-    /mc-readonly/.test(js) && /\.mode-card\.mc-readonly\{opacity:\.55;pointer-events:none\}/.test(css) &&
+    /mc-readonly/.test(js) &&
+    /\.mode-card\.mc-readonly\{opacity:\.55\}/.test(css) &&
+    /\.mode-card\.mc-readonly \.mc-switch,\.mode-card\.mc-readonly \.mc-skip\{pointer-events:none\}/.test(css) &&
+    !/\.mode-card\.mc-readonly\{[^}]*pointer-events/.test(css) &&
     /\.mc-sw-track\.on i\{[^}]*translateX\(14px\)/s.test(css),
-  'agent gets a robot icon; reopening syncs the knob to the live state and dims the card');
+  'agent gets a robot icon; reopening syncs the knob to the live state, dims the card yet keeps it closable');
   assert(/\.mc-switch\{[^}]*display:flex[^}]*cursor:pointer/s.test(css) &&
     /\.mc-sw-track\{[^}]*width:38px/s.test(css) &&
     /\.mode-card\.m-agent\{--mc:#b8afff\}/.test(css) &&

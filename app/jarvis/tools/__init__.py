@@ -570,6 +570,12 @@ def _unmask(text: str, masked: Dict[str, str]) -> str:
     return text
 
 
+def _balanced_json(s: str) -> str:
+    """Первый сбалансированный {...} от начала строки."""
+    end = _balanced(s, 0)
+    return s[: end + 1] if end > 0 else s
+
+
 def parse_text_calls(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """Находит в тексте псевдо-вызовы инструментов.
 
@@ -611,6 +617,32 @@ def parse_text_calls(text: str) -> Tuple[str, List[Dict[str, Any]]]:
             inner = {k: v for k, v in obj.items() if k not in ("name", "tool", "function", "type")}
         found.append({"name": name, "args": inner})
         out = out[:m.start()] + out[close_idx + 1:]
+
+    # 1.5) ГОЛЫЕ АРГУМЕНТЫ: модель напечатала только JSON-параметры какого-то
+    # инструмента ({"method":"GET","url":"..."}). Причина сырого JSON в чате —
+    # именно это: имени функции нет, старый парсер ничего не находил, и конверт
+    # оставался текстом ответа. Лечим по-настоящему: подбираем инструмент по
+    # совпадению ключей с его зарегистрированной схемой параметров.
+    if not found:
+        stripped = out.strip()
+        if stripped.startswith("{") and len(stripped) < 600:
+            try:
+                cand = json.loads(_balanced_json(stripped))
+            except Exception:
+                cand = None
+            if isinstance(cand, dict) and cand:
+                best_name, best_hit = "", 0
+                for tname, tdata in TOOLS.items():
+                    props = (((tdata.get("schema") or {}).get("function") or {})
+                             .get("parameters") or {}).get("properties") or {}
+                    if not props:
+                        continue
+                    hit = sum(1 for k in cand if k in props)
+                    if hit > best_hit and hit >= max(1, len(cand) // 2):
+                        best_name, best_hit = tname, hit
+                if best_name:
+                    found.append({"name": best_name, "args": cand})
+                    out = ""
 
     # 2) синтаксис вызова: function name(...) / name({...})
     names = sorted(TOOLS.keys(), key=len, reverse=True)
