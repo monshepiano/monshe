@@ -3154,6 +3154,31 @@ class AiReplySuggestionsTests(unittest.TestCase):
             items = agent.suggest_replies_ai("расскажи про котов", "Коты спят 16 часов в сутки.")
         self.assertTrue(items and all(isinstance(i, str) for i in items))
 
+    def test_english_tech_junk_never_reaches_the_user(self) -> None:
+        # nano вернула служебный мусор из JSON ответа — пользователь его не увидит
+        with mock.patch.object(agent.llm, "chat",
+                               return_value='["content", "tool_calls", "reasoning"]'), \
+             mock.patch.object(agent, "suggest_replies",
+                               return_value=["Расскажи подробнее"]) as local:
+            items = agent.suggest_replies_ai(
+                "что в файле?", "В файле три раздела: введение, данные и выводы.")
+        self.assertEqual(items, ["Расскажи подробнее"])
+        self.assertTrue(local.called, "мусор модели обязан упасть в локальный запас")
+
+        # сырой JSON вместо ответа — nano вообще не вызывается (экономия)
+        with mock.patch.object(agent.llm, "chat") as nano:
+            agent.suggest_replies_ai("запусти", '{"ok": true, "stdout": "готово"}',
+                                     ["run_python"])
+        self.assertFalse(nano.called, "служебному ответу не нужен nano-запрос")
+
+    def test_suggestion_usable_requires_russian(self) -> None:
+        self.assertTrue(agent._suggestion_usable("Добавить график продаж"))
+        self.assertTrue(agent._suggestion_usable("Сравнить с GPT"))
+        self.assertFalse(agent._suggestion_usable("tool_calls"))
+        self.assertFalse(agent._suggestion_usable("Content overview"))
+        self.assertFalse(agent._suggestion_usable("reasoning пошёл"))
+        self.assertFalse(agent._suggestion_usable(""))
+
     def test_parser_is_tolerant_to_model_noise(self) -> None:
         parse = agent._parse_reply_suggestions
         # пояснение вокруг массива

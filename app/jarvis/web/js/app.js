@@ -188,6 +188,10 @@ function stampTime(node, ts) {
    при прокрутке — отдельный слой #scrollDate; поэтому одно не подменяет другое. */
 function placeDaySeparator(node) {
   if (!node || !node.parentNode || !node.dataset || !node.dataset.ts) return null;
+  // СЦЕНАРИЙ — РАЗГОВОР ОДНОГО ДНЯ: пока он выполняется, разделители дат
+  // («Сегодня») не появляются вовсе. Они объясняют переход между днями,
+  // а этапы сценария — это не дни.
+  if (S.scenarioActive) return null;
   let prev = node.previousElementSibling;
   while (prev && prev.classList.contains('day-separator')) prev = prev.previousElementSibling;
   if (prev && prev.classList.contains('msg') && prev.dataset.day === node.dataset.day) return null;
@@ -531,8 +535,9 @@ function agentWave(originEl, calm) {
   wave.style.setProperty('--aw', (radius * 2.2) + 'px');
   document.body.appendChild(wave);
   S.agentWaveRect = null;
-  // включение — короткая сдержанная волна (0.78 с); выключение — отлив
-  setTimeout(() => wave.remove(), calm ? 750 : 820);
+  // включение — яркая волна-перекраска (0.85 с); выключение — волна
+  // СЛЕТАЕТ с интерфейса и убирается в тумблер (сжатие в точку)
+  setTimeout(() => wave.remove(), calm ? 850 : 950);
 }
 
 $('#tgAgent').addEventListener('change', function () {
@@ -549,12 +554,23 @@ $('#tgAgent').addEventListener('change', function () {
   // СНАЧАЛА ВОЛНА, ТЕМА — ЗА НЕЙ. Волна короткая и сдержанная (0.78 с),
   // расходится от тумблера; на 280-й мс, когда фронт накрывает экран, за ним
   // меняется тема — жест читается как «волна прокатилась и перекрасила».
-  if (S.agentMode) agentWave(S.agentWaveOrigin || $('#swAgent'), false);
-  else agentWave(S.agentWaveOrigin || $('#swAgent'), true);
-  setTimeout(() => {
-    document.body.classList.toggle('agent-on', S.agentMode);
-    if (shell) shell.classList.remove('ag-switching');
-  }, 280);
+  if (S.agentMode) {
+    // ВОЛНА КРАСИТ: яркий бордовый фронт катится от тумблера по экрану,
+    // и интерфейс перекрашивается ВСЛЕД за волной — цвета едут плавными
+    // переходами (~0.85 с), как взрывная волна с краской за фронтом
+    agentWave(S.agentWaveOrigin || $('#swAgent'), false);
+    setTimeout(() => {
+      document.body.classList.add('agent-on');
+      if (shell) shell.classList.remove('ag-switching');
+    }, 240);
+  } else {
+    // ОБРАТНО: бордовый слетает с интерфейса и убирается в тумблер —
+    // волна сжимается в точку нажатия, цвета едут вспять, затем сам
+    // тумблер гаснет до нейтрального
+    document.body.classList.remove('agent-on');
+    agentWave(S.agentWaveOrigin || $('#swAgent'), true);
+    setTimeout(() => { if (shell) shell.classList.remove('ag-switching'); }, 700);
+  }
   S.agentWaveOrigin = null;
   $('#input').placeholder = S.agentMode
     ? 'Поставь задачу — разобью на шаги и сделаю сам…'
@@ -2283,25 +2299,7 @@ function markBorn(card) {
   }
 }
 
-const TOOL_WAIT_AFTER_PAINT_MS = 800;
 
-function finishToolWait(card) {
-  if (!card || !card.classList.contains('tool-wait')) return;
-  const finish = () => {
-    if (!card.isConnected) return;
-    const painted = Number(card.dataset.waitPainted || 0);
-    if (!painted) {
-      requestAnimationFrame(finish);
-      return;
-    }
-    // Даже мгновенный cache hit оставляет спокойный контур на человечески
-    // различимый срок. Отсчёт идёт от первого paint, не от прихода результата.
-    const left = TOOL_WAIT_AFTER_PAINT_MS - (performance.now() - painted);
-    if (left > 0) setTimeout(finish, left);
-    else card.classList.remove('tool-wait');
-  };
-  requestAnimationFrame(finish);
-}
 
 function collapseSoon(card, opts) {
   if (!card || !card.isConnected) return;
@@ -2569,6 +2567,10 @@ function mountUiPanels(root) {
     box.innerHTML = '';
 
     const HUES = ['c1', 'c2', 'c3', 'c4', 'c5'];
+    // ЧИСТЫЕ ПЛИТКИ НЕ ЖДУТ КНОПКУ: один клик = выбор = отправка. Единственный
+    // формат, где подтверждение лишено смысла — нечего докручивать, нечему
+    // передумать: одно касание уже и есть весь ответ.
+    const tilesOnly = items.length > 0 && items.every((x) => x.t === 'tiles');
     // ЛЮБАЯ панель отправляется ТОЛЬКО кнопкой «Отправить». Раньше чистые
     // плитки улетали по первому касанию (таймер на 900 мс), а тумблеры и
     // звёзды — сразу; передумать было нельзя, промах стоил отправки. Теперь
@@ -2801,6 +2803,7 @@ function mountUiPanels(root) {
             it.val = o;
             $$('.ui-tile', grid).forEach((x) => x.classList.remove('on'));
             t.classList.add('on'); sfx('select');
+            if (tilesOnly) { setTimeout(fire, 140); return; }
             controlChanged();
           });
           grid.appendChild(t);
@@ -2843,10 +2846,10 @@ function mountUiPanels(root) {
       box.appendChild(row);
     }
 
-    // Кнопка «Отправить» нужна ВСЕГДА, когда в панели есть выбор: никакой
-    // автопосылки. Выглядит и ведёт себя как кнопка отправки под полем
-    // ввода — та же стрелка, тот же смысл.
-    if (askable) {
+    // Кнопка «Отправить» нужна везде, КРОМЕ чистых плиток: там клик сам
+    // является подтверждением. Выглядит и ведёт себя как кнопка отправки
+    // под полем ввода — та же стрелка, тот же смысл.
+    if (askable && !tilesOnly) {
       go = el('button', 'ui-go', ICO.send + '<span>Отправить</span>');
       go.addEventListener('click', fire);
       // Плиткам кнопка не нужна: выбор уходит сам. Но как только человек начал
@@ -3106,6 +3109,8 @@ function stopRunForReal() {
 function stopStream() {
   return new Promise((resolve) => {
     if (!S.streaming) { resolve(); return; }
+    // СТОП ВО ВРЕМЯ СЦЕНАРИЯ РВЁТ ВЕСЬ СЦЕНАРИЙ: следующий шаг не отправляется
+    if (S.scenarioActive) S.abortedScenario = true;
     stopRunForReal();
     try { if (S.abort) S.abort.abort(); } catch (e) { /* уже закрыт */ }
     let waited = 0;
@@ -3603,176 +3608,203 @@ function qtDetail(args, result) {
   return out || '(пусто)';
 }
 
-/* ============================ ТИХИЙ ПОТОК ============================
-   Работа инструментов обычного режима — ЖИВОЕ ОКНО, а не россыпь строк.
-   Окно висит в ответе: строки прилипают к низу, новая приходит снизу из
-   темноты, старая уходит вверх и тает (маски сверху/снизу). Пока череда
-   идёт — окно дышит; череда закончилась (другой тип работы или конец
-   ответа) — окно медленно и благородно сворачивается в след: одна строка
-   «семейство × число действий · время». След раскрывается в список, каждая
-   строка списка — тоже раскрываемая (аргументы + результат). */
-function ensureQuietStream(ui) {
-  if (ui.quietStream && ui.quietStream.node.isConnected) return ui.quietStream;
-  const node = el('div', 'quiet-stream');
-  node.body = ui.statusEl;                    // маркер вставки: перед статусом
+/* ======================= КУХНЯ ИНСТРУМЕНТОВ =======================
+   Один спокойный серый цвет на всё — чуть ярче подписи «обычный запрос».
+   РАБОТАЮЩИЙ инструмент: имя, от него вниз тонкая полоса, справа от неё —
+   поток строк: вальяжно плывут вверх, растворяясь в темноте сверху и снизу.
+   Закончил — галочка и время встают У ИМЕНИ, и инструмент залезает в папку
+   своего семейства, растворяясь в ней. Папка открывается — от иконки вниз
+   идёт полоса, инструменты выплывают по одному; клик по инструменту
+   разворачивает его текст (полоса от иконки, без затемнений, прокрутка
+   только вниз). Обычный режим и AGENT живут на одной кухне. */
+function qtFeed(flow, text) {
+  const line = el('div', 'qt-flowline', esc(String(text || '')));
+  flow.appendChild(line);
+  while (flow.children.length > 7) flow.removeChild(flow.firstChild);
+}
+
+function qtOpen(ui, ev) {
+  const node = el('div', 'qt-node');
+  node.innerHTML =
+    '<div class="qt-head">' +
+      '<span class="qt-ico">' + qtFamilyIcon(ev.group, ev.name) + '</span>' +
+      '<span class="qt-name">' + esc(ev.label || ev.name) + '</span>' +
+      '<span class="qt-mark"></span>' +
+    '</div>' +
+    '<div class="qt-body"><span class="qt-rail"></span><div class="qt-flow"></div></div>';
+  node._tool = { id: ev.id || ev.name, name: ev.name, label: ev.label || ev.name,
+                 group: ev.group || 'base', args: ev.args || {} };
   ui.statusEl.parentNode.insertBefore(node, ui.statusEl);
-  ui.quietStream = { node, group: '', lines: [] };
-  return ui.quietStream;
-}
-
-function addQuietLine(ui, ev) {
-  const stream = ensureQuietStream(ui);
-  if (stream.group && stream.group !== ev.group) flushQuietStream(ui);
-  if (!ui.quietStream || !ui.quietStream.node.isConnected) {
-    // поток только что свернулся — новое семейство начинает новое окно
-    const fresh = ensureQuietStream(ui);
-    fresh.group = ev.group;
-  }
-  const s = ui.quietStream;
-  s.group = ev.group;
-  const line = el('div', 'qs-line');
-  line.innerHTML =
-    '<span class="qs-ico">' + qtFamilyIcon(ev.group, ev.name) + '</span>' +
-    '<span class="qs-label">' + esc(ev.label || ev.name) + '</span>' +
-    '<span class="qs-state"></span>';
-  line._tool = { id: ev.id, name: ev.name, label: ev.label || ev.name,
-                 group: ev.group, args: ev.args || {} };
-  s.node.appendChild(line);
-  s.lines.push(line);
-  // окно показывает только последние строки: старые уходят вверх в темноту
-  while (s.lines.length > 8) s.lines.shift();
-  while (s.node.children.length > 12) s.node.removeChild(s.node.firstChild);
-  ui.tools[ev.id || ev.name] = line;
+  ui.tools[ev.id || ev.name] = node;
+  // поток строк состояния: подпись, главный аргумент, фразы темы — плывут вверх
+  const flow = node.querySelector('.qt-flow');
+  const lines = toolTicker(ev);
+  const quips = groupQuips(ev.group);
+  let li = 0;
+  qtFeed(flow, lines[li++] || node._tool.label);
+  const tick = () => {
+    if (!node.isConnected || node._done) return;
+    qtFeed(flow, li < lines.length ? lines[li++] : quips[(li++) % quips.length]);
+    node._t = setTimeout(tick, 1900);
+  };
+  node._t = setTimeout(tick, 1900);
   scrollSoon(ui);
-  return line;
+  return node;
 }
 
-function flushQuietStream(ui) {
-  const s = ui.quietStream;
-  if (!s || !s.node || !s.node.isConnected || !s.lines.length) {
-    if (s) s.node.remove();
-    ui.quietStream = null;
-    return;
-  }
-  ui.quietStream = null;
-  const fam = QT_FAMILY[s.group] || QT_FAMILY.base;
-  const rows = s.lines.slice();
-  const totalSec = rows.reduce((acc, r) => acc + (r._tool && r._tool.elapsed || 0), 0);
-  const trace = el('div', 'quiet-trace');
-  trace.innerHTML =
-    '<span class="qt-ico">' + qtFamilyIcon(s.group, '') + '</span>' +
-    '<span class="qt-label">' + esc(fam.label) +
-      (rows.length > 1 ? ' × ' + rows.length : '') + '</span>' +
-    '<span class="qt-state">' + (totalSec ? totalSec.toFixed(1).replace(/\.0$/, '') + 'с' : '') + '</span>' +
-    '<span class="th-open">›</span>';
-  const list = el('div', 'quiet-list');
-  rows.forEach((line) => {
-    const t = line._tool || {};
-    const row = el('div', 'ql-row');
-    row.innerHTML =
-      '<span class="ql-head">' +
-        '<span class="qs-ico">' + qtFamilyIcon(t.group, t.name) + '</span>' +
-        '<span class="ql-label">' + esc(t.label || t.name) + '</span>' +
-        '<span class="qs-state">' + (t.ok === false ? '✕' : '✓') +
-          (t.elapsed ? ' ' + t.elapsed + 'с' : '') + '</span>' +
-      '</span>' +
-      '<pre class="ql-detail">' + esc(qtDetail(t.args, t.result)) + '</pre>';
-    row.addEventListener('click', () => row.classList.toggle('open'));
-    list.appendChild(row);
-  });
-  trace.addEventListener('click', () => {
-    trace.classList.toggle('open');
-    list.classList.toggle('open');
-  });
-  // СВЁРТКА ОКНА — НЕ СПЕШИТ. Медленная (640 мс) благородная анимация:
-  // окно съёживается по высоте, след возникает на его месте и раскрывается
-  // по клику. Быстрая свёртка читалась бы как моргание.
-  const node = s.node;
-  node.classList.add('qs-folding');
+function qtMark(node, ok, sec) {
+  const m = node && node.querySelector('.qt-mark');
+  if (m) m.textContent = (ok === false ? '✕' : '✓') + (sec != null ? ' ' + sec + 'с' : '');
+}
+
+function qtFolder(ui, group) {
+  if (!ui.qtFolders) ui.qtFolders = {};
+  let f = ui.qtFolders[group];
+  if (f && f.isConnected) return f;
+  f = el('div', 'qt-folder');
+  f.dataset.group = group;
+  f._items = [];
+  f.innerHTML =
+    '<div class="qt-head">' +
+      '<span class="qt-ico">' + qtFamilyIcon(group, '') + '</span>' +
+      '<span class="qt-name"></span>' +
+      '<span class="qt-mark"></span>' +
+    '</div>' +
+    '<div class="qt-kids"><span class="qt-rail"></span><div class="qt-rows"></div></div>';
+  f.querySelector('.qt-head').addEventListener('click', () => qtToggleFolder(f));
+  ui.qtFolders[group] = f;
+  return f;
+}
+
+function qtFolderSync(folder) {
+  const items = folder._items || [];
+  const fam = QT_FAMILY[folder.dataset.group] || QT_FAMILY.base;
+  const total = items.reduce((acc, x) => acc + (x.elapsed || 0), 0);
+  const anyFail = items.some((x) => x.ok === false);
+  folder.querySelector('.qt-name').textContent =
+    fam.label + (items.length > 1 ? ' × ' + items.length : '');
+  folder.querySelector('.qt-mark').textContent =
+    (anyFail ? '✕' : '✓') + (total ? ' ' + total.toFixed(1).replace(/\.0$/, '') + 'с' : '');
+}
+
+function qtFold(ui, node) {
+  if (!node || !node.isConnected || node.dataset.folded === '1') return;
+  node.dataset.folded = '1';
+  node._done = true;
+  clearTimeout(node._t);
+  const t = node._tool || {};
+  const folder = qtFolder(ui, t.group || 'base');
+  const fresh = !folder.isConnected;
+  if (fresh && node.parentNode) node.parentNode.insertBefore(folder, node);
+  folder._items.push({ name: t.name, label: t.label, group: t.group, args: t.args,
+                       ok: t.ok, elapsed: t.elapsed, result: t.result });
+  qtFolderSync(folder);
+  // ИНСТРУМЕНТ ЗАЛЕЗАЕТ В ПАПКУ, РАСТВОРЯЯСЬ: подъезд к папке + съёживание
   const h0 = node.getBoundingClientRect().height;
+  let dy = -10;
+  if (!fresh) {
+    const fr = folder.getBoundingClientRect();
+    const nr = node.getBoundingClientRect();
+    dy = Math.max(-90, Math.min(-6, fr.bottom - nr.top));
+  }
+  node.style.overflow = 'hidden';
+  node.style.transition = 'none';
   node.style.height = h0 + 'px';
   void node.offsetHeight;
-  node.style.transition = 'height .64s cubic-bezier(.3,.7,.25,1), opacity .5s ease .14s';
-  node.style.height = Math.min(46, h0) + 'px';
-  node.style.opacity = '.25';
-  setTimeout(() => {
-    node.replaceWith(trace);
-    if (trace.parentNode) trace.insertAdjacentElement('afterend', list);
-    node.remove();
-  }, 640);
-  scrollSoon(ui);
+  node.style.transition =
+    'height .38s cubic-bezier(.3,.7,.3,1), transform .38s cubic-bezier(.3,.7,.3,1), opacity .26s ease .1s';
+  node.style.transform = 'translateY(' + dy + 'px) scale(.94)';
+  node.style.opacity = '0';
+  node.style.height = '0px';
+  setTimeout(() => node.remove(), 400);
 }
 
-/* ГРУППИРОВКА В АГЕНТЕ: череда однотипных карточек складывается в ОДНУ
-   групповую карточку — как только пришёл другой тип работы или ответ
-   завершён. Внутри — раскрываемый список действий (строки тоже
-   раскрываемые). Дизайн — семья агентских карточек, не тихих следов. */
-function flushAgentGroup(ui) {
-  const g = ui.agentGroup;
-  ui.agentGroup = null;
-  if (!g || !g.cards.length) return;
-  const cards = g.cards.filter((c) => c.isConnected);
-  if (!cards.length) return;
-  const fam = QT_FAMILY[g.group] || QT_FAMILY.base;
-  // ОДНО действие не образует череды: карточка живёт сама и сворачивается
-  // в миниатюру, как обычная инструментальная карточка
-  if (cards.length === 1) {
-    const only = cards[0];
-    const t = only._tool || {};
-    collapseSoon(only, {
-      cls: t.ok === false ? 'th-no' : 'th-ok', icon: ICO.code,
-      title: t.label || '', sub: t.elapsed != null ? t.elapsed + 'с' : '',
-      tag: t.ok === false ? 'ошибка' : 'готово',
+function qtToggleFolder(f) {
+  const kids = f.querySelector('.qt-kids');
+  if (!kids) return;
+  if (f.classList.contains('open')) {
+    f.classList.remove('open');
+    const rows = Array.from(f.querySelectorAll('.qt-row')).reverse();
+    rows.forEach((r, i) => {
+      r.style.transition = 'opacity .16s ease ' + (i * 40) + 'ms, transform .16s ease ' + (i * 40) + 'ms';
+      r.style.opacity = '0';
+      r.style.transform = 'translateY(-5px)';
     });
-    return;
+    setTimeout(() => {
+      kids.classList.remove('open');
+      rows.forEach((r) => { r.style.cssText = ''; });
+    }, rows.length * 40 + 180);
+  } else {
+    const box = f.querySelector('.qt-rows');
+    box.replaceChildren();
+    (f._items || []).forEach((t) => box.appendChild(qtRow(t)));
+    kids.classList.add('open');
+    f.classList.add('open');
+    f.querySelectorAll('.qt-row').forEach((r, i) => {
+      r.style.opacity = '0';
+      r.style.transform = 'translateY(7px)';
+      r.style.transition = 'opacity .2s ease ' + (i * 45) + 'ms, transform .2s cubic-bezier(.2,.75,.3,1) ' + (i * 45) + 'ms';
+      void r.offsetHeight;
+      r.style.opacity = '1';
+      r.style.transform = 'translateY(0)';
+    });
   }
-  const anchor = cards[0];
-  const secs = cards.map((c) => (c._tool && c._tool.elapsed) || 0);
-  const totalSec = secs.reduce((a, b) => a + b, 0);
-  const anyFail = cards.some((c) => c._tool && c._tool.ok === false);
-  const card = makeCard(qtFamilyIcon(g.group, ''), fam.label, 'tool-card ag-group', true);
-  card.querySelector('.card-head').insertBefore(el('span', 'tool-run'), card.querySelector('.chev'));
-  const head = card.querySelector('.k');
-  if (head) head.innerHTML = esc(fam.label) + '<span class="ag-count"> × ' + cards.length + '</span>';
-  const rows = el('div', 'ag-rows');
-  cards.forEach((c) => {
-    const t = c._tool || {};
-    const row = el('div', 'ql-row');
-    row.innerHTML =
-      '<span class="ql-head">' +
-        '<span class="qs-ico">' + qtFamilyIcon(t.group, t.name) + '</span>' +
-        '<span class="ql-label">' + esc(t.label || t.name) + '</span>' +
-        '<span class="qs-state">' + (t.ok === false ? '✕' : '✓') +
-          (t.elapsed != null ? ' ' + t.elapsed + 'с' : '') + '</span>' +
-      '</span>' +
-      '<pre class="ql-detail">' + esc(qtDetail(t.args, t.result)) + '</pre>';
-    row.addEventListener('click', () => row.classList.toggle('open'));
-    rows.appendChild(row);
+}
+
+function qtRow(t) {
+  const row = el('div', 'qt-row');
+  row.innerHTML =
+    '<div class="qt-head">' +
+      '<span class="qt-ico">' + qtFamilyIcon(t.group, t.name) + '</span>' +
+      '<span class="qt-name">' + esc(t.label || t.name) + '</span>' +
+      '<span class="qt-mark">' + (t.ok === false ? '✕' : '✓') + (t.elapsed != null ? ' ' + t.elapsed + 'с' : '') + '</span>' +
+    '</div>' +
+    '<div class="qt-detail-wrap"><span class="qt-rail"></span>' +
+      '<pre class="qt-detail">' + esc(qtDetail(t.args, t.result)) + '</pre></div>';
+  row.querySelector('.qt-head').addEventListener('click', (e) => {
+    e.stopPropagation();
+    qtToggleDetail(row);
   });
-  card.inner.appendChild(rows);
-  anchor.parentNode.insertBefore(card, anchor);
-  cards.forEach((c) => {
-    const t = c._tool || {};
-    if (t.id && ui.tools[t.id] === c) delete ui.tools[t.id];
-    c.remove();
+  return row;
+}
+
+function qtToggleDetail(row) {
+  const w = row.querySelector('.qt-detail-wrap');
+  if (!w) return;
+  if (w.classList.contains('open')) {
+    const h = w.getBoundingClientRect().height;
+    w.style.overflow = 'hidden';
+    w.style.transition = 'none';
+    w.style.height = h + 'px';
+    void w.offsetHeight;
+    w.style.transition = 'height .2s cubic-bezier(.3,.7,.3,1), opacity .15s ease';
+    w.style.height = '0px';
+    w.style.opacity = '0';
+    setTimeout(() => { w.classList.remove('open'); w.style.cssText = ''; }, 210);
+  } else {
+    w.classList.add('open');
+    const h = w.getBoundingClientRect().height;
+    w.style.overflow = 'hidden';
+    w.style.transition = 'none';
+    w.style.height = '0px';
+    w.style.opacity = '0';
+    void w.offsetHeight;
+    w.style.transition = 'height .2s cubic-bezier(.2,.75,.3,1), opacity .18s ease';
+    w.style.height = h + 'px';
+    w.style.opacity = '1';
+    setTimeout(() => { w.style.cssText = ''; }, 220);
+  }
+}
+
+/* Конец работы/ответа: всё открытое немедленно прячется в папки */
+function flushQt(ui) {
+  if (!ui || !ui.statusEl || !ui.statusEl.parentNode) return;
+  $$('.qt-node', ui.statusEl.parentNode).forEach((n) => {
+    if (n.dataset.folded === '1') return;
+    const t = n._tool || {};
+    if (!n.querySelector('.qt-mark').textContent) qtMark(n, t.ok, t.elapsed);
+    qtFold(ui, n);
   });
-  markBorn(card);
-  const run = card.querySelector('.tool-run');
-  if (run) { run.style.animation = 'none'; run.style.background = anyFail ? 'var(--red)' : 'var(--green)'; }
-  const k = card.querySelector('.k');
-  if (k) k.className = 'k ' + (anyFail ? 'tool-err' : 'tool-ok');
-  const tEl = card.querySelector('.t');
-  if (tEl && totalSec) tEl.innerHTML += ' <span class="muted" style="font-size:10.5px">· ' +
-    totalSec.toFixed(1).replace(/\.0$/, '') + 'с</span>';
-  // групповая карточка задерживается на виду, затем сворачивается в миниатюру —
-  // список действий доступен разворачиванием, как у любой карточки
-  collapseSoon(card, {
-    cls: anyFail ? 'th-no' : 'th-ok', icon: qtFamilyIcon(g.group, ''),
-    title: fam.label + ' × ' + cards.length,
-    sub: totalSec ? totalSec.toFixed(1).replace(/\.0$/, '') + 'с' : '',
-    tag: anyFail ? 'есть ошибки' : 'готово',
-  });
-  scrollSoon(ui);
 }
 
 /* Печать «хода мыслей». Раньше текст вставлялся кусками как есть: модель
@@ -4747,51 +4779,15 @@ function handleEvent(ev, ui) {
         termLine('$ ' + ev.name, 'cmd');
         break;
       }
-      // строка состояния рассказывает, чем агент занят прямо сейчас
+      // строка состояния рассказывает, чем занят прямо сейчас
       busyMode(ui, toolTicker(ev), 2200);
-      // ОБЫЧНЫЙ РЕЖИМ — ЖИВОЕ ОКНО РАБОТЫ. Полное молчание читалось как
-      // «завис», россыпь одинаковых строк — как лог. Теперь инструменты
-      // живут в одном окне: строки прилипают к низу, новая приходит снизу
-      // из темноты, старые уходят вверх и тают. Череда однотипных действий —
-      // одна история: окно свернётся в след «семейство × число · время».
-      if (!ui.agentMode) {
-        termLine('$ ' + ev.name + ' ' + JSON.stringify(ev.args || {}).slice(0, 300), 'cmd');
-        addQuietLine(ui, ev);
-        break;
-      }
-      // переход обычный → агент посреди ответа: окно тихого потока
-      // сворачивается в след, дальше работают агентские карточки
-      if (ui.quietStream) flushQuietStream(ui);
-      // череда однотипных карточек складывается в одну группу: другой тип
-      // работы закрывает прежнюю группу
-      if (ui.agentGroup && ui.agentGroup.group !== ev.group) flushAgentGroup(ui);
-      // Только registry-marked ожидание получает контур. Класс присутствует
-      // ещё до DOM insertion — никакого отложенного «старта» после открытия.
-      const waitVisual = ev.wait_visual === true;
-      const card = makeCard('⚙', ev.label || ev.name,
-        'tool-card' + (waitVisual ? ' tool-wait' : ''), true);
-      card.querySelector('.card-head').insertBefore(el('span', 'tool-run'), card.querySelector('.chev'));
-      const kv = el('div', 'kv');
-      Object.keys(ev.args || {}).forEach((k) => {
-        const v = String(ev.args[k]);
-        kv.innerHTML += '<i>' + esc(k) + '</i><span>' + esc(v.length > 300 ? v.slice(0, 300) + '…' : v) + '</span>';
-      });
-      card.inner.appendChild(kv);
-      node.body.insertBefore(card, ui.statusEl);
-      markBorn(card);
-      // карточка знает о себе всё: группе инструментов нужны имя, аргументы
-      // и результат, чтобы сложиться в общую карточку с раскрываемым списком
-      card._tool = { id: ev.id || ev.name, name: ev.name, label: ev.label || ev.name,
-                     group: ev.group || 'base', args: ev.args || {} };
-      if (!ui.agentGroup) ui.agentGroup = { group: ev.group || 'base', cards: [] };
-      ui.agentGroup.cards.push(card);
-      ui.tools[ev.id || ev.name] = card;
+      // ОДНА КУХНЯ ДЛЯ ОБЫЧНОГО РЕЖИМА И АГЕНТА: имя инструмента, от него
+      // вниз серая полоса, справа — поток строк в темноту. Работает — плывёт,
+      // закончил — галочка и время у имени, инструмент растворяется в папке.
+      // Открываются и закрываются мгновенно: кухня не тормозит ответ.
       termLine('$ ' + ev.name + ' ' + JSON.stringify(ev.args || {}).slice(0, 300), 'cmd');
-      // Прогрессом владеют только plan_step-события оркестратора. Число
-      // инструментов не равно числу шагов: один пункт может вызвать пять tools,
-      // а другой — ни одного. Локальный счётчик преждевременно красил проверку.
-      beep(520, 0.05);
-      scrollDown();
+      qtOpen(ui, ev);
+      if (ui.agentMode) beep(520, 0.05);
       break;
     }
 
@@ -4879,6 +4875,7 @@ function handleEvent(ev, ui) {
       // как «можно активировать», в отличие от безымянной кнопки. Каждый режим
       // — свой цвет. Мелкая «Пропустить» рядом.
       reactor('wait');
+      flushQt(ui);
       busyMode(ui, ['Жду разрешения', 'режим «' + ev.label + '»'], 1500);
       const MODE_META = {
         agent: { name: 'AGENT', ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V5.4"/><circle cx="12" cy="3.6" r="1.3"/><circle cx="9.2" cy="12.6" r=".9" fill="currentColor" stroke="none"/><circle cx="14.8" cy="12.6" r=".9" fill="currentColor" stroke="none"/><path d="M9.5 16h5"/></svg>',
@@ -5025,10 +5022,8 @@ function handleEvent(ev, ui) {
     // пока нажмут кнопку: лучше один вопрос, чем неверная догадка.
     case 'question': {
       reactor('wait');
-      // вопрос — граница работы: окно инструментов сворачивается в след,
-      // череда карточек складывается в группу, карточка вопроса чистая
-      flushQuietStream(ui);
-      flushAgentGroup(ui);
+      // вопрос — граница работы: кухонные инструменты прячутся в папки
+      flushQt(ui);
       busyMode(ui, ['Жду твоего ответа', 'выбери вариант выше'], 1500);
       const card = questionCard(ev, (choice) => {
         api('/api/questions/answer', { id: ev.id, answer: choice });
@@ -5045,38 +5040,19 @@ function handleEvent(ev, ui) {
         termLine((ev.result && ev.result.ok !== false ? '✓ ' : '✕ ') + ev.name, 'sys');
         break;
       }
-      const card = ui.tools[ev.id || ev.name];
+      const node = ui.tools[ev.id || ev.name];
       const ok = ev.result && ev.result.ok !== false;
-      if (card && card.classList.contains('qs-line')) {
-        // строка живого окна: замирает цветом отработавшей — тускло серо-зелёная,
-        // галочка и время тем же спокойным цветом; сама остаётся в окне, пока
-        // череда не свернётся в след
+      if (node && node.classList.contains('qt-node')) {
+        // галочка и время — У ИМЕНИ, спокойным серым; короткая пауза, чтобы
+        // глаз успел их схватить, — и инструмент залезает в папку семейства
         delete ui.tools[ev.id || ev.name];
-        card._tool = Object.assign(card._tool || {}, {
-          ok, elapsed: ev.elapsed != null ? ev.elapsed : null, result: ev.result || {} });
-        card.classList.add(ok ? 'qs-done' : 'qs-fail');
-        const st = card.querySelector('.qs-state');
-        if (st) st.textContent = (ok ? '✓' : '✕') +
-          (ev.elapsed != null ? ' · ' + ev.elapsed + 'с' : '');
-      } else if (card) {
-        const run = card.querySelector('.tool-run');
-        if (run) { run.style.animation = 'none'; run.style.background = ok ? 'var(--green)' : 'var(--red)'; }
-        card.querySelector('.k').className = 'k ' + (ok ? 'tool-ok' : 'tool-err');
-        card.querySelector('.k').textContent = ok ? '✓' : '✕';
-        if (ev.elapsed != null) {
-          card.querySelector('.t').innerHTML += ' <span class="muted" style="font-size:10.5px">· ' + ev.elapsed + 'с</span>';
-        }
-        const r = ev.result || {};
-        const pre = el('pre', 'out');
-        pre.textContent = toolResultText(r) || '(пусто)';
-        card.inner.appendChild(pre);
-        finishToolWait(card);
-        // результат карточки помнит сама — он нужен групповой карточке.
-        // Индивидуальное сворачивание отменено: череда однотипных карточек
-        // складывается в ОДНУ групповую (другой тип работы или конец ответа),
-        // одиночная свернётся на flushAgentGroup
-        card._tool = Object.assign(card._tool || {}, {
-          ok, elapsed: ev.elapsed != null ? ev.elapsed : null, result: ev.result || {} });
+        node._tool.ok = ok;
+        node._tool.elapsed = ev.elapsed != null ? ev.elapsed : null;
+        node._tool.result = ev.result || {};
+        node._done = true;
+        clearTimeout(node._t);
+        qtMark(node, ok, node._tool.elapsed);
+        setTimeout(() => qtFold(ui, node), 240);
       }
       termLine((ok ? '✓ ' : '✕ ') + ev.name + (ev.result && ev.result.error ? ' — ' + ev.result.error : ' — ok'),
         ok ? '' : 'err');
@@ -5192,10 +5168,8 @@ function handleEvent(ev, ui) {
 
     case 'done': {
       dropStatus(ui);
-      // ответ завершён: живое окно инструментов сворачивается в след,
-      // череда агентских карточек — в групповую карточку
-      flushQuietStream(ui);
-      flushAgentGroup(ui);
+      // ответ завершён: всё открытое прячется в папки немедленно
+      flushQt(ui);
       if (ev.tier) ui.routeTier = ev.tier;
       if (ev.model) ui.modelName = ev.model;
       updateResponseMeta(ui);
@@ -5209,17 +5183,15 @@ function handleEvent(ev, ui) {
 
     case 'error':
       showError(ui, ev.error || 'неизвестная ошибка');
-      flushQuietStream(ui);
-      flushAgentGroup(ui);
+      flushQt(ui);
       queueResponseFinish(ui, ui.buffer, false);
       break;
 
     case 'end':
       dropStatus(ui);
-      // конец потока: что не закрыл done, закрываем здесь — окно не должно
-      // остаться висеть раскрытым после ответа
-      flushQuietStream(ui);
-      flushAgentGroup(ui);
+      // конец потока: что не закрыл done, закрываем здесь — кухня не должна
+      // остаться раскрытой после ответа
+      flushQt(ui);
       // end означает только конец SSE. Если done потерялся, всё равно дренируем
       // локальный буфер; Stop → Send переключит finally после visualDonePromise.
       if (!ui.doneReceived) queueResponseFinish(ui, ui.buffer, false);

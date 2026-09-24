@@ -1032,20 +1032,67 @@ def suggest_replies(user_text: str, answer: str) -> List[str]:
     return items
 
 
+# Служебные слова, которые nano-модель вытаскивает из JSON/кода ответа:
+# «content», «tool_calls», «reasoning» — это не подсказки для человека.
+_SUGGEST_JUNK = re.compile(
+    r"(?i)\b(content|tool|tools|tool_call|tool_calls|call|calls|reasoning|"
+    r"json|api|prompt|response|request|schema|model|token|message|"
+    r"assistant|output|input|true|false|null)\b|[_{}<>\[\]]")
+
+
+def _human_answer_tail(answer: str) -> str:
+    """Живой текст ответа для подсказок — без кода и сырого JSON.
+
+    AGENT нередко заканчивает ответ служебным куском: JSON результата,
+    код, имена полей. Nano-модель, увидев это, предлагала «content» и
+    «tool_calls» вместо подсказок. Скармливаем модели только человеческий
+    текст; если его слишком мало — nano вообще не вызывается.
+    """
+    text = str(answer or "").strip()
+    if not text:
+        return ""
+    if text[:1] in "{[" and text[-1:] in "}]":
+        return ""                      # ответ целиком служебный
+    text = re.sub(r"```.*?```", " ", text, flags=re.S)
+    text = re.sub(r"`[^`\n]+`", " ", text)
+    text = re.sub(r"\{[^{}]*\}", " ", text)
+    text = re.sub(r"\[[^\[\]]*\]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _suggestion_usable(item: str) -> bool:
+    """Подсказка — короткая живая русская фраза, а не служебное слово."""
+    clean = str(item or "").strip()
+    if not 2 <= len(clean) <= 60:
+        return False
+    if not re.search(r"[а-яё]", clean.lower()):
+        return False                  # «content» и прочая англичанина — мимо
+    if _SUGGEST_JUNK.search(clean):
+        return False
+    if re.search(r"[A-Za-z]{4,}", clean):
+        return False
+    return True
+
+
 def suggest_replies_ai(user_text: str, answer: str,
                        tools_used: Optional[List[str]] = None) -> List[str]:
     """Продолжения от ИИ-модели — по сути ответа, а не общие фразы.
 
-    Дешёвая nano-модель видит вопрос и ответ и предлагает три конкретных
-    продолжения. Запрос короткий, таймаут 3 секунды: подсказки обязаны
-    появиться сразу после печати, ждать модель нельзя. Локальный запас
-    остаётся на случай сбоя: после AGENT-прогона — проактивные шаги,
-    в обычном разговоре — разговорные продолжения. Пустых строк не бывает.
+    Дешёвая nano-модель видит вопрос и ЖИВОЙ текст ответа (код и JSON
+    вырезаны) и предлагает три конкретных продолжения. Таймаут 3 секунды:
+    подсказки обязаны появиться сразу после печати. Всё, что не похоже на
+    русскую фразу, отсеивается; сбой или мусор честно падает в локальный
+    запас: после AGENT-прогона — проактивные шаги, в разговоре —
+    разговорные продолжения. Пустых строк не бывает.
     """
     q = str(user_text or "").strip()
-    a = str(answer or "").strip()
-    if not a:
-        return []
+    raw_answer = str(answer or "")
+    tail = _human_answer_tail(raw_answer)
+    if len(tail) < 20:
+        # служебного/короткого ответа не хватает для смысла: nano не платим
+        if tools_used:
+            return suggest_proactive(q, raw_answer, tools_used)
+        return suggest_replies(q, raw_answer)
     span = telemetry.Span("reply_suggestions", source="nano")
     try:
         raw = llm.chat([
@@ -1054,26 +1101,28 @@ def suggest_replies_ai(user_text: str, answer: str,
                         "ассистентом. Пользователь только что получил ответ. "
                         "Предложи ТРИ естественных продолжения ИМЕННО по сути "
                         "этого ответа: уточнение, следующий шаг или просьбу "
-                        "использовать результат. Каждая фраза до 5 слов, от "
-                        "первого лица пользователя, без кавычек и номеров. "
-                        "Не повторяй ответ и не задавай пустых мета-вопросов "
-                        "вроде «что ещё?». Ответь ТОЛЬКО JSON-массивом из "
-                        "трёх строк, без markdown и пояснений."},
+                        "использовать результат. Фразы ТОЛЬКО на русском "
+                        "языке, без английских и технических слов. Каждая "
+                        "фраза до 5 слов, от первого лица пользователя, без "
+                        "кавычек и номеров. Не повторяй ответ и не задавай "
+                        "пустых мета-вопросов вроде «что ещё?». Ответь "
+                        "ТОЛЬКО JSON-массивом из трёх строк."},
             {"role": "user",
-             "content": "Вопрос: %s\nОтвет: %s" % (q[:600], a[:1200])},
+             "content": "Вопрос: %s\nОтвет: %s" % (q[:600], tail[:1200])},
         ], tier="nano", timeout=3, operation="reply_suggestions_ai")
-        items = _parse_reply_suggestions(str(raw))
-        if items:
+        items = [x for x in _parse_reply_suggestions(str(raw))
+                 if _suggestion_usable(x)]
+        if len(items) >= 2:
             span.finish("ok", count=len(items))
-            return items
+            return items[:3]
     except Exception:
         pass
     span.finish("fallback")
     # сбой или мусор — честный локальный запас: у AGENT-прогона это
     # проактивные шаги по фактам работы, у разговора — разговорные продолжения
     if tools_used:
-        return suggest_proactive(q, a, tools_used)
-    return suggest_replies(q, a)
+        return suggest_proactive(q, raw_answer, tools_used)
+    return suggest_replies(q, raw_answer)
 
 
 def _parse_reply_suggestions(raw: str) -> List[str]:
