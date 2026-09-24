@@ -3179,6 +3179,40 @@ class AiReplySuggestionsTests(unittest.TestCase):
         self.assertFalse(agent._suggestion_usable("reasoning пошёл"))
         self.assertFalse(agent._suggestion_usable(""))
 
+    def test_code_answers_still_get_ai_suggestions(self) -> None:
+        # «напиши игру» — ответ почти весь из кода: nano всё равно зовётся,
+        # видит дайджест кода, и его русские подсказки доходят до пользователя
+        chess = ("Вот игра в шахматы на python:\n```python\nimport random\n"
+                 "BOARD = [['.'] * 8 for _ in range(8)]\nprint('ход')\n```\n"
+                 "Управление мышью, есть проверка мата.")
+        with mock.patch.object(agent.llm, "chat",
+                               return_value='["Добавь ИИ противника", "Сохрани в файл", '
+                                            '"Сделай сетку на 10 клеток"]') as nano:
+            items = agent.suggest_replies_ai("напиши игру шахматы", chess, [])
+        self.assertTrue(nano.called, "кодовый ответ не должен лишать nano-подсказок")
+        self.assertEqual(items, ["Добавь ИИ противника", "Сохрани в файл",
+                                 "Сделай сетку на 10 клеток"])
+        sent = nano.call_args[0][0][1]["content"]
+        self.assertIn("в ответе есть код", sent)
+
+    def test_local_fallback_varies_by_answer_type(self) -> None:
+        code_items = agent.suggest_replies("напиши", "вот код:\n```python\nprint(1)\n```")
+        self.assertEqual(code_items, ["Сохрани в файл", "Добавь ещё функции",
+                                      "Объясни по шагам"])
+        talk_items = agent.suggest_replies("расскажи", "Коротко о погоде.")
+        self.assertEqual(talk_items, ["Расскажи подробнее", "Покажи на примере",
+                                      "Что дальше?"])
+
+    def test_new_message_supersedes_previous_run_in_chat(self) -> None:
+        # контракт сервера: новое сообщение в диалоге останавливает прежний
+        # прогон — иначе старый молча доигрывался и модель продолжала прошлую
+        # задачу вместо новой («ответил на прошлый запрос»)
+        source = (ROOT / "app" / "jarvis" / "server.py").read_text(encoding="utf-8")
+        self.assertIn("_RUN_EVENTS: Dict[str, threading.Event]", source)
+        self.assertIn("old_event = _RUN_EVENTS.get(chat_id)", source)
+        self.assertIn("old_event.set()", source)
+        self.assertIn("_RUN_EVENTS[chat_id] = stop_event", source)
+
     def test_parser_is_tolerant_to_model_noise(self) -> None:
         parse = agent._parse_reply_suggestions
         # пояснение вокруг массива

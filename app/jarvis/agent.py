@@ -1019,15 +1019,24 @@ def suggest_replies(user_text: str, answer: str) -> List[str]:
 
     Эти кнопки появляются уже после foreground. Их прежняя nano-генерация могла
     занимать до 20 секунд, конкурировала с новым сообщением и часто возвращала
-    невалидный JSON. Универсальные разговорные действия полезнее нестабильной
-    псевдоперсонализации; содержимое реплик никуда не логируется.
+    невалидный JSON. Локальный запас строится ПО ТИПУ ответа: одна и та же
+    тройка на любой ответ выглядела мёртвой стандартной кнопкой; содержимое
+    реплик никуда не логируется.
     """
     del user_text
     span = telemetry.Span("reply_suggestions", source="local")
-    if not (answer or "").strip():
+    a = str(answer or "")
+    if not a.strip():
         span.finish("empty")
         return []
-    items = ["Расскажи подробнее", "Покажи на примере", "Предложи следующий шаг"]
+    if "```" in a or len(a) > 1200:
+        # ответ — артефакт (код, разметка): продолжения про артефакт
+        items = ["Сохрани в файл", "Добавь ещё функции", "Объясни по шагам"]
+    elif a.count("\n") > 4 and len(a) > 400:
+        # структурный материал (список, инструкция)
+        items = ["Разверни подробнее", "Покажи на примере", "Что дальше?"]
+    else:
+        items = ["Расскажи подробнее", "Покажи на примере", "Что дальше?"]
     span.finish("ok", count=len(items))
     return items
 
@@ -1060,6 +1069,31 @@ def _human_answer_tail(answer: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _nano_context(answer: str) -> str:
+    """Контекст для nano-подсказок: живой текст + сжатый дайджест кода.
+
+    Раньше код вырезался целиком — и ответ «напиши игру» (почти весь из кода)
+    оставался без nano вовсе: подсказки падали в статичные. Теперь модель
+    видит и прозу, и первые строки каждого блока кода — продолжения снова
+    по делу, а служебный мусор отсеивает _suggestion_usable.
+    """
+    text = str(answer or "").strip()
+    if not text:
+        return ""
+    digest: List[str] = []
+    for m in re.finditer(r"```[a-zA-Z0-9_+\-]*\n(.*?)```", text, re.S):
+        head = "\n".join(x.rstrip() for x in m.group(1).splitlines() if x.strip())
+        if head:
+            digest.append(head[:160])
+        if len(digest) >= 3:
+            break
+    tail = _human_answer_tail(text)
+    if digest:
+        note = "(в ответе есть код, первые строки: %s)" % " … ".join(digest)[:400]
+        return (tail + "\n" + note).strip() if tail else note
+    return tail
+
+
 def _suggestion_usable(item: str) -> bool:
     """Подсказка — короткая живая русская фраза, а не служебное слово."""
     clean = str(item or "").strip()
@@ -1087,9 +1121,9 @@ def suggest_replies_ai(user_text: str, answer: str,
     """
     q = str(user_text or "").strip()
     raw_answer = str(answer or "")
-    tail = _human_answer_tail(raw_answer)
+    tail = _nano_context(raw_answer)
     if len(tail) < 20:
-        # служебного/короткого ответа не хватает для смысла: nano не платим
+        # совсем пустому ответу не хватает смысла: nano не платим
         if tools_used:
             return suggest_proactive(q, raw_answer, tools_used)
         return suggest_replies(q, raw_answer)
@@ -1108,8 +1142,8 @@ def suggest_replies_ai(user_text: str, answer: str,
                         "пустых мета-вопросов вроде «что ещё?». Ответь "
                         "ТОЛЬКО JSON-массивом из трёх строк."},
             {"role": "user",
-             "content": "Вопрос: %s\nОтвет: %s" % (q[:600], tail[:1200])},
-        ], tier="nano", timeout=3, operation="reply_suggestions_ai")
+             "content": "Вопрос: %s\nОтвет: %s" % (q[:600], tail[:1400])},
+        ], tier="nano", timeout=5, operation="reply_suggestions_ai")
         items = [x for x in _parse_reply_suggestions(str(raw))
                  if _suggestion_usable(x)]
         if len(items) >= 2:

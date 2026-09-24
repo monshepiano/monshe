@@ -35,6 +35,10 @@ MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 # контрольных точках (цикл шагов, ожидание санкции/ответа, стрим).
 _RUN_STOPS: Dict[str, threading.Event] = {}
 _ACTIVE_RUNS: Dict[str, "agent.Agent"] = {}
+# Событие отмены ПО ДИАЛОГУ: новое сообщение в том же чате обязано
+# остановить прежний прогон — иначе тот молча доигрывался и дописывал
+# историю ПОСЛЕ нового вопроса, и модель продолжала прошлую задачу
+_RUN_EVENTS: Dict[str, threading.Event] = {}
 _RUN_LOCK = threading.Lock()
 
 
@@ -767,8 +771,16 @@ class Handler(BaseHTTPRequestHandler):
         if run_token:
             with _RUN_LOCK:
                 _RUN_STOPS[run_token] = stop_event
-        # Живой прогон этого диалога: монетка ₽ меняет лимит на лету
+        # Живой прогон этого диалога: монетка ₽ меняет лимит на лету.
+        # НОВОЕ СООБЩЕНИЕ СУПЕРСЕДИРУЕТ ПРЕЖНИЙ ПРОГОН: пока старый молча
+        # доигрывался после обрыва/Stop, его реплики падали в историю после
+        # нового вопроса — модель видела «незакрытую» прошлую задачу и
+        # продолжала ЕЁ вместо новой. Теперь прошлый прогон останавливается.
         with _RUN_LOCK:
+            old_event = _RUN_EVENTS.get(chat_id)
+            if old_event is not None:
+                old_event.set()
+            _RUN_EVENTS[chat_id] = stop_event
             _ACTIVE_RUNS[chat_id] = runner
         alive_box = [True]
 
@@ -906,6 +918,8 @@ class Handler(BaseHTTPRequestHandler):
             with _RUN_LOCK:
                 if _ACTIVE_RUNS.get(chat_id) is runner:
                     _ACTIVE_RUNS.pop(chat_id, None)
+                if _RUN_EVENTS.get(chat_id) is stop_event:
+                    _RUN_EVENTS.pop(chat_id, None)
             if not final_text:
                 final_text = _canonical_response_content(partial, "")
             if final_text:
