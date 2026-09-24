@@ -1015,7 +1015,10 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch:has(input:checked){color:#ffd9de}
 .agent-switch-track:has(input:checked){background:rgba(255,84,104,.16);border-color:rgba(255,107,122,.6)}
 .agent-switch-track input:checked + i{transform:translateX(16px);background:#ff6b7a;
-  box-shadow:0 0 10px rgba(255,107,122,.85);color:#2a1216}
+  box-shadow:0 0 10px rgba(255,107,122,.85);color:#2a1216;
+  /* включённый AGENT живёт: ядро тумблера мягко дышит светом */
+  animation:agGlow 2.6s ease-in-out infinite}
+@keyframes agGlow{50%{box-shadow:0 0 17px rgba(255,107,122,.95),0 0 34px rgba(255,84,104,.4)}}
 .agent-switch-track:has(input:focus-visible){outline:2px solid rgba(255,107,122,.5);outline-offset:2px}
 .agent-switch:focus-within{z-index:50}
 
@@ -1089,7 +1092,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   animation:agSpark 1.5s linear infinite;
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude}
-@keyframes agSpark{from{background-position:-130% 0}to{background-position:130% 0}}
+@keyframes agSpark{from{background-position:130% 0}to{background-position:-130% 0}}
 .agent-switch-track:not(:has(input:checked)):hover::after{
   content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
   background:linear-gradient(90deg,transparent,rgba(255,107,122,.14) 78%,rgba(255,107,122,.3));
@@ -1097,8 +1100,10 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 @keyframes agFlow{50%{opacity:.35}}
 
 /* AGENT по умолчанию чуть красноватый — режим приманивает ещё до наведения */
-.agent-switch-track{border-color:rgba(255,107,122,.26);background:rgba(255,107,122,.045)}
-.agent-switch-track i{color:#2a1216}
+.agent-switch-track{border-color:rgba(255,107,122,.26);background:rgba(255,107,122,.05)}
+/* содержимое тумблера ЧУТЬ красное: круглёшек розоват и в выключенном
+   состоянии — режим приманивает ещё до наведения */
+.agent-switch-track i{color:#2a1216;background:#a4898f}
 /* Tooltip не участвует в геометрии composer. После выбора tip-dismissed гасит
    его до mouseleave, а не оставляет висеть из-за фокуса checkbox. */
 .toggle[data-tip]:is(:hover,:focus-visible)::after,
@@ -2509,35 +2514,82 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .mc-skip:hover{color:var(--tx2);background:rgba(255,255,255,.05)}
 
 /* ============================ ТЕМА AGENT ============================
-   Включение агентского режима — пересадка в гоночный автомобиль. От
-   тумблера к краям экрана расходится красная волна (.agent-wave), а класс
-   agent-on на body держит тему, пока режим жив: линии, ядро реактора,
-   кнопка отправки, композер, навигация, план — всё наливается красным.
-   Не кричаще: тот же канон (цвет на контуре, свет внутри), но в цвете
-   скорости. */
+   Дизайн-система красного режима. Принцип: красный — ЦВЕТ ДЕЙСТВИЯ, он
+   живёт на органах управления и живых индикаторах, а НЕ на гранях панелей
+   (рамки карточек и панелей остаются нейтральными — перекрашенные края
+   читаются как тревога, а не как скорость). Иерархия акцентов:
+     1) ПОЛЕ ВВОДА — центр управления: тёплая внутренняя подсветка,
+        красный курсор, красное выделение текста;
+     2) КНОПКА ОТПРАВКИ — главный источник света в комнате;
+     3) НАВИГАЦИЯ — активная вкладка горит, остальные лишь теплеют при
+        наведении;
+     4) ЖИВЫЕ ИНДИКАТОРЫ — ядро реактора, курсор печати, план, тихие
+        черты инструментов: красный здесь значит «агент работает»;
+     5) ОТВЕТЫ-ЧИПЫ И УСКОРЕНИЕ — продолжение разговора в цвете режима.
+   Палитра: действие #ff5468 → глубина #c0294a, свечение rgba(255,84,104). */
+
+/* --- ВОЛНА: включение — длинная, яркая, двумя слоями света;
+       выключение — спокойный отлив обратно к тумблеру --- */
 .agent-wave{position:fixed;z-index:400;width:var(--aw,120vmax);height:var(--aw,120vmax);
-  left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;
-  background:radial-gradient(circle,rgba(255,84,104,.28) 0%,rgba(255,84,104,.12) 34%,transparent 68%);
-  animation:agentWave .95s cubic-bezier(.16,.8,.3,1) both}
+  left:50%;top:50%;transform:translate(-50%,-50%) scale(.05);border-radius:50%;
+  pointer-events:none;opacity:0;
+  background:radial-gradient(circle,
+      rgba(255,84,104,.46) 0%,rgba(255,84,104,.2) 26%,rgba(255,84,104,.07) 48%,transparent 70%),
+    radial-gradient(circle,rgba(255,179,188,.34) 0%,transparent 22%);
+  animation:agentWave 1.4s cubic-bezier(.14,.72,.26,1) both}
 @keyframes agentWave{
   0%{transform:translate(-50%,-50%) scale(.05);opacity:0}
-  22%{opacity:1}
+  16%{opacity:1}
+  62%{opacity:.85}
   100%{transform:translate(-50%,-50%) scale(1);opacity:0}}
+.agent-wave.out{background:radial-gradient(circle,
+    rgba(255,84,104,.2) 0%,rgba(255,84,104,.08) 30%,transparent 62%);
+  animation:agentWaveOut .8s ease-out both}
+@keyframes agentWaveOut{
+  0%{opacity:.5;transform:translate(-50%,-50%) scale(1)}
+  100%{opacity:0;transform:translate(-50%,-50%) scale(.88)}}
 
-body.agent-on{--line:rgba(255,90,106,.26);--line2:rgba(255,90,106,.46)}
-body.agent-on .reactor .ring{border-color:rgba(255,107,122,.42)}
-body.agent-on .reactor .core{background:radial-gradient(circle,#fff,#ffb3bc 45%,#a82836)}
-body.agent-on .send-btn{background:linear-gradient(135deg,#ff6b7a,#c0294a);
-  box-shadow:0 5px 18px rgba(255,84,104,.35)}
-body.agent-on .send-btn:hover{box-shadow:0 9px 26px rgba(255,84,104,.5)}
-body.agent-on .composer{border-color:rgba(255,90,106,.42);
-  box-shadow:0 14px 44px rgba(0,0,0,.45),0 0 0 1px rgba(255,84,104,.07) inset,
-    inset 0 0 26px rgba(255,84,104,.05)}
-body.agent-on .composer.focus{border-color:rgba(255,107,122,.6);
-  box-shadow:0 16px 50px rgba(190,60,80,.3),0 0 0 3px rgba(255,84,104,.1)}
-body.agent-on .nav-item.active{background:linear-gradient(90deg,rgba(255,84,104,.24),transparent)}
-body.agent-on .hello span{background:linear-gradient(90deg,#ffb3bc,#ff6b7a 45%,#ff8f9c 75%,#ffd9de)}
-body.agent-on .work-wait .tw-caret{background:linear-gradient(180deg,#fff,#ffb3bc 52%,#ff6b7a)}
+/* --- 1. ПОЛЕ ВВОДА: тёплая рубка --- */
+body.agent-on .composer{
+  border-color:rgba(255,84,104,.4);
+  background:linear-gradient(180deg,rgba(34,13,17,.94),rgba(16,8,11,.94));
+  box-shadow:0 14px 44px rgba(0,0,0,.45),
+    inset 0 1px 0 rgba(255,140,155,.1),inset 0 0 34px rgba(255,84,104,.07)}
+body.agent-on .composer.focus{
+  border-color:rgba(255,107,122,.62);
+  box-shadow:0 16px 50px rgba(190,60,80,.32),0 0 0 3px rgba(255,84,104,.12),
+    inset 0 0 40px rgba(255,84,104,.1)}
+body.agent-on #input{caret-color:#ff8f9c}
+body.agent-on .composer ::selection{background:rgba(255,84,104,.3)}
+body.agent-on .comp-btn:hover{color:#ffb3bc;border-color:rgba(255,107,122,.4)}
+
+/* --- 2. ОТПРАВКА: главный свет --- */
+body.agent-on .send-btn{background:linear-gradient(135deg,#ff5468,#c0294a);
+  box-shadow:0 5px 20px rgba(255,84,104,.45),inset 0 1px 0 rgba(255,255,255,.18)}
+body.agent-on .send-btn:hover{box-shadow:0 9px 30px rgba(255,84,104,.6),
+  inset 0 1px 0 rgba(255,255,255,.22)}
+body.agent-on .send-btn.stop{background:linear-gradient(135deg,#ff5468,#8f1d38)}
+
+/* --- 3. НАВИГАЦИЯ: активная вкладка горит --- */
+body.agent-on .nav-item.active{
+  background:linear-gradient(90deg,rgba(255,84,104,.28),rgba(255,84,104,.04));
+  color:#fff}
+body.agent-on .nav-item.active .nav-ico{
+  color:#ff8f9c;filter:drop-shadow(0 0 9px rgba(255,84,104,.55))}
+body.agent-on .nav-item:not(.active):hover{color:#ffb3bc}
+body.agent-on .nav-outline{border-color:rgba(255,84,104,.16)}
+
+/* --- 4. ЖИВЫЕ ИНДИКАТОРЫ: «агент работает» --- */
+body.agent-on .reactor .ring{border-color:rgba(255,107,122,.44)}
+body.agent-on .reactor .core{background:radial-gradient(circle,#fff,#ffb3bc 45%,#a82836);
+  box-shadow:0 0 22px rgba(255,84,104,.4)}
+body.agent-on .work-wait .tw-caret{background:linear-gradient(180deg,#fff,#ffb3bc 52%,#ff5468)}
+body.agent-on .hello span{background:linear-gradient(90deg,#ffb3bc,#ff5468 45%,#ff8f9c 75%,#ffd9de)}
+body.agent-on .qt-bar{background:rgba(255,107,122,.6);box-shadow:0 0 6px rgba(255,107,122,.25)}
+body.agent-on .tool-card.tool-wait{border-color:rgba(255,90,106,.36)}
+body.agent-on .tool-run{background:#ff5468!important}
+
+/* --- ПЛАН: приборная доска гоночного болида --- */
 body.agent-on .plan-dock{border-color:rgba(255,90,106,.5);
   background:linear-gradient(180deg,rgba(30,12,14,.96),rgba(16,7,9,.96));
   box-shadow:0 14px 38px rgba(0,0,0,.55),0 0 26px rgba(255,84,104,.2)}
@@ -2547,6 +2599,16 @@ body.agent-on .plan-dock .pd-seg{background:rgba(255,84,104,.14)}
 body.agent-on .plan-dock .pd-seg.done{background:rgba(255,84,104,.6);box-shadow:0 0 7px rgba(255,84,104,.24)}
 body.agent-on .plan-dock .pd-seg.now{background:rgba(255,84,104,.35);box-shadow:0 0 8px rgba(255,84,104,.32)}
 body.agent-on .plan-dock.live::after{border-color:rgba(255,150,160,.5);box-shadow:0 0 34px rgba(255,84,104,.38)}
-body.agent-on .tool-wait{border-color:rgba(255,90,106,.3)}
-body.agent-on .qt-bar{background:rgba(255,107,122,.6);box-shadow:0 0 6px rgba(255,107,122,.25)}
-body.agent-on .reply-chip:hover{border-color:rgba(255,107,122,.5)}
+
+/* --- 5. ПРОДОЛЖЕНИЕ РАЗГОВОРА: чипы и ускорение --- */
+body.agent-on .reply-chip{border-color:rgba(255,84,104,.22)}
+body.agent-on .reply-chip:hover{border-color:rgba(255,107,122,.55);
+  background:rgba(255,84,104,.08);color:#ffd9de}
+body.agent-on .boost-btn.on{color:#ff8f9c;border-color:rgba(255,84,104,.4)}
+body.agent-on .boost-btn.on::before{
+  background:linear-gradient(100deg,transparent 35%,rgba(255,107,122,.75) 50%,transparent 65%);
+  filter:drop-shadow(0 0 4px rgba(255,84,104,.5))}
+
+/* --- СКРОЛЛ: красный ободок вместо синего --- */
+body.agent-on ::-webkit-scrollbar-thumb{background:rgba(255,84,104,.24)}
+body.agent-on ::-webkit-scrollbar-thumb:hover{background:rgba(255,84,104,.42)}

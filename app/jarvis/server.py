@@ -436,7 +436,14 @@ class Handler(BaseHTTPRequestHandler):
                 if m.get("role") == "user":
                     asked = m.get("content", "")
                     break
-            items = agent.suggest_replies(asked, last.get("content", ""))
+            # После AGENT-прогона продолжения другие: не «расскажи подробнее»,
+            # а следующий шаг, который Джарвис может сделать сам (по фактам
+            # прогона: инструменты, файлы, задача).
+            if meta.get("agent") and isinstance(meta.get("tools"), list):
+                items = agent.suggest_proactive(asked, last.get("content", ""),
+                                                meta["tools"])
+            else:
+                items = agent.suggest_replies(asked, last.get("content", ""))
             meta["replies"] = items
             db.update_message_meta(last["id"], meta)
             return self._json({"ok": True, "items": items})
@@ -913,6 +920,7 @@ class Handler(BaseHTTPRequestHandler):
                 db.add_message(chat_id, "assistant", final_text,
                                {"files": files, "tools": used_tools, "model": runner.model_used,
                                 "tier": selected_tier,
+                                "agent": bool(runner.agent_mode),
                                 "interrupted": bool(stop_event.is_set()),
                                 "thinking": "".join(thinking)[:20000], "trace": trace[:60]})
             if alive:

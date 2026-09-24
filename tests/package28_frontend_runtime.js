@@ -1525,13 +1525,17 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   // тумблер агента: микродвижение 3px к включению + МЕДЛЕННАЯ красная искра
   // по контуру В СТОРОНУ включения + пульс света вправо. Без наклона.
   assert(/\.agent-switch-track:not\(:has\(input:checked\)\):hover i\{[^}]*translateX\(3px\)/s.test(css) &&
-    /@keyframes agSpark\{from\{background-position:-130% 0\}to\{background-position:130% 0\}\}/.test(css) &&
+    /@keyframes agSpark\{from\{background-position:130% 0\}to\{background-position:-130% 0\}\}/.test(css) &&
     /animation:agSpark 1\.5s linear infinite/.test(css) &&
     /@keyframes agFlow/.test(css) &&
     !/\.agent-switch[^{]*:hover\{transform:rotate/.test(css),
-    'the agent knob leans toward ON with a slow red contour spark flowing right');
-  assert(/\.agent-switch-track\{border-color:rgba\(255,107,122,\.26\)[^}]*\}/.test(css),
-    'the agent switch is faintly red even before hover');
+    'the agent knob leans toward ON, the red contour spark now sweeps the other way');
+  assert(/\.agent-switch-track\{border-color:rgba\(255,107,122,\.26\)[^}]*\}/.test(css) &&
+    /\.agent-switch-track i\{color:#2a1216;background:#a4898f\}/.test(css),
+    'the agent switch is faintly red in CONTENT (knob), not just its border');
+  assert(/\.agent-switch-track input:checked \+ i\{[^}]*animation:agGlow 2\.6s ease-in-out infinite/s.test(css) &&
+    /@keyframes agGlow\{50%\{box-shadow:0 0 17px rgba\(255,107,122,\.95\),0 0 34px rgba\(255,84,104,\.4\)\}\}/.test(css),
+    'the enabled AGENT knob breathes a soft inviting glow');
   assert(/\.budget-pop\[hidden\]\{display:none\}/.test(css),
   'the budget popup actually closes ([hidden] beats display:flex)');
   // закрытие чуть быстрее открытия; панель чуть жёлтая; стрелки свои
@@ -1642,12 +1646,24 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /document\.body\.classList\.toggle\('agent-on', S\.agentMode\);/.test(js) &&
     /S\.agentWaveOrigin/.test(js),
     'enabling AGENT fires a red wave from the switch (or the permission card)');
-  assert(/\.agent-wave\{/.test(css) && /@keyframes agentWave/.test(css) &&
-    /body\.agent-on\{--line:rgba\(255,90,106,\.26\);--line2:rgba\(255,90,106,\.46\)\}/.test(css) &&
-    /body\.agent-on \.send-btn\{background:linear-gradient\(135deg,#ff6b7a,#c0294a\)/.test(css) &&
-    /body\.agent-on \.reactor \.core\{background:radial-gradient\(circle,#fff,#ffb3bc 45%,#a82836\)\}/.test(css) &&
-    /body\.agent-on \.plan-dock\{[^}]*rgba\(255,90,106,\.5\)/s.test(css),
-    'the whole interface turns red while AGENT is on: lines, core, send, plan');
+  assert(/\.agent-wave\{/.test(css) && /animation:agentWave 1\.4s/.test(css) &&
+    /\.agent-wave\.out\{[\s\S]*?animation:agentWaveOut \.8s ease-out both\}/.test(css) &&
+    js.includes("agentWave(S.agentWaveOrigin || $('#swAgent'), false)") &&
+    js.includes("else agentWave(S.agentWaveOrigin || $('#swAgent'), true);"),
+    'enabling fires a slower, brighter wave; disabling calms back with a soft reverse wash');
+  // грани интерфейса НЕ перекрашиваются: тема живёт на органах управления
+  assert(!/body\.agent-on\{--line/.test(css),
+    'panel borders stay neutral: red is the color of action, not of edges');
+  assert(/body\.agent-on \.composer\{[^}]*border-color:rgba\(255,84,104,\.4\)/s.test(css) &&
+    /body\.agent-on #input\{caret-color:#ff8f9c\}/.test(css) &&
+    /body\.agent-on \.composer ::selection\{background:rgba\(255,84,104,\.3\)\}/.test(css),
+    'the composer becomes the cockpit: red border, caret and selection');
+  assert(/body\.agent-on \.send-btn\{background:linear-gradient\(135deg,#ff5468,#c0294a\)/.test(css) &&
+    /body\.agent-on \.reactor \.core\{background:radial-gradient\(circle,#fff,#ffb3bc 45%,#a82836\)/.test(css) &&
+    /body\.agent-on \.plan-dock\{[^}]*rgba\(255,90,106,\.5\)/s.test(css) &&
+    /body\.agent-on \.nav-item\.active \.nav-ico\{[^}]*drop-shadow\(0 0 9px rgba\(255,84,104,\.55\)\)/s.test(css) &&
+    /body\.agent-on ::-webkit-scrollbar-thumb\{background:rgba\(255,84,104,\.24\)\}/.test(css),
+    'action organs glow red: send, core, plan, active nav, scrollbar');
   // окно Джарвиса входит без scale — рамка не мерцает
   assert(/@keyframes jarvisWinIn\{from\{opacity:0;transform:translateY\(14px\)\}\}/.test(css),
     'the Jarvis window fades up without scaling (no border shimmer)');

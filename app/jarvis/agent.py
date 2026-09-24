@@ -973,6 +973,47 @@ def _claims_action(text: str) -> bool:
     return bool(_ACTION_CLAIM.search(text or ""))
 
 
+def _py_syntax_error(path: str) -> str:
+    """САМОПРОВЕРКА НАПИСАННОГО КОДА: файл обязан хотя бы компилироваться.
+
+    Модель сказала «готово» — проверяем локально, бесплатно и мгновенно.
+    Ошибка уходит модели немедленно: чинит до финального ответа, а не после
+    «работа завершена».
+    """
+    try:
+        import py_compile
+        py_compile.compile(path, doraise=True)
+        return ""
+    except Exception as exc:  # SyntaxError и прочее — текст модели
+        return str(exc).strip()[:400]
+
+
+def suggest_proactive(user_text: str, answer: str,
+                      tools_used: Optional[List[str]] = None) -> List[str]:
+    """Проактивные продолжения после AGENT-прогона.
+
+    По фактам прогона (инструменты, задача) предлагаем следующий шаг:
+    мониторинг, доработка, итоговый отчёт. Локально и мгновенно — это не
+    «что ещё спросить», а «что Джарвис может сделать дальше сам».
+    """
+    t = str(user_text or "").lower()
+    used = set(tools_used or [])
+    items: List[str] = []
+    if "web_search" in used and any(w in t for w in
+                                    ("новост", "курс", "цен", "погод", "бирж",
+                                     "котировк", "ставк")):
+        items.append("Поставь это на мониторинг и сообщай об изменениях")
+    if "write_file" in used:
+        items.append("Проверь результат и доработай детали")
+    if len(used) >= 3:
+        items.append("Собери итоговый отчёт по проделанной работе")
+    if not items:
+        items.append("Что можно улучшить в результате?")
+    items.append("Сделай следующий шаг сам")
+    del answer
+    return items[:3]
+
+
 def suggest_replies(user_text: str, answer: str) -> List[str]:
     """Мгновенные локальные продолжения — никакого второго облачного запроса.
 
@@ -1187,8 +1228,11 @@ def suggest_mode(text: str, agent_mode: bool, computer_use: bool) -> Optional[Di
     if not agent_mode and _AGENT_HINT_RE.search(t):
         return {"mode": "agent",
                 "reason": "многошаговая сборка: план и несколько шагов работы"}
-    # камеру сервер включает только как фронтовую кнопку — предложение уместно
+    # камеру сервер включает только как фронтовую кнопку — предложение уместно.
+    # В AGENT камера включается сама по прямой просьбе посмотреть.
     if _CAMERA_HINT_RE.search(t):
+        if agent_mode:
+            return None
         return {"mode": "camera", "reason": "нужно посмотреть на вас камерой"}
     return None
 
@@ -1440,6 +1484,9 @@ class Agent:
         # AUTO исполняется без чата: semantic planner там был невидим, но всё
         # равно создавал отдельный облачный запрос перед каждым заданием.
         self.visible_plan = visible_plan
+        # Файлы, на изменение которых пользователь дал согласие в ЭТОМ прогоне:
+        # повторные правки «своего» файла больше не спрашивают.
+        self._owned_files: set = set()
         self.cancel_check = cancel_check
         # Смена модели по ходу ответа (switch_model): применяется в начале шага
         self._tier_override: Optional[str] = None
@@ -1737,6 +1784,13 @@ class Agent:
                     "[Система] Режим «Компьютер» включён автоматически для этой "
                     "задачи: инструменты экрана (screenshot, ui_tree, mouse_click, "
                     "type_text, press_key) доступны в этом прогоне. Действуй."}]
+        elif (self.agent_mode and user_text and _CAMERA_HINT_RE.search(user_text)):
+            # «Посмотри на меня» — прямая просьба увидеть: камера включается
+            # сама, без лишнего вопроса. Пользователь видел, о чём просил.
+            yield {"type": "mode_changed", "mode": "camera", "on": True}
+            messages = list(messages) + [{"role": "system", "content":
+                "[Система] Камера включена автоматически по твоей просьбе "
+                "посмотреть. Пользователь в курсе."}]
         if computer_blocked:
             blocked = {"screenshot", "ui_tree", "screen_info", "mouse_click",
                        "mouse_move", "mouse_scroll", "mouse_drag", "type_text",
@@ -1800,6 +1854,10 @@ class Agent:
             if (t.get("function") or {}).get("name")
         }
         max_steps = _max_steps(self.agent_mode)
+        # ДОЛГИЙ ПРОГОН: многоэтапная работа получает больше хода — «дикий»
+        # агент не упирается в потолок посреди сборки.
+        if self.agent_mode and needs_plan(user_text):
+            max_steps = max(max_steps, 30)
 
         # Первый model turn — единственная достоверная граница между «начинаю
         # автономную работу» и «мне не хватает данных». До разрешённого
@@ -2639,6 +2697,23 @@ class Agent:
                     external_without_computer = bool(
                         not self.computer_use and opens_external_ui(name, args))
                     reason = needs_approval(name, args, computer_use=self.computer_use)
+                    # АВТОНОМИЯ С ГРАНИЦАМИ: агент решает всё сам, КРОМЕ денег,
+                    # действующих санкций и ИЗМЕНЕНИЯ существующих файлов. Новый
+                    # файл создаётся свободно; правка уже существующего — видимое
+                    # подтверждение, один раз на прогон.
+                    write_target = ""
+                    if (self.agent_mode and name == "write_file"
+                            and not reason
+                            and str(args.get("path") or "").strip()):
+                        write_target = str(args["path"]).strip()
+                        if write_target not in self._owned_files:
+                            try:
+                                if sandbox.safe_path(write_target,
+                                                     self.sandbox_id).exists():
+                                    reason = ("изменение существующего файла «%s»"
+                                              % write_target)
+                            except Exception:
+                                pass
                     # approvals_auto используется у headless AUTO для обычных
                     # серверных шагов, но не является тайным разрешением выводить
                     # GUI на Mac. Внешнее окно без включённого «Компьютера» всегда
@@ -2651,6 +2726,8 @@ class Agent:
                                "args": args, "reason": reason, "style": style}
                         decision = self._wait_approval(name, args, reason, style=style)
                         yield {"type": "approval_done", "status": decision.get("status")}
+                        if decision.get("status") == "approved" and write_target:
+                            self._owned_files.add(write_target)
                         if decision.get("status") != "approved":
                             result: Dict[str, Any] = {
                                 "ok": False,
@@ -2682,6 +2759,27 @@ class Agent:
                     # каждый кадр тащил по SSE сотни килобайт base64, которые
                     # фронт всё равно не показывал.
                     self._append_tool_result(convo, call, name, result, from_text)
+                    # САМОПРОВЕРКА: написанный .py обязан компилироваться. Ошибка
+                    # уходит модели ДО финального ответа — «готово» означает
+                    # проверено, а не «я закончил печатать».
+                    if (self.agent_mode and name == "write_file"
+                            and isinstance(result, dict) and result.get("ok")
+                            and str(args.get("path") or "").endswith(".py")):
+                        try:
+                            code_path = sandbox.safe_path(str(args.get("path")),
+                                                          self.sandbox_id)
+                            py_err = _py_syntax_error(str(code_path))
+                        except Exception:
+                            py_err = ""
+                        if py_err:
+                            convo.append({"role": "system", "content":
+                                          "САМОПРОВЕРКА КОДА: файл %s записан, НО не "
+                                          "проходит проверку синтаксиса (%s). Исправь "
+                                          "файл и не называй работу завершённой, пока "
+                                          "проверка не пройдена." %
+                                          (args.get("path"), py_err)})
+                            yield {"type": "status",
+                                   "text": "Самопроверка нашла ошибку в коде — чиню"}
                     yield {"type": "tool_result", "id": call.get("id"), "name": name,
                            "result": result, "elapsed": elapsed}
                     # План двигается фактом работы, но не чаще одного шага за

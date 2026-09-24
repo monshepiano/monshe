@@ -511,17 +511,18 @@ try {
    расходятся красные акценты, и весь интерфейс наливается цветом режима.
    Волна — одноразовый слой поверх всего: расширяется, тает, убирается.
    Класс agent-on на body остаётся и держит красную тему, пока режим жив. */
-function agentWave(originEl) {
+function agentWave(originEl, calm) {
   const src = originEl && originEl.getBoundingClientRect ? originEl : $('#swAgent');
   const r = (src && src.getBoundingClientRect()) || { left: innerWidth / 2, top: innerHeight / 2, width: 0, height: 0 };
   const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-  const wave = el('div', 'agent-wave');
+  const wave = el('div', 'agent-wave' + (calm ? ' out' : ''));
   const radius = Math.hypot(Math.max(cx, innerWidth - cx), Math.max(cy, innerHeight - cy));
   wave.style.left = cx + 'px';
   wave.style.top = cy + 'px';
   wave.style.setProperty('--aw', (radius * 2.2) + 'px');
   document.body.appendChild(wave);
-  setTimeout(() => wave.remove(), 950);
+  // включение — длинная яркая волна; выключение — спокойный отлив обратно
+  setTimeout(() => wave.remove(), calm ? 850 : 1450);
 }
 
 $('#tgAgent').addEventListener('change', function () {
@@ -536,7 +537,8 @@ $('#tgAgent').addEventListener('change', function () {
   // карточке-разрешении — координаты передаёт mode_changed), выключение
   // тихо возвращает нейтральный интерфейс.
   document.body.classList.toggle('agent-on', S.agentMode);
-  if (S.agentMode) agentWave(S.agentWaveOrigin || $('#swAgent'));
+  if (S.agentMode) agentWave(S.agentWaveOrigin || $('#swAgent'), false);
+  else agentWave(S.agentWaveOrigin || $('#swAgent'), true);
   S.agentWaveOrigin = null;
   $('#input').placeholder = S.agentMode
     ? 'Поставь задачу — разобью на шаги и сделаю сам…'

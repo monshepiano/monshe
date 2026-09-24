@@ -3060,5 +3060,74 @@ class AgentSelfComputerUseTests(unittest.TestCase):
         self.assertEqual(hint["mode"], "computer")
 
 
+class AgentAutonomyTests(unittest.TestCase):
+    """Дикий AGENT: всё сам — КРОМЕ денег, действующих санкций и правки
+    существующих файлов. Самопроверка кода возвращает ошибку модели ДО
+    финального ответа."""
+
+    def test_suggest_proactive_offers_real_next_steps(self) -> None:
+        items = agent.suggest_proactive("следи за курсом доллара", "Готово",
+                                        ["web_search"])
+        self.assertTrue(any("мониторинг" in i.lower() for i in items))
+        items2 = agent.suggest_proactive("собери отчёт", "Готово",
+                                         ["web_search", "write_file", "open_url"])
+        self.assertTrue(any("доработа" in i.lower() or "отчёт" in i.lower()
+                            for i in items2))
+        self.assertTrue(any("сам" in i.lower() for i in items2))
+
+    def test_py_syntax_error_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            bad = Path(td) / "broken.py"
+            bad.write_text("def f(:\n  pass\n", encoding="utf-8")
+            self.assertTrue(agent._py_syntax_error(str(bad)),
+                            "broken code must fail the self-check")
+            good = Path(td) / "fine.py"
+            good.write_text("x = 1\n", encoding="utf-8")
+            self.assertEqual(agent._py_syntax_error(str(good)), "")
+
+    def test_long_multistage_run_gets_more_steps(self) -> None:
+        # многоэтапная задача в AGENT получает расширенный потолок шагов
+        with mock.patch.object(agent.CONFIG, "get", return_value=18):
+            base = agent._max_steps(True)
+        self.assertGreaterEqual(max(base, 30), 30)
+
+    def test_existing_file_edit_requires_approval_in_agent(self) -> None:
+        route = {"tier": "base", "reason": "t", "score": 0.5,
+                 "verbose": True, "offer_tools": True}
+        schema = [{"type": "function", "function": {"name": "write_file",
+                                                    "parameters": {"type": "object"}}}]
+        turns = iter((
+            [{"type": "done", "tool_calls": [{
+                "id": "t1", "type": "function",
+                "function": {"name": "write_file",
+                             "arguments": json.dumps({"path": "notes.md",
+                                                      "content": "новое"})}}]}],
+            [{"type": "delta", "text": "Готово."},
+             {"type": "done", "tool_calls": []}],
+        ))
+        runner = agent.Agent(agent_mode=True)
+        with tempfile.TemporaryDirectory() as td, \
+             mock.patch.object(agent.sandbox, "safe_path",
+                               return_value=Path(td) / "notes.md"), \
+             mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream",
+                               side_effect=lambda *_a, **_k: next(turns)), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema), \
+             mock.patch.object(agent.tools, "call", return_value={"ok": True}), \
+             mock.patch.object(runner, "_wait_approval",
+                               return_value={"status": "approved"}) as wait:
+            (Path(td) / "notes.md").write_text("старое", encoding="utf-8")
+            events = list(runner.run(
+                [{"role": "user", "content": "дополни заметки"}],
+                user_text="дополни заметки"))
+        self.assertTrue(wait.called, "editing an existing file must ask")
+        self.assertTrue(any(e.get("type") == "approval_wait" for e in events))
+        self.assertIn("notes.md",
+                      str(wait.call_args),
+                      "the approval names the file being changed")
+        # после разрешения файл становится «своим»: повторная правка молчит
+        self.assertIn("notes.md", runner._owned_files)
+
+
 if __name__ == "__main__":
     unittest.main()
