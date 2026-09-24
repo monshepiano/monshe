@@ -1032,6 +1032,82 @@ def suggest_replies(user_text: str, answer: str) -> List[str]:
     return items
 
 
+def suggest_replies_ai(user_text: str, answer: str,
+                       tools_used: Optional[List[str]] = None) -> List[str]:
+    """Продолжения от ИИ-модели — по сути ответа, а не общие фразы.
+
+    Дешёвая nano-модель видит вопрос и ответ и предлагает три конкретных
+    продолжения. Запрос короткий, таймаут 3 секунды: подсказки обязаны
+    появиться сразу после печати, ждать модель нельзя. Локальный запас
+    остаётся на случай сбоя: после AGENT-прогона — проактивные шаги,
+    в обычном разговоре — разговорные продолжения. Пустых строк не бывает.
+    """
+    q = str(user_text or "").strip()
+    a = str(answer or "").strip()
+    if not a:
+        return []
+    span = telemetry.Span("reply_suggestions", source="nano")
+    try:
+        raw = llm.chat([
+            {"role": "system",
+             "content": "Ты генератор коротких кнопок-подсказок для чата с "
+                        "ассистентом. Пользователь только что получил ответ. "
+                        "Предложи ТРИ естественных продолжения ИМЕННО по сути "
+                        "этого ответа: уточнение, следующий шаг или просьбу "
+                        "использовать результат. Каждая фраза до 5 слов, от "
+                        "первого лица пользователя, без кавычек и номеров. "
+                        "Не повторяй ответ и не задавай пустых мета-вопросов "
+                        "вроде «что ещё?». Ответь ТОЛЬКО JSON-массивом из "
+                        "трёх строк, без markdown и пояснений."},
+            {"role": "user",
+             "content": "Вопрос: %s\nОтвет: %s" % (q[:600], a[:1200])},
+        ], tier="nano", timeout=3, operation="reply_suggestions_ai")
+        items = _parse_reply_suggestions(str(raw))
+        if items:
+            span.finish("ok", count=len(items))
+            return items
+    except Exception:
+        pass
+    span.finish("fallback")
+    # сбой или мусор — честный локальный запас: у AGENT-прогона это
+    # проактивные шаги по фактам работы, у разговора — разговорные продолжения
+    if tools_used:
+        return suggest_proactive(q, a, tools_used)
+    return suggest_replies(q, a)
+
+
+def _parse_reply_suggestions(raw: str) -> List[str]:
+    """Достать до трёх коротких фраз из ответа nano-модели.
+
+    Модель вероятностная: то вернёт массив, то обернёт в текст, то добавит
+    пояснение. Лесенка от строгого JSON к «строкам в кавычках» вынимает
+    фразы почти из чего угодно; мусор и пустышки отсеиваются.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    candidates: List[str] = []
+    match = re.search(r"\[.*\]", text, re.S)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            if isinstance(data, list):
+                candidates = [str(x) for x in data if x is not None]
+        except Exception:
+            candidates = []
+    if not candidates:
+        candidates = re.findall(r"[\"«']([^\"»']{3,60})[\"»']", text)
+    items: List[str] = []
+    for one in candidates:
+        clean = re.sub(r"\s+", " ", one).strip(" .!?—-")
+        if 2 <= len(clean) <= 60 and clean.lower() not in \
+                ("что ещё", "что-то ещё", "ещё", "продолжай"):
+            items.append(clean)
+        if len(items) == 3:
+            break
+    return items
+
+
 # Служебные отметки шагов плана: их видит фронт, но не пользователь.
 # [ШАГ 3] — модель сама объявила номер; [ШАГ ГОТОВ] — модель закрыла текущий.
 _STEP_MARK = re.compile(r"\[\s*ШАГ\s*(?:\d+|ГОТОВ)\s*\]\s*")
@@ -1880,6 +1956,9 @@ class Agent:
         # plan_pending; теперь план строится только для многоэтапных задач,
         # а придержать первый ход нужно всегда — это и fence, и шлюз вызовов.
         intro_hold = bool(self.agent_mode and not social_only)
+        # выпущен ли длинный первый текст (порог 260 символов): после выпуска
+        # печать идёт живьём, а не придержанной до конца хода
+        text_released = False
         plan_announced = False
         deferred_work_events: List[Dict[str, Any]] = []
 
@@ -2017,7 +2096,7 @@ class Agent:
                         if thinking_visible:
                             if piece:
                                 out = {"type": "thinking", "text": piece}
-                                if defer_plan_decision:
+                                if defer_plan_decision and not text_released:
                                     deferred_work_events.append(out)
                                 else:
                                     yield out
@@ -2026,7 +2105,7 @@ class Agent:
                             if len("".join(thinking_pending).strip()) >= thinking_min_chars:
                                 thinking_visible = True
                                 out = {"type": "thinking", "text": "".join(thinking_pending)}
-                                if defer_plan_decision:
+                                if defer_plan_decision and not text_released:
                                     deferred_work_events.append(out)
                                 else:
                                     yield out
@@ -2049,14 +2128,34 @@ class Agent:
                                 if n > self.plan_at:
                                     for progress in self._advance_plan(n):
                                         yield progress
+                    # ДЛИННЫЙ ПЕРВЫЙ ХОД ПЕЧАТАЕТСЯ СРАЗУ. intro_hold держал
+                    # ВЕСЬ первый ход до его конца — длинный ответ все это
+                    # время молчал и вываливался одним куском в конце: пользователь
+                    # видел «агент думает» вместо живой печати («медленный агент»).
+                    # 260 символов достаточно, чтобы понять: это ответ человеку,
+                    # а не вызов инструмента и не короткий уточняющий вопрос.
+                    # Решение о плане не трогаем: если инструменты придут после
+                    # вступления, план всё равно объявится как всегда.
+                    if not text_released and intro_hold:
+                        joined_now = "".join(acc_text)
+                        if len(joined_now) > 260 and not tools.looks_like_call_prefix(joined_now):
+                            text_released = True
+                            for held_event in list(deferred_work_events):
+                                yield held_event
+                            deferred_work_events.clear()
+                            if gate_open:
+                                # шлюз уже открыт, но начало текста ещё придержано:
+                                # закрываем его обратно, чтобы ниже ОДНИМ куском
+                                # ушёл весь накопленный текст — без потерь
+                                gate_open = False
                     if gate_open:
-                        if not defer_plan_decision:
+                        if not defer_plan_decision or text_released:
                             yield {"type": "delta", "text": event["text"]}
                     else:
                         joined = "".join(acc_text)
                         if not tools.looks_like_call_prefix(joined):
                             gate_open = True
-                            if not defer_plan_decision:
+                            if not defer_plan_decision or text_released:
                                 yield {"type": "delta", "text": joined}
                 elif etype == "tool_partial":
                     # Имя функции приходит раньше полного JSON/конца model turn.
@@ -2100,13 +2199,13 @@ class Agent:
                     if gate_open:
                         # уже что-то показали — стираем и перерисовываем. Пока
                         # решается судьба plan, сырой текст вообще не выходил.
-                        if not defer_plan_decision:
+                        if not defer_plan_decision or text_released:
                             yield {"type": "reset"}
                         gate_open = False
                     text_piece = cleaned
                     if cleaned:
                         gate_open = True
-                        if not defer_plan_decision:
+                        if not defer_plan_decision or text_released:
                             yield {"type": "delta", "text": cleaned}
                     for i, tc in enumerate(text_calls):
                         tool_calls.append({
@@ -2133,7 +2232,7 @@ class Agent:
                     and not retried_claim):
                 retried_claim = True
                 if gate_open:
-                    if not defer_plan_decision:
+                    if not defer_plan_decision or text_released:
                         yield {"type": "reset"}
                     gate_open = False
                 if defer_plan_decision:
@@ -2192,7 +2291,7 @@ class Agent:
             if missing_required_choice:
                 choice_failures += 1
                 if gate_open:
-                    if not defer_plan_decision:
+                    if not defer_plan_decision or text_released:
                         yield {"type": "reset"}
                     gate_open = False
                 if defer_plan_decision:
@@ -2310,7 +2409,7 @@ class Agent:
                 thinking_pending = []
                 thinking_visible = False
                 gate_open = False
-                if text_piece:
+                if text_piece and not text_released:
                     yield {"type": "delta", "text": text_piece}
                     gate_open = True
 
@@ -2328,7 +2427,7 @@ class Agent:
                 for work_event in deferred_work_events:
                     yield work_event
                 deferred_work_events.clear()
-                if text_piece:
+                if text_piece and not text_released:
                     yield {"type": "delta", "text": text_piece}
                     gate_open = True
 
@@ -2481,7 +2580,8 @@ class Agent:
                                 self.created_files.append(info)
                                 yield {"type": "file", **info}
                         yield {"type": "tool_result", "id": job["call"].get("id"),
-                               "name": job["name"], "result": result, "elapsed": elapsed}
+                               "name": job["name"], "result": result, "elapsed": elapsed,
+                               "group": tools.group_of(job["name"])}
                         # План двигается ФАКТОМ работы, но НЕ чаще одного шага
                         # за ход: параллельные результаты приходят почти
                         # одновременно, и продвижение на каждый из них
@@ -2735,7 +2835,8 @@ class Agent:
                                 else "Время ожидания подтверждения истекло",
                             }
                             self._append_tool_result(convo, call, name, result, from_text)
-                            yield {"type": "tool_result", "id": call.get("id"), "name": name, "result": result}
+                            yield {"type": "tool_result", "id": call.get("id"), "name": name, "result": result,
+                                    "group": tools.group_of(name)}
                             continue
 
                     result, elapsed = _timed_call(name, args)
@@ -2781,7 +2882,8 @@ class Agent:
                             yield {"type": "status",
                                    "text": "Самопроверка нашла ошибку в коде — чиню"}
                     yield {"type": "tool_result", "id": call.get("id"), "name": name,
-                           "result": result, "elapsed": elapsed}
+                           "result": result, "elapsed": elapsed,
+                           "group": tools.group_of(name)}
                     # План двигается фактом работы, но не чаще одного шага за
                     # ход (см. параллельную ветку): цепочка вызовов в одном
                     # ответе — это ОДНА фаза работы, а не пять шагов плана.

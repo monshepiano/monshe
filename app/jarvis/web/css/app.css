@@ -902,6 +902,20 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   cursor:pointer;transition:transform .16s,background .16s,border-color .16s;
   animation:chipIn .3s both}
 .ask-opt:hover{transform:translateY(-2px);background:rgba(0,200,240,.14);border-color:var(--cy)}
+/* ВЫБРАННЫЙ ВАРИАНТ — ПОДСВЕТКА, не отправка: клик лишь отмечает, отправляет
+   кнопка «Отправить». Выбранный тихо горит изнутри цветом Джарвиса */
+.ask-opt.sel{background:rgba(0,200,240,.16);border-color:var(--cy);
+  box-shadow:inset 0 0 12px rgba(0,200,240,.12),0 0 12px rgba(0,200,240,.1)}
+.ask-opt.sel::after{content:'✓';font-size:10px;color:var(--cy2);margin-left:6px}
+/* кнопка «Отправить» карточки-вопроса: та же стрела, что у поля ввода */
+.ask-send{display:flex;justify-content:flex-end;margin-top:10px}
+.ask-go{display:inline-flex;align-items:center;gap:7px;padding:7px 16px;border-radius:10px;
+  border:1px solid var(--line2);background:rgba(0,212,255,.1);color:var(--tx);
+  font:600 11.5px/1 var(--f);cursor:pointer;transition:.18s}
+.ask-go svg{width:13px;height:13px;fill:currentColor}
+.ask-go:not(:disabled):hover{background:rgba(0,212,255,.2);border-color:var(--cy);
+  box-shadow:0 0 14px rgba(0,200,240,.15)}
+.ask-go:disabled{opacity:.3;cursor:default;pointer-events:none}
 .ask-opt.good{border-color:rgba(63,191,149,.5);color:#9df0d2;background:rgba(63,191,149,.12)}
 .ask-opt.good:hover{background:rgba(63,191,149,.24);border-color:var(--green)}
 .ask-opt.bad{border-color:rgba(221,85,102,.5);color:#ffb3bd;background:rgba(221,85,102,.12)}
@@ -964,15 +978,17 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .boost-btn svg{width:15px;height:15px}
 .boost-btn.live{opacity:.85;pointer-events:auto}
 .boost-btn.live:hover{border-color:var(--line2);color:var(--cy2)}
-.boost-btn.on{opacity:.5;color:var(--cy2);border-color:rgba(0,212,255,.4)}
+.boost-btn.on{opacity:.85;color:#f0be46;border-color:rgba(217,164,65,.45);
+  background:rgba(217,164,65,.07);
+  box-shadow:inset 0 0 12px rgba(240,190,70,.12)}
 .boost-btn.on::before{content:'';position:absolute;inset:-1px;padding:1px;border-radius:inherit;
   pointer-events:none;
-  background:linear-gradient(100deg,transparent 35%,rgba(0,212,255,.7) 50%,transparent 65%);
+  background:linear-gradient(100deg,transparent 35%,rgba(240,190,70,.85) 50%,transparent 65%);
   background-size:250% 100%;
-  animation:boostRun .55s linear infinite;
+  animation:boostRun .42s linear infinite;
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude;
-  filter:drop-shadow(0 0 4px rgba(0,212,255,.5))}
+  filter:drop-shadow(0 0 4px rgba(240,190,70,.7))}
 @keyframes boostRun{from{background-position:140% 0}to{background-position:-140% 0}}
 .send-btn{width:42px;height:38px;border-radius:12px;border:0;flex-shrink:0;cursor:pointer;display:grid;place-items:center;
   background:linear-gradient(135deg,var(--cy),#0a8fc4);transition:.25s;box-shadow:0 5px 18px rgba(0,212,255,.3)}
@@ -1006,7 +1022,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   box-shadow:inset 0 1px 5px rgba(0,0,0,.42);transition:.24s}
 .agent-switch-track input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .agent-switch-track i{position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;
-  background:var(--tx3);transition:transform .24s cubic-bezier(.2,.8,.3,1),background .22s,box-shadow .22s;
+  background:var(--tx3);transition:transform .5s cubic-bezier(.2,.75,.3,1),background .3s,box-shadow .3s;
   /* буква A живёт НА самом круглешке: тумблер подписан собой, без соседних слов */
   font-style:normal;font-weight:800;font-size:11px;line-height:20px;text-align:center;
   color:var(--panel2);font-family:inherit;user-select:none}
@@ -1022,88 +1038,128 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch-track:has(input:focus-visible){outline:2px solid rgba(255,107,122,.5);outline-offset:2px}
 .agent-switch:focus-within{z-index:50}
 
-/* ============ ТИХИЙ ИНСТРУМЕНТ (обычный режим) ============
-   Работа инструмента видна — но шёпотом: тонкая вертикальная черта слева,
-   маленькая иконка, бледная подпись, скромное мерцание. Никаких карточек:
-   это язык AGENT-режима. Отработавший инструмент замирает в свёрнутый
-   след: текст бледнеет и прячется в мягкую маску к цвету фона — как
-   строки служебного вывода у ассистента. */
-.quiet-tool{display:flex;align-items:center;gap:9px;max-width:420px;margin:2px 0 2px 2px;
-  padding:3px 10px 3px 0;animation:qtIn .3s ease-out both}
-.qt-bar{flex:0 0 2px;height:16px;border-radius:2px;background:rgba(0,212,255,.55);
-  box-shadow:0 0 6px rgba(0,212,255,.25)}
-.qt-ico{font-size:11px;color:var(--tx3);font-style:normal}
-.qt-label{font-size:11.5px;color:var(--tx2);white-space:nowrap;overflow:hidden;
+/* ============ ТИХИЙ ПОТОК: ЖИВОЕ ОКНО (обычный режим) ============
+   Работа инструментов — одно окно в ответе, а не россыпь строк. Строки
+   прилипают к НИЗУ: новая приходит снизу из темноты, старая уходит вверх
+   и тает — маски сверху и снизу прячут края. Полоса слева — цвет подписи
+   «обычный запрос» (почти не насыщен); отработавшая строка замирает
+   тусклым серо-зелёным. Череда однотипных инструментов — одна история:
+   окно медленно (640 мс) сворачивается в след «семейство × N · время»,
+   след и строки внутри — раскрываемые. */
+.quiet-stream{position:relative;display:flex;flex-direction:column;justify-content:flex-end;
+  gap:5px;max-width:430px;margin:4px 0 4px 2px;padding:0 0 0 13px;
+  height:76px;overflow:hidden;
+  -webkit-mask-image:linear-gradient(180deg,transparent,#000 34%,#000 82%,transparent);
+  mask-image:linear-gradient(180deg,transparent,#000 34%,#000 82%,transparent)}
+/* полоса активной работы — та же почти-серая бирюза, что подпись «обычный
+   запрос»: окно живое, но не кричит */
+.quiet-stream::before{content:'';position:absolute;left:0;top:10px;bottom:10px;width:2px;
+  border-radius:2px;background:rgba(154,202,219,.5);
+  box-shadow:0 0 6px rgba(154,202,219,.18)}
+.qs-line{display:flex;align-items:center;gap:9px;min-width:0;
+  animation:qsIn .5s cubic-bezier(.2,.75,.3,1) both}
+@keyframes qsIn{from{opacity:0;transform:translateY(14px)}}
+.qs-ico{flex:0 0 auto;display:grid;place-items:center;color:var(--tx3);font-style:normal}
+.qs-ico svg{width:15px;height:15px;display:block}
+.qs-label{font-size:11.5px;color:var(--tx2);white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;animation:qtBlink 1.9s ease-in-out infinite}
-.qt-state{font-size:10.5px;color:var(--tx3);font-family:var(--fm);opacity:0;transition:.25s}
-@keyframes qtIn{from{opacity:0;transform:translateY(4px)}}
 @keyframes qtBlink{50%{opacity:.45}}
-.quiet-tool.qt-done .qt-label,.quiet-tool.qt-fail .qt-label{
-  animation:none;color:var(--tx3);
-  -webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);
-  mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
-.quiet-tool.qt-done .qt-bar{background:rgba(63,191,149,.5);box-shadow:0 0 5px rgba(63,191,149,.2)}
-.quiet-tool.qt-fail .qt-bar{background:rgba(221,85,102,.55)}
-.quiet-tool.qt-done .qt-state,.quiet-tool.qt-fail .qt-state{opacity:.85}
-.quiet-tool.qt-done .qt-state{color:var(--green)}
-.quiet-tool.qt-fail .qt-state{color:var(--red)}
-.quiet-tool.qt-done .qt-ico,.quiet-tool.qt-fail .qt-ico{opacity:.5}
+.qs-state{margin-left:auto;flex:0 0 auto;font-size:10.5px;color:rgba(154,202,219,.5);
+  font-family:var(--fm);opacity:0;transition:.25s}
+/* отработавшая строка: щепотка ненасыщенного зелёного — «сделано, тихо» */
+.qs-line.qs-done .qs-label,.qs-line.qs-fail .qs-label{animation:none;color:rgba(128,156,142,.75)}
+.qs-line.qs-done .qs-state,.qs-line.qs-fail .qs-state{opacity:.9}
+.qs-line.qs-done .qs-state{color:rgba(128,156,142,.5)}
+.qs-line.qs-fail .qs-state{color:rgba(190,120,128,.6)}
+.qs-line.qs-done .qs-ico,.qs-line.qs-fail .qs-ico{opacity:.55}
+/* СВЁРТКА ОКНА: небыстрая, благородная — окно съёживается по высоте,
+   след возникает на его месте. Быстрая свёртка читалась бы как моргание. */
+.quiet-stream.qs-folding::before{transition:height .64s cubic-bezier(.3,.7,.25,1)}
+.quiet-stream.qs-folding{animation:none}
+/* СЛЕД череды: одна строка о всей работе семейства; клик раскрывает список */
+.quiet-trace{display:flex;align-items:center;gap:9px;max-width:430px;margin:2px 0 2px 2px;
+  padding:3px 8px 3px 0;cursor:pointer;animation:qtIn .3s ease-out both;position:relative}
+.quiet-trace::before{content:'';position:absolute;left:0;top:4px;bottom:4px;width:2px;
+  border-radius:2px;background:rgba(128,156,142,.5)}
+@keyframes qtIn{from{opacity:0;transform:translateY(4px)}}
+.quiet-trace .qt-ico{display:grid;place-items:center;color:rgba(128,156,142,.8);font-style:normal}
+.quiet-trace .qt-ico svg{width:15px;height:15px;display:block}
+.quiet-trace .qt-label{font-size:11.5px;color:rgba(128,156,142,.75);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.quiet-trace .qt-state{margin-left:auto;font-size:10.5px;color:rgba(128,156,142,.5);
+  font-family:var(--fm)}
+.quiet-trace .th-open{font-size:11px;color:var(--tx3);transition:transform .25s}
+.quiet-trace.open .th-open{transform:rotate(90deg)}
+.quiet-trace:hover .qt-label{color:rgba(150,178,162,.9)}
+/* раскрываемый список следа */
+.quiet-list{display:none;flex-direction:column;gap:3px;max-width:430px;margin:2px 0 6px 15px}
+.quiet-list.open{display:flex;animation:qtIn .25s ease-out both}
+/* СТРОКА СПИСКА (и в следе, и внутри агентской группы): тёмная, раскрываемая */
+.ql-row{border:1px solid rgba(128,156,142,.14);border-radius:9px;background:rgba(8,14,20,.55);
+  cursor:pointer;transition:border-color .2s,background .2s}
+.ql-row:hover{border-color:rgba(128,156,142,.3);background:rgba(10,18,26,.7)}
+.ql-head{display:flex;align-items:center;gap:8px;padding:5px 10px;min-width:0}
+.ql-label{font-size:11px;color:var(--tx2);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;flex:1;min-width:0}
+.ql-head .qs-state{margin-left:auto;flex:0 0 auto;font-size:10px;color:rgba(128,156,142,.5);
+  font-family:var(--fm);opacity:.9}
+.ql-detail{display:none;margin:0;padding:7px 10px;border-top:1px solid rgba(128,156,142,.12);
+  font:10.5px/1.55 var(--fm);color:var(--tx3);white-space:pre-wrap;word-break:break-word;
+  max-height:180px;overflow:auto;scrollbar-width:none}
+.ql-detail::-webkit-scrollbar{display:none}
+.ql-row.open .ql-detail{display:block}
+/* групповая карточка агента: череда однотипных карточек, сложенных в одну */
+.ag-group .ag-count{color:var(--tx3);font-weight:500}
+.ag-rows{display:flex;flex-direction:column;gap:4px;margin-top:8px}
 
 /* ============ НАВЕДЕНИЕ НА ВЫКЛЮЧЕННЫЙ ПРИБОР: «нажми меня» ============
-   Переработано по решению хозяина: БЕЗ наклона и БЕЗ градиента по контуру.
-   Вместо этого — дыхание из центра кнопки: мягкое свечение РАСХОДИТСЯ
-   от середины к краям (свет только изнутри, канон Джарвиса). Сама кнопка,
-   её надпись и контур загораются СВОИМ тусклым цветом — намёк и приманка:
-   «нажми меня». Дорого, тихо, вкусно. Включённый прибор не анимируется
-   вовсе: он уже сказал своё слово.
-   Агент теперь КРАСНЫЙ, компьютер — ФИОЛЕТОВЫЙ. */
+   Спокойное свечение ИЗ ЦЕНТРА, без пульсации: свет разгорается один раз
+   за 1.3 с и остаётся — как будто кнопку cast тёплым металлом и её
+   коснулась рука. Кнопка, надпись и контур загораются СВОИМ тусклым
+   цветом (камера — бирюза, компьютер — фиолетовый, лимит — золото).
+   Включённый прибор не анимируется вовсе: он уже сказал своё слово. */
 #tgCamera{--sp:95,214,190}
 #tgComputer{--sp:178,168,246}
 #tgBudget{--sp:240,190,70}
-.agent-switch{--sp:255,107,122}
 
-/* дыхание из центра: свечение рождается в середине кнопки и мягко
-   расходится к краям, повторяясь, пока курсор гостит */
 .toggle:not(.on):hover,.budget-btn:not(.on):hover{
   border-color:rgba(var(--sp),.38);
   color:rgba(var(--sp),.92);
   background:rgba(var(--sp),.05)}
 .toggle:not(.on):hover::before,.budget-btn:not(.on):hover::before{
   content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
-  background:radial-gradient(circle at 50% 50%,rgba(var(--sp),.17),rgba(var(--sp),.05) 46%,transparent 72%);
-  animation:ibBreath 1.15s ease-in-out infinite}
+  background:radial-gradient(circle at 50% 50%,rgba(var(--sp),.16),rgba(var(--sp),.05) 46%,transparent 72%);
+  animation:qtGlowIn 1.3s ease-out both}
 .toggle:not(.on):hover .tg-dot{background:rgba(var(--sp),.85);
   box-shadow:0 0 7px rgba(var(--sp),.35)}
 .budget-btn:not(.on):hover .budget-coin{color:rgba(var(--sp),.95)}
-@keyframes ibBreath{50%{opacity:.45;transform:scale(1.04)}}
+/* разгорание из центра: один раз, без повторов и без пульсации */
+@keyframes qtGlowIn{from{opacity:0;transform:scale(.86)}to{opacity:1;transform:scale(1)}}
 
-/* ТУМБЛЕР AGENT — ПРИМАНКА. Без наклона: круглёшек чуть подаётся в сторону
-   включения, по контуру трека БЕГУТ красные искры (медленные, в сторону
-   включения), а свет в треке пульсирует вправо — «ну переключи меня». */
+/* ТУМБЛЕР AGENT — НЕЙТРАЛЬНЫЙ, пока выключен: он не приманивает цветом,
+   красный появляется только на наведении и во включённом состоянии.
+   НАВЕДЕНИЕ: весь трек ВКЛЮЧАЯ грани становится красным (не ярко),
+   слева вправо ОДИН РАЗ проходит сильно размытый огонёк и останавливается,
+   круглёшек плавно подаётся вправо — «готов пересесть». */
+.agent-switch-track:not(:has(input:checked)):hover{
+  border-color:rgba(255,107,122,.4);
+  background:rgba(255,107,122,.08)}
 .agent-switch-track:not(:has(input:checked)):hover i{
-  transform:translateX(3px);
+  transform:translateX(5px);
   background:#c9a0a6;
   box-shadow:0 0 8px rgba(255,107,122,.45)}
-.agent-switch-track:not(:has(input:checked)):hover::before{
-  content:'';position:absolute;inset:-1px;padding:1px;border-radius:inherit;
-  pointer-events:none;opacity:1;
-  background:linear-gradient(100deg,transparent 40%,rgba(255,107,122,.5) 50%,transparent 60%);
-  background-size:230% 100%;
-  animation:agSpark 1.5s linear infinite;
-  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
-  -webkit-mask-composite:xor;mask-composite:exclude}
-@keyframes agSpark{from{background-position:130% 0}to{background-position:-130% 0}}
+/* огонёк: один проход слева направо с остановкой, сильно размыт */
 .agent-switch-track:not(:has(input:checked)):hover::after{
   content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
-  background:linear-gradient(90deg,transparent,rgba(255,107,122,.14) 78%,rgba(255,107,122,.3));
-  animation:agFlow 1.5s ease-in-out infinite}
-@keyframes agFlow{50%{opacity:.35}}
-
-/* AGENT по умолчанию чуть красноватый — режим приманивает ещё до наведения */
-.agent-switch-track{border-color:rgba(255,107,122,.26);background:rgba(255,107,122,.05)}
-/* содержимое тумблера ЧУТЬ красное: круглёшек розоват и в выключенном
-   состоянии — режим приманивает ещё до наведения */
-.agent-switch-track i{color:#2a1216;background:#a4898f}
+  background:linear-gradient(90deg,transparent,rgba(255,107,122,.5) 96%,rgba(255,150,160,.65));
+  filter:blur(5px);
+  animation:agEmber 1.15s cubic-bezier(.2,.7,.25,1) both}
+@keyframes agEmber{
+  from{opacity:0;transform:translateX(-70%)}
+  60%{opacity:.9}
+  to{opacity:.55;transform:translateX(0)}}
+/* пересадка идёт (волна + тема): тумблер не трогают повторно */
+.agent-switch.ag-switching .agent-switch-track{pointer-events:none}
 /* Tooltip не участвует в геометрии composer. После выбора tip-dismissed гасит
    его до mouseleave, а не оставляет висеть из-за фокуса checkbox. */
 .toggle[data-tip]:is(:hover,:focus-visible)::after,
@@ -1385,6 +1441,9 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   display:none;place-items:center;padding:20px;animation:viewIn .25s}
 .modal-back.open{display:grid}
 .modal{width:min(520px,100%);max-height:86vh;overflow:auto;border:1px solid var(--line2);border-radius:18px;
+  /* СИСТЕМНЫЕ СКРОЛЛБАРЫ СПРЯТАНЫ: белые полосы справа выглядели лагом
+     и сдвигали содержимое. Прокрутка остаётся (колесо/тач), полос — нет. */
+  scrollbar-width:none;-ms-overflow-style:none;
   background:linear-gradient(180deg,rgba(11,22,38,.99),rgba(6,13,24,.99));padding:22px;box-shadow:var(--shadow);
   animation:approveIn .35s both}
 .modal h3{margin:0 0 6px;font-size:16px}
@@ -1419,9 +1478,11 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .sc-stage i{flex:0 0 20px;height:20px;border-radius:7px;display:grid;place-items:center;
   background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.28);color:var(--cy2);
   font-style:normal;font-size:10.5px;font-family:var(--fm)}
-.sc-stage-text{font-size:11px;color:var(--tx3);white-space:nowrap;overflow:hidden;
-  text-overflow:ellipsis;max-width:46%}
-.sc-stage-line{flex:1;height:1px;background:linear-gradient(90deg,transparent,rgba(0,212,255,.22),transparent)}
+.sc-stage-text{flex:0 1 auto;font-weight:500;font-size:11px;color:var(--tx2);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;max-width:56%;padding:4px 12px;border-radius:8px;
+  border:1px solid var(--line);background:var(--panel2)}
+/* коннектор — сплошная тонкая полоса без затухания к краям */
+.sc-stage-line{flex:1;height:1px;background:rgba(0,212,255,.22)}
 @keyframes scStageIn{from{opacity:0;transform:translateY(-6px)}}
 
 .sc-steps-full{display:flex;flex-direction:column;gap:8px;margin:12px 0 4px;max-height:44vh;overflow:auto}
@@ -2368,22 +2429,22 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .budget-pop[hidden]{display:none}
 .budget-pop{position:absolute;right:0;bottom:calc(100% + 10px);z-index:120;width:250px;
   display:flex;flex-direction:column;overflow:hidden;
-  /* ФОН И КОНТУР ЧУТЬ ЖЕЛТЫЕ: лимит — золотая тема, панель обязана
-     напоминать о монете ещё до чтения подписей. */
-  background:#13130d;border:1px solid rgba(240,190,70,.3);border-radius:15px;
-  box-shadow:0 22px 60px rgba(0,0,0,.75),0 0 0 1px rgba(0,0,0,.4),
-    inset 0 0 22px rgba(240,190,70,.05);
-  /* РОВНО ДВИЖЕНИЕ ПАНЕЛИ УВЕДОМЛЕНИЙ (npIn/npOut): тот же короткий вылет
-     с лёгким масштабом и та же кривая — панель лимита теперь прилетает
-     из того же мира, что и колокольчик. Раньше был пружинистый scale(.6). */
-  animation:npInUp .24s cubic-bezier(.2,.9,.3,1) both}
+  /* ФОН И КОНТУР — КЛАССИКА панели уведомлений: лимит не перекрашивает
+     саму панель, золото живёт ТОЛЬКО в акцентах (степперы, «Снять»,
+     подсветка вариантов) — деньги видны в цифрах, а не в рамке. */
+  background:#0a1420;border:1px solid var(--line2);border-radius:15px;
+  box-shadow:0 22px 60px rgba(0,0,0,.75),0 0 0 1px rgba(0,0,0,.4);
+  /* Открытие спокойнее закрытия (0.34 с против 0.15 с): появление денег
+     не должно выпрыгивать. */
+  animation:npInUp .34s cubic-bezier(.2,.9,.3,1) both}
 @keyframes npInUp{from{opacity:0;transform:translateY(10px) scale(.97)}}
 /* закрытие — чуть быстрее открытия: уход не должен задерживать */
 .budget-pop.bp-closing{animation:npOutUp .15s cubic-bezier(.4,0,1,1) both}
 @keyframes npOutUp{to{opacity:0;transform:translateY(10px) scale(.97)}}
+.modal::-webkit-scrollbar{width:0;height:0;display:none}
 /* свои степперы суммы: − и + в стиле Джарвиса вместо браузерных стрелок */
 .bp-field{flex:1;display:flex;align-items:center;gap:6px;
-  background:rgba(240,190,70,.05);border:1px solid rgba(240,190,70,.22);
+  background:rgba(255,255,255,.03);border:1px solid var(--line);
   border-radius:11px;padding:2px}
 .bp-step{width:26px;height:26px;border-radius:8px;border:1px solid rgba(240,190,70,.25);
   background:transparent;color:var(--gold);font-size:15px;line-height:1;cursor:pointer;
@@ -2393,8 +2454,8 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .bp-field .bp-input{flex:1;border:0;background:transparent;box-shadow:none;min-width:0}
 .bp-field .bp-input:focus{box-shadow:none;border:0}
 .bp-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
-  padding:11px 14px;border-bottom:1px solid rgba(240,190,70,.18);font-size:12px;color:var(--tx2);
-  background:#181710}
+  padding:11px 14px;border-bottom:1px solid var(--line);font-size:12px;color:var(--tx2);
+  background:rgba(255,255,255,.02)}
 .bp-head b{color:#f0be46;font-weight:700;letter-spacing:.3px}
 .bp-off{border:1px solid var(--line);background:transparent;color:var(--tx3);cursor:pointer;
   border-radius:8px;padding:3px 9px;font-size:10.5px;font-family:inherit;transition:.18s}
@@ -2513,102 +2574,136 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   cursor:pointer;transition:.15s}
 .mc-skip:hover{color:var(--tx2);background:rgba(255,255,255,.05)}
 
-/* ============================ ТЕМА AGENT ============================
-   Дизайн-система красного режима. Принцип: красный — ЦВЕТ ДЕЙСТВИЯ, он
-   живёт на органах управления и живых индикаторах, а НЕ на гранях панелей
-   (рамки карточек и панелей остаются нейтральными — перекрашенные края
-   читаются как тревога, а не как скорость). Иерархия акцентов:
-     1) ПОЛЕ ВВОДА — центр управления: тёплая внутренняя подсветка,
-        красный курсор, красное выделение текста;
-     2) КНОПКА ОТПРАВКИ — главный источник света в комнате;
-     3) НАВИГАЦИЯ — активная вкладка горит, остальные лишь теплеют при
-        наведении;
-     4) ЖИВЫЕ ИНДИКАТОРЫ — ядро реактора, курсор печати, план, тихие
-        черты инструментов: красный здесь значит «агент работает»;
-     5) ОТВЕТЫ-ЧИПЫ И УСКОРЕНИЕ — продолжение разговора в цвете режима.
-   Палитра: действие #ff5468 → глубина #c0294a, свечение rgba(255,84,104). */
+/* ============================ ТЕМА AGENT «ПОРШЕ» ============================
+   Полноценная ВТОРАЯ ТЕМА всего интерфейса — не перекраска деталей, а смена
+   базы: меняются сами переменные (--cy, --line, --panel), и всё, что на них
+   построено — панели, линии, подсветки, чипы, модалки — перекрашивается
+   само. Спокойная ровно настолько же, насколько синяя: глубокая тёплая
+   база, красный — ТОЛЬКО цвет действия, не яркая: это рабочий режим,
+   а не тревога.
+   Волна включения короткая и сдержанная (0.78 с), расходится от тумблера;
+   сама тема включается ЗА волной (+280 мс из JS) — жест читается как
+   «волна прокатилась по экрану и перекрасила его». */
 
-/* --- ВОЛНА: включение — длинная, яркая, двумя слоями света;
-       выключение — спокойный отлив обратно к тумблеру --- */
+/* --- ВОЛНА: короткая, сдержанная; выключение — спокойный отлив --- */
 .agent-wave{position:fixed;z-index:400;width:var(--aw,120vmax);height:var(--aw,120vmax);
   left:50%;top:50%;transform:translate(-50%,-50%) scale(.05);border-radius:50%;
   pointer-events:none;opacity:0;
   background:radial-gradient(circle,
-      rgba(255,84,104,.46) 0%,rgba(255,84,104,.2) 26%,rgba(255,84,104,.07) 48%,transparent 70%),
-    radial-gradient(circle,rgba(255,179,188,.34) 0%,transparent 22%);
-  animation:agentWave 1.4s cubic-bezier(.14,.72,.26,1) both}
+      rgba(217,106,118,.4) 0%,rgba(217,106,118,.16) 26%,rgba(217,106,118,.05) 48%,transparent 70%),
+    radial-gradient(circle,rgba(235,160,170,.26) 0%,transparent 22%);
+  animation:agentWave .78s cubic-bezier(.16,.7,.3,1) both}
 @keyframes agentWave{
   0%{transform:translate(-50%,-50%) scale(.05);opacity:0}
-  16%{opacity:1}
-  62%{opacity:.85}
+  20%{opacity:.9}
+  68%{opacity:.65}
   100%{transform:translate(-50%,-50%) scale(1);opacity:0}}
 .agent-wave.out{background:radial-gradient(circle,
-    rgba(255,84,104,.2) 0%,rgba(255,84,104,.08) 30%,transparent 62%);
-  animation:agentWaveOut .8s ease-out both}
+    rgba(217,106,118,.18) 0%,rgba(217,106,118,.07) 30%,transparent 62%);
+  animation:agentWaveOut .7s ease-out both}
 @keyframes agentWaveOut{
   0%{opacity:.5;transform:translate(-50%,-50%) scale(1)}
   100%{opacity:0;transform:translate(-50%,-50%) scale(.88)}}
 
-/* --- 1. ПОЛЕ ВВОДА: тёплая рубка --- */
+/* --- 1. БАЗА ТЕМЫ: переменные, и интерфейс меняется целиком --- */
+body.agent-on{
+  --cy:#d96a76; --cy2:#eb939d;
+  --line:rgba(255,120,132,.14); --line2:rgba(255,120,132,.26);
+  --panel:rgba(30,15,19,.72); --panel2:rgba(34,17,22,.55);
+  --bg:#0a0507; --bg2:#0f0709}
+
+/* --- 2. НЕБО, СЕТКА, СВЕТА: тёплая ночь вместо синей --- */
+body.agent-on .bg-layer{background:
+  radial-gradient(1200px 700px at 15% -10%,#2a1013 0%,transparent 60%),
+  radial-gradient(900px 600px at 110% 20%,#1e0d18 0%,transparent 55%),
+  linear-gradient(180deg,#0a0507,#050203)}
+body.agent-on .grid-plane{background-image:
+  linear-gradient(rgba(255,120,132,.05) 1px,transparent 1px),
+  linear-gradient(90deg,rgba(255,120,132,.05) 1px,transparent 1px)}
+body.agent-on .glow-a{background:#75303b}
+body.agent-on .glow-b{background:#48263f}
+body.agent-on .glow-c{background:#69333d}
+
+/* --- 3. СКРОЛЛ --- */
+body.agent-on ::-webkit-scrollbar-thumb{background:rgba(255,120,132,.22)}
+body.agent-on ::-webkit-scrollbar-thumb:hover{background:rgba(255,120,132,.4)}
+
+/* --- 4. ЦЕНТР УПРАВЛЕНИЯ: поле ввода --- */
 body.agent-on .composer{
-  border-color:rgba(255,84,104,.4);
-  background:linear-gradient(180deg,rgba(34,13,17,.94),rgba(16,8,11,.94));
+  border-color:var(--line2);
+  background:linear-gradient(180deg,rgba(30,15,19,.94),rgba(16,8,11,.94));
   box-shadow:0 14px 44px rgba(0,0,0,.45),
-    inset 0 1px 0 rgba(255,140,155,.1),inset 0 0 34px rgba(255,84,104,.07)}
+    inset 0 1px 0 rgba(255,150,160,.09),inset 0 0 34px rgba(217,106,118,.06)}
 body.agent-on .composer.focus{
-  border-color:rgba(255,107,122,.62);
-  box-shadow:0 16px 50px rgba(190,60,80,.32),0 0 0 3px rgba(255,84,104,.12),
-    inset 0 0 40px rgba(255,84,104,.1)}
-body.agent-on #input{caret-color:#ff8f9c}
-body.agent-on .composer ::selection{background:rgba(255,84,104,.3)}
-body.agent-on .comp-btn:hover{color:#ffb3bc;border-color:rgba(255,107,122,.4)}
+  border-color:rgba(235,147,157,.55);
+  box-shadow:0 16px 50px rgba(150,50,64,.3),0 0 0 3px rgba(217,106,118,.1),
+    inset 0 1px 0 rgba(255,160,170,.08)}
+body.agent-on #input{caret-color:#eb939d}
+body.agent-on .composer ::selection{background:rgba(217,106,118,.32)}
+body.agent-on .comp-btn:hover{color:#ffb9c2;border-color:var(--line2)}
 
-/* --- 2. ОТПРАВКА: главный свет --- */
-body.agent-on .send-btn{background:linear-gradient(135deg,#ff5468,#c0294a);
-  box-shadow:0 5px 20px rgba(255,84,104,.45),inset 0 1px 0 rgba(255,255,255,.18)}
-body.agent-on .send-btn:hover{box-shadow:0 9px 30px rgba(255,84,104,.6),
-  inset 0 1px 0 rgba(255,255,255,.22)}
-body.agent-on .send-btn.stop{background:linear-gradient(135deg,#ff5468,#8f1d38)}
+/* --- 5. КНОПКА ОТПРАВКИ: главный источник света в комнате --- */
+body.agent-on .send-btn{background:linear-gradient(135deg,#e07a86,#a63a49);
+  box-shadow:0 5px 18px rgba(217,106,118,.3)}
+body.agent-on .send-btn svg{fill:#2a0d12}
+body.agent-on .send-btn:hover{box-shadow:0 9px 26px rgba(217,106,118,.45)}
+body.agent-on .send-btn.stop{background:linear-gradient(135deg,#e05a6e,#8f1d38)}
+body.agent-on .send-btn.stop svg{fill:#fff}
 
-/* --- 3. НАВИГАЦИЯ: активная вкладка горит --- */
+/* --- 6. НАВИГАЦИЯ --- */
 body.agent-on .nav-item.active{
-  background:linear-gradient(90deg,rgba(255,84,104,.28),rgba(255,84,104,.04));
+  background:linear-gradient(90deg,rgba(217,106,118,.18),rgba(217,106,118,.03));
   color:#fff}
-body.agent-on .nav-item.active .nav-ico{
-  color:#ff8f9c;filter:drop-shadow(0 0 9px rgba(255,84,104,.55))}
-body.agent-on .nav-item:not(.active):hover{color:#ffb3bc}
-body.agent-on .nav-outline{border-color:rgba(255,84,104,.16)}
+body.agent-on .nav-item.active .nav-ico{filter:drop-shadow(0 0 8px rgba(217,106,118,.5))}
+body.agent-on .nav-item:not(.active):hover{color:#e8a7b0}
+body.agent-on .nav-outline{border-color:var(--line)}
 
-/* --- 4. ЖИВЫЕ ИНДИКАТОРЫ: «агент работает» --- */
-body.agent-on .reactor .ring{border-color:rgba(255,107,122,.44)}
-body.agent-on .reactor .core{background:radial-gradient(circle,#fff,#ffb3bc 45%,#a82836);
-  box-shadow:0 0 22px rgba(255,84,104,.4)}
-body.agent-on .work-wait .tw-caret{background:linear-gradient(180deg,#fff,#ffb3bc 52%,#ff5468)}
-body.agent-on .hello span{background:linear-gradient(90deg,#ffb3bc,#ff5468 45%,#ff8f9c 75%,#ffd9de)}
-body.agent-on .qt-bar{background:rgba(255,107,122,.6);box-shadow:0 0 6px rgba(255,107,122,.25)}
-body.agent-on .tool-card.tool-wait{border-color:rgba(255,90,106,.36)}
-body.agent-on .tool-run{background:#ff5468!important}
+/* --- 7. ПУЗЫРЬ ПОЛЬЗОВАТЕЛЯ --- */
+body.agent-on .bubble-user{
+  background:linear-gradient(135deg,rgba(217,106,118,.16),rgba(181,122,164,.14));
+  border-color:rgba(217,138,150,.4);box-shadow:0 6px 22px rgba(180,90,100,.2)}
 
-/* --- ПЛАН: приборная доска гоночного болида --- */
-body.agent-on .plan-dock{border-color:rgba(255,90,106,.5);
-  background:linear-gradient(180deg,rgba(30,12,14,.96),rgba(16,7,9,.96));
-  box-shadow:0 14px 38px rgba(0,0,0,.55),0 0 26px rgba(255,84,104,.2)}
+/* --- 8. ЖИВЫЕ ИНДИКАТОРЫ: реактор, курсор печати, приветствие --- */
+body.agent-on .reactor .ring{border-color:rgba(235,147,157,.44)}
+body.agent-on .reactor .core{background:radial-gradient(circle,#fff,#f0b6be 45%,#a82836)}
+body.agent-on .work-wait .tw-caret{background:linear-gradient(180deg,#fff,#f0b6be 52%,#d96a76)}
+body.agent-on .hello span{background:linear-gradient(90deg,var(--cy2),var(--pink) 40%,var(--violet) 72%,var(--coral))}
+
+/* --- 9. ИНСТРУМЕНТЫ И ТИХИЙ ПОТОК --- */
+body.agent-on .tool-card.tool-wait{border-color:rgba(255,120,132,.36)}
+body.agent-on .tool-run{background:#d96a76!important}
+body.agent-on .quiet-stream::before{background:rgba(235,160,170,.5);
+  box-shadow:0 0 6px rgba(217,106,118,.18)}
+body.agent-on .qs-line.qs-done .qs-state{color:rgba(196,146,152,.5)}
+body.agent-on .quiet-trace::before{background:rgba(196,146,152,.5)}
+body.agent-on .ql-row{border-color:rgba(255,120,132,.14);background:rgba(22,11,13,.55)}
+body.agent-on .ql-row:hover{border-color:rgba(255,120,132,.3);background:rgba(26,13,16,.7)}
+
+/* --- 10. ПЛАН --- */
+body.agent-on .plan-dock{border-color:rgba(255,120,132,.4)}
 body.agent-on .plan-dock .pd-t,body.agent-on .plan-dock .pd-ico,
-body.agent-on .plan-dock .pd-step{color:#ff9da8;text-shadow:0 0 12px rgba(255,84,104,.4)}
-body.agent-on .plan-dock .pd-seg{background:rgba(255,84,104,.14)}
-body.agent-on .plan-dock .pd-seg.done{background:rgba(255,84,104,.6);box-shadow:0 0 7px rgba(255,84,104,.24)}
-body.agent-on .plan-dock .pd-seg.now{background:rgba(255,84,104,.35);box-shadow:0 0 8px rgba(255,84,104,.32)}
-body.agent-on .plan-dock.live::after{border-color:rgba(255,150,160,.5);box-shadow:0 0 34px rgba(255,84,104,.38)}
+body.agent-on .plan-dock .pd-step{color:#eb939d;text-shadow:0 0 12px rgba(217,106,118,.4)}
+body.agent-on .plan-dock .pd-seg{background:rgba(217,106,118,.14)}
+body.agent-on .plan-dock .pd-seg.done{background:rgba(217,106,118,.6);box-shadow:0 0 7px rgba(217,106,118,.24)}
+body.agent-on .plan-dock .pd-seg.now{background:rgba(217,106,118,.35);box-shadow:0 0 8px rgba(217,106,118,.32)}
+body.agent-on .plan-dock.live::after{border-color:rgba(240,150,160,.5);box-shadow:0 0 34px rgba(217,106,118,.35)}
 
-/* --- 5. ПРОДОЛЖЕНИЕ РАЗГОВОРА: чипы и ускорение --- */
-body.agent-on .reply-chip{border-color:rgba(255,84,104,.22)}
-body.agent-on .reply-chip:hover{border-color:rgba(255,107,122,.55);
-  background:rgba(255,84,104,.08);color:#ffd9de}
-body.agent-on .boost-btn.on{color:#ff8f9c;border-color:rgba(255,84,104,.4)}
-body.agent-on .boost-btn.on::before{
-  background:linear-gradient(100deg,transparent 35%,rgba(255,107,122,.75) 50%,transparent 65%);
-  filter:drop-shadow(0 0 4px rgba(255,84,104,.5))}
+/* --- 11. ПРОДОЛЖЕНИЕ РАЗГОВОРА: чипы --- */
+body.agent-on .reply-chip{border-color:var(--line)}
+body.agent-on .reply-chip:hover{border-color:rgba(235,147,157,.5);
+  background:rgba(217,106,118,.08);color:#ffd4da}
 
-/* --- СКРОЛЛ: красный ободок вместо синего --- */
-body.agent-on ::-webkit-scrollbar-thumb{background:rgba(255,84,104,.24)}
-body.agent-on ::-webkit-scrollbar-thumb:hover{background:rgba(255,84,104,.42)}
+/* --- 12. ПАНЕЛИ И ОКНА: уведомления, модалки, тултипы --- */
+body.agent-on .note-panel{background:#150a0d}
+body.agent-on .jw-ico{background:rgba(217,106,118,.09);border-color:rgba(255,120,132,.34);
+  box-shadow:inset 0 0 18px rgba(217,106,118,.14)}
+body.agent-on .toggle[data-tip]:is(:hover,:focus-visible)::after,
+body.agent-on .budget-btn[data-tip]:is(:hover,:focus-visible)::after,
+body.agent-on .comp-btn[data-tip]:is(:hover,:focus-visible)::after,
+body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
+  border-color:rgba(255,120,132,.42);
+  box-shadow:0 12px 30px rgba(0,0,0,.7),0 0 16px rgba(217,106,118,.12)}
+
+/* УСКОРЕНИЕ остаётся ЗОЛОТЫМ и в агенте: скорость — цвет плана и денег,
+   а не режима; красный и золотой не спорят, потому что живут на разных
+   органах */

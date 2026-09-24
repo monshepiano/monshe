@@ -436,14 +436,11 @@ class Handler(BaseHTTPRequestHandler):
                 if m.get("role") == "user":
                     asked = m.get("content", "")
                     break
-            # После AGENT-прогона продолжения другие: не «расскажи подробнее»,
-            # а следующий шаг, который Джарвис может сделать сам (по фактам
-            # прогона: инструменты, файлы, задача).
-            if meta.get("agent") and isinstance(meta.get("tools"), list):
-                items = agent.suggest_proactive(asked, last.get("content", ""),
-                                                meta["tools"])
-            else:
-                items = agent.suggest_replies(asked, last.get("content", ""))
+            # Подсказки формирует ИИ-модель по сути ответа. После AGENT-прогона
+            # сбой модели честно падает в проактивные шаги по фактам работы —
+            # это решает suggest_replies_ai внутри себя.
+            items = agent.suggest_replies_ai(asked, last.get("content", ""),
+                                             meta.get("tools") if meta.get("agent") else None)
             meta["replies"] = items
             db.update_message_meta(last["id"], meta)
             return self._json({"ok": True, "items": items})
@@ -917,12 +914,18 @@ class Handler(BaseHTTPRequestHandler):
                 # Прерванный пользователем ответ помечается: обрывок кода не должен
                 # прикидываться полноценным ответом в контексте следующего запроса
                 # (модель продолжала «дописывать» несуществующий ответ).
-                db.add_message(chat_id, "assistant", final_text,
+                saved_ai = db.add_message(chat_id, "assistant", final_text,
                                {"files": files, "tools": used_tools, "model": runner.model_used,
                                 "tier": selected_tier,
                                 "agent": bool(runner.agent_mode),
                                 "interrupted": bool(stop_event.is_set()),
                                 "thinking": "".join(thinking)[:20000], "trace": trace[:60]})
+                # ПОДСКАЗКИ ГОТОВЯТСЯ ЗАРАНЕЕ, ПОКА ПОЛЬЗОВАТЕЛЬ ЧИТАЕТ. Ответ уже
+                # закрыт, соединение вот-вот оборвётся: nano-запрос идёт фоном и
+                # кладёт готовые кнопки в meta["replies"]. Когда фронт через
+                # /api/replies спросит их — они уже лежат там, ждать нечего.
+                _prefetch_replies(saved_ai.get("id"), text, final_text,
+                                  used_tools if runner.agent_mode else None)
             if alive:
                 self._sse({"type": "end"})
             self._sse_close()
@@ -931,6 +934,38 @@ class Handler(BaseHTTPRequestHandler):
                 tier=selected_tier, tool_count=len(used_tools),
                 error_type=run_error or None)
             _finish_local_post(chat_id, text, title=post_title)
+
+
+def _prefetch_replies(msg_id: str, user_text: str, answer: str,
+                      tools_used: Optional[List[str]] = None) -> None:
+    """Фоновая подготовка кнопок-подсказок для только что сохранённого ответа.
+
+    Пользователь читает ответ несколько секунд — этого хватает, чтобы дешёвая
+    nano-модель успела предложить продолжения по сути. Тред пишет результат в
+    meta["replies"]: /api/replies отдаёт готовое мгновенно, второй раз за то
+    же самое мы не платим. Ошибка потока молчит: подсказки — украшение,
+    а не часть ответа, и /api/replies всегда сможет посчитать их сам.
+    """
+    if not msg_id:
+        return
+
+    def work() -> None:
+        try:
+            msg = db.get_message(msg_id)
+            if not msg:
+                return
+            meta = msg.get("meta") or {}
+            if isinstance(meta.get("replies"), list):
+                return          # уже посчитано (перечитали историю и т.п.)
+            items = agent.suggest_replies_ai(user_text, answer, tools_used)
+            if items:
+                meta["replies"] = items
+                db.update_message_meta(msg_id, meta)
+        except Exception:
+            pass
+
+    threading.Thread(target=work, daemon=True,
+                     name="jarvis-replies").start()
 
 
 def _warm_models() -> None:

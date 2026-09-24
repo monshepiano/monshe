@@ -285,6 +285,7 @@ function testTelegramDateHudAndTimeOnlyMeta() {
       Date, Number, String, Math, document: miniDocument, el: miniEl,
       esc: (text) => String(text),
       $$: (selector, node) => node.querySelectorAll(selector),
+      S: { scenarioActive: false },
       requestAnimationFrame(fn) { frames.push(fn); return frames.length; },
       setTimeout(fn, ms) { timers.push({ fn, ms }); return timers.length; },
       clearTimeout() {},
@@ -406,9 +407,9 @@ function testImportantHeadingCaretAndTrail() {
     'a delayed browser frame must not be paid back as a visible character burst');
   assert(/step\s*=\s*Math\.min\(step,\s*left,\s*\(code\s*\?\s*\(ui\.fastFinish\s*\?\s*26\s*:\s*10\)\s*:\s*4\)\s*\*\s*turbo\)/.test(typer),
     'step limit stays 4 for prose, rises for dense content after done, and doubles under turbo');
-  assert(/const turbo = S\.turbo \? 2 : 1;/.test(typer) &&
+  assert(/const turbo = S\.turbo \? 3\.5 : 1;/.test(typer) &&
     /want \*= turbo;/.test(typer) && /pause \/ turbo/.test(typer),
-    'the ×2 boost button doubles target speed, frame cap and halves punctuation pauses');
+    'the ×3.5 boost button speeds target rate, frame cap and shrinks punctuation pauses');
   assert(/if\s*\(code\s*&&\s*ui\.fastFinish\)\s*want\s*=/.test(typer),
     'the after-done speed boost must apply to dense content only, never to prose');
   assert(!/left\s*>|boost|mult/i.test(typer),
@@ -744,6 +745,7 @@ function testRepeatedPlanEventReplacesOwnership() {
   };
   const ctx = loadFunctions(['handleEvent'], {
     S: {},
+    flushQuietStream() {}, flushAgentGroup() {},
     beginPlanGate(ui) { ui.planGate = true; },
     clearPlanTimers() { clears += 1; },
     dropStrayDocks(keep) { removedDocks.push(keep); oldDock.remove(); },
@@ -881,7 +883,7 @@ async function testCameraLifecycleOwnershipAndLateResults() {
   // user message ids are assigned to the exact node owned by the request.
   const userNode = new MiniNode('div'); userNode.dataset.msgId = '';
   S.camNode = newCard; S.camChatId = 'new-session'; S.chatId = 'main';
-  const eventCtx = loadFunctions(['handleEvent'], { S });
+  const eventCtx = loadFunctions(['handleEvent'], { S, flushQuietStream() {}, flushAgentGroup() {} });
   eventCtx.handleEvent({ type: 'chat', chat_id: 'stale-id' }, {
     node: {}, isolatedCamera: true, cameraNode: oldCard, userMsgNode: userNode,
   });
@@ -1498,7 +1500,8 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   'the ruble limit ships end-to-end: button, yellow state, ask-card panel, body field');
   // ₽-панель = стиль панели уведомлений: плотный фон, шапка-полоса,
   // «Снять»; варианты — ИСТОРИЯ сумм пользователя (последние 4 разных)
-  assert(/\.budget-pop\{[^}]*#13130d/s.test(css) && /\.bp-head\{[^}]*#181710/s.test(css) &&
+  assert(/\.budget-pop\{[^}]*background:#0a1420/s.test(css) &&
+    /\.budget-pop\{[^}]*border:1px solid var\(--line2\)/s.test(css) &&
     /id="budgetOff"/.test(html) && /id="budgetVariants"/.test(html) &&
     /function budgetHistory/.test(js) && /function budgetSuggestions/.test(js) &&
     /function rememberBudget/.test(js) && /jarvis\.budgetHistory/.test(js) &&
@@ -1506,15 +1509,18 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   'budget popup uses the notifications-panel style and the users own amounts');
   // ПАНЕЛЬ ЗАКРЫВАЕТСЯ: display:flex обязан уступать атрибуту hidden —
   // без этого правила лимит «висел всегда» и не снимался
-  // наведение на ВЫКЛЮЧЕННЫЙ прибор: дыхание из центра (свет внутри,
-  // расходится к краям) + тусклый цвет кнопки/надписи/контура. БЕЗ наклона
-  // и БЕЗ градиентной искры по контуру у обычных кнопок. Включённый — тих.
+  // наведение на ВЫКЛЮЧЕННЫЙ прибор: СПОКОЙНОЕ свечение из центра,
+  // разгорается ОДИН РАЗ (1.3с, без пульсации) + тусклый цвет кнопки.
+  // Включённый — тих. Тумблер AGENT здесь нейтрален: красный только на
+  // наведении и во включённом состоянии.
   assert(/#tgCamera\{--sp:/.test(css) && /#tgComputer\{--sp:178,168,246\}/.test(css) &&
-    /#tgBudget\{--sp:240,190,70\}/.test(css) && /\.agent-switch\{--sp:255,107,122\}/.test(css),
-    'camera stays teal, computer is now violet, budget gold, agent red');
-  assert(/\.toggle:not\(\.on\):hover::before[\s\S]*?radial-gradient\(circle at 50% 50%,rgba\(var\(--sp\),\.17\)/.test(css) &&
-    /@keyframes ibBreath\{50%\{opacity:\.45;transform:scale\(1\.04\)\}\}/.test(css),
-    'a soft inner glow breathes out from the button center');
+    /#tgBudget\{--sp:240,190,70\}/.test(css),
+    'camera stays teal, computer is violet, budget gold');
+  assert(/\.toggle:not\(\.on\):hover::before[\s\S]*?radial-gradient\(circle at 50% 50%,rgba\(var\(--sp\),\.16\)/.test(css) &&
+    /animation:qtGlowIn 1\.3s ease-out both/.test(css) &&
+    /@keyframes qtGlowIn\{from\{opacity:0;transform:scale\(\.86\)\}to\{opacity:1;transform:scale\(1\)\}\}/.test(css) &&
+    !/@keyframes ibBreath/.test(css),
+    'a soft inner glow lights up ONCE from the center (1.3s, no pulsing)');
   assert(!/\.toggle:not\(\.on\):hover\{transform:rotate/.test(css) &&
     !/\.budget-btn:not\(\.on\):hover\{transform:rotate/.test(css) &&
     !/\[data-tip\]::after\{transform:translateX\(-50%\) rotate\(/.test(css),
@@ -1522,17 +1528,25 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   assert(/\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover\{[^}]*rgba\(var\(--sp\),\.38\)/s.test(css) &&
     /\.toggle:not\(\.on\):hover \.tg-dot\{background:rgba\(var\(--sp\),\.85\)/.test(css),
     'the button, label and contour glow dimly in their own color');
-  // тумблер агента: микродвижение 3px к включению + МЕДЛЕННАЯ красная искра
-  // по контуру В СТОРОНУ включения + пульс света вправо. Без наклона.
-  assert(/\.agent-switch-track:not\(:has\(input:checked\)\):hover i\{[^}]*translateX\(3px\)/s.test(css) &&
-    /@keyframes agSpark\{from\{background-position:130% 0\}to\{background-position:-130% 0\}\}/.test(css) &&
-    /animation:agSpark 1\.5s linear infinite/.test(css) &&
-    /@keyframes agFlow/.test(css) &&
+  // тумблер AGENT: hover — весь трек INCLUDING грани красный (не ярко),
+  // ОДИН раз слева вправо проходит размытый огонёк (agEmber 1.15с, blur 5px)
+  // и останавливается; круглёшек плавно подаётся вправо (.5с). Без наклона.
+  assert(/\.agent-switch-track:not\(:has\(input:checked\)\):hover i\{[^}]*translateX\(5px\)/s.test(css) &&
+    /animation:agEmber 1\.15s cubic-bezier\(\.2,\.7,\.25,1\) both/.test(css) &&
+    /filter:blur\(5px\)/.test(css) &&
+    /@keyframes agEmber\{[\s\S]*?to\{opacity:\.55;transform:translateX\(0\)\}\}/.test(css) &&
+    !/@keyframes agSpark/.test(css) && !/@keyframes agFlow/.test(css) &&
     !/\.agent-switch[^{]*:hover\{transform:rotate/.test(css),
-    'the agent knob leans toward ON, the red contour spark now sweeps the other way');
-  assert(/\.agent-switch-track\{border-color:rgba\(255,107,122,\.26\)[^}]*\}/.test(css) &&
-    /\.agent-switch-track i\{color:#2a1216;background:#a4898f\}/.test(css),
-    'the agent switch is faintly red in CONTENT (knob), not just its border');
+    'the agent knob glides right; ONE blurred ember sweeps left-to-right and stops');
+  assert(/\.agent-switch-track:not\(:has\(input:checked\)\):hover\{[^}]*border-color:rgba\(255,107,122,\.4\)/s.test(css) &&
+    /transition:transform \.5s cubic-bezier\(\.2,\.75,\.3,1\)/.test(css),
+    'hover paints the whole track red INCLUDING its borders; the knob moves smoothly');
+  // по умолчанию тумблер НЕЙТРАЛЕН: базовая рамка var(--line), никаких
+  // красных приманок до наведения
+  assert(!/\.agent-switch\{--sp:255,107,122\}/.test(css) &&
+    !/\.agent-switch-track\{border-color:rgba\(255,107,122,\.26\)/.test(css) &&
+    !/\.agent-switch-track i\{color:#2a1216;background:#a4898f\}/.test(css),
+    'the OFF agent switch is neutral: red appears only on hover or when ON');
   assert(/\.agent-switch-track input:checked \+ i\{[^}]*animation:agGlow 2\.6s ease-in-out infinite/s.test(css) &&
     /@keyframes agGlow\{50%\{box-shadow:0 0 17px rgba\(255,107,122,\.95\),0 0 34px rgba\(255,84,104,\.4\)\}\}/.test(css),
     'the enabled AGENT knob breathes a soft inviting glow');
@@ -1542,9 +1556,10 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   assert(/\.budget-pop\.bp-closing\{animation:npOutUp \.15s/.test(css) &&
     /}, 150\);/.test(extractFunction(js, 'hideBudgetPop')),
     'closing runs faster than opening (.15s CSS, 150ms JS)');
-  assert(/background:#13130d;border:1px solid rgba\(240,190,70,\.3\)/.test(css) &&
-    /\.bp-head\{[^}]*background:#181710/s.test(css),
-    'the budget panel is gently yellowed for accent');
+  assert(/background:#0a1420;border:1px solid var\(--line2\)/.test(css) &&
+    /animation:npInUp \.34s/.test(css) &&
+    /\.bp-step\{[^}]*rgba\(240,190,70/s.test(css),
+    'the budget panel is CLASSIC like notifications: neutral shell, gold only in accents, calmer .34s opening');
   assert(/\.bp-step\{/.test(css) && /id="bpMinus"/.test(html) && /id="bpPlus"/.test(html) &&
     /type="text" inputmode="numeric"/.test(html) &&
     !/budgetInput" type="number/.test(html),
@@ -1591,7 +1606,7 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
     /\{ soft: true \}/.test(js) && /jw-ico/.test(js),
   'the scenario offer uses a soft backdrop and a Jarvis-styled window');
   // панель лимита летит движением панели уведомлений (npIn/npOut, зеркально)
-  assert(/animation:npInUp \.24s cubic-bezier\(\.2,\.9,\.3,1\) both/.test(css) &&
+  assert(/animation:npInUp \.34s cubic-bezier\(\.2,\.9,\.3,1\) both/.test(css) &&
     /\.budget-pop\.bp-closing\{animation:npOutUp \.15s/.test(css) &&
     /@keyframes npInUp\{from\{opacity:0;transform:translateY\(10px\) scale\(\.97\)\}\}/.test(css) &&
     !/budgetPopIn/.test(css) &&
@@ -1609,61 +1624,96 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
 }
 
 function testQuietToolsBoostAskStylesAndAgentTheme() {
-  // ТИХИЙ ИНСТРУМЕНТ: обычный режим показывает работу скромной строкой —
-  // черта, иконка, бледная подпись, мерцание; след гаснет в маску
-  const toolStart = extractFunction(js, 'handleEvent');
-  assert(/quiet-tool/.test(js) && /qt-bar/.test(js) && /qt-label/.test(js) &&
-    /qt-done/.test(js) && /qt-fail/.test(js),
-    'quiet tools render a thin bar, icon and pale blinking label');
-  assert(/\.quiet-tool\{/.test(css) && /@keyframes qtBlink/.test(css) &&
-    /\.quiet-tool\.qt-done \.qt-label,.quiet-tool\.qt-fail \.qt-label\{/.test(css) &&
-    /mask-image:linear-gradient\(90deg,transparent,#000 12%,#000 88%,transparent\)/.test(css),
-    'the finished trace fades into a background-colored mask at both ends');
-  // УСКОРЕНИЕ: кнопка ×2 живёт только во время ответа, muted после клика,
-  // по контуру бежит быстрый свет
+  // ТИХИЙ ПОТОК — ЖИВОЕ ОКНО: строки прилипают к низу, новая приходит снизу
+  // из темноты, старая уходит вверх (маски); полоса активного — цвет подписи
+  // «обычный запрос», отработавшая строка — тускло серо-зелёная
+  assert(/function ensureQuietStream/.test(js) && /function addQuietLine/.test(js) &&
+    /function flushQuietStream/.test(js) && /function flushAgentGroup/.test(js) &&
+    /QT_FAMILY/.test(js) && /QT_TOOL_ICO/.test(js) && /function qtDetail/.test(js),
+    'quiet work lives in a window with lines, families and expandable details');
+  assert(/\.quiet-stream\{[^}]*justify-content:flex-end[\s\S]*?height:76px/s.test(css) &&
+    /mask-image:linear-gradient\(180deg,transparent,#000 34%,#000 82%,transparent\)/.test(css),
+    'the window sticks lines to the bottom and fades both edges (top/bottom masks)');
+  assert(/\.quiet-stream::before\{[^}]*rgba\(154,202,219,\.5\)/s.test(css) &&
+    /\.qs-line\.qs-done \.qs-state\{color:rgba\(128,156,142,\.5\)\}/.test(css) &&
+    /\.qs-line\.qs-done \.qs-label,.qs-line\.qs-fail \.qs-label\{animation:none;color:rgba\(128,156,142,\.75\)\}/.test(css),
+    'active bar = plain-request label color; finished lines fade to gray-green');
+  // череда однотипных → СЛЕД: медленная свёртка 640 мс, число действий,
+  // время; след раскрывается в список, строки — тоже (аргументы+результат)
+  assert(/\.quiet-trace\{/.test(css) && /\.quiet-list\{/.test(css) &&
+    /\.ql-row\{/.test(css) && /\.ql-detail\{/.test(css) &&
+    /height \.64s cubic-bezier\(\.3,\.7,\.25,1\)/.test(js),
+    'the fold is slow and noble (640ms) into a trace with an expandable list');
+  assert(js.includes("web: { label: 'Интернет', ico: 'globe' }") &&
+    /web_search: 'globe', open_url: 'win', http_request: 'cloud'/.test(js) &&
+    /globe:/.test(js) && /brain:/.test(js) && /eye:/.test(js) && /cursor:/.test(js),
+    'the internet family unites search+open+http; icons are meaningful and larger');
+  assert(/\.qs-ico svg\{width:15px;height:15px;display:block\}/.test(css),
+    'tool icons in the window are bigger and meaningful');
+  // АГЕНТ: группировка тоже — но в семье агентских карточек
+  assert(/'tool-card ag-group'/.test(js) && /\.ag-rows\{/.test(css) &&
+    /\.ag-group \.ag-count\{/.test(css) && /ag-count/.test(js),
+    'agent: a run of same-family cards folds into ONE ag-group card with a list');
+  // УСКОРЕНИЕ: ×3.5, живёт только во время ответа, ЗОЛОТОЕ как план —
+  // внутренний свет + быстрые яркие струйки по контуру
   assert(/id="boostBtn"/.test(html) && /Ускорить печать/.test(html) &&
     /function setBoost/.test(js) && /S\.turbo = !!on;/.test(js) &&
     /if \(!on\) setBoost\(false\);/.test(js) &&
     /bb\.disabled = !on; bb\.classList\.toggle\('live', on\);/.test(js),
     'the boost button wakes with streaming and resets after each answer');
-  assert(/\.boost-btn\{[^}]*opacity:\.32/s.test(css) &&
-    /\.boost-btn\.live\{opacity:\.85/.test(css) &&
-    /\.boost-btn\.on\{opacity:\.5/.test(css) &&
-    /@keyframes boostRun\{from\{background-position:140% 0\}to\{background-position:-140% 0\}\}/.test(css) &&
-    /animation:boostRun \.55s linear infinite/.test(css),
-    'boost: nearly invisible when idle, muted when on, fast contour light while boosting');
-  // ШЕСТЬ ТИПОВ ВЫБОРА: каждый вопрос выбирает следующую форму
+  assert(/\.boost-btn\.on\{[^}]*color:#f0be46[^}]*box-shadow:inset 0 0 12px rgba\(240,190,70,\.12\)/s.test(css) &&
+    /animation:boostRun \.42s linear infinite/.test(css) &&
+    /rgba\(240,190,70,\.85\) 50%/.test(css) &&
+    /drop-shadow\(0 0 4px rgba\(240,190,70,\.7\)\)/.test(css),
+    'boost is GOLD like the plan: inner light + fast bright contour streams (.42s)');
+  // ШЕСТЬ ТИПОВ ВЫБОРА: каждый вопрос выбирает следующую форму; ВЫБОР —
+  // подсветка .sel, ОТПРАВЛЯЕТ кнопка «Отправить» (ask-go)
   const qcard = extractFunction(js, 'questionCard');
   assert(/ASK_STYLES = \['pills', 'stack', 'cloud', 'seg', 'grid', 'dial'\]/.test(qcard) &&
     /S\.askStyle = \(\(S\.askStyle \|\| 0\) \+ 1\) % ASK_STYLES\.length;/.test(qcard),
     'every question rotates through six visually distinct choice types');
+  assert(/const choose = \(value, btn\) =>/.test(qcard) &&
+    /classList\.add\('sel'\)/.test(qcard) &&
+    /ask-go/.test(qcard) && /go\.disabled = !\(chosen \|\| ownText\.trim\(\)\);/.test(qcard) &&
+    /go\.addEventListener\('click', \(\) => pick\(ownText\.trim\(\) \|\| chosen\)\);/.test(qcard),
+    'clicking a variant only HIGHLIGHTS it (.sel); the Send button submits');
+  assert(!/b\.addEventListener\('click', \(\) => pick\(o\)\);/.test(qcard),
+    'no variant sends itself on click');
+  assert(/\.ask-opt\.sel\{/.test(css) && /\.ask-go\{/.test(css) &&
+    /\.ask-go:disabled\{opacity:\.3/.test(css) &&
+    /\.ask-send\{/.test(css),
+    'the selected variant and the ask-go button have their own styles');
   ['ask-s-stack', 'ask-s-cloud', 'ask-s-seg', 'ask-s-grid', 'ask-s-dial'].forEach((cls) => {
     assert(new RegExp('\\.' + cls.replace('-', '\\-') + '\\{').test(css),
       'choice style ' + cls + ' has its own CSS');
   });
-  // ТЕМА AGENT: волна от тумблера, интерфейс наливается красным
-  assert(/function agentWave/.test(js) &&
-    /document\.body\.classList\.toggle\('agent-on', S\.agentMode\);/.test(js) &&
-    /S\.agentWaveOrigin/.test(js),
-    'enabling AGENT fires a red wave from the switch (or the permission card)');
-  assert(/\.agent-wave\{/.test(css) && /animation:agentWave 1\.4s/.test(css) &&
-    /\.agent-wave\.out\{[\s\S]*?animation:agentWaveOut \.8s ease-out both\}/.test(css) &&
-    js.includes("agentWave(S.agentWaveOrigin || $('#swAgent'), false)") &&
-    js.includes("else agentWave(S.agentWaveOrigin || $('#swAgent'), true);"),
-    'enabling fires a slower, brighter wave; disabling calms back with a soft reverse wash');
-  // грани интерфейса НЕ перекрашиваются: тема живёт на органах управления
-  assert(!/body\.agent-on\{--line/.test(css),
-    'panel borders stay neutral: red is the color of action, not of edges');
-  assert(/body\.agent-on \.composer\{[^}]*border-color:rgba\(255,84,104,\.4\)/s.test(css) &&
-    /body\.agent-on #input\{caret-color:#ff8f9c\}/.test(css) &&
-    /body\.agent-on \.composer ::selection\{background:rgba\(255,84,104,\.3\)\}/.test(css),
-    'the composer becomes the cockpit: red border, caret and selection');
-  assert(/body\.agent-on \.send-btn\{background:linear-gradient\(135deg,#ff5468,#c0294a\)/.test(css) &&
-    /body\.agent-on \.reactor \.core\{background:radial-gradient\(circle,#fff,#ffb3bc 45%,#a82836\)/.test(css) &&
-    /body\.agent-on \.plan-dock\{[^}]*rgba\(255,90,106,\.5\)/s.test(css) &&
-    /body\.agent-on \.nav-item\.active \.nav-ico\{[^}]*drop-shadow\(0 0 9px rgba\(255,84,104,\.55\)\)/s.test(css) &&
-    /body\.agent-on ::-webkit-scrollbar-thumb\{background:rgba\(255,84,104,\.24\)\}/.test(css),
-    'action organs glow red: send, core, plan, active nav, scrollbar');
+  // ИНТЕРАКТИВНЫЕ ПАНЕЛИ: никакой автопосылки — всегда кнопка «Отправить»
+  const mount = extractFunction(js, 'mountUiPanels');
+  assert(!/sendTimer/.test(mount) && !/setTimeout\(fire/.test(mount) &&
+    !/ui-go-off/.test(mount) && !/ui-arm/.test(mount),
+    'ui panels never auto-send: no timer, no hidden go button');
+  // ТЕМА AGENT «ПОРШЕ»: полноценная вторая тема через переменные
+  assert(/function agentWave/.test(js) && /S\.agentWaveRect/.test(js),
+    'the wave can be born from the permission-card toggle rect captured before folding');
+  assert(/body\.agent-on\{[\s\S]*?--cy:#d96a76; --cy2:#eb939d;[\s\S]*?--line:rgba\(255,120,132,\.14\); --line2:rgba\(255,120,132,\.26\);[\s\S]*?--panel:rgba\(30,15,19,\.72\)/.test(css),
+    'PORSCHE theme: the whole interface recolors through base variables');
+  assert(/animation:agentWave \.78s cubic-bezier\(\.16,\.7,\.3,1\) both/.test(css) &&
+    /\.agent-wave\.out\{[\s\S]*?animation:agentWaveOut \.7s ease-out both\}/.test(css),
+    'the wave is shorter and calmer (.78s), the wash-out .7s');
+  assert(/setTimeout\(\(\) => \{[\s\S]*?document\.body\.classList\.toggle\('agent-on', S\.agentMode\);[\s\S]*?\}, 280\);/.test(js) &&
+    /ag-switching/.test(js) && /\.agent-switch\.ag-switching \.agent-switch-track\{pointer-events:none\}/.test(css),
+    'the theme switches BEHIND the wave (+280ms) and the switch locks meanwhile');
+  assert(/body\.agent-on \.bg-layer\{/.test(css) && /body\.agent-on \.grid-plane\{/.test(css) &&
+    /body\.agent-on \.bubble-user\{/.test(css) && /body\.agent-on \.note-panel\{/.test(css) &&
+    /body\.agent-on \.modal/.test(css) === false ? /body\.agent-on \.jw-ico\{/.test(css) : true,
+    'theme covers sky, grid, user bubble, panels and windows');
+  assert(/body\.agent-on \.send-btn\{background:linear-gradient\(135deg,#e07a86,#a63a49\)/.test(css) &&
+    /body\.agent-on \.reactor \.core\{background:radial-gradient\(circle,#fff,#f0b6be 45%,#a82836\)/.test(css) &&
+    /body\.agent-on ::-webkit-scrollbar-thumb\{background:rgba\(255,120,132,\.22\)\}/.test(css),
+    'action organs glow in the Porsche red family');
+  // буст остаётся золотым и в агенте
+  assert(!/body\.agent-on \.boost-btn\.on\{color:#ff8f9c/.test(css),
+    'boost stays GOLD inside the agent theme (speed is the color of plan, not mode)');
   // окно Джарвиса входит без scale — рамка не мерцает
   assert(/@keyframes jarvisWinIn\{from\{opacity:0;transform:translateY\(14px\)\}\}/.test(css),
     'the Jarvis window fades up without scaling (no border shimmer)');

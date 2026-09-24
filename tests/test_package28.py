@@ -3129,5 +3129,77 @@ class AgentAutonomyTests(unittest.TestCase):
         self.assertIn("notes.md", runner._owned_files)
 
 
+class AiReplySuggestionsTests(unittest.TestCase):
+    """Подсказки продолжения формирует ИИ-модель (nano): три коротких
+    варианта по сути ответа. Любой сбой честно падает в локальный запас —
+    после AGENT-прогона это проактивные шаги по фактам работы."""
+
+    def test_parses_model_variants_and_falls_back(self) -> None:
+        with mock.patch.object(agent.llm, "chat",
+                               return_value='["Уточнить срок", "Добавить график", "Скопировать в файл"]'):
+            items = agent.suggest_replies_ai("когда дедлайн проекта?",
+                                             "Дедлайн — пятница, 18:00.")
+        self.assertEqual(items, ["Уточнить срок", "Добавить график", "Скопировать в файл"])
+
+        # мусор от модели — локальный запас: у AGENT-прогона проактивные шаги
+        with mock.patch.object(agent.llm, "chat", side_effect=RuntimeError("сеть")), \
+             mock.patch.object(agent, "suggest_proactive",
+                               return_value=["Поставь на мониторинг"]) as proactive:
+            items = agent.suggest_replies_ai("следи за курсом", "Готово", ["web_search"])
+        self.assertEqual(items, ["Поставь на мониторинг"])
+        self.assertTrue(proactive.called)
+
+        # обычный разговор — разговорные продолжения
+        with mock.patch.object(agent.llm, "chat", side_effect=RuntimeError("сеть")):
+            items = agent.suggest_replies_ai("расскажи про котов", "Коты спят 16 часов в сутки.")
+        self.assertTrue(items and all(isinstance(i, str) for i in items))
+
+    def test_parser_is_tolerant_to_model_noise(self) -> None:
+        parse = agent._parse_reply_suggestions
+        # пояснение вокруг массива
+        self.assertEqual(parse('Вот варианты: ["один", "два", "три"] Конец.'),
+                         ["один", "два", "три"])
+        # пустые мета-вопросы и мусор отсеиваются
+        self.assertEqual(parse('["Что ещё?", "Добавить таблицу", "", null]'),
+                         ["Добавить таблицу"])
+        self.assertEqual(parse(""), [])
+
+
+class LongIntroReleaseTests(unittest.TestCase):
+    """«Медленный агент»: intro_hold держал ВЕСЬ первый ход — длинный ответ
+    молчал до конца и вываливался куском. Теперь текст длиннее 260 символов
+    выпускается в поток сразу, в момент генерации."""
+
+    def test_long_first_turn_streams_immediately(self) -> None:
+        route = {"tier": "base", "reason": "t", "score": 0.5,
+                 "verbose": True, "offer_tools": True}
+        schema = [{"type": "function", "function": {"name": "web_search",
+                                                    "parameters": {"type": "object"}}}]
+        # первый ход: длинный текст (>260) двумя кусками, без инструментов
+        long_a = "Сейчас расскажу подробно о структуре рынка. " * 4   # ~200
+        long_b = "Дальше идут выводы и прогнозы на год. " * 4        # +~170
+        runner = agent.Agent(agent_mode=True)
+
+        def fake_stream(*_a, **_k):
+            return [
+                {"type": "delta", "text": long_a},
+                {"type": "delta", "text": long_b},
+                {"type": "done", "tool_calls": []},
+            ]
+
+        with mock.patch.object(agent.orchestrator, "choose_tier", return_value=route), \
+             mock.patch.object(agent.llm, "chat_stream", side_effect=fake_stream), \
+             mock.patch.object(agent.tools, "schemas", return_value=schema):
+            events = list(runner.run([{"role": "user", "content": "расскажи про рынок"}],
+                                     user_text="расскажи про рынок"))
+        deltas = [e for e in events if e.get("type") == "delta"]
+        self.assertTrue(deltas, "длинный текст обязан выходить дельтами, а не одним куском в конце")
+        # весь текст дошёл до пользователя без потерь
+        streamed = "".join(e.get("text", "") for e in deltas)
+        self.assertIn(long_a.strip()[:40], streamed,
+                      "начало длинного ответа не теряется при выпуске")
+        self.assertTrue(len(streamed) >= len(long_a + long_b) - 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -26,6 +26,8 @@ const S = {
   chatOpenRun: 0,       // поздний /messages не может перерисовать уже другой чат
   taskLoadRun: 0,
   autoPaused: false,
+  scenarioActive: false, // идёт выполнение сценария: индикатор даты молчит
+  agentWaveRect: null,   // rect тумблера из карточки-разрешения (до свёртки)
   followUi: null,       // текущий run и явное намерение следовать за его ростом
   attachments: [],
   config: {},
@@ -137,6 +139,9 @@ function setupScrollDate(host, badge) {
   };
   const paint = () => {
     frame = 0;
+    // СЦЕНАРИЙ — РАЗГОВОР ОДНОГО ДНЯ: индикатор «сегодня» не будится вовсе,
+    // он объясняет переход между днями, а этапы сценария — это не дни.
+    if (S.scenarioActive) { clearTimeout(hideTimer); hide(); return; }
     // Внизу дата не нужна: пользователь и так находится в сегодняшнем ходе.
     if (host.scrollHeight - host.scrollTop - host.clientHeight < 18) {
       clearTimeout(hideTimer);
@@ -513,7 +518,11 @@ try {
    Класс agent-on на body остаётся и держит красную тему, пока режим жив. */
 function agentWave(originEl, calm) {
   const src = originEl && originEl.getBoundingClientRect ? originEl : $('#swAgent');
-  const r = (src && src.getBoundingClientRect()) || { left: innerWidth / 2, top: innerHeight / 2, width: 0, height: 0 };
+  let r = (src && src.getBoundingClientRect()) || null;
+  // Карточка-разрешение уже свернулась — её тумблер в display:none и rect
+  // нулевой. Тогда волна рождается из координат, снятых ДО свёртывания.
+  if ((!r || (!r.width && !r.height)) && S.agentWaveRect) r = S.agentWaveRect;
+  if (!r) r = { left: innerWidth / 2, top: innerHeight / 2, width: 0, height: 0 };
   const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
   const wave = el('div', 'agent-wave' + (calm ? ' out' : ''));
   const radius = Math.hypot(Math.max(cx, innerWidth - cx), Math.max(cy, innerHeight - cy));
@@ -521,8 +530,9 @@ function agentWave(originEl, calm) {
   wave.style.top = cy + 'px';
   wave.style.setProperty('--aw', (radius * 2.2) + 'px');
   document.body.appendChild(wave);
-  // включение — длинная яркая волна; выключение — спокойный отлив обратно
-  setTimeout(() => wave.remove(), calm ? 850 : 1450);
+  S.agentWaveRect = null;
+  // включение — короткая сдержанная волна (0.78 с); выключение — отлив
+  setTimeout(() => wave.remove(), calm ? 750 : 820);
 }
 
 $('#tgAgent').addEventListener('change', function () {
@@ -533,12 +543,18 @@ $('#tgAgent').addEventListener('change', function () {
   const shell = this.closest('.agent-switch');
   if (shell) shell.classList.add('tip-dismissed');
   beep(S.agentMode ? 760 : 420, 0.1);
-  // ТЕМА AGENT: включение запускает волну от тумблера (или от тумблера в
-  // карточке-разрешении — координаты передаёт mode_changed), выключение
-  // тихо возвращает нейтральный интерфейс.
-  document.body.classList.toggle('agent-on', S.agentMode);
+  // ТУМБЛЕР НЕ ТРОГАЮТ, ПОКА ИГРАЕТ ПЕРЕСАДКА: волна и смена темы — единый
+  // жест, двойной клик посреди него ломал бы последовательность.
+  if (shell) shell.classList.add('ag-switching');
+  // СНАЧАЛА ВОЛНА, ТЕМА — ЗА НЕЙ. Волна короткая и сдержанная (0.78 с),
+  // расходится от тумблера; на 280-й мс, когда фронт накрывает экран, за ним
+  // меняется тема — жест читается как «волна прокатилась и перекрасила».
   if (S.agentMode) agentWave(S.agentWaveOrigin || $('#swAgent'), false);
   else agentWave(S.agentWaveOrigin || $('#swAgent'), true);
+  setTimeout(() => {
+    document.body.classList.toggle('agent-on', S.agentMode);
+    if (shell) shell.classList.remove('ag-switching');
+  }, 280);
   S.agentWaveOrigin = null;
   $('#input').placeholder = S.agentMode
     ? 'Поставь задачу — разобью на шаги и сделаю сам…'
@@ -1656,6 +1672,21 @@ const ICO = {
   shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7.5 3v5.6c0 4.6-3.1 8-7.5 9.4-4.4-1.4-7.5-4.8-7.5-9.4V6z"/></svg>',
   pause: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 5v14M16 5v14"/></svg>',
   play: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5.5l10 6.5-10 6.5z"/></svg>',
+  // Смысловые иконки ИНСТРУМЕНТОВ: по ним читается работа без подписи.
+  // Глобус — поиск в интернете; окно — открытие страницы; мозг — память/мысли;
+  // глаз — взгляд на экран; курсор — управление компьютером; терминал и
+  // шестерня — код и служебные действия; документ с пером — запись файла.
+  globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2M12 3.4c2.6 2.4 3.9 5.4 3.9 8.6s-1.3 6.2-3.9 8.6c-2.6-2.4-3.9-5.4-3.9-8.6s1.3-6.2 3.9-8.6z"/></svg>',
+  win: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3.4" y="4.4" width="17.2" height="15.2" rx="2.4"/><path d="M3.4 9.2h17.2M6.4 6.8h.01M9 6.8h.01M11.6 6.8h.01"/></svg>',
+  brain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5a2.6 2.6 0 0 0-2.6 2.6c-1.4.2-2.4 1.4-2.4 2.8 0 .6.2 1.2.5 1.6-.5.5-.8 1.1-.8 1.9 0 1.2.8 2.2 1.9 2.5 0 1.6 1.3 2.9 2.9 2.9.7 0 1.3-.2 1.8-.7V3.9c-.4-.2-.8-.4-1.3-.4z"/><path d="M14.5 3.5a2.6 2.6 0 0 1 2.6 2.6c1.4.2 2.4 1.4 2.4 2.8 0 .6-.2 1.2-.5 1.6.5.5.8 1.1.8 1.9 0 1.2-.8 2.2-1.9 2.5 0 1.6-1.3 2.9-2.9 2.9-.7 0-1.3-.2-1.8-.7V3.9c.4-.2.8-.4 1.3-.4z"/><path d="M12 19.5v1.2"/></svg>',
+  eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.9"/></svg>',
+  cursor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M5.5 3.5l14 7.7-6.3 1.5 2.6 6.1-2.6 1.1-2.6-6.1-4.4 4.2z"/></svg>',
+  term: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="4.4" width="17.6" height="15.2" rx="2.4"/><path d="M7 9.5l3 2.8-3 2.8M12.4 15.6h4.4"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.1"/><path d="M12 2.8l1 2.6 2.7-.7 1.4 2.4-1.9 2 1.9 2-1.4 2.4-2.7-.7-1 2.6h-1l-1-2.6-2.7.7-1.4-2.4 1.9-2-1.9-2 1.4-2.4 2.7.7 1-2.6z" transform="translate(0 1.2)"/></svg>',
+  docpen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h8.5L18.5 7.5v6.8l-4.3 4.2H6z"/><path d="M14 3.7v4h4.3"/><path d="M12.6 17.6l5.8-5.8 2 2-5.8 5.8-2.5.5z"/></svg>',
+  doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h8.5L18.5 7.5v13H6z"/><path d="M14 3.7v4h4.3"/><path d="M9 12h6M9 15.4h6"/></svg>',
+  cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18.5a4.2 4.2 0 0 1-.4-8.4 5.4 5.4 0 0 1 10.5 1.2 3.6 3.6 0 0 1-.6 7.2z"/></svg>',
+  spark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2l2.6 5.6 6 .7-4.5 4.1 1.3 6-5.4-3-5.4 3 1.3-6L3.4 9.5l6-.7z"/></svg>',
 };
 
 /* Свернуть блок в компактную строку-миниатюру.
@@ -2538,18 +2569,13 @@ function mountUiPanels(root) {
     box.innerHTML = '';
 
     const HUES = ['c1', 'c2', 'c3', 'c4', 'c5'];
-    // «Аналоговые» органы — те, где значение подкручивают, а не выбирают из
-    // готовых вариантов. Их нельзя отправлять по первому касанию: человек
-    // ещё крутит ползунок. Значит, панели с ними нужна кнопка «Отправить»,
-    // а панелям с одними плитками/тумблерами — не нужна.
-    // Всё, где значение ДОКРУЧИВАЮТ (а не выбирают одним касанием), требует
-    // кнопки «Отправить»: человек ещё расставляет порядок, дописывает строку
-    // или выбирает несколько пунктов — отправлять по первому касанию нельзя.
+    // ЛЮБАЯ панель отправляется ТОЛЬКО кнопкой «Отправить». Раньше чистые
+    // плитки улетали по первому касанию (таймер на 900 мс), а тумблеры и
+    // звёзды — сразу; передумать было нельзя, промах стоил отправки. Теперь
+    // клик всегда означает только выбор с подсветкой — как в живом диалоге.
     const ANALOG = { slider: 1, number: 1, text: 1, area: 1, date: 1,
                      color: 1, rank: 1, multi: 1, rate: 1 };
-    const hasAnalog = items.some((x) => ANALOG[x.t]);
     let touched = false;
-    let sendTimer = null;
     let go = null;
 
     let ownVal = '';                       // «свой вариант» — вне списка items
@@ -2581,24 +2607,13 @@ function mountUiPanels(root) {
     const canSend = () => ready() || Boolean(ownVal.trim());
     const syncSendState = () => {
       const valid = canSend();
-      if (!valid) {
-        clearTimeout(sendTimer);
-        box.classList.remove('ui-arm');
-      }
-      if (go) {
-        go.disabled = !valid;
-        // Pure one-tap panels auto-send. Their button appears only while a
-        // custom answer is being typed; mixed/analog forms always show it.
-        go.classList.toggle('ui-go-off', !hasAnalog && !ownVal.trim());
-      }
+      if (go) go.disabled = !valid;
       return valid;
     };
 
     const fire = () => {
       if (box.dataset.sent === '1' || !syncSendState()) return;
       box.dataset.sent = '1';
-      clearTimeout(sendTimer);
-      box.classList.remove('ui-arm');
       box.classList.add('ui-sent');
       $$('input,button,textarea', box).forEach((c) => { c.disabled = true; });
       $('#input').value = summary().join('\n'); autoGrow();
@@ -2606,21 +2621,12 @@ function mountUiPanels(root) {
       sfx('send');
     };
 
-    // Без аналоговых органов выбор уходит сам — подтверждать нечего.
-    const armSend = () => {
-      const valid = syncSendState();
-      if (hasAnalog || !touched || box.dataset.sent === '1') return;
-      // человек пишет своё — отправлять по таймеру нельзя, ждём кнопку
-      if (ownVal.trim()) { box.classList.remove('ui-arm'); return; }
-      clearTimeout(sendTimer);
-      if (!valid) { box.classList.remove('ui-arm'); return; }
-      box.classList.add('ui-arm');
-      sendTimer = setTimeout(fire, 900);
-    };
+    // Выбор меняет только состояние кнопки: нет таймера, нет автопосылки.
+    // Подтверждение — всегда осознанное нажатие «Отправить».
+    const armSend = () => { syncSendState(); };
     const controlChanged = () => {
       touched = true;
       syncSendState();
-      armSend();
     };
 
     items.forEach((it, idx) => {
@@ -2837,8 +2843,9 @@ function mountUiPanels(root) {
       box.appendChild(row);
     }
 
-    // Кнопка нужна ТОЛЬКО когда есть что докручивать. Выглядит и ведёт себя
-    // как кнопка отправки под полем ввода — та же стрелка, тот же смысл.
+    // Кнопка «Отправить» нужна ВСЕГДА, когда в панели есть выбор: никакой
+    // автопосылки. Выглядит и ведёт себя как кнопка отправки под полем
+    // ввода — та же стрелка, тот же смысл.
     if (askable) {
       go = el('button', 'ui-go', ICO.send + '<span>Отправить</span>');
       go.addEventListener('click', fire);
@@ -2852,8 +2859,6 @@ function mountUiPanels(root) {
       own.addEventListener('input', () => {
         ownVal = own.value;
         touched = true;
-        clearTimeout(sendTimer);
-        box.classList.remove('ui-arm');
         syncSendState();
       });
       own.addEventListener('keydown', (e) => {
@@ -3208,8 +3213,7 @@ async function send(opts) {
     stage.innerHTML =
       '<i>' + opts.scenarioStep + '</i>' +
       '<span class="sc-stage-line"></span>' +
-      '<span class="sc-stage-text">' + esc(text) + '</span>' +
-      '<span class="sc-stage-line"></span>';
+      '<b class="sc-stage-text">' + esc(text) + '</b>';
     requestHost.appendChild(stage);
   } else if (!opts.silent) {
     userMsgNode = addUserMsg(text, atts, null, requestHost);
@@ -3553,6 +3557,224 @@ function toolTicker(ev) {
   return lines.concat(groupQuips(ev.group));
 }
 
+/* Семейства инструментов: череда однотипных действий — ОДНА история.
+   Пять поисков подряд это одна работа «исследую интернет», а не пять
+   одинаковых строк. Источник правды о теме — группа из реестра. */
+const QT_FAMILY = {
+  web: { label: 'Интернет', ico: 'globe' },
+  sandbox: { label: 'Код и файлы', ico: 'term' },
+  memory: { label: 'Память', ico: 'brain' },
+  computer: { label: 'Компьютер', ico: 'cursor' },
+  media: { label: 'Медиа', ico: 'eye' },
+  auto: { label: 'Задачи', ico: 'cloud' },
+  base: { label: 'Работа', ico: 'spark' },
+};
+
+/* Конкретный инструмент — своя смысловая иконка: по ней виден ТИП действия
+   (глобус — искал, окно — открыл страницу, глаз — посмотрел на экран). */
+const QT_TOOL_ICO = {
+  web_search: 'globe', open_url: 'win', http_request: 'cloud',
+  read_file: 'doc', write_file: 'docpen', list_files: 'doc',
+  run_python: 'term', run_command: 'term',
+  screenshot: 'eye', ui_tree: 'eye', screen_info: 'eye',
+  mouse_click: 'cursor', mouse_move: 'cursor', scroll: 'cursor',
+  drag: 'cursor', type_text: 'cursor', press_key: 'cursor',
+  open_app: 'cursor',
+  remember: 'brain', recall: 'brain', forget: 'brain',
+  generate_image: 'spark',
+};
+
+function qtFamilyIcon(group, name) {
+  return ICO[QT_TOOL_ICO[name] || (QT_FAMILY[group] || {}).ico || 'gear'] || ICO.gear;
+}
+
+/* Компактная расшифровка вызова для раскрываемой строки следа: аргументы и
+   результат — то, что интересно при желании заглянуть, но не нужно на бегу. */
+function qtDetail(args, result) {
+  const parts = [];
+  const a = args || {};
+  Object.keys(a).slice(0, 4).forEach((k) => {
+    const v = String(a[k] == null ? '' : a[k]).trim();
+    if (v) parts.push(k + ': ' + (v.length > 160 ? v.slice(0, 160) + '…' : v));
+  });
+  let out = parts.join('\n');
+  const text = toolResultText(result || {});
+  if (text) out += (out ? '\n' : '') + (text.length > 600 ? text.slice(0, 600) + '…' : text);
+  return out || '(пусто)';
+}
+
+/* ============================ ТИХИЙ ПОТОК ============================
+   Работа инструментов обычного режима — ЖИВОЕ ОКНО, а не россыпь строк.
+   Окно висит в ответе: строки прилипают к низу, новая приходит снизу из
+   темноты, старая уходит вверх и тает (маски сверху/снизу). Пока череда
+   идёт — окно дышит; череда закончилась (другой тип работы или конец
+   ответа) — окно медленно и благородно сворачивается в след: одна строка
+   «семейство × число действий · время». След раскрывается в список, каждая
+   строка списка — тоже раскрываемая (аргументы + результат). */
+function ensureQuietStream(ui) {
+  if (ui.quietStream && ui.quietStream.node.isConnected) return ui.quietStream;
+  const node = el('div', 'quiet-stream');
+  node.body = ui.statusEl;                    // маркер вставки: перед статусом
+  ui.statusEl.parentNode.insertBefore(node, ui.statusEl);
+  ui.quietStream = { node, group: '', lines: [] };
+  return ui.quietStream;
+}
+
+function addQuietLine(ui, ev) {
+  const stream = ensureQuietStream(ui);
+  if (stream.group && stream.group !== ev.group) flushQuietStream(ui);
+  if (!ui.quietStream || !ui.quietStream.node.isConnected) {
+    // поток только что свернулся — новое семейство начинает новое окно
+    const fresh = ensureQuietStream(ui);
+    fresh.group = ev.group;
+  }
+  const s = ui.quietStream;
+  s.group = ev.group;
+  const line = el('div', 'qs-line');
+  line.innerHTML =
+    '<span class="qs-ico">' + qtFamilyIcon(ev.group, ev.name) + '</span>' +
+    '<span class="qs-label">' + esc(ev.label || ev.name) + '</span>' +
+    '<span class="qs-state"></span>';
+  line._tool = { id: ev.id, name: ev.name, label: ev.label || ev.name,
+                 group: ev.group, args: ev.args || {} };
+  s.node.appendChild(line);
+  s.lines.push(line);
+  // окно показывает только последние строки: старые уходят вверх в темноту
+  while (s.lines.length > 8) s.lines.shift();
+  while (s.node.children.length > 12) s.node.removeChild(s.node.firstChild);
+  ui.tools[ev.id || ev.name] = line;
+  scrollSoon(ui);
+  return line;
+}
+
+function flushQuietStream(ui) {
+  const s = ui.quietStream;
+  if (!s || !s.node || !s.node.isConnected || !s.lines.length) {
+    if (s) s.node.remove();
+    ui.quietStream = null;
+    return;
+  }
+  ui.quietStream = null;
+  const fam = QT_FAMILY[s.group] || QT_FAMILY.base;
+  const rows = s.lines.slice();
+  const totalSec = rows.reduce((acc, r) => acc + (r._tool && r._tool.elapsed || 0), 0);
+  const trace = el('div', 'quiet-trace');
+  trace.innerHTML =
+    '<span class="qt-ico">' + qtFamilyIcon(s.group, '') + '</span>' +
+    '<span class="qt-label">' + esc(fam.label) +
+      (rows.length > 1 ? ' × ' + rows.length : '') + '</span>' +
+    '<span class="qt-state">' + (totalSec ? totalSec.toFixed(1).replace(/\.0$/, '') + 'с' : '') + '</span>' +
+    '<span class="th-open">›</span>';
+  const list = el('div', 'quiet-list');
+  rows.forEach((line) => {
+    const t = line._tool || {};
+    const row = el('div', 'ql-row');
+    row.innerHTML =
+      '<span class="ql-head">' +
+        '<span class="qs-ico">' + qtFamilyIcon(t.group, t.name) + '</span>' +
+        '<span class="ql-label">' + esc(t.label || t.name) + '</span>' +
+        '<span class="qs-state">' + (t.ok === false ? '✕' : '✓') +
+          (t.elapsed ? ' ' + t.elapsed + 'с' : '') + '</span>' +
+      '</span>' +
+      '<pre class="ql-detail">' + esc(qtDetail(t.args, t.result)) + '</pre>';
+    row.addEventListener('click', () => row.classList.toggle('open'));
+    list.appendChild(row);
+  });
+  trace.addEventListener('click', () => {
+    trace.classList.toggle('open');
+    list.classList.toggle('open');
+  });
+  // СВЁРТКА ОКНА — НЕ СПЕШИТ. Медленная (640 мс) благородная анимация:
+  // окно съёживается по высоте, след возникает на его месте и раскрывается
+  // по клику. Быстрая свёртка читалась бы как моргание.
+  const node = s.node;
+  node.classList.add('qs-folding');
+  const h0 = node.getBoundingClientRect().height;
+  node.style.height = h0 + 'px';
+  void node.offsetHeight;
+  node.style.transition = 'height .64s cubic-bezier(.3,.7,.25,1), opacity .5s ease .14s';
+  node.style.height = Math.min(46, h0) + 'px';
+  node.style.opacity = '.25';
+  setTimeout(() => {
+    node.replaceWith(trace);
+    if (trace.parentNode) trace.insertAdjacentElement('afterend', list);
+    node.remove();
+  }, 640);
+  scrollSoon(ui);
+}
+
+/* ГРУППИРОВКА В АГЕНТЕ: череда однотипных карточек складывается в ОДНУ
+   групповую карточку — как только пришёл другой тип работы или ответ
+   завершён. Внутри — раскрываемый список действий (строки тоже
+   раскрываемые). Дизайн — семья агентских карточек, не тихих следов. */
+function flushAgentGroup(ui) {
+  const g = ui.agentGroup;
+  ui.agentGroup = null;
+  if (!g || !g.cards.length) return;
+  const cards = g.cards.filter((c) => c.isConnected);
+  if (!cards.length) return;
+  const fam = QT_FAMILY[g.group] || QT_FAMILY.base;
+  // ОДНО действие не образует череды: карточка живёт сама и сворачивается
+  // в миниатюру, как обычная инструментальная карточка
+  if (cards.length === 1) {
+    const only = cards[0];
+    const t = only._tool || {};
+    collapseSoon(only, {
+      cls: t.ok === false ? 'th-no' : 'th-ok', icon: ICO.code,
+      title: t.label || '', sub: t.elapsed != null ? t.elapsed + 'с' : '',
+      tag: t.ok === false ? 'ошибка' : 'готово',
+    });
+    return;
+  }
+  const anchor = cards[0];
+  const secs = cards.map((c) => (c._tool && c._tool.elapsed) || 0);
+  const totalSec = secs.reduce((a, b) => a + b, 0);
+  const anyFail = cards.some((c) => c._tool && c._tool.ok === false);
+  const card = makeCard(qtFamilyIcon(g.group, ''), fam.label, 'tool-card ag-group', true);
+  card.querySelector('.card-head').insertBefore(el('span', 'tool-run'), card.querySelector('.chev'));
+  const head = card.querySelector('.k');
+  if (head) head.innerHTML = esc(fam.label) + '<span class="ag-count"> × ' + cards.length + '</span>';
+  const rows = el('div', 'ag-rows');
+  cards.forEach((c) => {
+    const t = c._tool || {};
+    const row = el('div', 'ql-row');
+    row.innerHTML =
+      '<span class="ql-head">' +
+        '<span class="qs-ico">' + qtFamilyIcon(t.group, t.name) + '</span>' +
+        '<span class="ql-label">' + esc(t.label || t.name) + '</span>' +
+        '<span class="qs-state">' + (t.ok === false ? '✕' : '✓') +
+          (t.elapsed != null ? ' ' + t.elapsed + 'с' : '') + '</span>' +
+      '</span>' +
+      '<pre class="ql-detail">' + esc(qtDetail(t.args, t.result)) + '</pre>';
+    row.addEventListener('click', () => row.classList.toggle('open'));
+    rows.appendChild(row);
+  });
+  card.inner.appendChild(rows);
+  anchor.parentNode.insertBefore(card, anchor);
+  cards.forEach((c) => {
+    const t = c._tool || {};
+    if (t.id && ui.tools[t.id] === c) delete ui.tools[t.id];
+    c.remove();
+  });
+  markBorn(card);
+  const run = card.querySelector('.tool-run');
+  if (run) { run.style.animation = 'none'; run.style.background = anyFail ? 'var(--red)' : 'var(--green)'; }
+  const k = card.querySelector('.k');
+  if (k) k.className = 'k ' + (anyFail ? 'tool-err' : 'tool-ok');
+  const tEl = card.querySelector('.t');
+  if (tEl && totalSec) tEl.innerHTML += ' <span class="muted" style="font-size:10.5px">· ' +
+    totalSec.toFixed(1).replace(/\.0$/, '') + 'с</span>';
+  // групповая карточка задерживается на виду, затем сворачивается в миниатюру —
+  // список действий доступен разворачиванием, как у любой карточки
+  collapseSoon(card, {
+    cls: anyFail ? 'th-no' : 'th-ok', icon: qtFamilyIcon(g.group, ''),
+    title: fam.label + ' × ' + cards.length,
+    sub: totalSec ? totalSec.toFixed(1).replace(/\.0$/, '') + 'с' : '',
+    tag: anyFail ? 'есть ошибки' : 'готово',
+  });
+  scrollSoon(ui);
+}
+
 /* Печать «хода мыслей». Раньше текст вставлялся кусками как есть: модель
    отдаёт reasoning пачками по 20-200 символов, и блок дёргался скачками,
    а не печатался. Здесь тот же приём, что и в основном ответе, но БЕЗ пауз
@@ -3619,9 +3841,10 @@ function setStreaming(on) {
   if (bb) { bb.disabled = !on; bb.classList.toggle('live', on); }
 }
 
-/* ТУРБО ×2: пока идёт печать, рядом с Send доступна кнопка «». Один клик —
-   оставшийся текст печатается вдвое быстрее; сама кнопка при этом muted —
-   включённое состояние не должно кричать. По контуру бежит быстрый свет. */
+/* ТУРБО ×3.5: пока идёт печать, рядом с Send доступна кнопка «». Один клик —
+   оставшийся текст печатается в три с половиной раза быстрее; при этом
+   страница ОБЯЗАНА успевать прокручиваться (шаг печатки остаётся конечным),
+   а кнопка светится золотым, как план: внутренний свет + быстрые струйки. */
 function setBoost(on) {
   S.turbo = !!on;
   const bb = $('#boostBtn');
@@ -4015,7 +4238,7 @@ function typerStart(ui) {
     // ТУРБО: кнопка ×2 у поля ввода. Ускоряется всё честно — целевая
     // скорость, предел кадра и паузы препинания. Ответ не «прыгает», а
     // печатается тем же характером, только вдвое быстрее.
-    const turbo = S.turbo ? 2 : 1;
+    const turbo = S.turbo ? 3.5 : 1;
     want *= turbo;
     // После done ускоряется ТОЛЬКО плотный контент (код, таблицы, списки):
     // его хвост не должен «досматриваться» минуту. Разговорный текст держит
@@ -4526,25 +4749,22 @@ function handleEvent(ev, ui) {
       }
       // строка состояния рассказывает, чем агент занят прямо сейчас
       busyMode(ui, toolTicker(ev), 2200);
-      // ОБЫЧНЫЙ РЕЖИМ — БЕЗ КУХНИ, НО НЕ ПУСТОТА. Полное молчание читалось
-      // как «завис»: работа идёт, а экран ничего не говорит. Вместо карточек
-      // — тихая строка инструмента: тонкая вертикальная черта, иконка, бледная
-      // подпись, скромное мерцание. Отработав, строка замирает в свёрнутый
-      // след — как пометки инструментов у ассистента: видно, что было, но
-      // внимания не требует.
+      // ОБЫЧНЫЙ РЕЖИМ — ЖИВОЕ ОКНО РАБОТЫ. Полное молчание читалось как
+      // «завис», россыпь одинаковых строк — как лог. Теперь инструменты
+      // живут в одном окне: строки прилипают к низу, новая приходит снизу
+      // из темноты, старые уходят вверх и тают. Череда однотипных действий —
+      // одна история: окно свернётся в след «семейство × число · время».
       if (!ui.agentMode) {
         termLine('$ ' + ev.name + ' ' + JSON.stringify(ev.args || {}).slice(0, 300), 'cmd');
-        const q = el('div', 'quiet-tool');
-        q.innerHTML =
-          '<i class="qt-bar"></i>' +
-          '<span class="qt-ico">' + (ICO.gear || '⚙') + '</span>' +
-          '<span class="qt-label">' + esc(ev.label || ev.name) + '</span>' +
-          '<span class="qt-state"></span>';
-        node.body.insertBefore(q, ui.statusEl);
-        ui.tools[ev.id || ev.name] = q;
-        scrollSoon(ui);
+        addQuietLine(ui, ev);
         break;
       }
+      // переход обычный → агент посреди ответа: окно тихого потока
+      // сворачивается в след, дальше работают агентские карточки
+      if (ui.quietStream) flushQuietStream(ui);
+      // череда однотипных карточек складывается в одну группу: другой тип
+      // работы закрывает прежнюю группу
+      if (ui.agentGroup && ui.agentGroup.group !== ev.group) flushAgentGroup(ui);
       // Только registry-marked ожидание получает контур. Класс присутствует
       // ещё до DOM insertion — никакого отложенного «старта» после открытия.
       const waitVisual = ev.wait_visual === true;
@@ -4559,6 +4779,12 @@ function handleEvent(ev, ui) {
       card.inner.appendChild(kv);
       node.body.insertBefore(card, ui.statusEl);
       markBorn(card);
+      // карточка знает о себе всё: группе инструментов нужны имя, аргументы
+      // и результат, чтобы сложиться в общую карточку с раскрываемым списком
+      card._tool = { id: ev.id || ev.name, name: ev.name, label: ev.label || ev.name,
+                     group: ev.group || 'base', args: ev.args || {} };
+      if (!ui.agentGroup) ui.agentGroup = { group: ev.group || 'base', cards: [] };
+      ui.agentGroup.cards.push(card);
       ui.tools[ev.id || ev.name] = card;
       termLine('$ ' + ev.name + ' ' + JSON.stringify(ev.args || {}).slice(0, 300), 'cmd');
       // Прогрессом владеют только plan_step-события оркестратора. Число
@@ -4697,6 +4923,14 @@ function handleEvent(ev, ui) {
         if (card.dataset.done === '1') return;
         card.dataset.done = '1';
         api('/api/questions/answer', { id: ev.id, answer });
+        // координаты тумблера снимаются ДО свёртывания карточки: после
+        // свёртывания элемент скрыт, rect нулевой, а красной волне AGENT
+        // нужно родиться именно отсюда — из точки разрешения
+        const swEl = card.querySelector('.mc-switch');
+        if (swEl && answer === 'Включить' && ev.mode === 'agent') {
+          const rect = swEl.getBoundingClientRect();
+          if (rect.width || rect.height) S.agentWaveRect = rect;
+        }
         const thumb = collapseToThumb(card, {
           cls: 'th-ask', icon: '⚡', title: 'Разрешение: ' + (ev.label || ''),
           sub: ev.reason || '',
@@ -4791,6 +5025,10 @@ function handleEvent(ev, ui) {
     // пока нажмут кнопку: лучше один вопрос, чем неверная догадка.
     case 'question': {
       reactor('wait');
+      // вопрос — граница работы: окно инструментов сворачивается в след,
+      // череда карточек складывается в группу, карточка вопроса чистая
+      flushQuietStream(ui);
+      flushAgentGroup(ui);
       busyMode(ui, ['Жду твоего ответа', 'выбери вариант выше'], 1500);
       const card = questionCard(ev, (choice) => {
         api('/api/questions/answer', { id: ev.id, answer: choice });
@@ -4809,16 +5047,17 @@ function handleEvent(ev, ui) {
       }
       const card = ui.tools[ev.id || ev.name];
       const ok = ev.result && ev.result.ok !== false;
-      if (card && card.classList.contains('quiet-tool')) {
-        // тихий след отработавшего инструмента: черта зеленеет/краснеет,
-        // мерцание останавливается, подпись бледнеет и прячется в маску
+      if (card && card.classList.contains('qs-line')) {
+        // строка живого окна: замирает цветом отработавшей — тускло серо-зелёная,
+        // галочка и время тем же спокойным цветом; сама остаётся в окне, пока
+        // череда не свернётся в след
         delete ui.tools[ev.id || ev.name];
-        card.classList.add(ok ? 'qt-done' : 'qt-fail');
-        const st = card.querySelector('.qt-state');
-        if (st) st.textContent = ok
-          ? '✓' + (ev.elapsed != null ? ' · ' + ev.elapsed + 'с' : '')
-          : '✕';
-        // и идём дальше: терминальная строка и смена статуса ниже отработают
+        card._tool = Object.assign(card._tool || {}, {
+          ok, elapsed: ev.elapsed != null ? ev.elapsed : null, result: ev.result || {} });
+        card.classList.add(ok ? 'qs-done' : 'qs-fail');
+        const st = card.querySelector('.qs-state');
+        if (st) st.textContent = (ok ? '✓' : '✕') +
+          (ev.elapsed != null ? ' · ' + ev.elapsed + 'с' : '');
       } else if (card) {
         const run = card.querySelector('.tool-run');
         if (run) { run.style.animation = 'none'; run.style.background = ok ? 'var(--green)' : 'var(--red)'; }
@@ -4832,14 +5071,12 @@ function handleEvent(ev, ui) {
         pre.textContent = toolResultText(r) || '(пусто)';
         card.inner.appendChild(pre);
         finishToolWait(card);
-        // отработал — сворачиваем в миниатюру, но не раньше, чем карточку
-        // успели увидеть (см. CARD_MIN_MS)
-        collapseSoon(card, {
-          cls: ok ? 'th-ok' : 'th-no', icon: ICO.code,
-          title: ev.label || ev.name,
-          sub: ev.elapsed != null ? ev.elapsed + 'с' : '',
-          tag: ok ? 'готово' : 'ошибка',
-        });
+        // результат карточки помнит сама — он нужен групповой карточке.
+        // Индивидуальное сворачивание отменено: череда однотипных карточек
+        // складывается в ОДНУ групповую (другой тип работы или конец ответа),
+        // одиночная свернётся на flushAgentGroup
+        card._tool = Object.assign(card._tool || {}, {
+          ok, elapsed: ev.elapsed != null ? ev.elapsed : null, result: ev.result || {} });
       }
       termLine((ok ? '✓ ' : '✕ ') + ev.name + (ev.result && ev.result.error ? ' — ' + ev.result.error : ' — ok'),
         ok ? '' : 'err');
@@ -4955,6 +5192,10 @@ function handleEvent(ev, ui) {
 
     case 'done': {
       dropStatus(ui);
+      // ответ завершён: живое окно инструментов сворачивается в след,
+      // череда агентских карточек — в групповую карточку
+      flushQuietStream(ui);
+      flushAgentGroup(ui);
       if (ev.tier) ui.routeTier = ev.tier;
       if (ev.model) ui.modelName = ev.model;
       updateResponseMeta(ui);
@@ -4968,11 +5209,17 @@ function handleEvent(ev, ui) {
 
     case 'error':
       showError(ui, ev.error || 'неизвестная ошибка');
+      flushQuietStream(ui);
+      flushAgentGroup(ui);
       queueResponseFinish(ui, ui.buffer, false);
       break;
 
     case 'end':
       dropStatus(ui);
+      // конец потока: что не закрыл done, закрываем здесь — окно не должно
+      // остаться висеть раскрытым после ответа
+      flushQuietStream(ui);
+      flushAgentGroup(ui);
       // end означает только конец SSE. Если done потерялся, всё равно дренируем
       // локальный буфер; Stop → Send переключит finally после visualDonePromise.
       if (!ui.doneReceived) queueResponseFinish(ui, ui.buffer, false);
@@ -5577,17 +5824,35 @@ function questionCard(ev, onPick) {
   const yesNo = opts.length === 2;
   card.innerHTML =
     '<div class="ask-h"><span class="ask-i">?</span>' + esc(ev.question || '') + '</div>' +
-    '<div class="ask-opts"></div>';
+    '<div class="ask-opts"></div>' +
+    '<div class="ask-send"><button class="ask-go" disabled>' + ICO.send + '<span>Отправить</span></button></div>';
   const box = card.querySelector('.ask-opts');
+  const go = card.querySelector('.ask-go');
+  let chosen = '';                    // выбранный вариант: клик лишь подсвечивает
+  let ownText = '';                   // свой вариант — полноценная альтернатива
   const pick = (value) => {
     const answer = String(value || '').trim();
     if (!answer || card.dataset.done === '1') return;
     card.dataset.done = '1';
     box.innerHTML = '<span class="ask-picked">✓ ' + esc(answer) + '</span>';
+    go.parentNode.remove();
     reactor('busy');            // ответ получен — Джарвис снова за работой
     if (onPick) onPick(answer);
     collapseToThumb(card, { cls: 'th-ask', icon: '?', title: 'Вопрос',
                             sub: ev.question || '', tag: answer });
+  };
+  const syncGo = () => { go.disabled = !(chosen || ownText.trim()); };
+  // ВЫБОР — ЭТО ПОДСВЕТКА, ОТПРАВЛЯЕТ КНОПКА. Клик по варианту больше не
+  // отправляет его сразу: человек может передумать и выбрать другой. Каждый
+  // тип выбора подсвечивает выбранный элемент классом .sel.
+  const choose = (value, btn) => {
+    if (card.dataset.done === '1') return;
+    chosen = value;
+    ownText = '';
+    $$('.ask-opt', box).forEach((b) => b.classList.remove('sel'));
+    if (btn) btn.classList.add('sel');
+    syncGo();
+    sfx('select');
   };
   // РАЗНООБРАЗИЕ ВЫБОРА. Один и тот же список кнопок от вопроса к вопросу
   // приучает глаз и делает диалог механическим. Теперь каждый уточняющий
@@ -5606,21 +5871,21 @@ function questionCard(ev, onPick) {
     opts.forEach((o, i) => {
       const b = el('button', 'ask-opt as-stack' + tone(i));
       b.innerHTML = '<i>' + (i + 1) + '</i><span>' + esc(o) + '</span><b>›</b>';
-      b.addEventListener('click', () => pick(o));
+      b.addEventListener('click', () => choose(o, b));
       box.appendChild(b);
     });
   } else if (style === 'cloud') {
     // облако чипов: компактные капсулы без порядка
     opts.forEach((o, i) => {
       const b = el('button', 'ask-opt as-cloud' + tone(i), esc(o));
-      b.addEventListener('click', () => pick(o));
+      b.addEventListener('click', () => choose(o, b));
       box.appendChild(b);
     });
   } else if (style === 'seg') {
     // слитный сегмент: кнопки склеены в одну полосу
     opts.forEach((o, i) => {
       const b = el('button', 'ask-opt as-seg' + tone(i), esc(o));
-      b.addEventListener('click', () => pick(o));
+      b.addEventListener('click', () => choose(o, b));
       box.appendChild(b);
     });
   } else if (style === 'grid') {
@@ -5628,7 +5893,7 @@ function questionCard(ev, onPick) {
     opts.forEach((o, i) => {
       const b = el('button', 'ask-opt as-grid' + tone(i));
       b.innerHTML = '<em>' + String.fromCharCode(65 + i) + '</em><span>' + esc(o) + '</span>';
-      b.addEventListener('click', () => pick(o));
+      b.addEventListener('click', () => choose(o, b));
       box.appendChild(b);
     });
   } else if (style === 'dial') {
@@ -5637,14 +5902,14 @@ function questionCard(ev, onPick) {
       const b = el('button', 'ask-opt as-dial' + tone(i));
       b.innerHTML = '<i>' + esc(String(o).trim().charAt(0).toUpperCase() || '?') + '</i>' +
         '<span>' + esc(o) + '</span>';
-      b.addEventListener('click', () => pick(o));
+      b.addEventListener('click', () => choose(o, b));
       box.appendChild(b);
     });
   } else {
     // классические таблетки (pills)
     opts.forEach((o, i) => {
       const b = el('button', 'ask-opt' + tone(i), esc(o));
-      b.addEventListener('click', () => pick(o));
+      b.addEventListener('click', () => choose(o, b));
       box.appendChild(b);
     });
   }
@@ -5655,20 +5920,24 @@ function questionCard(ev, onPick) {
     const own = el('div', 'ask-own');
     const input = el('input', 'ask-own-i');
     input.type = 'text'; input.placeholder = 'Свой вариант…';
-    const send = el('button', 'ask-own-go', ICO.send);
-    send.title = 'Отправить свой вариант';
-    send.disabled = true;
-    input.addEventListener('input', () => { send.disabled = !input.value.trim(); });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); pick(input.value); }
+    input.addEventListener('input', () => {
+      ownText = input.value;
+      if (ownText.trim()) chosen = '';
+      $$('.ask-opt', box).forEach((b) => b.classList.remove('sel'));
+      syncGo();
     });
-    send.addEventListener('click', () => pick(input.value));
-    own.appendChild(input); own.appendChild(send); box.appendChild(own);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); pick(ownText || chosen); }
+    });
+    own.appendChild(input); box.appendChild(own);
   }
+  // ОТПРАВЛЯЕТ ТОЛЬКО КНОПКА — и выбор из списка, и свой вариант
+  go.addEventListener('click', () => pick(ownText.trim() || chosen));
   // если ответ уже был дан раньше (перечитываем историю) — показываем выбор
   if (ev.answer) {
     card.dataset.done = '1';
     box.innerHTML = '<span class="ask-picked">✓ ' + esc(ev.answer) + '</span>';
+    go.parentNode.remove();
   }
   return card;
 }
@@ -5950,13 +6219,20 @@ async function runScenario(sc) {
     loadChats();
   }
   const steps = sc.steps || [];
-  for (let i = 0; i < steps.length; i++) {
-    if (S.abortedScenario) break;
-    await sendScenarioStep(steps[i], i + 1, steps.length);
-    if (S.abortedScenario) break;
-    if (i < steps.length - 1) await sleep(700);
+  S.scenarioActive = true;
+  try {
+    for (let i = 0; i < steps.length; i++) {
+      if (S.abortedScenario) break;
+      await sendScenarioStep(steps[i], i + 1, steps.length);
+      if (S.abortedScenario) break;
+      if (i < steps.length - 1) await sleep(700);
+    }
+  } finally {
+    // флаг гаснет ВСЕГДА — даже при ошибке шага: иначе «сегодня» молчит
+    // до перезагрузки страницы
+    S.scenarioActive = false;
+    S.abortedScenario = false;
   }
-  S.abortedScenario = false;
 }
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
