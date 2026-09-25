@@ -365,7 +365,10 @@ function sfx(name) { if (soundOn() && SFX[name]) SFX[name](); }
 
 function modal(html, onMount, opts) {
   const m = $('#modal');
-  m.innerHTML = html;
+  // SOFT-окна скроллятся ВНУТРЕННИМ слоем: раньше скроллилось само окно, и
+  // градиентная рамка (::before) уезжала вместе с контентом — по краям
+  // проступали резкие обрезы карточки. Рамка живёт на окне и стоит на месте.
+  m.innerHTML = (opts && opts.soft) ? '<div class="jw-pane">' + html + '</div>' : html;
   // soft — лёгкие диалоги Джарвиса (предложение сценария, просмотр шагов):
   // фон затемняется вполсилы, лента под ним остаётся видна.
   m.classList.toggle('jarvis-win', !!(opts && opts.soft));
@@ -564,12 +567,11 @@ $('#tgAgent').addEventListener('change', function () {
     }, 520);
     setTimeout(() => { if (shell) shell.classList.remove('ag-switching'); }, 1450);
   } else {
-    // ОБРАТНО: бордовый слетает с интерфейса и убирается в тумблер —
-    // волна сжимается в точку нажатия, цвета едут вспять, затем сам
-    // тумблер гаснет до нейтрального
+    // ВЫКЛЮЧЕНИЕ — БЕЗ ОБРАТНОЙ ВОЛНЫ: базовый переход. Цвета уезжают
+    // вспять своими transition (~0.95с), тумблер гаснет до нейтрального
+    // обычной анимацией переключения. Тихо и спокойно.
     document.body.classList.remove('agent-on');
-    agentWave(S.agentWaveOrigin || $('#swAgent'), true);
-    setTimeout(() => { if (shell) shell.classList.remove('ag-switching'); }, 950);
+    setTimeout(() => { if (shell) shell.classList.remove('ag-switching'); }, 400);
   }
   S.agentWaveOrigin = null;
   $('#input').placeholder = S.agentMode
@@ -588,10 +590,14 @@ $$('.agent-switch').forEach((sw) => {
   let cooling = false;
   sw.addEventListener('mouseenter', () => {
     if (cooling || sw.classList.contains('ag-switching')) return;
-    cooling = true;
+    cooling = true;                        // перезапуск только после проигрыша
     sw.classList.add('ag-play');
-    setTimeout(() => sw.classList.remove('ag-play'), 1250);
-    setTimeout(() => { cooling = false; }, 1750);
+    setTimeout(() => { cooling = false; }, 1300);
+  });
+  // резинка, огонёк и свечение живут, ПОКА курсор на тумблере: уход — всё
+  // тихо гаснет (анимации с both-заливкой снимаются вместе с классом)
+  sw.addEventListener('mouseleave', () => {
+    sw.classList.remove('ag-play');
   });
 });
 $('#tgCamera').addEventListener('click', function () {
@@ -1809,9 +1815,9 @@ function collapseToThumb(node, opts) {
     node.style.transition = 'none';
     node.style.height = h0 + 'px';
     void node.offsetHeight;
-    // Свёртка идёт на 28% медленнее роста: раскрытие — ответ на клик, его
-    // ждут, а свёртка происходит сама и слишком резкая читается как рывок.
-    const dur = Math.max(141, Math.min(243, 115 + h0 * 0.28));
+    // Свёртка идёт заметно медленнее роста: раскрытие — ответ на клик, его
+    // ждут, а свёртка происходит сама и должна читаться как мягкий уход.
+    const dur = Math.max(200, Math.min(380, 170 + h0 * 0.42));
     node.classList.add('shrinking');
     node.style.transition = 'height ' + Math.round(dur) + 'ms cubic-bezier(.4,0,.7,1)';
     node.style.height = '28px';        // примерно высота будущей миниатюры
@@ -3108,6 +3114,9 @@ $('#sendBtn').addEventListener('click', () => {
     stopRunForReal();
     if (S.abort) S.abort.abort();
     setStreaming(false);
+    // ОСТАНОВКА — НЕ ОБРЫВ: несвернувшиеся инструменты и группы сворачиваются
+    // своими анимациями, кухня не остаётся раскрытой
+    if (S.followUi) flushTools(S.followUi);
     return;
   }
   send();
@@ -3145,6 +3154,8 @@ function stopStream() {
       if (!S.streaming || waited > 1800) {
         clearInterval(t);
         setStreaming(false);
+        // остановка ответа: инструменты и группы красиво сворачиваются
+        if (S.followUi) flushTools(S.followUi);
         resolve();
       }
     }, 60);
@@ -3657,7 +3668,30 @@ function ensureStatus(ui) {
 function qtFeed(flow, text) {
   const line = el('div', 'qt-flowline', esc(String(text || '')));
   flow.appendChild(line);
-  while (flow.children.length > 7) flow.removeChild(flow.firstChild);
+  // ЗАПОЛНИЛСЯ — включаем затемнение краёв: текст долетел до верха окна
+  if (flow.scrollHeight >= 86) flow.classList.add('full');
+  glideFlow(flow);
+}
+
+/* ПОТОК «ЛЕТИТ». Новая строка приходит снизу, а верхняя уезжает вверх и
+   тает в затемнении. Приём без скачка: плавный transform у всего потока,
+   затем удаление уехавшей строки и сброс transform в том же положении. */
+function glideFlow(flow) {
+  if (flow._glide) return;
+  if (flow.children.length < 2 || flow.scrollHeight <= flow.clientHeight + 2) return;
+  flow._glide = true;
+  const first = flow.firstElementChild;
+  const h = first.offsetHeight + 6;
+  flow.style.transition = 'transform .55s cubic-bezier(.3,.7,.3,1)';
+  void flow.offsetHeight;
+  flow.style.transform = 'translateY(' + (-h) + 'px)';
+  setTimeout(() => {
+    flow.style.transition = 'none';
+    flow.style.transform = 'none';
+    if (first.parentNode === flow) first.remove();
+    flow._glide = false;
+    glideFlow(flow);            // строки приходили дальше — поток догоняет
+  }, 570);
 }
 
 function qtOpen(ui, ev) {
@@ -3718,10 +3752,10 @@ function qtMiniaturize(node) {
   body.style.transition = 'none';
   body.style.height = h + 'px';
   void body.offsetHeight;
-  body.style.transition = 'height .3s cubic-bezier(.3,.7,.3,1), opacity .24s ease';
+  body.style.transition = 'height .44s cubic-bezier(.25,.6,.3,1), opacity .32s ease';
   body.style.height = '0px';
   body.style.opacity = '0';
-  setTimeout(() => { if (!node.dataset.folded) body.style.display = 'none'; }, 310);
+  setTimeout(() => { if (!node.dataset.folded) body.style.display = 'none'; }, 460);
 }
 
 /* ЧЕРЕДА ЗАКОНЧИЛАСЬ: инструменты другого типа или текст ответа означают,
@@ -3730,8 +3764,9 @@ function qtMiniaturize(node) {
 function qtSweep(ui, keepGroup) {
   const st = ui && ui.statusEl;
   const host = (st && st.parentNode) || (ui && ui.node ? ui.node.body : null);
-  if (!host) return;
+  if (!host) return 0;
   let i = 0;
+  let folded = 0;
   $$('.qt-node', host).forEach((nn) => {
     if (nn.dataset.folded === '1') return;
     const t = nn._tool || {};
@@ -3741,8 +3776,10 @@ function qtSweep(ui, keepGroup) {
       qtMark(nn, t.ok, t.elapsed);
       qtMiniaturize(nn);
     }
-    setTimeout(() => qtFold(ui, nn), i++ * 90);
+    folded++;
+    setTimeout(() => qtFold(ui, nn), i++ * 130);
   });
+  return folded;
 }
 
 function qtMark(node, ok, sec) {
@@ -3805,41 +3842,44 @@ function qtFold(ui, node) {
   node.style.height = h0 + 'px';
   void node.offsetHeight;
   node.style.transition =
-    'height .42s cubic-bezier(.3,.7,.25,1), transform .42s cubic-bezier(.3,.7,.25,1), opacity .3s ease .12s';
-  node.style.transform = 'translateY(' + dy + 'px) scale(.94)';
+    'height .72s cubic-bezier(.22,.55,.25,1), transform .72s cubic-bezier(.22,.55,.25,1), opacity .5s ease .18s';
+  node.style.transform = 'translateY(' + dy + 'px) scale(.93)';
   node.style.opacity = '0';
   node.style.height = '0px';
-  setTimeout(() => node.remove(), 440);
+  setTimeout(() => node.remove(), 760);
 }
 
 function qtToggleFolder(f) {
   const kids = f.querySelector('.qt-kids');
-  if (!kids) return;
+  if (!kids || f._anim) return;      // анимация играет — клики не рвут её
+  f._anim = true;
+  const free = () => { f._anim = false; };
   if (f.classList.contains('open')) {
     f.classList.remove('open');
     const rows = Array.from(f.querySelectorAll('.qt-row')).reverse();
     // ЗАКРЫТИЕ — ТА ЖЕ АНИМАЦИЯ В ОБРАТНУЮ СТОРОНУ: строки тонут одна за
     // другой (от последней к первой), затем тело папки съёживается в ноль.
     rows.forEach((r, i) => {
-      r.style.transition = 'opacity .28s ease ' + (i * 55) + 'ms, transform .28s cubic-bezier(.4,.6,.4,1) ' + (i * 55) + 'ms';
+      r.style.transition = 'opacity .38s ease ' + (i * 70) + 'ms, transform .38s cubic-bezier(.4,.6,.4,1) ' + (i * 70) + 'ms';
       r.style.opacity = '0';
-      r.style.transform = 'translateY(-6px)';
+      r.style.transform = 'translateY(-7px)';
     });
     const h0 = kids.getBoundingClientRect().height;
     kids.style.overflow = 'hidden';
     kids.style.transition = 'none';
     kids.style.height = h0 + 'px';
     void kids.offsetHeight;
-    const rowsT = rows.length * 55 + 260;
+    const rowsT = rows.length * 70 + 300;
     setTimeout(() => {
-      kids.style.transition = 'height .3s cubic-bezier(.4,.5,.4,1)';
+      kids.style.transition = 'height .38s cubic-bezier(.4,.5,.4,1)';
       kids.style.height = '0px';
     }, rowsT);
     setTimeout(() => {
       kids.classList.remove('open');
       kids.style.cssText = '';
       rows.forEach((r) => { r.style.cssText = ''; });
-    }, rowsT + 330);
+      free();
+    }, rowsT + 410);
   } else {
     const box = f.querySelector('.qt-rows');
     box.replaceChildren();
@@ -3858,8 +3898,8 @@ function qtToggleFolder(f) {
     const allRows = f.querySelectorAll('.qt-row');
     allRows.forEach((r, i) => {
       r.style.opacity = '0';
-      r.style.transform = 'translateY(10px)';
-      r.style.transition = 'opacity .34s ease ' + (i * 70) + 'ms, transform .34s cubic-bezier(.22,.8,.3,1) ' + (i * 70) + 'ms';
+      r.style.transform = 'translateY(12px)';
+      r.style.transition = 'opacity .42s ease ' + (i * 90) + 'ms, transform .42s cubic-bezier(.22,.8,.3,1) ' + (i * 90) + 'ms';
       void r.offsetHeight;
       r.style.opacity = '1';
       r.style.transform = 'translateY(0)';
@@ -3867,7 +3907,8 @@ function qtToggleFolder(f) {
     setTimeout(() => {
       kids.style.cssText = '';
       allRows.forEach((r) => { r.style.cssText = ''; });
-    }, allRows.length * 70 + 430);
+      free();
+    }, allRows.length * 90 + 520);
   }
 }
 
@@ -3897,10 +3938,10 @@ function qtToggleDetail(row) {
     w.style.transition = 'none';
     w.style.height = h + 'px';
     void w.offsetHeight;
-    w.style.transition = 'height .32s cubic-bezier(.3,.7,.3,1), opacity .22s ease';
+    w.style.transition = 'height .44s cubic-bezier(.3,.6,.3,1), opacity .3s ease';
     w.style.height = '0px';
     w.style.opacity = '0';
-    setTimeout(() => { w.classList.remove('open'); w.style.cssText = ''; }, 330);
+    setTimeout(() => { w.classList.remove('open'); w.style.cssText = ''; }, 460);
   } else {
     w.classList.add('open');
     const h = w.getBoundingClientRect().height;
@@ -3909,10 +3950,10 @@ function qtToggleDetail(row) {
     w.style.height = '0px';
     w.style.opacity = '0';
     void w.offsetHeight;
-    w.style.transition = 'height .32s cubic-bezier(.22,.8,.3,1), opacity .26s ease';
+    w.style.transition = 'height .44s cubic-bezier(.22,.8,.3,1), opacity .34s ease';
     w.style.height = h + 'px';
     w.style.opacity = '1';
-    setTimeout(() => { w.style.cssText = ''; }, 340);
+    setTimeout(() => { w.style.cssText = ''; }, 470);
   }
 }
 
@@ -4449,7 +4490,10 @@ function scrollSoon(ui) {
 
 function typerStart(ui) {
   if (ui.typer) return;
-  ui.holdUntil = 0;
+  // печать может быть придержана вальсом свёртки инструментов (конец
+  // череды): hold живёт в _qtHold и подхватывается здесь при старте
+  ui.holdUntil = ui._qtHold || 0;
+  ui._qtHold = 0;
   ui.acc = ui.acc || 0;
   let lastTick = performance.now();
   ui.typer = setInterval(() => {
@@ -4949,7 +4993,10 @@ function handleEvent(ev, ui) {
       ui.planStep = 1;
       ev.steps.forEach((s, i) => {
         const li = el('li', 'plan-pending', '<span class="plan-num">' + (i + 1) + '</span><span class="plan-copy"></span>');
-        li._planText = String(s || '');
+        // Модель иногда помечает шаги markdown-зачёркиванием (~~step~~) и
+        // жирным: в карточке плана это выглядит мусором. Шаг — чистый текст.
+        li._planText = String(s || '').replace(/~~/g, '').replace(/\*\*/g, '')
+          .replace(/\x60/g, '').trim();
         // Пункты уже существуют как состояние (plan_step может прийти сразу),
         // но в DOM входят и быстро печатаются по одному. Общий typer ответа
         // начнётся только после releasePlanGate по завершении перелёта.
@@ -5382,10 +5429,14 @@ function handleEvent(ev, ui) {
 
     case 'delta': {
       // ПОШЁЛ ТЕКСТ — прошлое семейство инструментов закончило работу:
-      // миниатюры уезжают в папку (один раз за фазу текста, не на каждый чанк)
+      // миниатюры уезжают в папку вальсом, и ПЕЧАТЬ ЖДЁТ окончания этой
+      // анимации + ещё пол-секунды: текст не должен затирать свёртку
       if (!ui.agentMode && !ui._qtSwept) {
         ui._qtSwept = true;
-        qtSweep(ui, null);
+        const folded = qtSweep(ui, null);
+        if (folded > 0) {
+          ui._qtHold = performance.now() + 720 + folded * 130 + 500;
+        }
       }
       if (!ui.mdEl) {
         dropStatus(ui);

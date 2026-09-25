@@ -988,7 +988,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    то же семейство, что флоу AUTO, но в разы быстрее: это же ускорение. */
 .boost-btn{width:30px;height:38px;border-radius:11px;border:1px solid var(--line);
   background:transparent;color:var(--tx3);flex-shrink:0;cursor:pointer;
-  display:grid;place-items:center;transition:.2s;position:relative;opacity:.32;
+  display:grid;place-items:center;transition:.2s;position:relative;opacity:.5;
   pointer-events:none;padding:0}
 .boost-btn svg{width:15px;height:15px}
 .boost-btn.live{opacity:.85;pointer-events:auto}
@@ -1052,14 +1052,15 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch:hover{color:var(--tx2)}
 .agent-switch-track:hover{border-color:var(--line2)}
 .agent-switch:has(input:checked){color:#f2c3cd}
-.agent-switch-track:has(input:checked){background:rgba(143,31,44,.3);border-color:rgba(196,84,104,.78)}
-.agent-switch-track input:checked + i{transform:translateX(16px);background:#8f1f34;
-  box-shadow:0 0 14px rgba(255,92,116,.9),0 0 30px rgba(159,42,60,.6);color:#f2c9d2;
-  /* включённый AGENT ГОРИТ ЯРЧЕ и мягко пульсирует: «я активен!» */
+.agent-switch-track:has(input:checked){background:rgba(74,13,24,.5);border-color:rgba(212,94,116,.85)}
+.agent-switch-track input:checked + i{transform:translateX(16px);background:#e290a2;
+  box-shadow:0 0 13px rgba(255,96,120,.9),0 0 28px rgba(159,42,60,.65);color:#3a0f18;
+  /* включённый AGENT: светлый круглёшок РАЗЛИЧИМ на тёмном треке и горит
+     ЗВЁЗДНО — пульс глубже и ярче, чтобы его было видно */
   animation:agGlow 2.2s ease-in-out infinite}
 @keyframes agGlow{
-  0%,100%{box-shadow:0 0 14px rgba(255,92,116,.85),0 0 30px rgba(159,42,60,.55)}
-  50%{box-shadow:0 0 24px rgba(255,110,132,1),0 0 52px rgba(178,48,68,.8)}}
+  0%,100%{box-shadow:0 0 12px rgba(255,96,120,.75),0 0 26px rgba(159,42,60,.5)}
+  50%{box-shadow:0 0 32px rgba(255,120,140,1),0 0 64px rgba(184,52,74,.9)}}
 .agent-switch-track:has(input:focus-visible){outline:2px solid rgba(220,90,110,.55);outline-offset:2px}
 .agent-switch:focus-within{z-index:50}
 
@@ -1084,10 +1085,14 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   white-space:nowrap}
 .qt-body{display:flex;align-items:stretch;margin:3px 0 3px 6px}
 .qt-rail{flex:0 0 1px;background:rgba(154,202,219,.4);border-radius:1px}
-.qt-flow{flex:1;margin-left:11px;height:88px;overflow:hidden;
-  display:flex;flex-direction:column;justify-content:flex-end;gap:6px;
-  -webkit-mask-image:linear-gradient(180deg,transparent,#000 22%,#000 80%,transparent);
-  mask-image:linear-gradient(180deg,transparent,#000 22%,#000 80%,transparent)}
+.qt-flow{flex:1;margin-left:11px;max-height:88px;overflow:hidden;
+  display:flex;flex-direction:column;justify-content:flex-start;gap:6px;
+  /* затемнение краёв появляется, когда поток заполнился и «полетел»:
+     пустому окну нечего растворять, заполненному — необходимо */
+  -webkit-mask-image:none;mask-image:none}
+.qt-flow.full{
+  -webkit-mask-image:linear-gradient(180deg,transparent,#000 22%,#000 82%,transparent);
+  mask-image:linear-gradient(180deg,transparent,#000 22%,#000 82%,transparent)}
 .qt-flowline{font-size:11px;color:rgba(154,202,219,.66);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;
   animation:qtRise .6s cubic-bezier(.2,.75,.3,1) both}
@@ -1139,15 +1144,27 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   border-color:rgba(var(--sp),.3);
   color:rgba(var(--sp),.8);
   background:rgba(var(--sp),.04)}
-.toggle:not(.on):hover::before,.budget-btn:not(.on):hover::before{
+/* СВЕТ РОЖДАЕТСЯ В ЦЕНТРЕ маленьким ярким пятном и РАЗРАСТАЕТСЯ до мягкой
+   подсветки всей кнопки. Это видно как анимация (градиент интерполируется),
+   а не мгновенное появление готового света */
+.comp-btn{position:relative}
+.comp-btn{--sp:130,190,215}
+.toggle:not(.on):hover::before,.budget-btn:not(.on):hover::before,
+.comp-btn:not(.on):hover::before{
   content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
   background:radial-gradient(circle at 50% 50%,rgba(var(--sp),.11),rgba(var(--sp),.04) 46%,transparent 72%);
-  animation:qtGlowIn 3.2s ease-in-out both}
+  animation:qtGlowIn 2.6s cubic-bezier(.25,.6,.3,1) both}
 .toggle:not(.on):hover .tg-dot{background:rgba(var(--sp),.7);
   box-shadow:0 0 6px rgba(var(--sp),.28)}
 .budget-btn:not(.on):hover .budget-coin{color:rgba(var(--sp),.85)}
-/* разгорание из центра: МЕДЛЕННО И ПЛАВНО, один раз, без повторов */
-@keyframes qtGlowIn{from{opacity:0;transform:scale(.82)}to{opacity:1;transform:scale(1)}}
+/* рост света: от точки в центре — к мягкой подсветке кнопки. Конечное
+   состояние ровно то, что было раньше: видна сама АНИМАЦИЯ появления */
+@keyframes qtGlowIn{
+  0%{opacity:0;
+    background:radial-gradient(circle at 50% 50%,rgba(var(--sp),.5),rgba(var(--sp),.16) 8%,transparent 18%)}
+  14%{opacity:1}
+  100%{opacity:1;
+    background:radial-gradient(circle at 50% 50%,rgba(var(--sp),.11),rgba(var(--sp),.04) 46%,transparent 72%)}}
 
 /* ТУМБЛЕР AGENT — РЕЗИНКА. Наведение: круглёшек тянется вправо, замирает и
    РЫВКОМ — но плавно, как резинка — возвращается. Огонёк ЖИВЁТ ТОЛЬКО
@@ -1158,8 +1175,11 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    края. Всё играет по классу .ag-play (JS ставит его один раз за наведение
    — :hover дрожал на краях и искры пробегали дважды). */
 .agent-switch-track{overflow:hidden}
-.agent-switch.ag-play .agent-switch-track:not(:has(input:checked)){
-  border-color:rgba(220,90,110,.4)}
+/* пока курсор на тумблере — трек держит винный свет и свечение огонька */
+.agent-switch.ag-play .agent-switch-track:not(:has(input:checked)),
+.agent-switch-track:not(:has(input:checked)):hover{
+  border-color:rgba(224,96,118,.52);
+  background:rgba(143,39,57,.1)}
 @keyframes agKnobRubber{
   0%{transform:translateX(0)}
   44%{transform:translateX(6px)}
@@ -1170,18 +1190,19 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)) i{
   animation:agKnobRubber 1.1s cubic-bezier(.3,.7,.3,1) both;
   background:#c99aa3}
-/* огонёк: чуть крупнее, размытый, СВЕТЯЩИЙСЯ — но обрезан рамкой трека */
+/* огонёк: КРУПНЕЕ, сильнее размыт, ЯРКО светится — и в конце НЕ исчезает:
+   докатывается до правого края трека и остаётся там жить (слепая зона за
+   круглёшком), всё время наведения видно только его свечение */
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked))::after{
-  content:'';position:absolute;left:2px;top:50%;width:18px;height:18px;margin-top:-9px;
+  content:'';position:absolute;left:1px;top:50%;width:22px;height:22px;margin-top:-11px;
   border-radius:50%;pointer-events:none;
-  background:radial-gradient(circle,rgba(255,120,142,.98),rgba(255,86,112,.55) 52%,transparent 78%);
-  filter:blur(2.5px);
-  animation:agEmberRun 1.1s cubic-bezier(.3,.6,.35,1) both}
+  background:radial-gradient(circle,rgba(255,140,160,1),rgba(255,86,112,.6) 50%,transparent 76%);
+  filter:blur(4px);
+  animation:agEmberRun 1.1s cubic-bezier(.3,.55,.35,1) both}
 @keyframes agEmberRun{
   0%{opacity:0;transform:translateX(0)}
-  12%{opacity:1}
-  70%{opacity:1;transform:translateX(26px)}
-  100%{opacity:0;transform:translateX(46px)}}
+  14%{opacity:1}
+  100%{opacity:1;transform:translateX(23px)}}
 /* свечение от улетевшего огонька: СНАРУЖИ справа — box-shadow самого трека
    обрезкой не Clip-ится и остаётся жить у правого края */
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)){
@@ -1194,16 +1215,17 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   pointer-events:none;
   background:linear-gradient(100deg,transparent 37%,rgba(255,84,112,.95) 50%,transparent 63%);
   background-size:250% 100%;background-repeat:no-repeat;
-  animation:agSparkRun 1.1s cubic-bezier(.25,.6,.35,1) both;
+  animation:agSparkRun 1.25s cubic-bezier(.3,.55,.4,1) both;
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude}
 @keyframes agSparkRun{
   0%{background-position:135% 0;opacity:0}
   10%{opacity:1}
-  45%{background-position:60% 0}
-  72%{background-position:8% 0}
-  88%{background-position:-14% 0;opacity:1}
-  100%{background-position:-24% 0;opacity:0}}
+  38%{background-position:52% 0}
+  62%{background-position:14% 0}
+  80%{background-position:-6% 0}
+  92%{background-position:-14% 0;opacity:1}
+  100%{background-position:-19% 0;opacity:0}}
 /* пересадка идёт (волна + тема): тумблер не трогают повторно */
 .agent-switch.ag-switching .agent-switch-track{pointer-events:none}
 /* Tooltip не участвует в геометрии composer. После выбора tip-dismissed гасит
@@ -1505,9 +1527,15 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   font-size:22px;margin:0 auto 4px;color:var(--cy2);
   background:rgba(0,212,255,.09);border:1px solid rgba(0,212,255,.34);
   box-shadow:inset 0 0 18px rgba(0,212,255,.14)}
-.modal.jarvis-win{border-color:transparent;position:relative;
+.modal.jarvis-win{border-color:transparent;position:relative;overflow:hidden;
+  padding:0;display:flex;flex-direction:column;
   /* вход без масштаба: scale + маска-градиент рамки давали рябь на углах */
   animation:jarvisWinIn .3s cubic-bezier(.2,.9,.3,1) both}
+/* скроллится ВНУТРЕННИЙ слой: градиентная рамка окна не уезжает вместе
+   с контентом — резкие обрезы по краям карточки больше не проступают */
+.jw-pane{overflow-y:auto;overflow-x:hidden;scrollbar-width:none;overscroll-behavior:contain;
+  padding:22px;min-height:0}
+.jw-pane::-webkit-scrollbar{width:0;height:0;display:none}
 @keyframes jarvisWinIn{from{opacity:0;transform:translateY(14px)}}
 .modal.jarvis-win::before{content:'';position:absolute;inset:-1px;padding:1px;border-radius:inherit;
   pointer-events:none;
@@ -1524,11 +1552,11 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .sc-stage i{flex:0 0 20px;height:20px;border-radius:7px;display:grid;place-items:center;
   background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.28);color:var(--cy2);
   font-style:normal;font-size:10.5px;font-family:var(--fm)}
-/* заголовок этапа — БЕЗ рамки, чуть крупнее: это название, а не табличка */
-.sc-stage-text{flex:0 1 auto;font-weight:500;font-size:12px;color:var(--tx2);white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;max-width:60%}
-/* коннектор — сплошная тонкая НЕДОЛГАЯ полоса без затухания к краям */
-.sc-stage-line{flex:0 0 26px;height:1px;background:rgba(0,212,255,.25)}
+/* заголовок этапа — БЕЗ рамки, крупнее: это название, а не табличка */
+.sc-stage-text{flex:0 1 auto;font-weight:500;font-size:13.5px;color:var(--tx2);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;max-width:62%}
+/* коннектор — сплошная тонкая полоса, ПОДЛИННЕЕ, без затухания к краям */
+.sc-stage-line{flex:0 0 46px;height:1px;background:rgba(0,212,255,.25)}
 @keyframes scStageIn{from{opacity:0;transform:translateY(-6px)}}
 
 .sc-steps-full{display:flex;flex-direction:column;gap:8px;margin:12px 0 4px;max-height:44vh;
@@ -2634,19 +2662,19 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   left:50%;top:50%;transform:translate(-50%,-50%) scale(.02);border-radius:50%;
   pointer-events:none;opacity:0;
   background:radial-gradient(circle closest-side,
-      rgba(122,22,38,.6) 0%,
-      rgba(132,26,42,.48) 34%,
-      rgba(255,96,124,.4) 50%,
-      rgba(255,110,136,.2) 60%,
-      rgba(132,26,42,.07) 74%,
-      transparent 88%);
-  filter:blur(10px);
-  animation:agentWave 1.35s cubic-bezier(.22,.6,.3,1) both}
+      rgba(122,22,38,.4) 0%,
+      rgba(132,26,42,.3) 34%,
+      rgba(255,96,124,.26) 50%,
+      rgba(255,110,136,.14) 60%,
+      rgba(132,26,42,.05) 74%,
+      transparent 86%);
+  filter:blur(12px);
+  animation:agentWave .92s cubic-bezier(.3,.15,.45,.9) both}
 @keyframes agentWave{
   0%{transform:translate(-50%,-50%) scale(.02);opacity:0}
-  12%{opacity:1}
-  72%{opacity:.92}
-  100%{transform:translate(-50%,-50%) scale(1);opacity:0}}
+  10%{opacity:.85}
+  55%{opacity:.8}
+  100%{transform:translate(-50%,-50%) scale(1.06);opacity:0}}
 .agent-wave.out{
   animation:agentWaveOut 1s cubic-bezier(.5,0,.5,1) both}
 @keyframes agentWaveOut{
@@ -2720,7 +2748,7 @@ body.agent-on .composer.focus{
     inset 0 1px 0 rgba(240,170,185,.09)}
 body.agent-on #input{caret-color:#d98a9b}
 body.agent-on .composer ::selection{background:rgba(143,39,57,.4)}
-body.agent-on .comp-btn:hover{color:#eea4b3;border-color:rgba(196,84,104,.42)}
+body.agent-on .comp-btn:hover{color:#eea4b3;background:rgba(143,39,57,.14);border-color:rgba(196,84,104,.42)}
 
 /* --- 8. КНОПКА ОТПРАВКИ: главный бордовый источник света --- */
 body.agent-on .send-btn{background:linear-gradient(135deg,#a83248,#571223);
@@ -2747,7 +2775,8 @@ body.agent-on .bubble-user{
 body.agent-on .reactor .ring{border-color:rgba(217,138,155,.5)}
 body.agent-on .reactor .core{background:radial-gradient(circle,#fff,#eaa4b2 44%,#6e1628)}
 body.agent-on .work-wait .tw-caret{background:linear-gradient(180deg,#fff,#eaa4b2 52%,#8f2739)}
-body.agent-on .hello span{background:linear-gradient(90deg,#d98a9b,#8f86cf 38%,#5f77d8 68%,#d98a9b)}
+body.agent-on .hello span{background:linear-gradient(90deg,#f5bcc9,#c3a9f0 40%,#8fa7ec 68%,#f5bcc9);
+  text-shadow:0 0 26px rgba(217,138,155,.25)}
 
 /* --- 12. ИНСТРУМЕНТЫ АГЕНТА: карточки и группы — винные акценты --- */
 body.agent-on .tool-card{border-color:rgba(152,124,150,.3)}
@@ -2756,20 +2785,47 @@ body.agent-on .tool-run{background:#8f2739!important}
 body.agent-on .ql-row{border-color:rgba(196,84,104,.18);background:rgba(16,10,16,.5)}
 body.agent-on .ql-row:hover{border-color:rgba(196,84,104,.4);background:rgba(22,12,17,.7)}
 
-/* --- 13. ПЛАН: синяя панель, винные сегменты --- */
+/* --- 13. ПЛАН: панель на ночи, но СЕГМЕНТЫ НЕ ТРОГАЕМ — золото в работе
+       и зелёный после выполнения это фишка плана, а не тема режима --- */
 body.agent-on .plan-dock{border-color:rgba(196,84,104,.5);
   background:linear-gradient(180deg,rgba(16,20,42,.94),rgba(10,13,28,.94))}
 body.agent-on .plan-dock .pd-t,body.agent-on .plan-dock .pd-ico,
 body.agent-on .plan-dock .pd-step{color:#e3a3b1;text-shadow:0 0 12px rgba(168,50,72,.45)}
-body.agent-on .plan-dock .pd-seg{background:rgba(143,39,57,.16)}
-body.agent-on .plan-dock .pd-seg.done{background:rgba(168,50,72,.66);box-shadow:0 0 7px rgba(168,50,72,.3)}
-body.agent-on .plan-dock .pd-seg.now{background:rgba(168,50,72,.4);box-shadow:0 0 8px rgba(168,50,72,.36)}
-body.agent-on .plan-dock.live::after{border-color:rgba(232,152,168,.55);box-shadow:0 0 34px rgba(168,50,72,.4)}
 
 /* --- 14. ЧИПЫ-ПОДСКАЗКИ --- */
 body.agent-on .reply-chip{border-color:rgba(124,132,180,.22)}
 body.agent-on .reply-chip:hover{border-color:rgba(217,138,155,.55);
   background:rgba(143,39,57,.1);color:#f7ccd4}
+
+/* --- 14a. НАВЕДЕНИЯ: у каждого элемента в теме своё гармоничное состояние.
+   Синие rgba-остатки отсюда исключены: подсветка тёплая, контуры винные,
+   подъёмы мягче — никаких «странных цветов при наложении» --- */
+body.agent-on .nav-item:hover{background:rgba(143,39,57,.12)}
+body.agent-on .chat-item:hover{background:rgba(143,39,57,.12)}
+body.agent-on .chat-item.active{background:rgba(143,39,57,.17);border-color:rgba(196,84,104,.4)}
+body.agent-on .icon-btn:hover{background:rgba(143,39,57,.16);border-color:rgba(196,84,104,.38)}
+body.agent-on .card-head:hover{background:rgba(143,39,57,.08)}
+body.agent-on .card-head.open:hover{background:rgba(143,39,57,.16)}
+body.agent-on .btn:hover{background:rgba(143,39,57,.18);border-color:rgba(196,84,104,.4)}
+body.agent-on .btn.primary{background:linear-gradient(135deg,#a83248,#571223);border-color:transparent}
+body.agent-on .btn.primary:hover{box-shadow:0 8px 22px rgba(143,39,57,.42)}
+body.agent-on .btn.danger:hover{background:rgba(180,50,60,.2);border-color:rgba(221,85,102,.5)}
+body.agent-on .act:hover{color:#e3a3b1;border-color:rgba(196,84,104,.4);background:rgba(143,39,57,.1)}
+body.agent-on .ask-opt:hover{background:rgba(143,39,57,.14);border-color:#a85a6c}
+body.agent-on .ask-opt.sel,body.agent-on .ask-opt.sel:hover{background:rgba(143,39,57,.2);border-color:#c4788b}
+body.agent-on .ask-opt.sel::after{color:#e3a3b1}
+body.agent-on .ask-go{background:linear-gradient(135deg,#a83248,#571223);border-color:transparent;color:#f7dde3}
+body.agent-on .ask-go:hover{box-shadow:0 6px 18px rgba(143,39,57,.45)}
+body.agent-on .sugg:hover{background:rgba(143,39,57,.12);border-color:rgba(196,84,104,.42);
+  box-shadow:0 12px 30px rgba(0,0,0,.5),0 0 18px rgba(143,39,57,.14)}
+body.agent-on .file-chip:hover{background:rgba(143,39,57,.18);
+  box-shadow:0 8px 20px rgba(60,20,32,.3)}
+body.agent-on .md pre.pre-folded:hover{border-color:rgba(196,84,104,.4);color:#e3a3b1}
+body.agent-on .tc-btn:hover{background:rgba(143,39,57,.16);border-color:rgba(196,84,104,.4)}
+body.agent-on .bp-input:focus{border-color:rgba(217,138,155,.55)}
+body.agent-on .modal{background:linear-gradient(180deg,rgba(13,17,36,.99),rgba(8,10,22,.99));
+  border-color:rgba(152,124,150,.4)}
+body.agent-on .empty{color:#9aa8c8}
 
 /* --- 15. ПАНЕЛИ, ОКНА, СЦЕНАРИЙ --- */
 body.agent-on .note-panel{background:#0d1126}

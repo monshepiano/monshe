@@ -3213,6 +3213,17 @@ class AiReplySuggestionsTests(unittest.TestCase):
         self.assertIn("old_event.set()", source)
         self.assertIn("_RUN_EVENTS[chat_id] = stop_event", source)
 
+    def test_plan_steps_arrive_clean_of_markdown(self) -> None:
+        # модель пометила шаги ~~зачёркиванием~~ и **жирным** — в карточке
+        # плана обязан остаться чистый текст
+        self.assertEqual(agent._step_text("~~run_python~~"), "run_python")
+        self.assertEqual(agent._step_text("**set_difficulty**"), "set_difficulty")
+        self.assertEqual(agent._step_text("`enable_sound`"), "enable_sound")
+        self.assertEqual(
+            agent.parse_plan_steps('["~~run_python~~", "**set_difficulty**", '
+                                   '"enable_sound", "check_result"]'),
+            ["run_python", "set_difficulty", "enable_sound", "check_result"])
+
     def test_parser_is_tolerant_to_model_noise(self) -> None:
         parse = agent._parse_reply_suggestions
         # пояснение вокруг массива
