@@ -1489,8 +1489,8 @@ function testThinkingGradientContract() {
   // включённый AGENT — БОРДО и горит ЯРЧЕ с пульсацией («я активен!»)
   assert(/\.agent-switch-track:has\(input:checked\)\s*\{[^}]*rgba\(74,13,24,\.5\)/s.test(css) &&
     /\.agent-switch-track input:checked \+ i\{[^}]*background:#e290a2/s.test(css) &&
-    /animation:agGlow 2\.2s ease-in-out infinite/.test(css) &&
-    /@keyframes agGlow\{[\s\S]*?50%\{box-shadow:0 0 32px rgba\(255,120,140,1\),0 0 64px rgba\(184,52,74,\.9\)\}\}/.test(css),
+    /\.agent-switch-track input:checked \+ i::after\{[^}]*box-shadow:0 0 34px 6px rgba\(255,116,138,\.85\),0 0 72px 14px rgba\(198,52,74,\.6\)/s.test(css) &&
+    /@keyframes agGlow\{\s*0%,100%\{opacity:\.38\}\s*50%\{opacity:1\}\}/.test(css),
     'the enabled knob is a LIGHT disc clearly visible on the dark track, pulsing deep and bright');
 }
 
@@ -1521,12 +1521,13 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   assert(/#tgCamera\{--sp:/.test(css) && /#tgComputer\{--sp:178,168,246\}/.test(css) &&
     /#tgBudget\{--sp:240,190,70\}/.test(css),
     'camera stays teal, computer is violet, budget gold');
-  assert(/\.toggle:not\(\.on\):hover::before[\s\S]*?radial-gradient\(circle at 50% 50%,rgba\(var\(--sp\),\.11\)/.test(css) &&
-    /animation:qtGlowIn 2\.6s cubic-bezier\(\.25,\.6,\.3,1\) both/.test(css) &&
-    /@keyframes qtGlowIn\{[\s\S]*?rgba\(var\(--sp\),\.5\),rgba\(var\(--sp\),\.16\) 8%,transparent 18%/s.test(css) &&
+  assert(/\.toggle:not\(\.on\):hover::before[\s\S]*?radial-gradient\(circle at 50% 50%,rgba\(var\(--sp\),\.24\)/.test(css) &&
+    /animation:qtGlowIn 2\.6s cubic-bezier\(\.22,\.6,\.3,1\) both/.test(css) &&
+    /opacity:0;transform:scale\(\.1\);/.test(css) &&
+    /@keyframes qtGlowIn\{[\s\S]*?0%\{opacity:0;transform:scale\(\.1\)\}[\s\S]*?100%\{opacity:1;transform:scale\(1\)\}\}/.test(css) &&
     /\.comp-btn\{--sp:130,190,215\}/.test(css) &&
     !/@keyframes ibBreath/.test(css),
-    'the center light is a VISIBLE animation: a bright dot GROWS into the soft glow (all composer buttons)');
+    'the center light REALLY animates: transform+opacity interpolate — a bright dot smoothly grows into the glow');
   assert(!/\.toggle:not\(\.on\):hover\{transform:rotate/.test(css) &&
     !/\.budget-btn:not\(\.on\):hover\{transform:rotate/.test(css) &&
     !/\[data-tip\]::after\{transform:translateX\(-50%\) rotate\(/.test(css),
@@ -1541,29 +1542,32 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   assert(/animation:agKnobRubber 1\.1s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
     /@keyframes agKnobRubber\{[\s\S]*?44%\{transform:translateX\(6px\)\}[\s\S]*?76%\{transform:translateX\(-1\.8px\)\}[\s\S]*?100%\{transform:translateX\(0\)\}\}/.test(css),
     'the knob stretches right, then SNAP-releases back like a rubber band, a bit faster');
-  assert(/animation:agEmberRun 1\.1s/.test(css) &&
-    /@keyframes agEmberRun\{[\s\S]*?100%\{opacity:1;transform:translateX\(23px\)\}\}/.test(css) &&
-    /rgba\(255,140,160,1\)/.test(css) && /filter:blur\(4px\)/.test(css) &&
+  assert(/animation:agEmberRun 1\.2s linear both/.test(css) &&
+    /@keyframes agEmberRun\{[\s\S]*?45%\{transform:translateX\(14px\)\}[\s\S]*?72%\{transform:translateX\(20px\)\}[\s\S]*?100%\{opacity:1;transform:translateX\(23px\)\}\}/.test(css) &&
+    /rgba\(255,150,168,1\)/.test(css) && /filter:blur\(6px\)/.test(css) &&
+    /width:26px;height:26px/.test(css) &&
     /\.agent-switch-track\{overflow:hidden\}/.test(css),
-    'the ember is bigger/blurrier/glowing, stops in the right blind zone and STAYS there while hovered');
-  assert(/@keyframes agRestGlow\{to\{box-shadow:inset 0 1px 5px rgba\(0,0,0,\.42\),[\s\S]*?11px 0 20px -7px rgba\(255,86,112,\.62\)\}\}/.test(css) &&
-    /animation:agRestGlow \.55s ease \.72s both/.test(css),
-    'after the ember exits, only its GLOW stays OUTSIDE at the right edge of the track');
-  assert(/animation:agSparkRun 1\.25s cubic-bezier\(\.3,\.55,\.4,1\) both/.test(css) &&
+    'the ember is bigger/blurrier/glowing, moves briskly, decelerates ONLY at the end and STAYS in the blind zone');
+  assert(/@keyframes agRestGlow\{to\{box-shadow:inset 0 1px 5px rgba\(0,0,0,\.42\),[\s\S]*?14px 0 30px -6px rgba\(255,86,112,\.85\)\}\}/.test(css) &&
+    /animation:agRestGlow \.55s ease \.75s both/.test(css),
+    'the ember glow is GENEROUS and stays outside at the right edge');
+  assert(/animation:agSparkRun 1\.2s linear both/.test(css) &&
     /rgba\(255,84,112,\.95\) 50%/.test(css) &&
     /background-repeat:no-repeat/.test(css) &&
-    /@keyframes agSparkRun\{[\s\S]*?0%\{background-position:135% 0;opacity:0\}[\s\S]*?100%\{background-position:-19% 0;opacity:0\}\}/.test(css) &&
-    /92%\{background-position:-14% 0;opacity:1\}/.test(css),
-    'ONE bright spark pass (no repeat), decelerating smoothly and dying at the right edge');
+    /@keyframes agSparkRun\{[\s\S]*?0%\{background-position:135% 0;opacity:0\}[\s\S]*?100%\{background-position:-11% 0;opacity:0\}\}/.test(css) &&
+    /92%\{background-position:-8% 0;opacity:1\}/.test(css) &&
+    /40%\{background-position:40% 0\}/.test(css),
+    'ONE spark pass, brisk then slowing, fading exactly at the END of its path');
   // по умолчанию тумблер НЕЙТРАЛЕН: базовая рамка var(--line), никаких
   // красных приманок до наведения
   assert(!/\.agent-switch\{--sp:255,107,122\}/.test(css) &&
     !/\.agent-switch-track\{border-color:rgba\(255,107,122,\.26\)/.test(css) &&
     !/\.agent-switch-track i\{color:#2a1216;background:#a4898f\}/.test(css),
     'the OFF agent switch is neutral: red appears only on hover or when ON');
-  assert(/\.agent-switch-track input:checked \+ i\{[^}]*animation:agGlow 2\.2s ease-in-out infinite/s.test(css) &&
-    /@keyframes agGlow\{[\s\S]*?50%\{box-shadow:0 0 32px rgba\(255,120,140,1\),0 0 64px rgba\(184,52,74,\.9\)\}\}/.test(css),
-    'the enabled AGENT knob glows EVEN BRIGHTER and pulses: "I am active"');
+  assert(/\.agent-switch-track input:checked \+ i::after\{[^}]*box-shadow:0 0 34px 6px rgba\(255,116,138,\.85\),0 0 72px 14px rgba\(198,52,74,\.6\)/s.test(css) &&
+    /animation:agGlow 2\.2s ease-in-out infinite/.test(css) &&
+    /@keyframes agGlow\{\s*0%,100%\{opacity:\.38\}\s*50%\{opacity:1\}\}/.test(css),
+    'the enabled knob pulses via a GLOW LAYER with deep opacity swings — clearly visible');
   assert(/\.budget-pop\[hidden\]\{display:none\}/.test(css),
   'the budget popup actually closes ([hidden] beats display:flex)');
   // закрытие чуть быстрее открытия; панель чуть жёлтая; стрелки свои
@@ -1654,9 +1658,12 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /\.qt-flowline\{/.test(css) && /@keyframes qtRise/.test(css),
     'a tool is a name with a thin rail down and a flowing masked area to the right');
   assert(/\.qt-flow\{[^}]*max-height:88px/s.test(css) &&
+    /\.qt-flowin\{[^}]*will-change:transform/s.test(css) &&
     /\.qt-flow\.full\{[\s\S]*?mask-image:linear-gradient\(180deg,transparent,#000 22%,#000 82%,transparent\)/s.test(css) &&
-    /function glideFlow/.test(js),
-    'the flow GROWS with lines; when full, edge fades appear and the text GLIDES up');
+    /function glideFlow/.test(js) &&
+    /inner\.scrollHeight > flow\.clientHeight \+ 4/.test(extractFunction(js, 'qtFeed')) &&
+    js.includes('<div class="qt-flowin"></div>'),
+    'the flow FILLS line by line (no motion), then the inner layer glides — never overlapping the header');
   assert(/rgba\(154,202,219,\.72\)/.test(css) &&
     !/rgba\(128,156,142\)/.test(css),
     'ALL kitchen colors are the plain-request gray, a bit brighter; no other tints');
@@ -1665,17 +1672,19 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   // отработал — галочка у имени, строка результата в поток, СВЁРТКА В
   // МИНИАТЮРУ; в папку семейство уезжает ТОЛЬКО когда череда закончилась
   // (другой тип инструмента или текст ответа)
-  assert(/setTimeout\(\(\) => qtMiniaturize\(node\), 340\);/.test(js) &&
-    /function qtSweep\(ui, keepGroup\)/.test(js) &&
+  assert(/setTimeout\(\(\) => qtMiniaturize\(node\), 1150\);/.test(js) &&
+    /lines\.slice\(1, 7\)/.test(js),
+    'the RESULT MASS pours into the flow right away (up to 6 real lines), the miniature waits');
+  assert(/function qtSweep\(ui, keepGroup\)/.test(js) &&
     /qtSweep\(ui, ev\.group\);/.test(js) &&
     /if \(!ui\.agentMode && !ui\._qtSwept\)/.test(js) &&
     /qtResultLine\(node, ev\);/.test(js),
     'a finished tool becomes a miniature and shows its result line; the family folder closes the WHOLE streak at once');
-  assert(/'height \.72s cubic-bezier\(\.22,\.55,\.25,1\)/.test(js),
-    'the fold into the folder is MUCH smoother and slower (.72s)');
-  assert(/folded > 0[\s\S]*?_qtHold = performance\.now\(\) \+ 720 \+ folded \* 130 \+ 500/.test(js) &&
+  assert(/'height \.95s cubic-bezier\(\.2,\.5,\.2,1\)/.test(js),
+    'the fold into the folder is MUCH smoother and slower (.95s)');
+  assert(/_qtHold = performance\.now\(\) \+ \(folded - 1\) \* 170 \+ 700/.test(js) &&
     /ui\.holdUntil = ui\._qtHold \|\| 0;/.test(js),
-    'typing WAITS for the folding waltz to finish (+0.5s) before the text starts');
+    'typing waits for the waltz but the pause is SHORT now');
   assert(/\.qt-detail\{[^}]*overflow-y:auto;overflow-x:hidden/s.test(css) &&
     /white-space:pre-wrap;word-break:break-word/.test(css),
     'tool text scrolls VERTICALLY ONLY and wraps — no horizontal scrolling');
@@ -1684,12 +1693,14 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /\.qt-kids>\.qt-rail\{/.test(css) && /\.qt-rows\{/.test(css),
     'the folder has no rail when closed; opened, a rail runs down from the icon');
   const tf = extractFunction(js, 'qtToggleFolder');
-  assert(/i \* 90\)/.test(tf) && /'opacity \.42s ease '/.test(tf) &&
-    /'height \.38s cubic-bezier\(\.4,\.5,\.4,1\)'/.test(tf) &&
-    /i \* 70\)/.test(tf) &&
-    /translateY\(12px\)/.test(tf) && /translateY\(-7px\)/.test(tf) &&
+  assert(/i \* 110\)/.test(tf) && /'opacity \.5s ease '/.test(tf) &&
+    /'height \.42s cubic-bezier\(\.25,\.8,\.3,1\)'/.test(tf) &&
+    /i \* 80\)/.test(tf) &&
+    /translateY\(12px\)/.test(tf) && /translateY\(-8px\)/.test(tf) &&
     /f\._anim/.test(tf),
     'folder tools float out ONE BY ONE, slower and smoother, folding back in reverse; clicks never break the animation');
+  assert(tf.indexOf("kids.style.height = '0px'") < tf.indexOf("f.classList.remove('open')"),
+    'CLOSING keeps the folder open until the reverse animation finishes — it never snaps to display:none');
   assert(/'height \.44s cubic-bezier\(\.3,\.6,\.3,1\), opacity \.3s ease'/.test(extractFunction(js, 'qtToggleDetail')) &&
     /'height \.44s cubic-bezier\(\.22,\.8,\.3,1\), opacity \.34s ease'/.test(extractFunction(js, 'qtToggleDetail')),
     'a single tool expands/collapses slower and smoother too');
@@ -1737,35 +1748,36 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   });
   // ТЕМА AGENT — БОРДО НА НОЧНОЙ СИНИ (человек-паук), и её ПРИВОЗИТ волна
   assert(/@property --cy\{syntax:'<color>';inherits:true;initial-value:#00c8f0\}/.test(css) &&
-    /transition:--cy \.95s ease,--cy2 \.95s ease,--line \.95s ease/.test(css),
+    /transition:--cy \.5s ease,--cy2 \.5s ease,--line \.5s ease/.test(css),
     'theme colors are registered properties and TRAVEL with transitions');
   assert(/body\.agent-on\{[\s\S]*?--cy:#8f2739; --cy2:#d98a9b;[\s\S]*?--panel:rgba\(13,17,36,\.76\)/.test(css),
     'the theme is DESIGNED FROM SCRATCH: deep bordo accents on NAVY space (Spider-Man)');
   assert(/function agentWave/.test(js) && /S\.agentWaveRect/.test(js),
     'the wave can be born from the permission-card toggle rect');
   const waveCss = css.match(/\.agent-wave\{([^}]*)\}/s)[1];
-  assert(!/border:3px/.test(waveCss) && /filter:blur\(12px\)/.test(waveCss) &&
-    /rgba\(122,22,38,\.4\) 0%/.test(waveCss) && /rgba\(255,96,124,\.26\) 50%/.test(waveCss),
-    'the wave is a WIDE SOFT LIGHT FRONT, a bit more transparent (no thin ring, no flash)');
-  assert(/animation:agentWave \.92s cubic-bezier\(\.3,\.15,\.45,\.9\) both/.test(css) &&
-    /@keyframes agentWave\{[\s\S]*?100%\{transform:translate\(-50%,-50%\) scale\(1\.06\);opacity:0\}\}/.test(css),
-    'the wave rolls FASTER and never stalls mid-way — it exits beyond the screen');
+  assert(!/border:3px/.test(waveCss) && /filter:blur\(8px\)/.test(waveCss) &&
+    /rgba\(116,18,33,\.52\) 0%/.test(waveCss) && /rgba\(255,96,124,\.3\) 52%/.test(waveCss),
+    'the wave is a WIDE SOFT PAINTED FRONT: the area behind it reads as already colored');
+  assert(/animation:agentWave \.8s cubic-bezier\(\.25,\.45,\.35,1\) both/.test(css) &&
+    /@keyframes agentWave\{[\s\S]*?82%\{opacity:\.95\}[\s\S]*?100%\{transform:translate\(-50%,-50%\) scale\(1\.3\);opacity:0\}\}/.test(css),
+    'the wave keeps full brightness until 82% and EXITS beyond the screen (scale 1.3)');
   assert(!/agentWave\(S\.agentWaveOrigin \|\| \$\('#swAgent'\), true\)/.test(js),
     'NO reverse wave on disable: plain base transitions take the theme back');
   assert(/@keyframes agentWaveOut\{[\s\S]*?100%\{opacity:0;transform:translate\(-50%,-50%\) scale\(\.03\)\}\}/.test(css),
     'on disable the color wave shrinks back INTO the toggle');
   assert(/document\.body\.classList\.add\('agent-on'\);/.test(js) &&
-    /\}, 520\);/.test(js) &&
+    /\}, 260\);/.test(js) &&
+    /transition:--cy \.5s ease,--cy2 \.5s ease,--line \.5s ease/.test(css) &&
     /document\.body\.classList\.remove\('agent-on'\);/.test(js) &&
     /ag-switching/.test(js),
-    'the theme settles BEHIND the wave front on enable and falls off immediately on disable');
+    'colors flip at 260ms and finish IN HALF A SECOND — the paint settles while the wave is still rolling');
   assert(/body\.agent-on \.bg-layer\{/.test(css) && /body\.agent-on \.grid-plane\{/.test(css) &&
     /body\.agent-on \.bubble-user\{/.test(css) && /body\.agent-on \.note-panel\{background:#0d1126\}/.test(css) &&
     /body\.agent-on \.send-btn\{background:linear-gradient\(135deg,#a83248,#571223\)/.test(css) &&
     /body\.agent-on \.reactor \.core\{background:radial-gradient\(circle,#fff,#eaa4b2 44%,#6e1628\)/.test(css) &&
-    /body\.agent-on \.plan-dock\{/.test(css) && /body\.agent-on \.jw-ico\{/.test(css) &&
+    /body\.agent-on \.jw-ico\{/.test(css) &&
     /body\.agent-on ::-webkit-scrollbar-thumb\{background:rgba\(118,136,214,\.22\)\}/.test(css),
-    'a full designed theme: navy sky/panels/scroll + bordo energy (send, core, plan, windows)');
+    'a full designed theme: navy sky/panels/scroll + bordo energy (send, core, windows) — plan stays GOLD');
   assert(/body\.agent-on \.md pre\{background:rgba\(7,10,24,\.9\)/.test(css) &&
     /body\.agent-on \.md pre code\{color:#ccd7f0\}/.test(css) &&
     /body\.agent-on \.md th\{background:rgba\(58,16,29,\.62\)/.test(css) &&
@@ -1773,8 +1785,9 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     'CODE is readable on navy; tables get a wine head and navy zebra');
   assert(/body\.agent-on \.hello span\{background:linear-gradient\(90deg,#f5bcc9,#c3a9f0 40%,#8fa7ec 68%,#f5bcc9\)/.test(css),
     'the AGENT greeting is BRIGHT and readable on the navy page');
-  assert(!/body\.agent-on \.plan-dock \.pd-seg\{/.test(css),
-    'plan segments are NEVER recolored: gold while running, green when done — the feature survives any theme');
+  assert(!/body\.agent-on \.plan-dock \{/.test(css) &&
+    !/body\.agent-on \.plan-dock ./.test(css),
+    'the plan dock is NEVER touched by the agent theme: gold frame, gold segments, green done — as it was');
   assert(/body\.agent-on \.nav-item:hover\{background:rgba\(143,39,57,\.12\)\}/.test(css) &&
     /body\.agent-on \.chat-item\.active\{background:rgba\(143,39,57,\.17\)/.test(css) &&
     /body\.agent-on \.ask-opt\.sel, ?body\.agent-on \.ask-opt\.sel:hover\{background:rgba\(143,39,57,\.2\)/.test(css) &&
@@ -1789,8 +1802,8 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     'the "today" label and day separators stay silent while a scenario runs');
   assert(/\.sc-stage-text\{[^}]*font-size:13\.5px/s.test(css) &&
     !/\.sc-stage-text\{[^}]*border/s.test(css) &&
-    /\.sc-stage-line\{flex:0 0 46px/.test(css),
-    'stage = framed digit, LONGER connector, bigger frameless title');
+    /\.sc-stage-line\{flex:0 0 64px/.test(css),
+    'stage = framed digit, MUCH longer connector, bigger frameless title');
   assert(/if \(S\.scenarioActive\) S\.abortedScenario = true;/.test(extractFunction(js, 'stopStream')) &&
     /S\.abortedScenario/.test(extractFunction(js, 'runScenario')),
     'STOP during a scenario kills the WHOLE scenario — no next step is sent');
@@ -1813,38 +1826,45 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /\.jw-pane\{[^}]*overflow-y:auto/s.test(css) &&
     /jw-pane/.test(js.match(/m\.innerHTML = \(opts && opts\.soft\)[^;]+;/)[0]),
     'soft windows scroll an INNER pane: the gradient frame never scrolls away (no harsh card edges)');
-  assert(/\.sc-stage-line\{flex:0 0 46px/.test(css) &&
+  assert(/\.sc-stage-line\{flex:0 0 64px/.test(css) &&
     /\.sc-stage-text\{[^}]*font-size:13\.5px/s.test(css),
-    'the stage connector is LONGER and the stage title is bigger');
+    'the stage connector is MUCH longer and the stage title is bigger');
   // РЕЗИНКА ТУМБЛЕРА: играет РОВНО ОДИН РАЗ за наведение (JS-класс ag-play),
   // огонёк живёт ВНУТРИ трека (overflow:hidden), свечение остаётся СНАРУЖИ
   // справа, искра — один проход с замедлением в конце
   assert(/\.agent-switch-track\{overflow:hidden\}/.test(css) &&
     /\.agent-switch\.ag-play \.agent-switch-track:not\(:has\(input:checked\)\) i\{[\s\S]*?agKnobRubber 1\.1s/.test(css) &&
-    /sw\.classList\.add\('ag-play'\);/.test(js) &&
-    /setTimeout\(\(\) => \{ cooling = false; \}, 1300\);/.test(js) &&
+    /sw\.classList\.remove\('ag-play'\);[\s\S]*?void sw\.offsetWidth;[\s\S]*?sw\.classList\.add\('ag-play'\);/.test(js) &&
+    !/cooling/.test(js) &&
     !/:has\(input:checked\)\):hover i\{/.test(css),
-    'the rubber plays ONCE per hover via a JS class, not :hover (no double sparks)');
+    'the rubber RESTARTS on every mouseenter (remove + reflow + add) — quick re-hovers always play');
   const spark = css.match(/\.agent-switch\.ag-play \.agent-switch-track:not\(:has\(input:checked\)\)\:\:before\s*\{([^}]*)\}/s);
   assert(spark && /background-repeat:no-repeat/.test(spark[1]) &&
     /rgba\(255,84,112,\.95\) 50%/.test(spark[1]),
     'the contour spark is a SINGLE pass (no-repeat), bright');
-  assert(/animation:agSparkRun 1\.25s cubic-bezier\(\.3,\.55,\.4,1\) both/.test(css) &&
-    /@keyframes agSparkRun\{[\s\S]*?100%\{background-position:-19% 0;opacity:0\}\}/.test(css) &&
-    /92%\{background-position:-14% 0;opacity:1\}/.test(css) &&
-    /38%\{background-position:52% 0\}/.test(css),
-    'ONE spark pass that decelerates SMOOTHLY and dies at the RIGHT edge');
+  assert(/animation:agSparkRun 1\.2s linear both/.test(css) &&
+    /@keyframes agSparkRun\{[\s\S]*?100%\{background-position:-11% 0;opacity:0\}\}/.test(css) &&
+    /92%\{background-position:-8% 0;opacity:1\}/.test(css) &&
+    /40%\{background-position:40% 0\}/.test(css),
+    'ONE spark pass, brisk then slowing, fading exactly at the END of its path');
   const ember = css.match(/\.agent-switch\.ag-play \.agent-switch-track:not\(:has\(input:checked\)\)\:\:after\s*\{([^}]*)\}/s);
-  assert(ember && /width:22px;height:22px/.test(ember[1]) && /blur\(4px\)/.test(ember[1]) &&
-    /rgba\(255,140,160,1\)/.test(ember[1]),
-    'the ember is BIGGER, blurrier and glows stronger');
+  assert(ember && /width:26px;height:26px/.test(ember[1]) && /blur\(6px\)/.test(ember[1]) &&
+    /rgba\(255,150,168,1\)/.test(ember[1]),
+    'the ember is EVEN BIGGER and blurrier, glowing wide');
+  const emberKf = css.match(/@keyframes agEmberRun\s*\{([\s\S]*?)\}\}/)[1];
+  assert(/45%\{transform:translateX\(14px\)\}/.test(emberKf) &&
+    /72%\{transform:translateX\(20px\)\}/.test(emberKf) &&
+    /100%\{opacity:1;transform:translateX\(23px\)/.test(emberKf),
+    'the ember moves briskly and decelerates ONLY AT THE END, staying alive in the blind zone');
   assert(/@keyframes agEmberRun\{[\s\S]*?100%\{opacity:1;transform:translateX\(23px\)\}\}/.test(css) &&
     /sw\.addEventListener\('mouseleave', \(\) => \{[\s\S]*?classList\.remove\('ag-play'\)/.test(js),
     'the ember STOPS at the right blind zone and STAYS alive while hovered — it never escapes or dies');
-  assert(/@keyframes agRestGlow\{to\{box-shadow:inset 0 1px 5px rgba\(0,0,0,\.42\),\s*\n?\s*11px 0 20px -7px rgba\(255,86,112,\.62\)\}\}/.test(css),
-    'the ember glow stays OUTSIDE at the right edge of the track');
-  // свет приборов: ЯВНАЯ анимация — яркое пятно растёт из центра (2.6с)
-  assert(/animation:qtGlowIn 2\.6s cubic-bezier\(\.25,\.6,\.3,1\) both/.test(css),
+  assert(/@keyframes agRestGlow\{to\{box-shadow:inset 0 1px 5px rgba\(0,0,0,\.42\),\s*\n?\s*14px 0 30px -6px rgba\(255,86,112,\.85\)\}\}/.test(css),
+    'the ember glow is GENEROUS and stays OUTSIDE at the right edge of the track');
+  // свет приборов: ЯВНАЯ анимация — пятно РАСТЁТ из центра, transform интерполируется
+  assert(/animation:qtGlowIn 2\.6s cubic-bezier\(\.22,\.6,\.3,1\) both/.test(css) &&
+    /opacity:0;transform:scale\(\.1\);/.test(css) &&
+    /35%\{transform:scale\(\.42\)\}/.test(css),
     'the composer-button center glow GROWS from a bright dot — the animation is finally visible');
   // РАЗВЁРТЫВАНИЕ КОДА С ПЕРВОГО РАЗА: следы анимации сворачивания стираются
   assert(/node\.style\.height = '';/.test(extractFunction(js, 'collapseToThumb')) &&

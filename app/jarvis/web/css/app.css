@@ -28,8 +28,8 @@ body{
   margin:0;font-family:var(--ff);background:var(--bg);color:var(--tx);
   overflow:hidden;-webkit-font-smoothing:antialiased;
   /* перекраска темы: цвета едут плавно, волна их «привозит» */
-  transition:--cy .95s ease,--cy2 .95s ease,--line .95s ease,--line2 .95s ease,
-    --panel .95s ease,--panel2 .95s ease,background .95s ease;
+  transition:--cy .5s ease,--cy2 .5s ease,--line .5s ease,--line2 .5s ease,
+    --panel .5s ease,--panel2 .5s ease,background .5s ease;
 }
 button,input,textarea,select{font-family:inherit;color:inherit}
 ::-webkit-scrollbar{width:9px;height:9px}
@@ -1054,13 +1054,16 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch:has(input:checked){color:#f2c3cd}
 .agent-switch-track:has(input:checked){background:rgba(74,13,24,.5);border-color:rgba(212,94,116,.85)}
 .agent-switch-track input:checked + i{transform:translateX(16px);background:#e290a2;
-  box-shadow:0 0 13px rgba(255,96,120,.9),0 0 28px rgba(159,42,60,.65);color:#3a0f18;
-  /* включённый AGENT: светлый круглёшок РАЗЛИЧИМ на тёмном треке и горит
-     ЗВЁЗДНО — пульс глубже и ярче, чтобы его было видно */
+  box-shadow:0 0 13px rgba(255,96,120,.9),0 0 28px rgba(159,42,60,.65);color:#3a0f18}
+/* ПУЛЬС — ОТДЕЛЬНЫЙ СЛОЙ СВЕЧЕНИЯ вокруг круглёшка: анимация opacity
+   (композитор, без перерисовок), амплитуда глубже — видно ЗВЁЗДНО */
+.agent-switch-track input:checked + i::after{content:'';position:absolute;inset:-7px;
+  border-radius:50%;pointer-events:none;
+  box-shadow:0 0 34px 6px rgba(255,116,138,.85),0 0 72px 14px rgba(198,52,74,.6);
   animation:agGlow 2.2s ease-in-out infinite}
 @keyframes agGlow{
-  0%,100%{box-shadow:0 0 12px rgba(255,96,120,.75),0 0 26px rgba(159,42,60,.5)}
-  50%{box-shadow:0 0 32px rgba(255,120,140,1),0 0 64px rgba(184,52,74,.9)}}
+  0%,100%{opacity:.38}
+  50%{opacity:1}}
 .agent-switch-track:has(input:focus-visible){outline:2px solid rgba(220,90,110,.55);outline-offset:2px}
 .agent-switch:focus-within{z-index:50}
 
@@ -1086,10 +1089,10 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .qt-body{display:flex;align-items:stretch;margin:3px 0 3px 6px}
 .qt-rail{flex:0 0 1px;background:rgba(154,202,219,.4);border-radius:1px}
 .qt-flow{flex:1;margin-left:11px;max-height:88px;overflow:hidden;
-  display:flex;flex-direction:column;justify-content:flex-start;gap:6px;
   /* затемнение краёв появляется, когда поток заполнился и «полетел»:
      пустому окну нечего растворять, заполненному — необходимо */
   -webkit-mask-image:none;mask-image:none}
+.qt-flowin{display:flex;flex-direction:column;gap:6px;will-change:transform}
 .qt-flow.full{
   -webkit-mask-image:linear-gradient(180deg,transparent,#000 22%,#000 82%,transparent);
   mask-image:linear-gradient(180deg,transparent,#000 22%,#000 82%,transparent)}
@@ -1144,27 +1147,29 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   border-color:rgba(var(--sp),.3);
   color:rgba(var(--sp),.8);
   background:rgba(var(--sp),.04)}
-/* СВЕТ РОЖДАЕТСЯ В ЦЕНТРЕ маленьким ярким пятном и РАЗРАСТАЕТСЯ до мягкой
-   подсветки всей кнопки. Это видно как анимация (градиент интерполируется),
-   а не мгновенное появление готового света */
+/* СВЕТ РОЖДАЕТСЯ В ЦЕНТРЕ и РАЗРАСТАЕТСЯ. Раньше анимировался сам градиент —
+   градиенты НЕ интерполируются, и свет просто прыгал из кадра в кадр.
+   Теперь градиент готов сразу, а растёт transform: крошечное яркое пятно
+   (.1) плавно распускается до всей кнопки — это настоящая плавная анимация */
 .comp-btn{position:relative}
 .comp-btn{--sp:130,190,215}
 .toggle:not(.on):hover::before,.budget-btn:not(.on):hover::before,
 .comp-btn:not(.on):hover::before{
   content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
-  background:radial-gradient(circle at 50% 50%,rgba(var(--sp),.11),rgba(var(--sp),.04) 46%,transparent 72%);
-  animation:qtGlowIn 2.6s cubic-bezier(.25,.6,.3,1) both}
+  background:radial-gradient(circle at 50% 50%,rgba(var(--sp),.24),rgba(var(--sp),.08) 40%,transparent 68%);
+  opacity:0;transform:scale(.1);
+  animation:qtGlowIn 2.6s cubic-bezier(.22,.6,.3,1) both}
 .toggle:not(.on):hover .tg-dot{background:rgba(var(--sp),.7);
   box-shadow:0 0 6px rgba(var(--sp),.28)}
 .budget-btn:not(.on):hover .budget-coin{color:rgba(var(--sp),.85)}
-/* рост света: от точки в центре — к мягкой подсветке кнопки. Конечное
-   состояние ровно то, что было раньше: видна сама АНИМАЦИЯ появления */
+/* рост света: пятно растёт от центра, яркость гаснет до рабочей.
+   transform и opacity интерполируются по-настоящему — скачков нет */
 @keyframes qtGlowIn{
-  0%{opacity:0;
-    background:radial-gradient(circle at 50% 50%,rgba(var(--sp),.5),rgba(var(--sp),.16) 8%,transparent 18%)}
-  14%{opacity:1}
-  100%{opacity:1;
-    background:radial-gradient(circle at 50% 50%,rgba(var(--sp),.11),rgba(var(--sp),.04) 46%,transparent 72%)}}
+  0%{opacity:0;transform:scale(.1)}
+  10%{opacity:1;transform:scale(.14)}
+  35%{transform:scale(.42)}
+  65%{transform:scale(.78)}
+  100%{opacity:1;transform:scale(1)}}
 
 /* ТУМБЛЕР AGENT — РЕЗИНКА. Наведение: круглёшек тянется вправо, замирает и
    РЫВКОМ — но плавно, как резинка — возвращается. Огонёк ЖИВЁТ ТОЛЬКО
@@ -1190,42 +1195,45 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)) i{
   animation:agKnobRubber 1.1s cubic-bezier(.3,.7,.3,1) both;
   background:#c99aa3}
-/* огонёк: КРУПНЕЕ, сильнее размыт, ЯРКО светится — и в конце НЕ исчезает:
-   докатывается до правого края трека и остаётся там жить (слепая зона за
-   круглёшком), всё время наведения видно только его свечение */
+/* огонёк: ЕЩЁ КРУПНЕЕ, сильно размыт, светится в стороны — движется бодро
+   и тормозит ТОЛЬКО В КОНЦЕ, у правого края трека (слепая зона за круглёшком):
+   сам он обрезан рамкой, снаружи живёт лишь его свечение. Пока курсор
+   на тумблере — огонёк остаётся там и НЕ гаснет */
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked))::after{
-  content:'';position:absolute;left:1px;top:50%;width:22px;height:22px;margin-top:-11px;
+  content:'';position:absolute;left:0;top:50%;width:26px;height:26px;margin-top:-13px;
   border-radius:50%;pointer-events:none;
-  background:radial-gradient(circle,rgba(255,140,160,1),rgba(255,86,112,.6) 50%,transparent 76%);
-  filter:blur(4px);
-  animation:agEmberRun 1.1s cubic-bezier(.3,.55,.35,1) both}
+  background:radial-gradient(circle,rgba(255,150,168,1),rgba(255,86,112,.65) 48%,transparent 78%);
+  filter:blur(6px);
+  animation:agEmberRun 1.2s linear both}
 @keyframes agEmberRun{
   0%{opacity:0;transform:translateX(0)}
-  14%{opacity:1}
+  12%{opacity:1;transform:translateX(2px)}
+  45%{transform:translateX(14px)}
+  72%{transform:translateX(20px)}
   100%{opacity:1;transform:translateX(23px)}}
-/* свечение от улетевшего огонька: СНАРУЖИ справа — box-shadow самого трека
-   обрезкой не Clip-ится и остаётся жить у правого края */
+/* свечение огонька: ЩЕДРЕЕ в стороны, СНАРУЖИ справа — box-shadow самого
+   трека обрезкой не_clip-ится и живёт у правого края всё наведение */
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)){
-  animation:agRestGlow .55s ease .72s both}
+  animation:agRestGlow .55s ease .75s both}
 @keyframes agRestGlow{to{box-shadow:inset 0 1px 5px rgba(0,0,0,.42),
-  11px 0 20px -7px rgba(255,86,112,.62)}}
+  14px 0 30px -6px rgba(255,86,112,.85)}}
 /* искра по контуру: один проход (no-repeat!), в конце замедляется и тает */
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked))::before{
   content:'';position:absolute;inset:0;padding:1px;border-radius:inherit;
   pointer-events:none;
   background:linear-gradient(100deg,transparent 37%,rgba(255,84,112,.95) 50%,transparent 63%);
   background-size:250% 100%;background-repeat:no-repeat;
-  animation:agSparkRun 1.25s cubic-bezier(.3,.55,.4,1) both;
+  animation:agSparkRun 1.2s linear both;
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude}
 @keyframes agSparkRun{
   0%{background-position:135% 0;opacity:0}
-  10%{opacity:1}
-  38%{background-position:52% 0}
-  62%{background-position:14% 0}
-  80%{background-position:-6% 0}
-  92%{background-position:-14% 0;opacity:1}
-  100%{background-position:-19% 0;opacity:0}}
+  8%{opacity:1;background-position:120% 0}
+  40%{background-position:40% 0}
+  62%{background-position:12% 0}
+  80%{background-position:-2% 0}
+  92%{background-position:-8% 0;opacity:1}
+  100%{background-position:-11% 0;opacity:0}}
 /* пересадка идёт (волна + тема): тумблер не трогают повторно */
 .agent-switch.ag-switching .agent-switch-track{pointer-events:none}
 /* Tooltip не участвует в геометрии composer. После выбора tip-dismissed гасит
@@ -1555,8 +1563,8 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 /* заголовок этапа — БЕЗ рамки, крупнее: это название, а не табличка */
 .sc-stage-text{flex:0 1 auto;font-weight:500;font-size:13.5px;color:var(--tx2);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;max-width:62%}
-/* коннектор — сплошная тонкая полоса, ПОДЛИННЕЕ, без затухания к краям */
-.sc-stage-line{flex:0 0 46px;height:1px;background:rgba(0,212,255,.25)}
+/* коннектор — сплошная тонкая полоса, ЕЩЁ ДЛИННЕЕ, без затухания к краям */
+.sc-stage-line{flex:0 0 64px;height:1px;background:rgba(0,212,255,.25)}
 @keyframes scStageIn{from{opacity:0;transform:translateY(-6px)}}
 
 .sc-steps-full{display:flex;flex-direction:column;gap:8px;margin:12px 0 4px;max-height:44vh;
@@ -2662,19 +2670,20 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   left:50%;top:50%;transform:translate(-50%,-50%) scale(.02);border-radius:50%;
   pointer-events:none;opacity:0;
   background:radial-gradient(circle closest-side,
-      rgba(122,22,38,.4) 0%,
-      rgba(132,26,42,.3) 34%,
-      rgba(255,96,124,.26) 50%,
-      rgba(255,110,136,.14) 60%,
-      rgba(132,26,42,.05) 74%,
-      transparent 86%);
-  filter:blur(12px);
-  animation:agentWave .92s cubic-bezier(.3,.15,.45,.9) both}
+      rgba(116,18,33,.52) 0%,
+      rgba(128,22,38,.42) 36%,
+      rgba(255,96,124,.3) 52%,
+      rgba(255,110,136,.16) 62%,
+      rgba(128,22,38,.06) 76%,
+      transparent 90%);
+  filter:blur(8px);
+  will-change:transform,opacity;
+  animation:agentWave .8s cubic-bezier(.25,.45,.35,1) both}
 @keyframes agentWave{
   0%{transform:translate(-50%,-50%) scale(.02);opacity:0}
-  10%{opacity:.85}
-  55%{opacity:.8}
-  100%{transform:translate(-50%,-50%) scale(1.06);opacity:0}}
+  9%{opacity:.95}
+  82%{opacity:.95}
+  100%{transform:translate(-50%,-50%) scale(1.3);opacity:0}}
 .agent-wave.out{
   animation:agentWaveOut 1s cubic-bezier(.5,0,.5,1) both}
 @keyframes agentWaveOut{
@@ -2785,12 +2794,8 @@ body.agent-on .tool-run{background:#8f2739!important}
 body.agent-on .ql-row{border-color:rgba(196,84,104,.18);background:rgba(16,10,16,.5)}
 body.agent-on .ql-row:hover{border-color:rgba(196,84,104,.4);background:rgba(22,12,17,.7)}
 
-/* --- 13. ПЛАН: панель на ночи, но СЕГМЕНТЫ НЕ ТРОГАЕМ — золото в работе
-       и зелёный после выполнения это фишка плана, а не тема режима --- */
-body.agent-on .plan-dock{border-color:rgba(196,84,104,.5);
-  background:linear-gradient(180deg,rgba(16,20,42,.94),rgba(10,13,28,.94))}
-body.agent-on .plan-dock .pd-t,body.agent-on .plan-dock .pd-ico,
-body.agent-on .plan-dock .pd-step{color:#e3a3b1;text-shadow:0 0 12px rgba(168,50,72,.45)}
+/* --- 13. ПЛАН — НЕ ТРОГАЕМ ВООБЩЕ: золотая рамка, золотые сегменты,
+       зелёное «выполнено» — это фишка плана, а не тема режима --- */
 
 /* --- 14. ЧИПЫ-ПОДСКАЗКИ --- */
 body.agent-on .reply-chip{border-color:rgba(124,132,180,.22)}

@@ -538,9 +538,8 @@ function agentWave(originEl, calm) {
   wave.style.setProperty('--aw', (radius * 2.2) + 'px');
   document.body.appendChild(wave);
   S.agentWaveRect = null;
-  // включение — плавная волна света (1.35 с), за фронтом перекрашивается
-  // интерфейс; выключение — волна слетает и убирается в тумблер
-  setTimeout(() => wave.remove(), calm ? 1000 : 1400);
+  // волна короткая и быстрая, но ДОХОДИТ до края экрана и уходит за него
+  setTimeout(() => wave.remove(), calm ? 1000 : 900);
 }
 
 $('#tgAgent').addEventListener('change', function () {
@@ -558,14 +557,15 @@ $('#tgAgent').addEventListener('change', function () {
   // расходится от тумблера; на 280-й мс, когда фронт накрывает экран, за ним
   // меняется тема — жест читается как «волна прокатилась и перекрасила».
   if (S.agentMode) {
-    // ВОЛНА СВЕТА КРАСИТ: широкий мягкий фронт катится от тумблера по
-    // экрану (~1.35 с), и КО ЗА ФРОНТОМ интерфейс перекрашивается —
-    // цвета едут плавными переходами (~0.95 с), догорая уже за волной
+    // ВОЛНА КРАСИТ ИНТЕРФЕЙС ЗА СОБОЙ: пока бордовый фронт катится по
+    // экрану, ПЕРЕКРАШЕННЫМ становится то, что она уже накрыла. Класс
+    // темы включается на 260-й мс — к этому моменту фронт накрыл центр,
+    // и цвета доезжают переходами (0.5 с) ещё ПОД волной, до её ухода
     agentWave(S.agentWaveOrigin || $('#swAgent'), false);
     setTimeout(() => {
       document.body.classList.add('agent-on');
-    }, 520);
-    setTimeout(() => { if (shell) shell.classList.remove('ag-switching'); }, 1450);
+    }, 260);
+    setTimeout(() => { if (shell) shell.classList.remove('ag-switching'); }, 950);
   } else {
     // ВЫКЛЮЧЕНИЕ — БЕЗ ОБРАТНОЙ ВОЛНЫ: базовый переход. Цвета уезжают
     // вспять своими transition (~0.95с), тумблер гаснет до нейтрального
@@ -587,12 +587,13 @@ $$('.agent-switch').forEach((sw) => sw.addEventListener('mouseleave', function (
    и искры пробегали дважды. Теперь mouseevent-класс ставится один раз
    и снимается после проигрыша; повторное наведение в паузе игнорируется. */
 $$('.agent-switch').forEach((sw) => {
-  let cooling = false;
   sw.addEventListener('mouseenter', () => {
-    if (cooling || sw.classList.contains('ag-switching')) return;
-    cooling = true;                        // перезапуск только после проигрыша
+    if (sw.classList.contains('ag-switching')) return;
+    // РЕСТАРТ ВСЕГДА: даже мгновенный повтор входа проигрывает резинку
+    // с нуля — снять класс, принудительный reflow, поставить заново
+    sw.classList.remove('ag-play');
+    void sw.offsetWidth;
     sw.classList.add('ag-play');
-    setTimeout(() => { cooling = false; }, 1300);
   });
   // резинка, огонёк и свечение живут, ПОКА курсор на тумблере: уход — всё
   // тихо гаснет (анимации с both-заливкой снимаются вместе с классом)
@@ -3666,32 +3667,44 @@ function ensureStatus(ui) {
 }
 
 function qtFeed(flow, text) {
+  // строки живут на ВНУТРЕННЕМ слое: он и сдвигается при полёте, а внешнее
+  // окно просто обрезает — поток никогда не наезжает на заголовок
+  const inner = flow.querySelector('.qt-flowin');
+  if (!inner) return;
   const line = el('div', 'qt-flowline', esc(String(text || '')));
-  flow.appendChild(line);
-  // ЗАПОЛНИЛСЯ — включаем затемнение краёв: текст долетел до верха окна
-  if (flow.scrollHeight >= 86) flow.classList.add('full');
-  glideFlow(flow);
+  inner.appendChild(line);
+  // ФАЗА 1 — НАПОЛНЕНИЕ: строки пишутся одна за другой, окно растёт,
+  // ничего не движется. ФАЗА 2 — ПОЛЁТ: окно заполнилось, включаем
+  // затемнение краёв и текст начинает пролетать вверх
+  if (inner.scrollHeight > flow.clientHeight + 4) {
+    flow.classList.add('full');
+    glideFlow(flow, inner);
+  }
 }
 
-/* ПОТОК «ЛЕТИТ». Новая строка приходит снизу, а верхняя уезжает вверх и
-   тает в затемнении. Приём без скачка: плавный transform у всего потока,
-   затем удаление уехавшей строки и сброс transform в том же положении. */
-function glideFlow(flow) {
+/* ПОЛЁТ ПОТОКА. Внутренний слой плавно уезжает вверх ровно на высоту
+   первой строки, затем она удаляется и transform сбрасывается в тот же
+   кадр — сдвига не видно, а верхняя строка растворилась в затемнении. */
+function glideFlow(flow, inner) {
   if (flow._glide) return;
-  if (flow.children.length < 2 || flow.scrollHeight <= flow.clientHeight + 2) return;
   flow._glide = true;
-  const first = flow.firstElementChild;
-  const h = first.offsetHeight + 6;
-  flow.style.transition = 'transform .55s cubic-bezier(.3,.7,.3,1)';
-  void flow.offsetHeight;
-  flow.style.transform = 'translateY(' + (-h) + 'px)';
-  setTimeout(() => {
-    flow.style.transition = 'none';
-    flow.style.transform = 'none';
-    if (first.parentNode === flow) first.remove();
-    flow._glide = false;
-    glideFlow(flow);            // строки приходили дальше — поток догоняет
-  }, 570);
+  const step = () => {
+    const first = inner.firstElementChild;
+    if (!first) { flow._glide = false; return; }
+    const h = first.offsetHeight + 6;
+    inner.style.transition = 'transform .5s cubic-bezier(.3,.7,.3,1)';
+    void inner.offsetHeight;
+    inner.style.transform = 'translateY(' + (-h) + 'px)';
+    setTimeout(() => {
+      inner.style.transition = 'none';
+      if (first.parentNode === inner) first.remove();
+      inner.style.transform = 'none';
+      // поток всё ещё переполнен — продолжаем лететь без паузы
+      if (inner.scrollHeight > flow.clientHeight + 4) step();
+      else { flow._glide = false; flow.classList.remove('full'); }
+    }, 520);
+  };
+  step();
 }
 
 function qtOpen(ui, ev) {
@@ -3702,7 +3715,8 @@ function qtOpen(ui, ev) {
       '<span class="qt-name">' + esc(ev.label || ev.name) + '</span>' +
       '<span class="qt-mark"></span>' +
     '</div>' +
-    '<div class="qt-body"><span class="qt-rail"></span><div class="qt-flow"></div></div>';
+    '<div class="qt-body"><span class="qt-rail"></span><div class="qt-flow">' +
+      '<div class="qt-flowin"></div></div></div>';
   node._tool = { id: ev.id || ev.name, name: ev.name, label: ev.label || ev.name,
                  group: ev.group || 'base', args: ev.args || {} };
   const st = ensureStatus(ui);
@@ -3726,16 +3740,23 @@ function qtOpen(ui, ev) {
   return node;
 }
 
-/* КОРОТКАЯ СТРОКА РЕЗУЛЬТАТА в поток: видно, ЧТО инструмент получил —
-   «нашёл 3 статьи», «файл записан», а не голая галочка. */
+/* МАССА РЕЗУЛЬТАТА — В ПОТОКЕ СРАЗУ. Раньше во время работы в инструменте
+   было видно пару строк, а «масса информации» всплывала только при клике
+   после ответа. Теперь результат вываливается в поток тем же живым полётом:
+   первая строка с галочкой, затем до шести строк настоящего вывода. */
 function qtResultLine(node, ev) {
   const flow = node && node.querySelector('.qt-flow');
   if (!flow) return;
   const ok = !(ev && ev.result && ev.result.ok === false);
-  let text = toolResultText((ev && ev.result) || '');
-  text = String(text || '').split('\n').filter((x) => x.trim())[0] || '';
-  if (text.length > 96) text = text.slice(0, 96) + '…';
-  qtFeed(flow, (ok ? '✓ ' : '✕ ') + (text || 'готово'));
+  const raw = String(toolResultText((ev && ev.result) || '') || '');
+  const lines = raw.split('\n').map((x) => x.trim()).filter(Boolean);
+  qtFeed(flow, (ok ? '✓ ' : '✕ ') + (lines[0] || 'готово'));
+  lines.slice(1, 7).forEach((x, i) => {
+    setTimeout(() => {
+      if (node.isConnected && !node._done) return;
+      qtFeed(flow, x.length > 96 ? x.slice(0, 96) + '…' : x);
+    }, 120 + i * 170);
+  });
 }
 
 /* МИНИАТЮРА: инструмент закончил — тело (поток) прячется, остаётся строка
@@ -3752,10 +3773,10 @@ function qtMiniaturize(node) {
   body.style.transition = 'none';
   body.style.height = h + 'px';
   void body.offsetHeight;
-  body.style.transition = 'height .44s cubic-bezier(.25,.6,.3,1), opacity .32s ease';
+  body.style.transition = 'height .5s cubic-bezier(.25,.6,.3,1), opacity .36s ease';
   body.style.height = '0px';
   body.style.opacity = '0';
-  setTimeout(() => { if (!node.dataset.folded) body.style.display = 'none'; }, 460);
+  setTimeout(() => { if (!node.dataset.folded) body.style.display = 'none'; }, 520);
 }
 
 /* ЧЕРЕДА ЗАКОНЧИЛАСЬ: инструменты другого типа или текст ответа означают,
@@ -3777,7 +3798,7 @@ function qtSweep(ui, keepGroup) {
       qtMiniaturize(nn);
     }
     folded++;
-    setTimeout(() => qtFold(ui, nn), i++ * 130);
+    setTimeout(() => qtFold(ui, nn), i++ * 170);
   });
   return folded;
 }
@@ -3842,11 +3863,11 @@ function qtFold(ui, node) {
   node.style.height = h0 + 'px';
   void node.offsetHeight;
   node.style.transition =
-    'height .72s cubic-bezier(.22,.55,.25,1), transform .72s cubic-bezier(.22,.55,.25,1), opacity .5s ease .18s';
+    'height .95s cubic-bezier(.2,.5,.2,1), transform .95s cubic-bezier(.2,.5,.2,1), opacity .62s ease .22s';
   node.style.transform = 'translateY(' + dy + 'px) scale(.93)';
   node.style.opacity = '0';
   node.style.height = '0px';
-  setTimeout(() => node.remove(), 760);
+  setTimeout(() => node.remove(), 990);
 }
 
 function qtToggleFolder(f) {
@@ -3855,31 +3876,33 @@ function qtToggleFolder(f) {
   f._anim = true;
   const free = () => { f._anim = false; };
   if (f.classList.contains('open')) {
-    f.classList.remove('open');
+    // КЛАСС open НЕ СНИМАЕТСЯ ДО КОНЦА: раньше display:none включался
+    // мгновенно и строки исчезали одним кадром — «обратной анимации не было»
     const rows = Array.from(f.querySelectorAll('.qt-row')).reverse();
     // ЗАКРЫТИЕ — ТА ЖЕ АНИМАЦИЯ В ОБРАТНУЮ СТОРОНУ: строки тонут одна за
     // другой (от последней к первой), затем тело папки съёживается в ноль.
     rows.forEach((r, i) => {
-      r.style.transition = 'opacity .38s ease ' + (i * 70) + 'ms, transform .38s cubic-bezier(.4,.6,.4,1) ' + (i * 70) + 'ms';
+      r.style.transition = 'opacity .46s ease ' + (i * 80) + 'ms, transform .46s cubic-bezier(.4,.6,.4,1) ' + (i * 80) + 'ms';
       r.style.opacity = '0';
-      r.style.transform = 'translateY(-7px)';
+      r.style.transform = 'translateY(-8px)';
     });
     const h0 = kids.getBoundingClientRect().height;
     kids.style.overflow = 'hidden';
     kids.style.transition = 'none';
     kids.style.height = h0 + 'px';
     void kids.offsetHeight;
-    const rowsT = rows.length * 70 + 300;
+    const rowsT = rows.length * 80 + 320;
     setTimeout(() => {
-      kids.style.transition = 'height .38s cubic-bezier(.4,.5,.4,1)';
+      kids.style.transition = 'height .44s cubic-bezier(.4,.5,.4,1)';
       kids.style.height = '0px';
     }, rowsT);
     setTimeout(() => {
+      f.classList.remove('open');
       kids.classList.remove('open');
       kids.style.cssText = '';
       rows.forEach((r) => { r.style.cssText = ''; });
       free();
-    }, rowsT + 410);
+    }, rowsT + 470);
   } else {
     const box = f.querySelector('.qt-rows');
     box.replaceChildren();
@@ -3893,13 +3916,13 @@ function qtToggleFolder(f) {
     kids.style.transition = 'none';
     kids.style.height = '0px';
     void kids.offsetHeight;
-    kids.style.transition = 'height .36s cubic-bezier(.25,.8,.3,1)';
+    kids.style.transition = 'height .42s cubic-bezier(.25,.8,.3,1)';
     kids.style.height = h + 'px';
     const allRows = f.querySelectorAll('.qt-row');
     allRows.forEach((r, i) => {
       r.style.opacity = '0';
       r.style.transform = 'translateY(12px)';
-      r.style.transition = 'opacity .42s ease ' + (i * 90) + 'ms, transform .42s cubic-bezier(.22,.8,.3,1) ' + (i * 90) + 'ms';
+      r.style.transition = 'opacity .5s ease ' + (i * 110) + 'ms, transform .5s cubic-bezier(.22,.8,.3,1) ' + (i * 110) + 'ms';
       void r.offsetHeight;
       r.style.opacity = '1';
       r.style.transform = 'translateY(0)';
@@ -3908,7 +3931,7 @@ function qtToggleFolder(f) {
       kids.style.cssText = '';
       allRows.forEach((r) => { r.style.cssText = ''; });
       free();
-    }, allRows.length * 90 + 520);
+    }, allRows.length * 110 + 580);
   }
 }
 
@@ -5348,7 +5371,9 @@ function handleEvent(ev, ui) {
         clearTimeout(node._t);
         qtMark(node, ok, node._tool.elapsed);
         qtResultLine(node, ev);
-        setTimeout(() => qtMiniaturize(node), 340);
+        // масса результата летит в потоке — миниатюра чуть позже, чтобы
+        // пользователь УСПЕЛ увидеть настоящий вывод, а не голую галочку
+        setTimeout(() => qtMiniaturize(node), 1150);
       } else if (node) {
         // AGENT: спиннер замирает цветом, ✓/✕ у имени, результат внутри
         // карточки; сворачивается чередой в одну групповую карточку
@@ -5435,7 +5460,9 @@ function handleEvent(ev, ui) {
         ui._qtSwept = true;
         const folded = qtSweep(ui, null);
         if (folded > 0) {
-          ui._qtHold = performance.now() + 720 + folded * 130 + 500;
+          // вальс должен успеть показаться, но не задерживать ответ:
+          // хвост последней свёртки + короткая пауза — и текст пошёл
+          ui._qtHold = performance.now() + (folded - 1) * 170 + 700;
         }
       }
       if (!ui.mdEl) {
