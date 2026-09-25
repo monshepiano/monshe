@@ -28,8 +28,8 @@ body{
   margin:0;font-family:var(--ff);background:var(--bg);color:var(--tx);
   overflow:hidden;-webkit-font-smoothing:antialiased;
   /* перекраска темы: цвета едут плавно, волна их «привозит» */
-  transition:--cy .5s ease,--cy2 .5s ease,--line .5s ease,--line2 .5s ease,
-    --panel .5s ease,--panel2 .5s ease,background .5s ease;
+  transition:--cy .3s ease,--cy2 .3s ease,--line .3s ease,--line2 .3s ease,
+    --panel .3s ease,--panel2 .3s ease,background .3s ease;
 }
 button,input,textarea,select{font-family:inherit;color:inherit}
 ::-webkit-scrollbar{width:9px;height:9px}
@@ -758,13 +758,8 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .md pre.live-code{max-height:min(42vh,360px);overflow:auto;overscroll-behavior:contain}
 /* ДОПИСАННЫЙ код сворачивается в строку СРАЗУ после написания — не ждём
    конца ответа. Одна строка с эллипсисом + «развернуть» справа; клик
-   возвращает блок до конца ответа, дальше строится настоящая вкладка. */
-.md pre.pre-folded{max-height:30px;overflow:hidden;cursor:pointer;position:relative;
-  padding:7px 74px 7px 12px;white-space:nowrap;text-overflow:ellipsis;
-  color:var(--tx3);border-color:var(--line);font-size:10.5px;line-height:16px}
-.md pre.pre-folded::after{content:'развернуть';position:absolute;right:12px;top:50%;
-  transform:translateY(-50%);font-size:10px;color:var(--cy);font-family:var(--f)}
-.md pre.pre-folded:hover{color:var(--tx2);border-color:rgba(0,212,255,.35)}
+   возвращает блок до конца ответа, дальше строится настоящая вкладка.
+   (свёртка блоков убрана: код всегда полноразмерный, живёт в live-code) */
 .md blockquote{margin:10px 0;padding:8px 14px;border-left:2.5px solid var(--cy);background:rgba(0,212,255,.06);
   border-radius:0 9px 9px 0;color:var(--tx2)}
 .md table{width:100%;border-collapse:collapse;margin:11px 0;font-size:12.5px;display:block;overflow-x:auto}
@@ -1046,24 +1041,23 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch-track input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .agent-switch-track i{position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;
   background:var(--tx3);transition:transform .5s cubic-bezier(.2,.75,.3,1),background .3s,box-shadow .3s;
-  /* буква A живёт НА самом круглешке: тумблер подписан собой, без соседних слов */
+  /* буква A живёт НА самом круглешке и ВСЕГДА ярко-чётко бордовая */
   font-style:normal;font-weight:800;font-size:11px;line-height:20px;text-align:center;
-  color:var(--panel2);font-family:inherit;user-select:none}
+  color:#a83248;text-shadow:0 0 5px rgba(168,50,72,.4);font-family:inherit;user-select:none}
 .agent-switch:hover{color:var(--tx2)}
 .agent-switch-track:hover{border-color:var(--line2)}
 .agent-switch:has(input:checked){color:#f2c3cd}
 .agent-switch-track:has(input:checked){background:rgba(74,13,24,.5);border-color:rgba(212,94,116,.85)}
 .agent-switch-track input:checked + i{transform:translateX(16px);background:#e290a2;
-  box-shadow:0 0 13px rgba(255,96,120,.9),0 0 28px rgba(159,42,60,.65);color:#3a0f18}
-/* ПУЛЬС — ОТДЕЛЬНЫЙ СЛОЙ СВЕЧЕНИЯ вокруг круглёшка: анимация opacity
-   (композитор, без перерисовок), амплитуда глубже — видно ЗВЁЗДНО */
-.agent-switch-track input:checked + i::after{content:'';position:absolute;inset:-7px;
-  border-radius:50%;pointer-events:none;
-  box-shadow:0 0 34px 6px rgba(255,116,138,.85),0 0 72px 14px rgba(198,52,74,.6);
+  box-shadow:0 0 13px rgba(255,96,120,.9),0 0 28px rgba(159,42,60,.65);
+  color:#7c1f30;text-shadow:0 0 6px rgba(255,110,132,.55)}
+/* ПУЛЬС — ВЕСЬ ТУМБЛЕР ЦЕЛИКОМ: цветное свечение (glow) дышит на треке
+   и выплёскивается за его границы, а не кружок вокруг круглёшка */
+.agent-switch-track:has(input:checked){
   animation:agGlow 2.2s ease-in-out infinite}
 @keyframes agGlow{
-  0%,100%{opacity:.38}
-  50%{opacity:1}}
+  0%,100%{box-shadow:0 0 14px 2px rgba(255,110,135,.38),0 0 30px 6px rgba(170,40,60,.22)}
+  50%{box-shadow:0 0 28px 6px rgba(255,120,140,.78),0 0 58px 16px rgba(178,48,68,.5)}}
 .agent-switch-track:has(input:focus-visible){outline:2px solid rgba(220,90,110,.55);outline-offset:2px}
 .agent-switch:focus-within{z-index:50}
 
@@ -1088,11 +1082,21 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   white-space:nowrap}
 .qt-body{display:flex;align-items:stretch;margin:3px 0 3px 6px}
 .qt-rail{flex:0 0 1px;background:rgba(154,202,219,.4);border-radius:1px}
-.qt-flow{flex:1;margin-left:11px;max-height:88px;overflow:hidden;
+.qt-flow{flex:1;margin-left:11px;max-height:88px;overflow:hidden;height:0;
+  /* ВЫСОТА ЕДЕТ ПЛАВНО: вертикальная полоса тянется за текстом без рывков */
+  transition:height .32s cubic-bezier(.25,.7,.3,1);
   /* затемнение краёв появляется, когда поток заполнился и «полетел»:
      пустому окну нечего растворять, заполненному — необходимо */
   -webkit-mask-image:none;mask-image:none}
 .qt-flowin{display:flex;flex-direction:column;gap:6px;will-change:transform}
+/* КУХНЯ НЕВИММА К РЕЖИМУ И ТЕМЕ: цвета зашиты намертво — переключение
+   AGENT не меняет уже отработавшие инструменты никак */
+.qt-detail{color:rgba(154,202,219,.66)!important}
+body.agent-on .qt-name{color:rgba(154,202,219,.72)!important}
+body.agent-on .qt-mark{color:rgba(154,202,219,.55)!important}
+body.agent-on .qt-flowline{color:rgba(154,202,219,.66)!important}
+body.agent-on .qt-rail{background:rgba(154,202,219,.4)!important}
+body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .qt-flow.full{
   -webkit-mask-image:linear-gradient(180deg,transparent,#000 22%,#000 82%,transparent);
   mask-image:linear-gradient(180deg,transparent,#000 22%,#000 82%,transparent)}
@@ -1117,6 +1121,11 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
 .qt-detail::-webkit-scrollbar{display:none}
 .qt-folder:hover .qt-name,.qt-row:hover .qt-name{color:rgba(178,214,231,.9)}
+/* серия инструментов долетела в папку — имя коротко подмигивает свечением */
+.qt-folder.blink .qt-name{animation:qtBlink .55s ease-out both}
+@keyframes qtBlink{
+  0%,100%{text-shadow:none}
+  45%{text-shadow:0 0 14px rgba(178,226,244,.6),0 0 4px rgba(178,226,244,.35)}}
 /* СТРОКА ГРУППЫ АГЕНТА: тёмная, раскрываемая — как след тишины, но в карточке */
 .ql-row{border:1px solid rgba(128,156,142,.14);border-radius:9px;background:rgba(8,14,20,.55);
   cursor:pointer;transition:border-color .2s,background .2s}
@@ -1156,19 +1165,17 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .toggle:not(.on):hover::before,.budget-btn:not(.on):hover::before,
 .comp-btn:not(.on):hover::before{
   content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
-  background:radial-gradient(circle at 50% 50%,rgba(var(--sp),.24),rgba(var(--sp),.08) 40%,transparent 68%);
-  opacity:0;transform:scale(.1);
-  animation:qtGlowIn 2.6s cubic-bezier(.22,.6,.3,1) both}
+  background:radial-gradient(circle at 50% 50%,rgba(var(--sp),.19),rgba(var(--sp),.07) 42%,transparent 70%);
+  opacity:0;transform:scale(.14);
+  animation:qtGlowIn 1.05s cubic-bezier(.25,.65,.35,1) both}
 .toggle:not(.on):hover .tg-dot{background:rgba(var(--sp),.7);
   box-shadow:0 0 6px rgba(var(--sp),.28)}
 .budget-btn:not(.on):hover .budget-coin{color:rgba(var(--sp),.85)}
-/* рост света: пятно растёт от центра, яркость гаснет до рабочей.
-   transform и opacity интерполируются по-настоящему — скачков нет */
+/* СВЕЧЕНИЕ ИЗ ЦЕНТРА: начинается СРАЗУ при наведении, за 1.05с свет
+   доходит от точки до границ кнопки и ЗАМИРАЕТ (конечное состояние живёт) */
 @keyframes qtGlowIn{
-  0%{opacity:0;transform:scale(.1)}
-  10%{opacity:1;transform:scale(.14)}
-  35%{transform:scale(.42)}
-  65%{transform:scale(.78)}
+  0%{opacity:0;transform:scale(.14)}
+  12%{opacity:1;transform:scale(.18)}
   100%{opacity:1;transform:scale(1)}}
 
 /* ТУМБЛЕР AGENT — РЕЗИНКА. Наведение: круглёшек тянется вправо, замирает и
@@ -1194,7 +1201,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   100%{transform:translateX(0)}}
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)) i{
   animation:agKnobRubber 1.1s cubic-bezier(.3,.7,.3,1) both;
-  background:#c99aa3}
+  background:#c99aa3;color:#7c1f30;text-shadow:0 0 6px rgba(255,110,132,.5)}
 /* огонёк: ЕЩЁ КРУПНЕЕ, сильно размыт, светится в стороны — движется бодро
    и тормозит ТОЛЬКО В КОНЦЕ, у правого края трека (слепая зона за круглёшком):
    сам он обрезан рамкой, снаружи живёт лишь его свечение. Пока курсор
@@ -1204,13 +1211,13 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   border-radius:50%;pointer-events:none;
   background:radial-gradient(circle,rgba(255,150,168,1),rgba(255,86,112,.65) 48%,transparent 78%);
   filter:blur(6px);
-  animation:agEmberRun 1.2s linear both}
+  animation:agEmberRun 1s cubic-bezier(.3,.5,.35,1) both}
 @keyframes agEmberRun{
   0%{opacity:0;transform:translateX(0)}
-  12%{opacity:1;transform:translateX(2px)}
-  45%{transform:translateX(14px)}
-  72%{transform:translateX(20px)}
-  100%{opacity:1;transform:translateX(23px)}}
+  12%{opacity:1;transform:translateX(4px)}
+  40%{transform:translateX(20px)}
+  70%{transform:translateX(34px)}
+  100%{opacity:1;transform:translateX(46px)}}
 /* свечение огонька: ЩЕДРЕЕ в стороны, СНАРУЖИ справа — box-shadow самого
    трека обрезкой не_clip-ится и живёт у правого края всё наведение */
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)){
@@ -2678,12 +2685,12 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
       transparent 90%);
   filter:blur(8px);
   will-change:transform,opacity;
-  animation:agentWave .8s cubic-bezier(.25,.45,.35,1) both}
+  animation:agentWave .72s cubic-bezier(.4,.35,.6,.85) both}
 @keyframes agentWave{
   0%{transform:translate(-50%,-50%) scale(.02);opacity:0}
-  9%{opacity:.95}
-  82%{opacity:.95}
-  100%{transform:translate(-50%,-50%) scale(1.3);opacity:0}}
+  8%{opacity:.96}
+  76%{opacity:.96}
+  100%{transform:translate(-50%,-50%) scale(1.38);opacity:0}}
 .agent-wave.out{
   animation:agentWaveOut 1s cubic-bezier(.5,0,.5,1) both}
 @keyframes agentWaveOut{
@@ -2720,8 +2727,8 @@ body.agent-on .glow-b{background:#212a6a}
 body.agent-on .glow-c{background:#371a33}
 
 /* --- 3. СКРОЛЛ: синяя луна, при касании — бордо --- */
-body.agent-on ::-webkit-scrollbar-thumb{background:rgba(118,136,214,.22)}
-body.agent-on ::-webkit-scrollbar-thumb:hover{background:rgba(196,84,104,.42)}
+body.agent-on ::-webkit-scrollbar-thumb{background:rgba(118,136,214,.24)}
+body.agent-on ::-webkit-scrollbar-thumb:hover{background:rgba(196,84,104,.5)}
 
 /* --- 4. ТЕКСТ ПИСЬМА: заголовки и ссылки винные --- */
 body.agent-on .md h3{color:#c4788b}
@@ -2730,7 +2737,7 @@ body.agent-on .md blockquote{border-left-color:#8f2739;background:rgba(143,39,57
 body.agent-on .md ::selection{background:rgba(143,39,57,.4)}
 
 /* --- 5. КОД: тёмно-синяя плита, СВЕТЛЫЙ читаемый текст --- */
-body.agent-on .md code{background:rgba(143,39,57,.15);color:#efb6c3}
+body.agent-on .md code{background:rgba(22,28,58,.9);color:#efb6c3}
 body.agent-on .md pre{background:rgba(7,10,24,.9);border-color:rgba(124,132,180,.2)}
 body.agent-on .md pre code{color:#ccd7f0}
 body.agent-on .code-block{border-color:rgba(124,132,180,.24);background:rgba(7,10,24,.88)}
@@ -2747,14 +2754,12 @@ body.agent-on .md tr:nth-child(even){background:rgba(18,23,46,.32)}
 
 /* --- 7. ПОЛЕ ВВОДА: синяя рубка с винным светом внутри --- */
 body.agent-on .composer{
-  border-color:rgba(152,124,150,.4);
-  background:linear-gradient(180deg,rgba(19,24,50,.95),rgba(9,11,24,.95));
-  box-shadow:0 14px 44px rgba(0,0,0,.5),
-    inset 0 1px 0 rgba(217,138,155,.08),inset 0 0 34px rgba(143,39,57,.07)}
+  border-color:rgba(124,132,180,.34);
+  background:linear-gradient(180deg,rgba(16,21,44,.96),rgba(9,12,26,.96));
+  box-shadow:0 14px 44px rgba(0,0,0,.5),inset 0 1px 0 rgba(150,160,210,.07)}
 body.agent-on .composer.focus{
-  border-color:rgba(217,138,155,.6);
-  box-shadow:0 16px 50px rgba(94,26,40,.34),0 0 0 3px rgba(143,39,57,.12),
-    inset 0 1px 0 rgba(240,170,185,.09)}
+  border-color:rgba(217,138,155,.62);
+  box-shadow:0 16px 50px rgba(0,0,0,.55),0 0 0 3px rgba(143,39,57,.14)}
 body.agent-on #input{caret-color:#d98a9b}
 body.agent-on .composer ::selection{background:rgba(143,39,57,.4)}
 body.agent-on .comp-btn:hover{color:#eea4b3;background:rgba(143,39,57,.14);border-color:rgba(196,84,104,.42)}
@@ -2769,30 +2774,30 @@ body.agent-on .send-btn.stop svg{fill:#fff}
 
 /* --- 9. НАВИГАЦИЯ: активная вкладка горит бордо --- */
 body.agent-on .nav-item.active{
-  background:linear-gradient(90deg,rgba(143,39,57,.26),rgba(143,39,57,.04));
-  color:#fff}
+  background:rgba(143,39,57,.26);
+  border-left:2px solid #a83248;color:#fff}
 body.agent-on .nav-item.active .nav-ico{filter:drop-shadow(0 0 9px rgba(168,50,72,.6))}
 body.agent-on .nav-item:not(.active):hover{color:#eba7b4}
 body.agent-on .nav-outline{border-color:rgba(124,132,180,.24)}
 
 /* --- 10. ПУЗЫРИ: пользователь — бордо, ответы живут на сини --- */
 body.agent-on .bubble-user{
-  background:linear-gradient(135deg,rgba(143,39,57,.24),rgba(94,42,92,.16));
-  border-color:rgba(188,96,116,.42);box-shadow:0 6px 22px rgba(88,32,44,.28)}
+  background:rgba(122,26,44,.42);
+  border-color:rgba(212,94,116,.5);box-shadow:0 6px 22px rgba(0,0,0,.35),0 0 16px rgba(143,39,57,.18)}
 
 /* --- 11. ЖИВЫЕ ИНДИКАТОРЫ --- */
 body.agent-on .reactor .ring{border-color:rgba(217,138,155,.5)}
 body.agent-on .reactor .core{background:radial-gradient(circle,#fff,#eaa4b2 44%,#6e1628)}
 body.agent-on .work-wait .tw-caret{background:linear-gradient(180deg,#fff,#eaa4b2 52%,#8f2739)}
-body.agent-on .hello span{background:linear-gradient(90deg,#f5bcc9,#c3a9f0 40%,#8fa7ec 68%,#f5bcc9);
-  text-shadow:0 0 26px rgba(217,138,155,.25)}
+body.agent-on .hello span{background:linear-gradient(90deg,#f2b9c7,#d98a9b 42%,#c9a0ee 74%,#f2b9c7);
+  text-shadow:0 0 26px rgba(217,138,155,.22)}
 
 /* --- 12. ИНСТРУМЕНТЫ АГЕНТА: карточки и группы — винные акценты --- */
 body.agent-on .tool-card{border-color:rgba(152,124,150,.3)}
 body.agent-on .tool-card.tool-wait{border-color:rgba(196,84,104,.42)}
 body.agent-on .tool-run{background:#8f2739!important}
-body.agent-on .ql-row{border-color:rgba(196,84,104,.18);background:rgba(16,10,16,.5)}
-body.agent-on .ql-row:hover{border-color:rgba(196,84,104,.4);background:rgba(22,12,17,.7)}
+body.agent-on .ql-row{border-color:rgba(124,132,180,.22);background:rgba(13,17,36,.6)}
+body.agent-on .ql-row:hover{border-color:rgba(196,84,104,.45);background:rgba(18,23,46,.8)}
 
 /* --- 13. ПЛАН — НЕ ТРОГАЕМ ВООБЩЕ: золотая рамка, золотые сегменты,
        зелёное «выполнено» — это фишка плана, а не тема режима --- */
@@ -2825,7 +2830,6 @@ body.agent-on .sugg:hover{background:rgba(143,39,57,.12);border-color:rgba(196,8
   box-shadow:0 12px 30px rgba(0,0,0,.5),0 0 18px rgba(143,39,57,.14)}
 body.agent-on .file-chip:hover{background:rgba(143,39,57,.18);
   box-shadow:0 8px 20px rgba(60,20,32,.3)}
-body.agent-on .md pre.pre-folded:hover{border-color:rgba(196,84,104,.4);color:#e3a3b1}
 body.agent-on .tc-btn:hover{background:rgba(143,39,57,.16);border-color:rgba(196,84,104,.4)}
 body.agent-on .bp-input:focus{border-color:rgba(217,138,155,.55)}
 body.agent-on .modal{background:linear-gradient(180deg,rgba(13,17,36,.99),rgba(8,10,22,.99));
@@ -2834,8 +2838,8 @@ body.agent-on .empty{color:#9aa8c8}
 
 /* --- 15. ПАНЕЛИ, ОКНА, СЦЕНАРИЙ --- */
 body.agent-on .note-panel{background:#0d1126}
-body.agent-on .jw-ico{background:rgba(143,39,57,.12);border-color:rgba(196,84,104,.38);
-  box-shadow:inset 0 0 18px rgba(143,39,57,.16)}
+body.agent-on .jw-ico{background:rgba(20,26,54,.92);border-color:rgba(196,84,104,.48);
+  box-shadow:inset 0 0 18px rgba(143,39,57,.28),0 0 14px rgba(143,39,57,.12)}
 body.agent-on .sc-stage i,body.agent-on .sc-step-full i{
   background:rgba(143,39,57,.17);border-color:rgba(196,84,104,.36);color:#e3a3b1}
 body.agent-on .sc-stage-line{background:rgba(196,84,104,.32)}

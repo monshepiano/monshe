@@ -3115,6 +3115,12 @@ $('#sendBtn').addEventListener('click', () => {
     stopRunForReal();
     if (S.abort) S.abort.abort();
     setStreaming(false);
+    // печать обрывается МГНЕННО: буфер приравнивается к показанному,
+    // тайпер больше нечего дописывать
+    if (S.followUi) {
+      typerStop(S.followUi);
+      S.followUi.buffer = S.followUi.shown || '';
+    }
     // ОСТАНОВКА — НЕ ОБРЫВ: несвернувшиеся инструменты и группы сворачиваются
     // своими анимациями, кухня не остаётся раскрытой
     if (S.followUi) flushTools(S.followUi);
@@ -3155,8 +3161,12 @@ function stopStream() {
       if (!S.streaming || waited > 1800) {
         clearInterval(t);
         setStreaming(false);
-        // остановка ответа: инструменты и группы красиво сворачиваются
-        if (S.followUi) flushTools(S.followUi);
+        // печать обрывается мгновенно, затем кухня красиво сворачивается
+        if (S.followUi) {
+          typerStop(S.followUi);
+          S.followUi.buffer = S.followUi.shown || '';
+          flushTools(S.followUi);
+        }
         resolve();
       }
     }, 60);
@@ -3673,13 +3683,24 @@ function qtFeed(flow, text) {
   if (!inner) return;
   const line = el('div', 'qt-flowline', esc(String(text || '')));
   inner.appendChild(line);
-  // ФАЗА 1 — НАПОЛНЕНИЕ: строки пишутся одна за другой, окно растёт,
-  // ничего не движется. ФАЗА 2 — ПОЛЁТ: окно заполнилось, включаем
-  // затемнение краёв и текст начинает пролетать вверх
-  if (inner.scrollHeight > flow.clientHeight + 4) {
-    flow.classList.add('full');
-    glideFlow(flow, inner);
+  // ФАЗА 1 — НАПОЛНЕНИЕ: высота окна едет плавным переходом (полоса под
+  // текстом тянется без рывков), ничего не движется. ФАЗА 2 — ПОЛЁТ:
+  // окно заполнилось, включаем затемнение краёв и текст пролетает вверх
+  if (!flow.classList.contains('full')) {
+    const h = Math.min(inner.scrollHeight, 88);
+    if (h > (flow._h || 0)) {
+      flow._h = h;
+      flow.style.height = h + 'px';
+    }
+    if (inner.scrollHeight > flow.clientHeight + 4) {
+      flow.classList.add('full');
+      flow._h = 88;
+      flow.style.height = '88px';
+      glideFlow(flow, inner);
+    }
   }
+  // страница прилипает к растущему инструменту: текст не пишется за экраном
+  if (flow._ui) scrollSoon(flow._ui);
 }
 
 /* ПОЛЁТ ПОТОКА. Внутренний слой плавно уезжает вверх ровно на высоту
@@ -3726,6 +3747,7 @@ function qtOpen(ui, ev) {
   // имя инструмента и так стоит заголовком, дублировать его в потоке
   // бессмысленно. Дальше — фразы темы. Строки приходят чаще: поток живой.
   const flow = node.querySelector('.qt-flow');
+  flow._ui = ui;                    // поток растёт — страница едет за ним
   const lines = toolTicker(ev).slice(1);
   const quips = groupQuips(ev.group);
   let li = 0;
@@ -3751,12 +3773,15 @@ function qtResultLine(node, ev) {
   const raw = String(toolResultText((ev && ev.result) || '') || '');
   const lines = raw.split('\n').map((x) => x.trim()).filter(Boolean);
   qtFeed(flow, (ok ? '✓ ' : '✕ ') + (lines[0] || 'готово'));
-  lines.slice(1, 7).forEach((x, i) => {
+  const extra = lines.slice(1, 7);
+  extra.forEach((x, i) => {
     setTimeout(() => {
       if (node.isConnected && !node._done) return;
       qtFeed(flow, x.length > 96 ? x.slice(0, 96) + '…' : x);
     }, 120 + i * 170);
   });
+  // сколько будет литься масса — миниатюра ждёт ЭТО плюс ~1 секунду
+  return 120 + extra.length * 170;
 }
 
 /* МИНИАТЮРА: инструмент закончил — тело (поток) прячется, остаётся строка
@@ -3863,11 +3888,26 @@ function qtFold(ui, node) {
   node.style.height = h0 + 'px';
   void node.offsetHeight;
   node.style.transition =
-    'height .95s cubic-bezier(.2,.5,.2,1), transform .95s cubic-bezier(.2,.5,.2,1), opacity .62s ease .22s';
+    'height 1.05s cubic-bezier(.2,.5,.2,1), transform 1.05s cubic-bezier(.2,.5,.2,1), ' +
+    'opacity .55s ease .5s, filter .55s ease .5s';
   node.style.transform = 'translateY(' + dy + 'px) scale(.93)';
+  // ПОДЛЕТАЯ К ПАПКЕ — растворяется: текст размывается и гаснет ещё в
+  // полёте, шрифты инструмента и папки не смешиваются
+  node.style.filter = 'blur(3px)';
   node.style.opacity = '0';
   node.style.height = '0px';
-  setTimeout(() => node.remove(), 990);
+  folder._pend = (folder._pend || 0) + 1;
+  setTimeout(() => {
+    node.remove();
+    // последний инструмент серии долетел — папка СРАЗУ подмигивает
+    // свечением: «я поработала»
+    folder._pend -= 1;
+    if (folder._pend <= 0 && folder.isConnected) {
+      folder.classList.remove('blink');
+      void folder.offsetWidth;
+      folder.classList.add('blink');
+    }
+  }, 1080);
 }
 
 function qtToggleFolder(f) {
@@ -3879,10 +3919,11 @@ function qtToggleFolder(f) {
     // КЛАСС open НЕ СНИМАЕТСЯ ДО КОНЦА: раньше display:none включался
     // мгновенно и строки исчезали одним кадром — «обратной анимации не было»
     const rows = Array.from(f.querySelectorAll('.qt-row')).reverse();
-    // ЗАКРЫТИЕ — ТА ЖЕ АНИМАЦИЯ В ОБРАТНУЮ СТОРОНУ: строки тонут одна за
-    // другой (от последней к первой), затем тело папки съёживается в ноль.
+    // ЗАКРЫТИЕ: строки тонут одна за другой (от последней к первой) И
+    // ОДНОВРЕМЕННО с ними съёживается тело папки — два действия в один
+    // движение, чуть быстрее прежнего
     rows.forEach((r, i) => {
-      r.style.transition = 'opacity .46s ease ' + (i * 80) + 'ms, transform .46s cubic-bezier(.4,.6,.4,1) ' + (i * 80) + 'ms';
+      r.style.transition = 'opacity .38s ease ' + (i * 60) + 'ms, transform .38s cubic-bezier(.4,.6,.4,1) ' + (i * 60) + 'ms';
       r.style.opacity = '0';
       r.style.transform = 'translateY(-8px)';
     });
@@ -3891,18 +3932,16 @@ function qtToggleFolder(f) {
     kids.style.transition = 'none';
     kids.style.height = h0 + 'px';
     void kids.offsetHeight;
-    const rowsT = rows.length * 80 + 320;
-    setTimeout(() => {
-      kids.style.transition = 'height .44s cubic-bezier(.4,.5,.4,1)';
-      kids.style.height = '0px';
-    }, rowsT);
+    kids.style.transition = 'height .4s cubic-bezier(.4,.5,.4,1)';
+    kids.style.height = '0px';
+    const rowsT = rows.length * 60 + 420;
     setTimeout(() => {
       f.classList.remove('open');
       kids.classList.remove('open');
       kids.style.cssText = '';
       rows.forEach((r) => { r.style.cssText = ''; });
       free();
-    }, rowsT + 470);
+    }, rowsT);
   } else {
     const box = f.querySelector('.qt-rows');
     box.replaceChildren();
@@ -3911,18 +3950,21 @@ function qtToggleFolder(f) {
     f.classList.add('open');
     // ОТКРЫТИЕ: тело папки вырастает из нуля, инструменты ВЫПЛЫВАЮТ
     // из-под неё один за другим — неторопливо и плавно.
+    // ОТКРЫТИЕ — ТОЧНОЕ ЗЕРКАЛО СВЁРТКИ: тело папки вырастает ОДНОВРЕМЕННО
+    // с выплыванием строк (от первой к последней, снизу вверх), те же
+    // длительности и кривые, что у закрытия — только в обратную сторону
     const h = kids.getBoundingClientRect().height;
     kids.style.overflow = 'hidden';
     kids.style.transition = 'none';
     kids.style.height = '0px';
     void kids.offsetHeight;
-    kids.style.transition = 'height .42s cubic-bezier(.25,.8,.3,1)';
+    kids.style.transition = 'height .4s cubic-bezier(.4,.5,.4,1)';
     kids.style.height = h + 'px';
     const allRows = f.querySelectorAll('.qt-row');
     allRows.forEach((r, i) => {
       r.style.opacity = '0';
-      r.style.transform = 'translateY(12px)';
-      r.style.transition = 'opacity .5s ease ' + (i * 110) + 'ms, transform .5s cubic-bezier(.22,.8,.3,1) ' + (i * 110) + 'ms';
+      r.style.transform = 'translateY(8px)';
+      r.style.transition = 'opacity .38s ease ' + (i * 60) + 'ms, transform .38s cubic-bezier(.4,.6,.4,1) ' + (i * 60) + 'ms';
       void r.offsetHeight;
       r.style.opacity = '1';
       r.style.transform = 'translateY(0)';
@@ -3931,7 +3973,7 @@ function qtToggleFolder(f) {
       kids.style.cssText = '';
       allRows.forEach((r) => { r.style.cssText = ''; });
       free();
-    }, allRows.length * 110 + 580);
+    }, allRows.length * 60 + 420);
   }
 }
 
@@ -4365,24 +4407,11 @@ function renderTyped(ui) {
     livePre.classList.add('live-code');
     livePre.scrollTop = livePre.scrollHeight;
   }
-  // ДОПИСАННЫЙ БЛОК КОДА СХЛОПЫВАЕТСЯ В СТРОКУ СРАЗУ — не ждём конца всего
-  // ответа. DOM здесь каждый тик перерисовывается целиком, поэтому «вкладку»
-  // нельзя построить один раз: класс вешается при каждом рендере, а клик
-  // запоминает номер блока в ui.codeExpanded и держит его развёрнутым.
-  // Настоящая вкладка-миниатюра строится в конце ответа (foldCodeBlocks).
-  typedPres.forEach((pre, idx) => {
-    if (pre === livePre && inCodeBlock(text)) return;
-    const code = pre.textContent || '';
-    if (code.split('\n').length < 4 && code.length < 200) return; // короткие не прячем
-    if (ui.codeExpanded && ui.codeExpanded.has(idx)) return;
-    pre.classList.add('pre-folded');
-    pre.title = 'Развернуть код';
-    pre.addEventListener('click', () => {
-      (ui.codeExpanded || (ui.codeExpanded = new Set())).add(idx);
-      pre.classList.remove('pre-folded');
-      scrollSoon(ui);
-    });
-  });
+  // КОД БОЛЬШЕ НЕ СХЛОПЫВАЕТСЯ В ПОЛОСУ С КНОПКОЙ «развернуть»: законченный
+  // блок остаётся полным (окно live-code у активного fence скроллится само),
+  // а вкладка-миниатюра строится один раз в конце ответа (foldCodeBlocks).
+  // Прежняя полоса ломала индекс блока при перерисовках и «частично
+  // открывала» код — теперь открытый инструмент всегда показывает всё.
   if (measure) {
     ui.lastHeightCheck = now;
     const after = ui.mdEl.offsetHeight;
@@ -4554,7 +4583,7 @@ function typerStart(ui) {
     // ТУРБО: кнопка ×2 у поля ввода. Ускоряется всё честно — целевая
     // скорость, предел кадра и паузы препинания. Ответ не «прыгает», а
     // печатается тем же характером, только вдвое быстрее.
-    const turbo = S.turbo ? 3.5 : 1;
+    const turbo = S.turbo ? 8 : 1;
     want *= turbo;
     // После done ускоряется ТОЛЬКО плотный контент (код, таблицы, списки):
     // его хвост не должен «досматриваться» минуту. Разговорный текст держит
@@ -5370,10 +5399,10 @@ function handleEvent(ev, ui) {
         node._done = true;
         clearTimeout(node._t);
         qtMark(node, ok, node._tool.elapsed);
-        qtResultLine(node, ev);
-        // масса результата летит в потоке — миниатюра чуть позже, чтобы
-        // пользователь УСПЕЛ увидеть настоящий вывод, а не голую галочку
-        setTimeout(() => qtMiniaturize(node), 1150);
+        const pour = qtResultLine(node, ev);
+        // масса результата дописывается в поток, и лишь через ~1 секунду
+        // после её конца инструмент сворачивается в миниатюру
+        setTimeout(() => qtMiniaturize(node), pour + 1000);
       } else if (node) {
         // AGENT: спиннер замирает цветом, ✓/✕ у имени, результат внутри
         // карточки; сворачивается чередой в одну групповую карточку
@@ -5462,7 +5491,7 @@ function handleEvent(ev, ui) {
         if (folded > 0) {
           // вальс должен успеть показаться, но не задерживать ответ:
           // хвост последней свёртки + короткая пауза — и текст пошёл
-          ui._qtHold = performance.now() + (folded - 1) * 170 + 700;
+          ui._qtHold = performance.now() + (folded - 1) * 170 + 550;
         }
       }
       if (!ui.mdEl) {
