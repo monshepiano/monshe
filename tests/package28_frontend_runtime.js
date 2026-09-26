@@ -1147,7 +1147,7 @@ function testRussianImageAndHudFollowupContract() {
   const tipRule = css.match(/\.agent-switch\[data-tip\]:not\(\.tip-dismissed\):hover::after\s*\{([^}]*)\}/s);
   assert(/\.composer\s*\{[^}]*overflow:visible/s.test(css) && tipRule &&
     /z-index:60/.test(tipRule[1]) && /white-space:normal/.test(tipRule[1]) &&
-    /animation:tipIn \.16s 1\.95s both/.test(tipRule[1]),
+    /animation:tipIn \.16s 1\.45s both/.test(tipRule[1]),
   'switch tooltip renders above the composer, wraps, and waits ~1s like an OS hint');
 
   const refresh = extractFunction(js, 'refreshState');
@@ -1279,8 +1279,8 @@ function testReadinessFollowHistoryAndLiveCodeContracts() {
   assert(/classList\.remove\('live-code'\)/.test(fold) &&
     /getBoundingClientRect\(\)\.height/.test(fold),
     'folding measures the visible height before removing the live-code cap');
-  assert(/\.md pre\.live-code\s*\{[^}]*max-height:min\(42vh,360px\)[^}]*overflow:auto/s.test(css),
-    'typing code remains in a bounded internally scrolling viewport');
+  assert(/\.md pre\.live-code\s*\{[^}]*max-height:min\(30vh,260px\)[^}]*overflow:auto/s.test(css),
+    'typing code remains in a bounded, COMPACT internally scrolling viewport');
 }
 
 
@@ -1489,8 +1489,8 @@ function testThinkingGradientContract() {
     'the off AGENT track matches the neutral neighbouring controls at 28px high');
   // включённый AGENT — БОРДО и горит ЯРЧЕ с пульсацией («я активен!»)
   assert(/\.agent-switch-track:has\(input:checked\)\s*\{[^}]*rgba\(74,13,24,\.5\)/s.test(css) &&
-    /\.agent-switch-track input:checked \+ i\{[^}]*background:linear-gradient\(180deg,#b23a52,#8f2739\)/s.test(css) &&
-    /\.agent-switch-track input:checked \+ i\{[^}]*color:#ffe9ee/s.test(css) &&
+    /\.agent-switch-track input:checked \+ i\{[^}]*background:linear-gradient\(180deg,#c94760,#a13248\)/s.test(css) &&
+    /\.agent-switch-track input:checked \+ i\{[^}]*color:#25070d/s.test(css) &&
     /\.agent-switch-track i\{[^}]*background:var\(--tx3\)/s.test(css) &&
     !/\.agent-switch-track i\{[^}]*#2fa8d8/s.test(css) &&
     /\.agent-switch-track:has\(input:checked\)\{\s*animation:agGlow 2\.2s ease-in-out infinite\}/.test(css) &&
@@ -1527,7 +1527,7 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
     'camera stays teal, computer is violet, budget gold');
   assert(!/qtGlowIn/.test(css) &&
     !/\.toggle:not\(\.on\):hover::before/.test(css) &&
-    /\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover,\.comp-btn:not\(\.on\):hover\{[^}]*box-shadow:0 0 12px 1px rgba\(var\(--sp\),\.22\),0 0 30px 7px rgba\(var\(--sp\),\.11\)/s.test(css) &&
+    /\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover,\.comp-btn:not\(\.on\):hover\{[^}]*box-shadow:inset 0 0 22px 5px rgba\(var\(--sp\),\.24\),inset 0 0 8px 1px rgba\(var\(--sp\),\.18\),\s*0 0 10px 1px rgba\(var\(--sp\),\.14\),0 0 24px 5px rgba\(var\(--sp\),\.07\)/s.test(css) &&
     /\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover,\.comp-btn:not\(\.on\):hover\{[^}]*background:rgba\(var\(--sp\),\.1\)/s.test(css) &&
     /text-shadow:0 0 9px rgba\(var\(--sp\),\.35\)/.test(css) &&
     /\.comp-btn\{--sp:130,190,215\}/.test(css) &&
@@ -1545,8 +1545,10 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   // за правый край (остаётся свечение справа), по контуру бежит ЯВНАЯ
   // искра насыщенного красного, в конце замедляется и гаснет.
   assert(/animation:agKnobRubber 1\.1s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
-    /@keyframes agKnobRubber\{[\s\S]*?44%\{transform:translateX\(6px\);background:#5f2230\}/.test(css) &&
-    /@keyframes agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:var\(--tx3\)\}\}/.test(css),
+    /@keyframes agKnobRubber\{[\s\S]*?44%\{transform:translateX\(6px\);background:#b23a52;color:#25070d\}/.test(css) &&
+    /20%\{background:#8f4152\}/.test(css) &&
+    /88%\{transform:translateX\(\.7px\);background:#87485a\}/.test(css) &&
+    /@keyframes agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:#7c4453;color:var\(--panel2\)\}\}/.test(css),
     'the knob is ITS OLD GREY self, painting DARK bordo on the way right and unpainting on the way back, synced to the motion');
   assert(/animation:agEmberRun 1s cubic-bezier\(\.3,\.5,\.35,1\) both/.test(css) &&
     /rgba\(255,150,168,\.7\),rgba\(255,86,112,\.38\) 48%/.test(css) &&
@@ -1696,18 +1698,20 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   // КОНЕЦ ОТВЕТА — ТОТ ЖЕ ВАЛЬС: инструменты улетают под группу ОДИН ЗА
   // ДРУГИМ (150мс), каждый со своей полосой одновременно (внутри qtFold)
   const fq = extractFunction(js, 'flushQt');
-  assert(/setTimeout\(\(\) => qtFold\(ui, n\), i\+\+ \* 150\);/.test(fq) &&
-    /let i = 0;/.test(fq),
-    'answer end folds tools ONE BY ONE into the group, strip compressing in the same beat');
+  assert(/setTimeout\(\(\) => qtFold\(ui, n, idx === pending\.length - 1\), idx \* 170\);/.test(fq) &&
+    /const pending = \[\];/.test(fq),
+    'answer end folds tools ONE BY ONE into the group (170ms), strip compressing in the same beat');
 
-  assert(/'height \.9s cubic-bezier\(\.25,\.55,\.3,1\)/.test(js) &&
-    /dy = Math\.max\(-360, Math\.min\(-6, fr\.top - nr\.top\)\);/.test(extractFunction(js, 'qtFold')) &&
+  assert(/'height 1\.05s cubic-bezier\(\.2,\.5,\.2,1\)/.test(js) &&
+    /dy = Math\.max\(-90, Math\.min\(-6, fr\.bottom - nr\.top\)\);/.test(extractFunction(js, 'qtFold')) &&
+    /function qtFold\(ui, node, isLast\)/.test(js) &&
+    /if \(isLast\) setTimeout\(folderBlink, 820\);/.test(extractFunction(js, 'qtFold')) &&
     /node\.style\.filter = 'blur\(3px\)'/.test(extractFunction(js, 'qtFold')) &&
     /folder\._pend = \(folder\._pend \|\| 0\) \+ 1;/.test(extractFunction(js, 'qtFold')) &&
     /folder\.classList\.add\('blink'\)/.test(extractFunction(js, 'qtFold')) &&
     /\.qt-folder\.blink \.qt-name\{animation:qtBlink \.5s ease-out both\}/.test(css) &&
-    /0%\{filter:brightness\(1\.3\)\}/.test(css) &&
-    /30%\{filter:brightness\(2\.2\)\}/.test(css) &&
+    /0%\{filter:brightness\(1\.15\)\}/.test(css) &&
+    /30%\{filter:brightness\(1\.8\)\}/.test(css) &&
     !/qtBlink[\s\S]*?text-shadow/.test(css.match(/@keyframes qtBlink\{[\s\S]*?\}\}/)[0]) &&
     'the fold is slow and gentle, lines DISSOLVE (blur) as they fly to the folder, which BLINKS its glow right as the streak lands');
   assert(/_qtHold = performance\.now\(\) \+ \(folded - 1\) \* 150 \+ 480/.test(js) &&
@@ -1779,14 +1783,15 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   assert(/@property --cy\{syntax:'<color>';inherits:true;initial-value:#00c8f0\}/.test(css) &&
     /transition:--cy \.3s ease,--cy2 \.3s ease,--line \.3s ease/.test(css),
     'theme colors are registered properties and TRAVEL with transitions');
-  assert(/body\.agent-on\{[\s\S]*?--cy:#8f2739; --cy2:#d98a9b;[\s\S]*?--panel:rgba\(13,17,36,\.76\)/.test(css),
-    'the theme is DESIGNED FROM SCRATCH: deep bordo accents on NAVY space (Spider-Man)');
+  assert(/body\.agent-on\{[\s\S]*?--cy:#c94760; --cy2:#e8a7b8;[\s\S]*?--line:rgba\(196,84,104,\.22\)[\s\S]*?--panel:rgba\(26,12,18,\.78\)/.test(css),
+    'WINE NIGHT: a genuinely NEW world — wine-black sky, wine panels, wine lines, bright rose energy');
   assert(/function agentWave/.test(js) && /S\.agentWaveRect/.test(js),
     'the wave can be born from the permission-card toggle rect');
   const waveCss = css.match(/\.agent-wave\{([^}]*)\}/s)[1];
   assert(!/border:3px/.test(waveCss) && /filter:blur\(8px\)/.test(waveCss) &&
-    /rgba\(116,18,33,\.4\) 0%/.test(waveCss) && /rgba\(255,96,124,\.3\) 45%/.test(waveCss),
-    'the wave is a WIDE SOFT PAINTED FRONT: the area behind it reads as already colored');
+    /transparent 0%/.test(waveCss) && /rgba\(168,50,72,\.42\) 44%/.test(waveCss) &&
+    /transparent 68%/.test(waveCss),
+    'the wave is a RING: hollow center, bright front, transparent edge — nothing trails behind it');
   assert(/animation:agentWave \.72s linear both/.test(css) &&
     /@keyframes agentWave\{[\s\S]*?88%\{opacity:\.97\}[\s\S]*?100%\{transform:translate\(-50%,-50%\) scale\(3\.2\);opacity:0\}\}/.test(css) &&
     /wave\.style\.setProperty\('--aw', \(radius \* 2\.6\) \+ 'px'\)/.test(js) &&
@@ -1805,34 +1810,36 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /ag-switching/.test(js),
     'colors flip at 260ms and settle in 0.3s — the paint lands while the wave is still rolling over it');
   assert(/body\.agent-on \.bg-layer\{/.test(css) && /body\.agent-on \.grid-plane\{/.test(css) &&
-    /body\.agent-on \.bubble-user\{/.test(css) && /body\.agent-on \.note-panel\{background:#0d1126\}/.test(css) &&
-    /body\.agent-on \.send-btn\{background:linear-gradient\(135deg,#a83248,#571223\)/.test(css) &&
-    /body\.agent-on \.reactor \.core\{background:radial-gradient\(circle,#fff,#eaa4b2 44%,#6e1628\)/.test(css) &&
+    /body\.agent-on \.bubble-user\{/.test(css) && /body\.agent-on \.note-panel\{background:#1a0c12\}/.test(css) &&
+    /body\.agent-on \.send-btn\{background:linear-gradient\(135deg,#c94760,#8f2739\)/.test(css) &&
+    /body\.agent-on \.reactor \.core\{background:radial-gradient\(circle,#fff,#f0c4cf 44%,#7c1f30\)/.test(css) &&
     /body\.agent-on \.jw-ico\{/.test(css) &&
-    /body\.agent-on ::-webkit-scrollbar-thumb\{background:rgba\(118,136,214,\.24\)\}/.test(css),
-    'a full designed theme: navy sky/panels/scroll + bordo energy (send, core, windows) — plan stays GOLD');
-  assert(/body\.agent-on \.md pre\{background:rgba\(7,10,24,\.9\)/.test(css) &&
-    /body\.agent-on \.md pre code\{color:#d4dbe9\}/.test(css) &&
-    /body\.agent-on \.md th\{background:rgba\(58,16,29,\.62\)/.test(css) &&
-    /body\.agent-on \.md tr:nth-child\(even\)\{background:rgba\(18,23,46,\.32\)\}/.test(css),
-    'CODE is readable on navy; tables get a wine head and navy zebra');
-  assert(/body\.agent-on \.hello span\{background:linear-gradient\(90deg,#f2b9c7,#d98a9b 42%,#eec2ce 74%,#f2b9c7\)/.test(css),
-    'the AGENT greeting is BRIGHT and readable on the navy page');
+    /body\.agent-on ::-webkit-scrollbar-thumb\{background:rgba\(196,84,104,\.28\)\}/.test(css),
+    'WINE NIGHT everywhere: wine sky, wine panels, wine scroll, bright-rose energy — plan stays GOLD');
+  assert(/body\.agent-on \.md pre\{background:rgba\(20,9,13,\.92\)/.test(css) &&
+    /body\.agent-on \.md pre code\{color:#d8dde6\}/.test(css) &&
+    /body\.agent-on \.md th\{background:rgba\(74,20,34,\.7\)/.test(css) &&
+    /body\.agent-on \.md tr:nth-child\(even\)\{background:rgba\(46,19,27,\.35\)\}/.test(css),
+    'CODE sits on a dark-wine slab with neutral readable font; wine head and wine zebra');
+  assert(/body\.agent-on \.hello span\{background:linear-gradient\(90deg,#f6c9d4,#e8a7b8 42%,#f0d0da 74%,#f6c9d4\)/.test(css),
+    'the AGENT greeting is BRIGHT and readable on the wine-dark page');
   const agBlock = css.slice(css.indexOf('body.agent-on{'));
   assert(!/168,159,242/.test(agBlock) && !/47,156,146/.test(agBlock) &&
     !/c3a9f0/.test(agBlock) && !/94,42,92/.test(agBlock) &&
     !/152,124,150/.test(agBlock) && !/c99aa3/.test(agBlock) &&
     !/e290a2/.test(agBlock) && !/2fa8d8/.test(agBlock),
-    'THEME PURITY: only bordo and navy survive in the agent block — no violet, teal, pink or blue leftovers');
+    'THEME PURITY: the wine-night block has no violet, teal, pink or blue leftovers');
   assert(!/body\.agent-on \.plan-dock \{/.test(css) &&
     !/body\.agent-on \.plan-dock ./.test(css),
     'the plan dock is NEVER touched by the agent theme: gold frame, gold segments, green done — as it was');
-  assert(/body\.agent-on \.nav-item:hover\{background:rgba\(143,39,57,\.12\)\}/.test(css) &&
-    /body\.agent-on \.chat-item\.active\{background:rgba\(143,39,57,\.17\)/.test(css) &&
-    /body\.agent-on \.ask-opt\.sel, ?body\.agent-on \.ask-opt\.sel:hover\{background:rgba\(143,39,57,\.2\)/.test(css) &&
-    /body\.agent-on \.sugg:hover\{background:rgba\(143,39,57,\.12\)/.test(css) &&
-    /body\.agent-on \.btn\.primary\{background:linear-gradient\(135deg,#a83248,#571223\)/.test(css),
-    'EVERY hover state is harmonized: wine light on navy, zero blue leftovers');
+  assert(/body\.agent-on \.nav-item:hover\{background:rgba\(168,50,72,\.14\)\}/.test(css) &&
+    /body\.agent-on \.chat-item\.active\{background:rgba\(168,50,72,\.2\)/.test(css) &&
+    /body\.agent-on \.ask-opt\.sel, ?body\.agent-on \.ask-opt\.sel:hover\{background:rgba\(168,50,72,\.22\)/.test(css) &&
+    /body\.agent-on \.sugg:hover\{background:rgba\(168,50,72,\.14\)/.test(css) &&
+    /body\.agent-on \.btn\.primary\{background:linear-gradient\(135deg,#c94760,#8f2739\)/.test(css) &&
+    /body\.agent-on \.fcard\.sel\{border-color:#c94760/.test(css) &&
+    /body\.agent-on \.toggle\.on\{background:rgba\(168,50,72,\.18\)/.test(css),
+    'EVERY hover/selected state is harmonized wine light — a whole new world, not a recolor');
   assert(!/body\.agent-on \.boost-btn\.on\{color:#ff8f9c/.test(css),
     'boost stays GOLD inside the agent theme');
   // СЦЕНАРИЙ: «сегодня» молчит, полоса недолгая, название без рамки, стоп рвёт всё
@@ -1918,8 +1925,9 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   assert(/if \(!ui\.agentMode\) \{[\s\S]*?qtSweep\(ui, ev\.group\);[\s\S]*?qtOpen\(ui, ev\);[\s\S]*?break;[\s\S]*?\}/.test(js) &&
     /'tool-card' \+ \(waitVisual \? ' tool-wait' : ''\)/.test(js) &&
     /function flushAgentGroup/.test(js) && /finishToolWait\(node\);/.test(js) &&
-    /TOOL_WAIT_AFTER_PAINT_MS = 800/.test(js),
-    'AGENT keeps its OWN tool cards with groups; the gray kitchen is the normal mode only');
+    /TOOL_WAIT_AFTER_PAINT_MS = 800/.test(js) &&
+    /if \(e\.target\.closest\('\.ql-row'\)\) return;/.test(extractFunction(js, 'makeCard')),
+    'AGENT keeps its OWN tool cards with groups; clicking a tool inside a group NEVER collapses the group');
 }
 
 function testProactiveModesBudgetAndAbortContracts() {
@@ -1966,14 +1974,14 @@ function testProactiveModesBudgetAndAbortContracts() {
     /case 'thinking':\s*\{\s*\n\s*\/\/ Ход мыслей — привилегия AGENT[\s\S]*?if \(!ui\.agentMode\) break;/.test(js),
     'normal mode runs the gray kitchen; AGENT runs its own cards; thinking stays agent-only');
   // подписи: пауза ~1с, компактные, у микрофона и вложения
-  assert(/animation:tipIn \.16s 1\.95s both/.test(css) &&
+  assert(/animation:tipIn \.16s 1\.45s both/.test(css) &&
     /@keyframes tipIn/.test(css) && /max-width:180px/.test(css) &&
     /white-space:normal/.test(css) &&
     /id="attachBtn" data-tip="Вложить файл"/.test(html) &&
     /id="micBtn" data-tip="Голосовой ввод"/.test(html) &&
     /data-tip="AGENT — план и самостоятельная работа"/.test(html) &&
     /data-tip="Лимит ₽ на ответ"/.test(html),
-  'tooltips wait ~2s, stay compact, mic and attach included');
+  'tooltips wait ~1.5s, stay compact, mic and attach included');
   // монета лимита пульсирует как точка колокольчика (тот же bellPing)
   assert(/\.budget-btn\.on \.budget-coin\{animation:bellPing 1\.9s ease-in-out infinite\}/.test(css) &&
     !/budgetPulse/.test(css),
@@ -1988,19 +1996,26 @@ function testProactiveModesBudgetAndAbortContracts() {
     'code NEVER collapses into a slim «развернуть» row: opening a tool shows the full code (scrollable)');
   // дописанный код: окно ограничено по высоте, нейтральный цвет строк,
   // стройная строка СРАЗУ после закрытия fence, клик раскрывает обратно
-  assert(/\.md pre\{[^}]*max-height:min\(40vh,340px\)/s.test(css) &&
-    /\.md pre code\{[^}]*color:#c9d3de\}/s.test(css) &&
+  assert(/\.md pre\{[^}]*max-height:min\(30vh,260px\)/s.test(css) &&
+    /\.md pre code\{[^}]*color:#d4d9e0\}/s.test(css) &&
+    /\.md pre\.live-code\{max-height:min\(30vh,260px\)/.test(css) &&
     /\.md pre\.code-compact\{max-height:32px/.test(css) &&
     /pre\.classList\.add\('code-compact'\);/.test(js) &&
     /closest\('pre\.code-compact'\)/.test(js) &&
-    !/tag: 'развернуть'/.test(js),
-    'finished code: capped window, neutral line color, slim row RIGHT after the fence closes (click to peek), no big «развернуть» tag');
+    /tag: S\.agentMode \? 'развернуть' : ''/.test(js) &&
+    /tag: 'развернуть',/.test(js),
+    'code thumbnails carry «развернуть» ONLY in AGENT mode; quiet mode stays clean');
   // панель ФАЙЛЫ: «Импорт», иконка обновления (две круговые стрелки),
   // «Очистить» замьючена, когда чистить нечего
-  assert(/>Импорт<\/button>/.test(html) &&
+  assert(/id="uploadHere" title="Импорт"/.test(html) &&
+    /M12 16V5/.test(html) && /M4 19h16/.test(html) &&
     /id="refreshFiles"[^>]*title="Обновить"/.test(html) &&
+    /const spin = \$\('#refreshFiles svg'\);/.test(js) &&
+    /spin\.classList\.add\('spin'\);/.test(js) &&
+    /@keyframes btnSpin\{to\{transform:rotate\(360deg\)\}\}/.test(css) &&
+    /\.btn:disabled,\.btn:disabled:hover\{opacity:\.52;cursor:not-allowed/.test(css) &&
     /wipe\.disabled = !\(\(info\.files \|\| 0\) > 0\);/.test(js),
-    'files panel: «Импорт» label, refresh ICON, «Очистить» muted when there are no files');
+    'files panel: UPLOAD icon (arrow up over a bar), spinning refresh arrows, «Очистить» visibly muted');
   // поток: полоса удлиняется ПЕРВОЙ, строка пишется после неё
   assert(/qt-flowline qt-wait/.test(js) &&
     /classList\.remove\('qt-wait'\), 230\)/.test(js) &&

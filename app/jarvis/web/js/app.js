@@ -1661,6 +1661,9 @@ function makeCard(icon, title, cls, openByDefault) {
   body.addEventListener('click', (e) => {
     if (window.getSelection && String(window.getSelection()).length) return;
     if (e.target.closest('a,button,input,textarea,select,label,.file-chip,.img-out')) return;
+    // строка-инструмент внутри группы — самостоятельный клик: разворачиваем
+    // её, а НЕ сворачиваем группу, внутри которой она живёт
+    if (e.target.closest('.ql-row')) return;
     toggle();
   });
   card.inner = card.querySelector('.card-inner');
@@ -3005,6 +3008,8 @@ function foldCodeBlocks(root, animate) {
       instant: true, cls: 'th-code inline-thumb', icon: ICO.code,
       title: lang ? 'Код · ' + lang : 'Код',
       sub: lines + ' стр. · ' + fmtSize(code.length),
+      // ярлык «развернуть» — агентская эстетика; тихий режим чище без него
+      tag: S.agentMode ? 'развернуть' : '',
     });
     if (!animate) { fold(); return; }
     // БАГ «перед сворачиванием разворачивается во весь рост»: раньше у pre
@@ -3511,6 +3516,7 @@ async function send(opts) {
         collapseSoon(ui.thinkCard, {
           cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
           sub: ts ? fmtSize((ts.textContent || '').length) : '',
+          tag: 'развернуть',
         });
       }
       markStopped(ui);
@@ -3900,6 +3906,7 @@ function qtSweep(ui, keepGroup) {
   if (!host) return 0;
   let i = 0;
   let folded = 0;
+  const pending = [];
   $$('.qt-node', host).forEach((nn) => {
     if (nn.dataset.folded === '1') return;
     const t = nn._tool || {};
@@ -3912,7 +3919,10 @@ function qtSweep(ui, keepGroup) {
       // Теперь qtFold закрывает полосу И летит ОДНОВРЕМЕННО.
     }
     folded++;
-    setTimeout(() => qtFold(ui, nn), i++ * 150);
+    pending.push([nn, i++ * 170]);
+  });
+  pending.forEach(([nn, delay], idx) => {
+    setTimeout(() => qtFold(ui, nn, idx === pending.length - 1), delay);
   });
   return folded;
 }
@@ -3952,7 +3962,7 @@ function qtFolderSync(folder) {
     (anyFail ? '✕' : '✓') + (total ? ' ' + total.toFixed(1).replace(/\.0$/, '') + 'с' : '');
 }
 
-function qtFold(ui, node) {
+function qtFold(ui, node, isLast) {
   if (!node || !node.isConnected || node.dataset.folded === '1') return;
   node.dataset.folded = '1';
   node._done = true;
@@ -3973,15 +3983,17 @@ function qtFold(ui, node) {
   if (!fresh) {
     const fr = folder.getBoundingClientRect();
     const nr = node.getBoundingClientRect();
-    dy = Math.max(-360, Math.min(-6, fr.top - nr.top));
+    // ПОСАДКА ВЕРХОМ УЗЛА НА НИЗ ПАПКИ (исходная формула): инструмент
+    // подплывает вплотную к группе снизу и тает на ней
+    dy = Math.max(-90, Math.min(-6, fr.bottom - nr.top));
   }
   node.style.overflow = 'hidden';
   node.style.transition = 'none';
   node.style.height = h0 + 'px';
   void node.offsetHeight;
   node.style.transition =
-    'height .9s cubic-bezier(.25,.55,.3,1), transform .9s cubic-bezier(.25,.55,.3,1), ' +
-    'opacity .5s ease .32s, filter .5s ease .32s';
+    'height 1.05s cubic-bezier(.2,.5,.2,1), transform 1.05s cubic-bezier(.2,.5,.2,1), ' +
+    'opacity .55s ease .5s, filter .55s ease .5s';
   node.style.transform = 'translateY(' + dy + 'px) scale(.93)';
   // РАСТВОРЕНИЕ ДО ПОЛНОГО ПРИЛЁТА: к моменту, когда имя доезжает до имени
   // папки, его уже не видно — шрифты не смешиваются никогда
@@ -3989,17 +4001,19 @@ function qtFold(ui, node) {
   node.style.opacity = '0';
   node.style.height = '0px';
   folder._pend = (folder._pend || 0) + 1;
+  const folderBlink = () => {
+    if (!folder.isConnected) return;
+    folder.classList.remove('blink');
+    void folder.offsetWidth;
+    folder.classList.add('blink');
+  };
   setTimeout(() => {
     node.remove();
-    // последний инструмент серии долетел — папка СРАЗУ подмигивает
-    // свечением: «я поработала»
     folder._pend -= 1;
-    if (folder._pend <= 0 && folder.isConnected) {
-      folder.classList.remove('blink');
-      void folder.offsetWidth;
-      folder.classList.add('blink');
-    }
-  }, 930);
+  }, 1080);
+  // ПОСЛЕДНИЙ ИНСТРУМЕНТ ЕЩЁ ЛЕТИТ — папка уже «охнула»: мигание начинается
+  // чуть раньше прилёта, впихивание последнего читается живым
+  if (isLast) setTimeout(folderBlink, 820);
 }
 
 function qtToggleFolder(f) {
@@ -4122,12 +4136,15 @@ function flushQt(ui) {
   const st = ui && ui.statusEl;
   const host = (st && st.parentNode) || (ui && ui.node ? ui.node.body : null);
   if (!host) return;
-  let i = 0;
+  const pending = [];
   $$('.qt-node', host).forEach((n) => {
     if (n.dataset.folded === '1') return;
     const t = n._tool || {};
     if (!n.querySelector('.qt-mark').textContent) qtMark(n, t.ok, t.elapsed);
-    setTimeout(() => qtFold(ui, n), i++ * 150);
+    pending.push(n);
+  });
+  pending.forEach((n, idx) => {
+    setTimeout(() => qtFold(ui, n, idx === pending.length - 1), idx * 170);
   });
 }
 
@@ -4973,6 +4990,7 @@ function queueResponseFinish(ui, content, success) {
         collapseSoon(ui.thinkCard, {
           cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
           sub: ts ? fmtSize((ts.textContent || '').length) : '',
+          tag: 'развернуть',
         });
       }
 
@@ -7108,6 +7126,17 @@ $('#addTaskBtn').addEventListener('click', () => {
    перетаскивать файлы мышью, переименовывать, создавать папки и удалять. */
 
 async function loadFiles(dir) {
+  // стрелки обновления совершают оборот, пока идёт загрузка списка
+  const spin = $('#refreshFiles svg');
+  if (spin) spin.classList.add('spin');
+  try {
+    await loadFilesInner(dir);
+  } finally {
+    if (spin) spin.classList.remove('spin');
+  }
+}
+
+async function loadFilesInner(dir) {
   if (dir != null) S.fdir = dir;
   const q = '/api/files/browse?dir=' + encodeURIComponent(S.fdir || '') +
     (S.chatId ? '&chat_id=' + encodeURIComponent(S.chatId) : '');
