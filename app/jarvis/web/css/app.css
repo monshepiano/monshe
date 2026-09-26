@@ -724,6 +724,9 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .btn{padding:8px 15px;border-radius:10px;border:1px solid var(--line);background:rgba(0,212,255,.07);
   color:var(--tx);font-size:12.5px;cursor:pointer;transition:.2s}
 .btn:hover{background:rgba(0,212,255,.16);border-color:var(--line2);transform:translateY(-1px)}
+.btn.icon-only{display:grid;place-items:center;padding:0;width:34px;height:34px}
+.btn.icon-only svg{width:15px;height:15px;display:block}
+.btn:disabled,.btn:disabled:hover{opacity:.34;cursor:default;transform:none;pointer-events:none}
 .btn:active{transform:scale(.96)}
 .btn.primary{background:linear-gradient(135deg,var(--cy),#0aa6d6);color:#02121b;border-color:transparent;font-weight:600}
 .btn.primary:hover{box-shadow:0 8px 22px rgba(0,212,255,.3)}
@@ -751,11 +754,17 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .md strong{color:#fff;font-weight:600}
 .md code{font-family:var(--fm);font-size:12.3px;background:rgba(0,212,255,.11);padding:2px 6px;border-radius:5px;color:#8ce9ff}
 .md pre{margin:11px 0;padding:13px 15px;border-radius:11px;background:rgba(0,0,0,.5);border:1px solid var(--line);
-  overflow:auto;position:relative}
-.md pre code{background:none;padding:0;font-size:12px;line-height:1.65;color:#b8ecff}
+  /* развёрнутый код НЕ занимает весь экран: высокое окно со скроллом */
+  max-height:min(40vh,340px);overflow:auto;position:relative}
+.md pre code{background:none;padding:0;font-size:12px;line-height:1.65;color:#c9d3de}
 /* Незаконченный code fence не растягивает весь чат: окно следует за новыми
    строками само, а после visual done обычный foldCodeBlocks сворачивает код. */
 .md pre.live-code{max-height:min(42vh,360px);overflow:auto;overscroll-behavior:contain}
+/* ЗАКОНЧЕННЫЙ БЛОК — СТРОЙНАЯ СТРОКА СРАЗУ ПОСЛЕ ЗАКРЫТИЯ FENCE: клик
+   раскрывает обратно в окно. Никакой кнопки «развернуть» — просто строка */
+.md pre.code-compact{max-height:32px;padding:7px 12px;overflow:hidden;cursor:pointer;opacity:.82}
+.md pre.code-compact:hover{opacity:1;border-color:var(--line2)}
+.md pre.code-compact code{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* ДОПИСАННЫЙ код сворачивается в строку СРАЗУ после написания — не ждём
    конца ответа. Одна строка с эллипсисом + «развернуть» справа; клик
    возвращает блок до конца ответа, дальше строится настоящая вкладка.
@@ -1040,24 +1049,28 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   box-shadow:inset 0 1px 5px rgba(0,0,0,.42);transition:.24s}
 .agent-switch-track input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .agent-switch-track i{position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;
-  background:var(--tx3);transition:transform .5s cubic-bezier(.2,.75,.3,1),background .3s,box-shadow .3s;
-  /* буква A живёт НА самом круглешке и ВСЕГДА ярко-чётко бордовая */
+  background:linear-gradient(180deg,#2fa8d8,#1b7fae);
+  transition:transform .5s cubic-bezier(.2,.75,.3,1),background .3s,box-shadow .3s;
+  /* буква A живёт НА круглешке и читается в любом состоянии: на синем —
+    светлая, на бордо в движении — светлая с тёмной тенью */
   font-style:normal;font-weight:800;font-size:11px;line-height:20px;text-align:center;
-  color:#a83248;text-shadow:0 0 5px rgba(168,50,72,.4);font-family:inherit;user-select:none}
+  color:#eaf7ff;text-shadow:0 1px 2px rgba(6,28,42,.6);font-family:inherit;user-select:none}
 .agent-switch:hover{color:var(--tx2)}
 .agent-switch-track:hover{border-color:var(--line2)}
 .agent-switch:has(input:checked){color:#f2c3cd}
 .agent-switch-track:has(input:checked){background:rgba(74,13,24,.5);border-color:rgba(212,94,116,.85)}
-.agent-switch-track input:checked + i{transform:translateX(16px);background:#e290a2;
-  box-shadow:0 0 13px rgba(255,96,120,.9),0 0 28px rgba(159,42,60,.65);
-  color:#7c1f30;text-shadow:0 0 6px rgba(255,110,132,.55)}
+.agent-switch-track input:checked + i{transform:translateX(16px);
+  /* ВКЛЮЧЁННЫЙ круглёшок — насыщенно-бордовый, буква светлая и чёткая */
+  background:linear-gradient(180deg,#b23a52,#8f2739);
+  box-shadow:0 0 13px rgba(190,60,84,.7),0 0 26px rgba(143,39,57,.5);
+  color:#ffe9ee;text-shadow:0 1px 2px rgba(64,10,20,.55)}
 /* ПУЛЬС — ВЕСЬ ТУМБЛЕР ЦЕЛИКОМ: цветное свечение (glow) дышит на треке
    и выплёскивается за его границы, а не кружок вокруг круглёшка */
 .agent-switch-track:has(input:checked){
   animation:agGlow 2.2s ease-in-out infinite}
 @keyframes agGlow{
-  0%,100%{box-shadow:0 0 14px 2px rgba(255,110,135,.38),0 0 30px 6px rgba(170,40,60,.22)}
-  50%{box-shadow:0 0 28px 6px rgba(255,120,140,.78),0 0 58px 16px rgba(178,48,68,.5)}}
+  0%,100%{box-shadow:0 0 12px 2px rgba(255,110,135,.24),0 0 26px 5px rgba(170,40,60,.14)}
+  50%{box-shadow:0 0 24px 5px rgba(255,120,140,.5),0 0 50px 14px rgba(178,48,68,.32)}}
 .agent-switch-track:has(input:focus-visible){outline:2px solid rgba(220,90,110,.55);outline-offset:2px}
 .agent-switch:focus-within{z-index:50}
 
@@ -1103,6 +1116,8 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .qt-flowline{font-size:11px;color:rgba(154,202,219,.66);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;
   animation:qtRise .6s cubic-bezier(.2,.75,.3,1) both}
+/* строка ждёт, пока полоса удлинится: qtFeed отпускает её через 230мс */
+.qt-flowline.qt-wait{opacity:0;animation:none}
 @keyframes qtRise{from{opacity:0;transform:translateY(15px)}}
 /* ПАПКА семейства: без полосы; дети выплывают из неё по одному */
 .qt-folder .qt-kids{display:none}
@@ -1124,8 +1139,9 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 /* серия инструментов долетела в папку — имя коротко подмигивает свечением */
 .qt-folder.blink .qt-name{animation:qtBlink .55s ease-out both}
 @keyframes qtBlink{
-  0%,100%{text-shadow:none}
-  45%{text-shadow:0 0 14px rgba(178,226,244,.6),0 0 4px rgba(178,226,244,.35)}}
+  0%,100%{text-shadow:none;filter:none}
+  45%{filter:brightness(1.85);
+    text-shadow:0 0 14px rgba(178,226,244,.6),0 0 4px rgba(178,226,244,.35)}}
 /* СТРОКА ГРУППЫ АГЕНТА: тёмная, раскрываемая — как след тишины, но в карточке */
 .ql-row{border:1px solid rgba(128,156,142,.14);border-radius:9px;background:rgba(8,14,20,.55);
   cursor:pointer;transition:border-color .2s,background .2s}
@@ -1153,9 +1169,16 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 #tgBudget{--sp:240,190,70}
 
 .toggle:not(.on):hover,.budget-btn:not(.on):hover{
-  border-color:rgba(var(--sp),.3);
-  color:rgba(var(--sp),.8);
-  background:rgba(var(--sp),.04)}
+  border-color:rgba(var(--sp),.38);
+  color:rgba(var(--sp),1);
+  background:rgba(var(--sp),.12);
+  text-shadow:0 0 9px rgba(var(--sp),.4);
+  /* кнопка НАЛИВАЕТСЯ СОКОМ: цвет и подсветка набирают глубину ~0.6с */
+  transition:color .6s ease,background-color .6s ease,border-color .6s ease,text-shadow .6s ease}
+.comp-btn:not(.on):hover{
+  color:rgba(var(--sp),1);background-color:rgba(var(--sp),.1);
+  text-shadow:0 0 9px rgba(var(--sp),.4);
+  transition:color .6s ease,background-color .6s ease,text-shadow .6s ease}
 /* СВЕТ РОЖДАЕТСЯ В ЦЕНТРЕ и РАЗРАСТАЕТСЯ. Раньше анимировался сам градиент —
    градиенты НЕ интерполируются, и свет просто прыгал из кадра в кадр.
    Теперь градиент готов сразу, а растёт transform: крошечное яркое пятно
@@ -1165,7 +1188,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .toggle:not(.on):hover::before,.budget-btn:not(.on):hover::before,
 .comp-btn:not(.on):hover::before{
   content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
-  background:radial-gradient(circle at 50% 50%,rgba(var(--sp),.19),rgba(var(--sp),.07) 42%,transparent 70%);
+  background:radial-gradient(circle at 50% 50%,rgba(var(--sp),.26),rgba(var(--sp),.12) 36%,rgba(var(--sp),.04) 58%,transparent 74%);
   opacity:0;transform:scale(.14);
   animation:qtGlowIn 1.05s cubic-bezier(.25,.65,.35,1) both}
 .toggle:not(.on):hover .tg-dot{background:rgba(var(--sp),.7);
@@ -1193,15 +1216,18 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   border-color:rgba(224,96,118,.52);
   background:rgba(143,39,57,.1)}
 @keyframes agKnobRubber{
-  0%{transform:translateX(0)}
+  /* круглёшок ОКРАШИВАЕТСЯ в бордо по дороге вправо и возвращается
+    в прежний синий, когда прыгает обратно влево */
+  0%{transform:translateX(0);background:linear-gradient(180deg,#2fa8d8,#1b7fae);color:#eaf7ff;text-shadow:0 1px 2px rgba(6,28,42,.6)}
+  30%{background:linear-gradient(180deg,#b23a52,#8f2739);color:#ffe9ee;text-shadow:0 1px 2px rgba(64,10,20,.55)}
   44%{transform:translateX(6px)}
-  60%{transform:translateX(6px)}
+  60%{transform:translateX(6px);background:linear-gradient(180deg,#b23a52,#8f2739);color:#ffe9ee;text-shadow:0 1px 2px rgba(64,10,20,.55)}
   76%{transform:translateX(-1.8px)}
-  88%{transform:translateX(.7px)}
-  100%{transform:translateX(0)}}
+  88%{transform:translateX(.7px);background:linear-gradient(180deg,#2fa8d8,#1b7fae);color:#eaf7ff;text-shadow:0 1px 2px rgba(6,28,42,.6)}
+  100%{transform:translateX(0);background:linear-gradient(180deg,#2fa8d8,#1b7fae);color:#eaf7ff;text-shadow:0 1px 2px rgba(6,28,42,.6)}}
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)) i{
-  animation:agKnobRubber 1.1s cubic-bezier(.3,.7,.3,1) both;
-  background:#c99aa3;color:#7c1f30;text-shadow:0 0 6px rgba(255,110,132,.5)}
+  /* цвета едут внутри agKnobRubber: статичной подмены больше нет */
+  animation:agKnobRubber 1.1s cubic-bezier(.3,.7,.3,1) both}
 /* огонёк: ЕЩЁ КРУПНЕЕ, сильно размыт, светится в стороны — движется бодро
    и тормозит ТОЛЬКО В КОНЦЕ, у правого края трека (слепая зона за круглёшком):
    сам он обрезан рамкой, снаружи живёт лишь его свечение. Пока курсор
@@ -1209,26 +1235,28 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked))::after{
   content:'';position:absolute;left:0;top:50%;width:26px;height:26px;margin-top:-13px;
   border-radius:50%;pointer-events:none;
-  background:radial-gradient(circle,rgba(255,150,168,1),rgba(255,86,112,.65) 48%,transparent 78%);
-  filter:blur(6px);
+  /* огонёк УБРАН НА ЗАДНИЙ ПЛАН: приглушён, крупен и размыт — свечение,
+    а не фейерверк; замирает у правого края, чуть видный ВНУТРИ трека */
+  background:radial-gradient(circle,rgba(255,150,168,.7),rgba(255,86,112,.38) 48%,transparent 78%);
+  filter:blur(7px);
   animation:agEmberRun 1s cubic-bezier(.3,.5,.35,1) both}
 @keyframes agEmberRun{
   0%{opacity:0;transform:translateX(0)}
-  12%{opacity:1;transform:translateX(4px)}
-  40%{transform:translateX(20px)}
-  70%{transform:translateX(34px)}
-  100%{opacity:1;transform:translateX(46px)}}
+  12%{opacity:.85;transform:translateX(4px)}
+  40%{transform:translateX(14px)}
+  70%{transform:translateX(21px)}
+  100%{opacity:.85;transform:translateX(26px)}}
 /* свечение огонька: ЩЕДРЕЕ в стороны, СНАРУЖИ справа — box-shadow самого
    трека обрезкой не_clip-ится и живёт у правого края всё наведение */
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)){
   animation:agRestGlow .55s ease .75s both}
 @keyframes agRestGlow{to{box-shadow:inset 0 1px 5px rgba(0,0,0,.42),
-  14px 0 30px -6px rgba(255,86,112,.85)}}
+  inset 14px 0 26px -8px rgba(255,86,112,.4)}}
 /* искра по контуру: один проход (no-repeat!), в конце замедляется и тает */
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked))::before{
   content:'';position:absolute;inset:0;padding:1px;border-radius:inherit;
   pointer-events:none;
-  background:linear-gradient(100deg,transparent 37%,rgba(255,84,112,.95) 50%,transparent 63%);
+  background:linear-gradient(100deg,transparent 37%,rgba(255,84,112,.55) 50%,transparent 63%);
   background-size:250% 100%;background-repeat:no-repeat;
   animation:agSparkRun 1.2s linear both;
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
@@ -1253,9 +1281,9 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   max-width:180px;width:max-content;white-space:normal;text-align:center;line-height:1.45;
   z-index:60;color:var(--tx2);box-shadow:0 12px 30px rgba(0,0,0,.7),0 0 16px rgba(0,200,240,.1);
   pointer-events:none;letter-spacing:0;font-family:var(--f);
-  /* подпись возникает НЕ сразу: ~1с после наведения и остановки курсора —
+  /* подпись возникает НЕ сразу: ~2с после наведения и остановки курсора —
      как системные подсказки на компьютере */
-  opacity:0;animation:tipIn .16s .95s both}
+  opacity:0;animation:tipIn .16s 1.95s both}
 @keyframes tipIn{from{opacity:0;transform:translateX(-50%) translateY(3px)}
   to{opacity:1;transform:translateX(-50%) translateY(0)}}
 .spacer{flex:1}
@@ -2685,12 +2713,14 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
       transparent 90%);
   filter:blur(8px);
   will-change:transform,opacity;
-  animation:agentWave .72s cubic-bezier(.4,.35,.6,.85) both}
+  /* РОВНЫЙ ХОД БЕЗ ЗАМЕДЛЕНИЯ: линейная кривая, финальный масштаб с
+    запасом ДАЛЕКО за границы любого экрана — гаснет только за ним */
+  animation:agentWave .72s linear both}
 @keyframes agentWave{
   0%{transform:translate(-50%,-50%) scale(.02);opacity:0}
-  8%{opacity:.96}
-  76%{opacity:.96}
-  100%{transform:translate(-50%,-50%) scale(1.38);opacity:0}}
+  6%{opacity:.97}
+  78%{opacity:.97}
+  100%{transform:translate(-50%,-50%) scale(1.9);opacity:0}}
 .agent-wave.out{
   animation:agentWaveOut 1s cubic-bezier(.5,0,.5,1) both}
 @keyframes agentWaveOut{
@@ -2710,7 +2740,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 /* --- 1. ПАЛИТРА: бордо — действие, синь — пространство --- */
 body.agent-on{
   --cy:#8f2739; --cy2:#d98a9b;
-  --line:rgba(124,132,180,.17); --line2:rgba(152,124,150,.38);
+  --line:rgba(124,132,180,.17); --line2:rgba(217,138,155,.34);
   --panel:rgba(13,17,36,.76); --panel2:rgba(18,23,46,.58)}
 
 /* --- 2. НЕБО: глубокая ночная синь с винным дыханием --- */
@@ -2724,7 +2754,7 @@ body.agent-on .grid-plane{background-image:
   linear-gradient(90deg,rgba(96,116,196,.05) 1px,transparent 1px)}
 body.agent-on .glow-a{background:#571526}
 body.agent-on .glow-b{background:#212a6a}
-body.agent-on .glow-c{background:#371a33}
+body.agent-on .glow-c{background:#141b3f}
 
 /* --- 3. СКРОЛЛ: синяя луна, при касании — бордо --- */
 body.agent-on ::-webkit-scrollbar-thumb{background:rgba(118,136,214,.24)}
@@ -2739,7 +2769,7 @@ body.agent-on .md ::selection{background:rgba(143,39,57,.4)}
 /* --- 5. КОД: тёмно-синяя плита, СВЕТЛЫЙ читаемый текст --- */
 body.agent-on .md code{background:rgba(22,28,58,.9);color:#efb6c3}
 body.agent-on .md pre{background:rgba(7,10,24,.9);border-color:rgba(124,132,180,.2)}
-body.agent-on .md pre code{color:#ccd7f0}
+body.agent-on .md pre code{color:#d4dbe9}
 body.agent-on .code-block{border-color:rgba(124,132,180,.24);background:rgba(7,10,24,.88)}
 body.agent-on .code-bar{background:rgba(13,17,36,.92);border-bottom:1px solid rgba(124,132,180,.16)}
 body.agent-on .code-bar .cb-lang{color:#d98a9b}
@@ -2748,7 +2778,7 @@ body.agent-on .code-bar .cb-copy:hover{color:#d98a9b;border-color:rgba(196,84,10
 
 /* --- 6. ТАБЛИЦЫ: винная шапка, синяя зебра --- */
 body.agent-on .md th{background:rgba(58,16,29,.62);color:#e3a3b1;
-  border-color:rgba(152,124,150,.3)}
+  border-color:rgba(196,84,104,.32)}
 body.agent-on .md td{border-color:rgba(124,132,180,.17)}
 body.agent-on .md tr:nth-child(even){background:rgba(18,23,46,.32)}
 
@@ -2769,7 +2799,7 @@ body.agent-on .send-btn{background:linear-gradient(135deg,#a83248,#571223);
   box-shadow:0 5px 18px rgba(143,39,57,.4),0 0 26px rgba(143,39,57,.14)}
 body.agent-on .send-btn svg{fill:#f7dde3}
 body.agent-on .send-btn:hover{box-shadow:0 9px 26px rgba(143,39,57,.55)}
-body.agent-on .send-btn.stop{background:linear-gradient(135deg,#a62540,#5c0f22)}
+body.agent-on .send-btn.stop{background:linear-gradient(135deg,#7c1f30,#4a0e1d)}
 body.agent-on .send-btn.stop svg{fill:#fff}
 
 /* --- 9. НАВИГАЦИЯ: активная вкладка горит бордо --- */
@@ -2789,11 +2819,11 @@ body.agent-on .bubble-user{
 body.agent-on .reactor .ring{border-color:rgba(217,138,155,.5)}
 body.agent-on .reactor .core{background:radial-gradient(circle,#fff,#eaa4b2 44%,#6e1628)}
 body.agent-on .work-wait .tw-caret{background:linear-gradient(180deg,#fff,#eaa4b2 52%,#8f2739)}
-body.agent-on .hello span{background:linear-gradient(90deg,#f2b9c7,#d98a9b 42%,#c9a0ee 74%,#f2b9c7);
+body.agent-on .hello span{background:linear-gradient(90deg,#f2b9c7,#d98a9b 42%,#eec2ce 74%,#f2b9c7);
   text-shadow:0 0 26px rgba(217,138,155,.22)}
 
 /* --- 12. ИНСТРУМЕНТЫ АГЕНТА: карточки и группы — винные акценты --- */
-body.agent-on .tool-card{border-color:rgba(152,124,150,.3)}
+body.agent-on .tool-card{border-color:rgba(124,132,180,.28)}
 body.agent-on .tool-card.tool-wait{border-color:rgba(196,84,104,.42)}
 body.agent-on .tool-run{background:#8f2739!important}
 body.agent-on .ql-row{border-color:rgba(124,132,180,.22);background:rgba(13,17,36,.6)}
@@ -2819,7 +2849,7 @@ body.agent-on .card-head.open:hover{background:rgba(143,39,57,.16)}
 body.agent-on .btn:hover{background:rgba(143,39,57,.18);border-color:rgba(196,84,104,.4)}
 body.agent-on .btn.primary{background:linear-gradient(135deg,#a83248,#571223);border-color:transparent}
 body.agent-on .btn.primary:hover{box-shadow:0 8px 22px rgba(143,39,57,.42)}
-body.agent-on .btn.danger:hover{background:rgba(180,50,60,.2);border-color:rgba(221,85,102,.5)}
+body.agent-on .btn.danger:hover{background:rgba(143,39,57,.22);border-color:rgba(196,84,104,.45)}
 body.agent-on .act:hover{color:#e3a3b1;border-color:rgba(196,84,104,.4);background:rgba(143,39,57,.1)}
 body.agent-on .ask-opt:hover{background:rgba(143,39,57,.14);border-color:#a85a6c}
 body.agent-on .ask-opt.sel,body.agent-on .ask-opt.sel:hover{background:rgba(143,39,57,.2);border-color:#c4788b}
@@ -2833,7 +2863,7 @@ body.agent-on .file-chip:hover{background:rgba(143,39,57,.18);
 body.agent-on .tc-btn:hover{background:rgba(143,39,57,.16);border-color:rgba(196,84,104,.4)}
 body.agent-on .bp-input:focus{border-color:rgba(217,138,155,.55)}
 body.agent-on .modal{background:linear-gradient(180deg,rgba(13,17,36,.99),rgba(8,10,22,.99));
-  border-color:rgba(152,124,150,.4)}
+  border-color:rgba(124,132,180,.34)}
 body.agent-on .empty{color:#9aa8c8}
 
 /* --- 15. ПАНЕЛИ, ОКНА, СЦЕНАРИЙ --- */

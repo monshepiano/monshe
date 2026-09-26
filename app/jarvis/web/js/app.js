@@ -523,6 +523,82 @@ try {
    расходятся красные акценты, и весь интерфейс наливается цветом режима.
    Волна — одноразовый слой поверх всего: расширяется, тает, убирается.
    Класс agent-on на body остаётся и держит красную тему, пока режим жив. */
+/* КИСТЬ: волна красит интерфейс ЗА СОБОЙ. Класс темы включается сразу,
+   но каждый элемент начинает перекрашиваться ровно тогда, когда фронт
+   доходит до него (задержка = расстояние от тумблера / скорость фронта),
+   а не весь экран разом. Градиентные фоны браузер не интерполирует — их
+   держим старыми до прихода фронта и отпускаем в момент: жёсткая кромка
+   кисти. После прохода всё прибирается, элементы живут своей жизнью. */
+function agentPaint(cx, cy) {
+  const R = Math.hypot(Math.max(cx, innerWidth - cx), Math.max(cy, innerHeight - cy)) || 1;
+  const VARS = ['--cy', '--cy2', '--line', '--line2', '--panel', '--panel2'];
+  const cs = getComputedStyle(document.body);
+  const old = {};
+  VARS.forEach((v) => { old[v] = cs.getPropertyValue(v).trim(); });
+  const els = new Set([document.body]);
+  for (const sheet of document.styleSheets) {
+    let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
+    for (const rule of rules) {
+      const sel = rule.selectorText || '';
+      if (sel.indexOf('body.agent-on') !== 0) continue;
+      const rest = sel.replace(/^body\.agent-on\s*/, '').trim();
+      if (!rest) continue;
+      try { document.querySelectorAll(rest).forEach((x) => els.add(x)); } catch (e) {}
+    }
+  }
+  const grads = [];
+  els.forEach((e) => {
+    const r = e.getBoundingClientRect();
+    const d = (r.width || r.height)
+      ? Math.hypot(r.left + r.width / 2 - cx, r.top + r.height / 2 - cy) : 0;
+    const delay = Math.min(620, Math.round(d / R * 470));
+    const save = { tr: e.style.transition, td: e.style.transitionDelay, vars: {} };
+    VARS.forEach((v) => {
+      save.vars[v] = e.style.getPropertyValue(v);
+      e.style.setProperty(v, old[v]);
+    });
+    e.style.transition = 'background-color .26s ease, border-color .26s ease, color .26s ease, ' +
+      'box-shadow .26s ease, fill .26s ease, --cy .26s ease, --cy2 .26s ease, ' +
+      '--line .26s ease, --line2 .26s ease, --panel .26s ease, --panel2 .26s ease';
+    e.style.transitionDelay = delay + 'ms';
+    e._agSave = save;
+    const bg = getComputedStyle(e).backgroundImage;
+    if (bg && bg !== 'none' && bg.indexOf('gradient') >= 0 && e !== document.body) {
+      save.bg = e.style.backgroundImage;
+      e.style.backgroundImage = bg;      // старый градиент — до прихода фронта
+      grads.push({ e, delay });
+    }
+  });
+  // класс темы — СРАЗУ: каждый элемент поедет со своей задержкой
+  document.body.classList.add('agent-on');
+  // на следующем кадре снимаем var- overrides: у каждого элемента его
+  // наследуемые цвета меняются в СВОЙ момент (transition + delay)
+  requestAnimationFrame(() => {
+    els.forEach((e) => {
+      if (!e._agSave) return;
+      VARS.forEach((v) => { if (!e._agSave.vars[v]) e.style.removeProperty(v); });
+    });
+  });
+  grads.forEach((g) => {
+    setTimeout(() => { g.e.style.backgroundImage = g.e._agSave.bg || ''; }, g.delay);
+  });
+  // прибираем за кистью: элементы возвращаются к обычным переходам
+  setTimeout(() => {
+    els.forEach((e) => {
+      if (!e._agSave) return;
+      const s = e._agSave;
+      e.style.transition = s.tr;
+      e.style.transitionDelay = s.td;
+      if (s.bg !== undefined) e.style.backgroundImage = s.bg;
+      VARS.forEach((v) => {
+        if (s.vars[v]) e.style.setProperty(v, s.vars[v]);
+        else e.style.removeProperty(v);
+      });
+      e._agSave = null;
+    });
+  }, 1000);
+}
+
 function agentWave(originEl, calm) {
   const src = originEl && originEl.getBoundingClientRect ? originEl : $('#swAgent');
   let r = (src && src.getBoundingClientRect()) || null;
@@ -535,7 +611,8 @@ function agentWave(originEl, calm) {
   const radius = Math.hypot(Math.max(cx, innerWidth - cx), Math.max(cy, innerHeight - cy));
   wave.style.left = cx + 'px';
   wave.style.top = cy + 'px';
-  wave.style.setProperty('--aw', (radius * 2.2) + 'px');
+  // с запасом ДАЛЕКО за экран: фронт уходит за границы и гаснет только там
+  wave.style.setProperty('--aw', (radius * 2.6) + 'px');
   document.body.appendChild(wave);
   S.agentWaveRect = null;
   // волна короткая и быстрая, но ДОХОДИТ до края экрана и уходит за него
@@ -561,10 +638,12 @@ $('#tgAgent').addEventListener('change', function () {
     // экрану, ПЕРЕКРАШЕННЫМ становится то, что она уже накрыла. Класс
     // темы включается на 260-й мс — к этому моменту фронт накрыл центр,
     // и цвета доезжают переходами (0.5 с) ещё ПОД волной, до её ухода
-    agentWave(S.agentWaveOrigin || $('#swAgent'), false);
-    setTimeout(() => {
-      document.body.classList.add('agent-on');
-    }, 260);
+    const wOrigin = S.agentWaveOrigin || $('#swAgent');
+    let wr = (wOrigin && wOrigin.getBoundingClientRect && wOrigin.getBoundingClientRect()) || null;
+    if ((!wr || (!wr.width && !wr.height)) && S.agentWaveRect) wr = S.agentWaveRect;
+    if (!wr) wr = { left: innerWidth / 2, top: innerHeight / 2, width: 0, height: 0 };
+    agentWave(wOrigin, false);
+    agentPaint(wr.left + wr.width / 2, wr.top + wr.height / 2);
     setTimeout(() => { if (shell) shell.classList.remove('ag-switching'); }, 950);
   } else {
     // ВЫКЛЮЧЕНИЕ — БЕЗ ОБРАТНОЙ ВОЛНЫ: базовый переход. Цвета уезжают
@@ -1735,13 +1814,13 @@ const ICO = {
 function growHeight(node, from, to) {
   if (!node || !(to > 0) || Math.abs(to - from) < 4) return;
   if (node._gt) { clearTimeout(node._gt); node._gt = null; }
-  const dur = Math.max(110, Math.min(190, 90 + Math.abs(to - from) * 0.22));
+  const dur = Math.max(200, Math.min(360, 150 + Math.abs(to - from) * 0.3));
   const prev = node.style.overflow;
   node.style.overflow = 'hidden';
   node.style.transition = 'none';
   node.style.height = from + 'px';
   void node.offsetHeight;                       // зафиксировать точку отсчёта
-  node.style.transition = 'height ' + Math.round(dur) + 'ms cubic-bezier(.33,1,.68,1)';
+  node.style.transition = 'height ' + Math.round(dur) + 'ms cubic-bezier(.25,.75,.3,1)';
   node.style.height = to + 'px';
   node._gt = setTimeout(() => {
     node._gt = null;
@@ -1818,9 +1897,9 @@ function collapseToThumb(node, opts) {
     void node.offsetHeight;
     // Свёртка идёт заметно медленнее роста: раскрытие — ответ на клик, его
     // ждут, а свёртка происходит сама и должна читаться как мягкий уход.
-    const dur = Math.max(200, Math.min(380, 170 + h0 * 0.42));
+    const dur = Math.max(240, Math.min(420, 200 + h0 * 0.4));
     node.classList.add('shrinking');
-    node.style.transition = 'height ' + Math.round(dur) + 'ms cubic-bezier(.4,0,.7,1)';
+    node.style.transition = 'height ' + Math.round(dur) + 'ms cubic-bezier(.35,.55,.35,1)';
     node.style.height = '28px';        // примерно высота будущей миниатюры
     setTimeout(() => {
       node.classList.remove('shrinking');
@@ -2925,7 +3004,7 @@ function foldCodeBlocks(root, animate) {
     const fold = () => collapseToThumb(wrap, {
       instant: true, cls: 'th-code inline-thumb', icon: ICO.code,
       title: lang ? 'Код · ' + lang : 'Код',
-      sub: lines + ' стр. · ' + fmtSize(code.length), tag: 'развернуть',
+      sub: lines + ' стр. · ' + fmtSize(code.length),
     });
     if (!animate) { fold(); return; }
     // БАГ «перед сворачиванием разворачивается во весь рост»: раньше у pre
@@ -3120,6 +3199,7 @@ $('#sendBtn').addEventListener('click', () => {
     if (S.followUi) {
       typerStop(S.followUi);
       S.followUi.buffer = S.followUi.shown || '';
+      markStopped(S.followUi);
     }
     // ОСТАНОВКА — НЕ ОБРЫВ: несвернувшиеся инструменты и группы сворачиваются
     // своими анимациями, кухня не остаётся раскрытой
@@ -3165,6 +3245,7 @@ function stopStream() {
         if (S.followUi) {
           typerStop(S.followUi);
           S.followUi.buffer = S.followUi.shown || '';
+          markStopped(S.followUi);
           flushTools(S.followUi);
         }
         resolve();
@@ -3432,7 +3513,7 @@ async function send(opts) {
           sub: ts ? fmtSize((ts.textContent || '').length) : '',
         });
       }
-      node.body.appendChild(el('div', 'muted', 'Остановлено.'));
+      markStopped(ui);
       settleVisualDone(ui);
     }
   } finally {
@@ -3681,7 +3762,7 @@ function qtFeed(flow, text) {
   // окно просто обрезает — поток никогда не наезжает на заголовок
   const inner = flow.querySelector('.qt-flowin');
   if (!inner) return;
-  const line = el('div', 'qt-flowline', esc(String(text || '')));
+  const line = el('div', 'qt-flowline qt-wait', esc(String(text || '')));
   inner.appendChild(line);
   // ФАЗА 1 — НАПОЛНЕНИЕ: высота окна едет плавным переходом (полоса под
   // текстом тянется без рывков), ничего не движется. ФАЗА 2 — ПОЛЁТ:
@@ -3701,6 +3782,10 @@ function qtFeed(flow, text) {
   }
   // страница прилипает к растущему инструменту: текст не пишется за экраном
   if (flow._ui) scrollSoon(flow._ui);
+  // ПОЛОСА УДЛИНЯЕТСЯ ПЕРВОЙ, СТРОКА ПИШЕТСЯ ПОСЛЕ: полоса тянется под
+  // ещё невидимой строкой, и лишь доехав — отпускает строку наружу.
+  // Так окно растёт строго по мере текста, без прыжка «полная длина сразу»
+  setTimeout(() => line.classList.remove('qt-wait'), 230);
 }
 
 /* ПОЛЁТ ПОТОКА. Внутренний слой плавно уезжает вверх ровно на высоту
@@ -3820,10 +3905,12 @@ function qtSweep(ui, keepGroup) {
     if (!nn.dataset.mini) {
       if (!nn._done) return;          // ещё работает — не трогаем
       qtMark(nn, t.ok, t.elapsed);
-      qtMiniaturize(nn);
+      // БЕЗ предварительной миниатюры: раньше полоса закрывалась (.5с),
+      // и только потом инструмент летел в папку — два такта вместо одного.
+      // Теперь qtFold закрывает полосу И летит ОДНОВРЕМЕННО.
     }
     folded++;
-    setTimeout(() => qtFold(ui, nn), i++ * 170);
+    setTimeout(() => qtFold(ui, nn), i++ * 150);
   });
   return folded;
 }
@@ -3875,24 +3962,27 @@ function qtFold(ui, node) {
   folder._items.push({ name: t.name, label: t.label, group: t.group, args: t.args,
                        ok: t.ok, elapsed: t.elapsed, result: t.result });
   qtFolderSync(folder);
-  // ИНСТРУМЕНТ ЗАЛЕЗАЕТ В ПАПКУ, РАСТВОРЯЯСЬ: подъезд к папке + съёживание
+  // ИНСТРУМЕНТ ЗАЛЕЗАЕТ В ПАПКУ, РАСТВОРЯЯСЬ. КОНЕЧНАЯ ТОЧКА — центр
+  // строки папки (раньше узел недолёживал выше/ниже имени, и имя
+  // инструмента накладывалось на имя группы). Полоса закрывается В ТОТ ЖЕ
+  // ТАКТ, что и полёт: одно движение, а не «полоса, потом группировка».
   const h0 = node.getBoundingClientRect().height;
   let dy = -10;
   if (!fresh) {
     const fr = folder.getBoundingClientRect();
     const nr = node.getBoundingClientRect();
-    dy = Math.max(-90, Math.min(-6, fr.bottom - nr.top));
+    dy = Math.max(-320, Math.min(-6, (fr.top + fr.height / 2) - (nr.top + nr.height / 2)));
   }
   node.style.overflow = 'hidden';
   node.style.transition = 'none';
   node.style.height = h0 + 'px';
   void node.offsetHeight;
   node.style.transition =
-    'height 1.05s cubic-bezier(.2,.5,.2,1), transform 1.05s cubic-bezier(.2,.5,.2,1), ' +
-    'opacity .55s ease .5s, filter .55s ease .5s';
+    'height .9s cubic-bezier(.25,.55,.3,1), transform .9s cubic-bezier(.25,.55,.3,1), ' +
+    'opacity .5s ease .32s, filter .5s ease .32s';
   node.style.transform = 'translateY(' + dy + 'px) scale(.93)';
-  // ПОДЛЕТАЯ К ПАПКЕ — растворяется: текст размывается и гаснет ещё в
-  // полёте, шрифты инструмента и папки не смешиваются
+  // РАСТВОРЕНИЕ ДО ПОЛНОГО ПРИЛЁТА: к моменту, когда имя доезжает до имени
+  // папки, его уже не видно — шрифты не смешиваются никогда
   node.style.filter = 'blur(3px)';
   node.style.opacity = '0';
   node.style.height = '0px';
@@ -3907,7 +3997,7 @@ function qtFold(ui, node) {
       void folder.offsetWidth;
       folder.classList.add('blink');
     }
-  }, 1080);
+  }, 930);
 }
 
 function qtToggleFolder(f) {
@@ -3923,18 +4013,18 @@ function qtToggleFolder(f) {
     // ОДНОВРЕМЕННО с ними съёживается тело папки — два действия в один
     // движение, чуть быстрее прежнего
     rows.forEach((r, i) => {
-      r.style.transition = 'opacity .38s ease ' + (i * 60) + 'ms, transform .38s cubic-bezier(.4,.6,.4,1) ' + (i * 60) + 'ms';
+      r.style.transition = 'opacity .42s ease ' + (i * 55) + 'ms, transform .42s cubic-bezier(.4,.6,.4,1) ' + (i * 55) + 'ms';
       r.style.opacity = '0';
-      r.style.transform = 'translateY(-8px)';
+      r.style.transform = 'translateY(-9px)';
     });
     const h0 = kids.getBoundingClientRect().height;
     kids.style.overflow = 'hidden';
     kids.style.transition = 'none';
     kids.style.height = h0 + 'px';
     void kids.offsetHeight;
-    kids.style.transition = 'height .4s cubic-bezier(.4,.5,.4,1)';
+    kids.style.transition = 'height .46s cubic-bezier(.4,.5,.4,1)';
     kids.style.height = '0px';
-    const rowsT = rows.length * 60 + 420;
+    const rowsT = rows.length * 55 + 500;
     setTimeout(() => {
       f.classList.remove('open');
       kids.classList.remove('open');
@@ -3961,10 +4051,13 @@ function qtToggleFolder(f) {
     kids.style.transition = 'height .4s cubic-bezier(.4,.5,.4,1)';
     kids.style.height = h + 'px';
     const allRows = f.querySelectorAll('.qt-row');
+    // ОТКРЫТИЕ — ПЛЁНКА ЗАКРЫТИЯ НАЗАД: строка начинается там, где
+    // закончила свёртка (чуть выше, у папки), и оседает вниз на место;
+    // порядок обращён — от первой к последней; те же длительности
     allRows.forEach((r, i) => {
       r.style.opacity = '0';
-      r.style.transform = 'translateY(8px)';
-      r.style.transition = 'opacity .38s ease ' + (i * 60) + 'ms, transform .38s cubic-bezier(.4,.6,.4,1) ' + (i * 60) + 'ms';
+      r.style.transform = 'translateY(-9px)';
+      r.style.transition = 'opacity .42s ease ' + (i * 55) + 'ms, transform .42s cubic-bezier(.4,.6,.4,1) ' + (i * 55) + 'ms';
       void r.offsetHeight;
       r.style.opacity = '1';
       r.style.transform = 'translateY(0)';
@@ -4407,6 +4500,18 @@ function renderTyped(ui) {
     livePre.classList.add('live-code');
     livePre.scrollTop = livePre.scrollHeight;
   }
+  // СВЁРТКА В СТРОКУ — СРАЗУ ПОСЛЕ ЗАКРЫТИЯ FENCE, не в конце ответа:
+  // пока блок пишется — он окно live-code; закрылся — в тот же тик
+  // становится стройной строкой (клик раскрывает обратно). Миниатюра-вкладка
+  // в конце ответа строится как раньше, foldCodeBlocks.
+  typedPres.forEach((pre, idx) => {
+    if (pre === livePre && inCodeBlock(text)) return;
+    if (pre.closest('.code-block')) return;
+    const code = pre.textContent || '';
+    if (code.split('\n').length < 4 && code.length < 200) return;
+    if (ui.mdEl._codePeek && ui.mdEl._codePeek.has(idx)) return;
+    pre.classList.add('code-compact');
+  });
   // КОД БОЛЬШЕ НЕ СХЛОПЫВАЕТСЯ В ПОЛОСУ С КНОПКОЙ «развернуть»: законченный
   // блок остаётся полным (окно live-code у активного fence скроллится само),
   // а вкладка-миниатюра строится один раз в конце ответа (foldCodeBlocks).
@@ -4583,7 +4688,7 @@ function typerStart(ui) {
     // ТУРБО: кнопка ×2 у поля ввода. Ускоряется всё честно — целевая
     // скорость, предел кадра и паузы препинания. Ответ не «прыгает», а
     // печатается тем же характером, только вдвое быстрее.
-    const turbo = S.turbo ? 8 : 1;
+    const turbo = S.turbo ? 16 : 1;
     want *= turbo;
     // После done ускоряется ТОЛЬКО плотный контент (код, таблицы, списки):
     // его хвост не должен «досматриваться» минуту. Разговорный текст держит
@@ -4630,6 +4735,34 @@ function typerStart(ui) {
 function typerFlush(ui) {
   if (ui.shown == null) ui.shown = '';
   typerStart(ui);
+}
+
+/* клик по стройной строке кода — раскрыть обратно в окно (со скроллом).
+   Слушатель один, на документе: typer перерисовывает innerHTML каждый тик,
+   слушатели на самих pre жить не могут. Раскрытое запоминаем по индексу
+   блока — до конца ответа оно не сожмётся снова. */
+document.addEventListener('click', (e) => {
+  const p = e.target && e.target.closest ? e.target.closest('pre.code-compact') : null;
+  if (!p) return;
+  const root = p.closest('.md');
+  if (!root) return;
+  const pres = $$('pre', root);
+  const idx = pres.indexOf(p);
+  if (idx < 0) return;
+  if (!root._codePeek) root._codePeek = new Set();
+  root._codePeek.add(idx);
+  p.classList.remove('code-compact');
+});
+
+/* МЕТКА «ОСТАНОВЛЕНО»: единая точка. Раньше её рисовал только обработчик
+   AbortError — а если обрыв приходил другим путём (стоп из сценария, из
+   follow-ожидания), метка пропадала. Теперь её ставит каждый путь стопа,
+   и никогда дважды. */
+function markStopped(ui) {
+  if (!ui || ui._stoppedMark) return;
+  if (!ui.node || !ui.node.body) return;
+  ui._stoppedMark = true;
+  ui.node.body.appendChild(el('div', 'muted', 'Остановлено.'));
 }
 
 function typerStop(ui) {
@@ -4836,7 +4969,7 @@ function queueResponseFinish(ui, content, success) {
         const ts = thinkFlush(ui.thinkCard);
         collapseSoon(ui.thinkCard, {
           cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
-          sub: ts ? fmtSize((ts.textContent || '').length) : '', tag: 'развернуть',
+          sub: ts ? fmtSize((ts.textContent || '').length) : '',
         });
       }
 
@@ -5491,7 +5624,7 @@ function handleEvent(ev, ui) {
         if (folded > 0) {
           // вальс должен успеть показаться, но не задерживать ответ:
           // хвост последней свёртки + короткая пауза — и текст пошёл
-          ui._qtHold = performance.now() + (folded - 1) * 170 + 550;
+          ui._qtHold = performance.now() + (folded - 1) * 150 + 480;
         }
       }
       if (!ui.mdEl) {
@@ -5502,7 +5635,7 @@ function handleEvent(ev, ui) {
           const ts0 = thinkFlush(ui.thinkCard);
           collapseSoon(ui.thinkCard, {
             cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
-            sub: ts0 ? fmtSize((ts0.textContent || '').length) : '', tag: 'развернуть',
+            sub: ts0 ? fmtSize((ts0.textContent || '').length) : '',
           });
         }
         ui.mdEl = el('div', 'md typing');
@@ -6990,7 +7123,7 @@ async function loadFiles(dir) {
   S.fsel = new Set([...S.fsel].filter((p) => S.frows.indexOf(p) >= 0));
   if (!entries.length) {
     grid.innerHTML = '<div class="file-empty">Пусто.<br>Перетащи сюда файлы с компьютера или ' +
-      'нажми «Загрузить». Здесь же появятся файлы, которые я создам.</div>';
+      'нажми «Импорт». Здесь же появятся файлы, которые я создам.</div>';
     syncSelection();
     return;
   }
@@ -7504,6 +7637,10 @@ function renderSbxBar(info, entries) {
   S.sandbox = info || {};
   // в шапке остаются только характеристики: сколько файлов, сколько места,
   // сколько объектов в текущей папке. Ярлык с названием убран.
+  // «Очистить» живёт только когда чистить есть что: без файлов кнопка
+  // замьючена, а не притворяется рабочей
+  const wipe = $('#sbxWipe');
+  if (wipe) wipe.disabled = !((info.files || 0) > 0);
   const stats = [
     ['файлов', String(info.files || 0)],
     ['занято', fmtSize(info.size || 0)],
