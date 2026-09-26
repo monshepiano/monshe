@@ -1275,6 +1275,14 @@ function testReadinessFollowHistoryAndLiveCodeContracts() {
   // foldCodeBlocks съёживает блок ОТ ВИДИМОЙ высоты и лишь потом снимает класс
   assert(/foldCodeBlocks\(ui\.mdEl,\s*true\)/.test(finish),
     'completed code folds with the animate path, never expanding to full height first');
+  // Q2: при ОТКРЫТИИ диалога код РАЗВЁРНУТ в компактном окне — keepCodeOpen
+  assert(/function keepCodeOpen\(root\)/.test(js) &&
+    /keepCodeOpen\(node\.body\);/.test(js) &&
+    (js.match(/keepCodeOpen\(node\.body\);/g) || []).length >= 2 &&
+    !/foldCodeBlocks\(node\.body\);/.test(js) &&
+    /'code-block code-open'/.test(extractFunction(js, 'keepCodeOpen')) &&
+    /\.code-block\.code-open pre\{max-height:min\(34vh,280px\)\}/.test(css),
+    'opening a chat shows code EXPANDED in a compact window (not thumbnails)');
   const fold = extractFunction(js, 'foldCodeBlocks');
   assert(/classList\.remove\('live-code'\)/.test(fold) &&
     /getBoundingClientRect\(\)\.height/.test(fold),
@@ -1489,7 +1497,7 @@ function testThinkingGradientContract() {
     'the off AGENT track matches the neutral neighbouring controls at 28px high');
   // включённый AGENT — БОРДО и горит ЯРЧЕ с пульсацией («я активен!»)
   assert(/\.agent-switch-track:has\(input:checked\)\s*\{[^}]*rgba\(74,13,24,\.5\)/s.test(css) &&
-    /\.agent-switch-track input:checked \+ i\{[^}]*background:linear-gradient\(180deg,#c94760,#a13248\)/s.test(css) &&
+    /\.agent-switch-track input:checked \+ i\{[^}]*background:linear-gradient\(180deg,#d4526c,#a83248\)/s.test(css) &&
     /\.agent-switch-track input:checked \+ i\{[^}]*color:#25070d/s.test(css) &&
     /\.agent-switch-track i\{[^}]*background:var\(--tx3\)/s.test(css) &&
     !/\.agent-switch-track i\{[^}]*#2fa8d8/s.test(css) &&
@@ -1527,7 +1535,7 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
     'camera stays teal, computer is violet, budget gold');
   assert(!/qtGlowIn/.test(css) &&
     !/\.toggle:not\(\.on\):hover::before/.test(css) &&
-    /\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover,\.comp-btn:not\(\.on\):hover\{[^}]*box-shadow:inset 0 0 22px 5px rgba\(var\(--sp\),\.24\),inset 0 0 8px 1px rgba\(var\(--sp\),\.18\),\s*0 0 10px 1px rgba\(var\(--sp\),\.14\),0 0 24px 5px rgba\(var\(--sp\),\.07\)/s.test(css) &&
+    /\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover,\.comp-btn:not\(\.on\):hover\{[^}]*box-shadow:0 0 10px 1px rgba\(var\(--sp\),\.15\),0 0 26px 6px rgba\(var\(--sp\),\.07\)/s.test(css) &&
     /\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover,\.comp-btn:not\(\.on\):hover\{[^}]*background:rgba\(var\(--sp\),\.1\)/s.test(css) &&
     /text-shadow:0 0 9px rgba\(var\(--sp\),\.35\)/.test(css) &&
     /\.comp-btn\{--sp:130,190,215\}/.test(css) &&
@@ -1545,10 +1553,10 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   // за правый край (остаётся свечение справа), по контуру бежит ЯВНАЯ
   // искра насыщенного красного, в конце замедляется и гаснет.
   assert(/animation:agKnobRubber 1\.1s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
-    /@keyframes agKnobRubber\{[\s\S]*?44%\{transform:translateX\(6px\);background:#b23a52;color:#25070d\}/.test(css) &&
-    /20%\{background:#8f4152\}/.test(css) &&
-    /88%\{transform:translateX\(\.7px\);background:#87485a\}/.test(css) &&
-    /@keyframes agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:#7c4453;color:var\(--panel2\)\}\}/.test(css),
+    /15%\{background:#a03c50;color:#1d060b\}/.test(css) &&
+    /@keyframes agKnobRubber\{[\s\S]*?44%\{transform:translateX\(6px\);background:#c4475e;color:#1d060b\}/.test(css) &&
+    /@keyframes agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:#8d4d5e;color:#1d060b\}\}/.test(css) &&
+    !/agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:var\(--tx3\)\}\}/.test(css),
     'the knob is ITS OLD GREY self, painting DARK bordo on the way right and unpainting on the way back, synced to the motion');
   assert(/animation:agEmberRun 1s cubic-bezier\(\.3,\.5,\.35,1\) both/.test(css) &&
     /rgba\(255,150,168,\.7\),rgba\(255,86,112,\.38\) 48%/.test(css) &&
@@ -1702,11 +1710,15 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /const pending = \[\];/.test(fq),
     'answer end folds tools ONE BY ONE into the group (170ms), strip compressing in the same beat');
 
-  assert(/'height 1\.05s cubic-bezier\(\.2,\.5,\.2,1\)/.test(js) &&
-    /dy = Math\.max\(-90, Math\.min\(-6, fr\.bottom - nr\.top\)\);/.test(extractFunction(js, 'qtFold')) &&
+  assert(/'height 1\.05s cubic-bezier\(\.2,\.5,\.2,1\)'/.test(extractFunction(js, 'qtFold')) &&
+    /const ghost = el\('div'\);/.test(extractFunction(js, 'qtFold')) &&
+    /node\.style\.position = 'fixed';/.test(extractFunction(js, 'qtFold')) &&
+    /requestAnimationFrame\(homing\)/.test(extractFunction(js, 'qtFold')) &&
+    /ghost\.style\.height = '0px';/.test(extractFunction(js, 'qtFold')) &&
+    /node\.style\.top = \(y0 \+ \(y1 - y0\) \* e\) \+ 'px';/.test(extractFunction(js, 'qtFold')) &&
     /function qtFold\(ui, node, isLast\)/.test(js) &&
     /if \(isLast\) setTimeout\(folderBlink, 820\);/.test(extractFunction(js, 'qtFold')) &&
-    /node\.style\.filter = 'blur\(3px\)'/.test(extractFunction(js, 'qtFold')) &&
+    /node\.style\.filter = 'blur\(' \+ \(3 \* fade\) \+ 'px\)';/.test(extractFunction(js, 'qtFold')) &&
     /folder\._pend = \(folder\._pend \|\| 0\) \+ 1;/.test(extractFunction(js, 'qtFold')) &&
     /folder\.classList\.add\('blink'\)/.test(extractFunction(js, 'qtFold')) &&
     /\.qt-folder\.blink \.qt-name\{animation:qtBlink \.5s ease-out both\}/.test(css) &&
@@ -1727,7 +1739,8 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   const tf = extractFunction(js, 'qtToggleFolder');
   assert(/i \* 55\)/.test(tf) && /'opacity \.42s ease '/.test(tf) &&
     /'height \.46s cubic-bezier\(\.4,\.5,\.4,1\)'/.test(tf) &&
-    /translateY\(-9px\)/.test(tf) && !/translateY\(8px\)/.test(tf) &&
+    /r\.style\.transform = 'translateY\(9px\)';/.test(tf) &&
+    (tf.match(/translateY\(9px\)/g) || []).length >= 2 &&
     /f\._anim/.test(tf) &&
     /const rowsT = rows\.length \* 55 \+ 500;/.test(tf) &&
     /kids\.style\.height = '0px';/.test(tf) && /kids\.style\.height = h \+ 'px';/.test(tf),
@@ -1783,12 +1796,13 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   assert(/@property --cy\{syntax:'<color>';inherits:true;initial-value:#00c8f0\}/.test(css) &&
     /transition:--cy \.3s ease,--cy2 \.3s ease,--line \.3s ease/.test(css),
     'theme colors are registered properties and TRAVEL with transitions');
-  assert(/body\.agent-on\{[\s\S]*?--cy:#c94760; --cy2:#e8a7b8;[\s\S]*?--line:rgba\(196,84,104,\.22\)[\s\S]*?--panel:rgba\(26,12,18,\.78\)/.test(css),
-    'WINE NIGHT: a genuinely NEW world — wine-black sky, wine panels, wine lines, bright rose energy');
+  assert(/body\.agent-on\{[\s\S]*?--cy:#9e2c42; --cy2:#cf8a9b;[\s\S]*?--line:rgba\(168,50,72,\.24\)[\s\S]*?--panel:rgba\(24,10,15,\.8\)/.test(css),
+    'WINE NIGHT, DARKER WINE: a genuinely NEW world — wine-black sky, wine panels, wine lines, deep dark rose energy');
   assert(/function agentWave/.test(js) && /S\.agentWaveRect/.test(js),
     'the wave can be born from the permission-card toggle rect');
   const waveCss = css.match(/\.agent-wave\{([^}]*)\}/s)[1];
-  assert(!/border:3px/.test(waveCss) && /filter:blur\(8px\)/.test(waveCss) &&
+  assert(!/border:3px/.test(waveCss) && !/filter:blur/.test(waveCss) &&
+    /will-change:transform,opacity;/.test(waveCss) && /backface-visibility:hidden;/.test(waveCss) &&
     /transparent 0%/.test(waveCss) && /rgba\(168,50,72,\.42\) 44%/.test(waveCss) &&
     /transparent 68%/.test(waveCss),
     'the wave is a RING: hollow center, bright front, transparent edge — nothing trails behind it');
@@ -1811,7 +1825,7 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     'colors flip at 260ms and settle in 0.3s — the paint lands while the wave is still rolling over it');
   assert(/body\.agent-on \.bg-layer\{/.test(css) && /body\.agent-on \.grid-plane\{/.test(css) &&
     /body\.agent-on \.bubble-user\{/.test(css) && /body\.agent-on \.note-panel\{background:#1a0c12\}/.test(css) &&
-    /body\.agent-on \.send-btn\{background:linear-gradient\(135deg,#c94760,#8f2739\)/.test(css) &&
+    /body\.agent-on \.send-btn\{background:linear-gradient\(135deg,#a83248,#6e1c2c\)/.test(css) &&
     /body\.agent-on \.reactor \.core\{background:radial-gradient\(circle,#fff,#f0c4cf 44%,#7c1f30\)/.test(css) &&
     /body\.agent-on \.jw-ico\{/.test(css) &&
     /body\.agent-on ::-webkit-scrollbar-thumb\{background:rgba\(196,84,104,\.28\)\}/.test(css),
@@ -1821,8 +1835,16 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /body\.agent-on \.md th\{background:rgba\(74,20,34,\.7\)/.test(css) &&
     /body\.agent-on \.md tr:nth-child\(even\)\{background:rgba\(46,19,27,\.35\)\}/.test(css),
     'CODE sits on a dark-wine slab with neutral readable font; wine head and wine zebra');
-  assert(/body\.agent-on \.hello span\{background:linear-gradient\(90deg,#f6c9d4,#e8a7b8 42%,#f0d0da 74%,#f6c9d4\)/.test(css),
-    'the AGENT greeting is BRIGHT and readable on the wine-dark page');
+  assert(/body\.agent-on \.hello span\{background:linear-gradient\(90deg,#eec2ce,#d39aa9 42%,#e8c4cf 74%,#eec2ce\);[\s\S]*?-webkit-background-clip:text;background-clip:text;color:transparent;[\s\S]*?filter:drop-shadow\(0 0 22px rgba\(196,84,104,\.28\)\)\}/.test(css),
+    'the AGENT greeting paints ONLY the letters (clip:text) — no square gradient slab behind JARVIS');
+  // ИСТОРИЯ ИНСТРУМЕНТОВ — ВСЕГДА ТИХАЯ КУХНЯ: restoreTrace собирает папки
+  // семейств, а не агентские tool-card; текущий режим не перекрашивает прошлое
+  assert(/function renderToolKitchen\(node, traces\)/.test(js) &&
+    /const toolTraces = \[\];/.test(extractFunction(js, 'restoreTrace')) &&
+    /renderToolKitchen\(node, toolTraces\);/.test(extractFunction(js, 'restoreTrace')) &&
+    !/tool-card/.test(extractFunction(js, 'renderToolKitchen')) &&
+    /qtFolderSync\(f\);/.test(extractFunction(js, 'renderToolKitchen')),
+    'past tools are restored as the QUIET kitchen (family folders with rows): switching to AGENT never repaints history');
   const agBlock = css.slice(css.indexOf('body.agent-on{'));
   assert(!/168,159,242/.test(agBlock) && !/47,156,146/.test(agBlock) &&
     !/c3a9f0/.test(agBlock) && !/94,42,92/.test(agBlock) &&
@@ -1836,10 +1858,17 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /body\.agent-on \.chat-item\.active\{background:rgba\(168,50,72,\.2\)/.test(css) &&
     /body\.agent-on \.ask-opt\.sel, ?body\.agent-on \.ask-opt\.sel:hover\{background:rgba\(168,50,72,\.22\)/.test(css) &&
     /body\.agent-on \.sugg:hover\{background:rgba\(168,50,72,\.14\)/.test(css) &&
-    /body\.agent-on \.btn\.primary\{background:linear-gradient\(135deg,#c94760,#8f2739\)/.test(css) &&
-    /body\.agent-on \.fcard\.sel\{border-color:#c94760/.test(css) &&
+    /body\.agent-on \.btn\.primary\{background:linear-gradient\(135deg,#a83248,#6e1c2c\)/.test(css) &&
+    /body\.agent-on \.fcard\.sel\{border-color:#a83248/.test(css) &&
     /body\.agent-on \.toggle\.on\{background:rgba\(168,50,72,\.18\)/.test(css),
-    'EVERY hover/selected state is harmonized wine light — a whole new world, not a recolor');
+    /body\.agent-on #newChatBtn\{background:linear-gradient\(135deg,#a83248,#6e1c2c\)/.test(css) &&
+    /body\.agent-on \.topbar\{background:rgba\(18,8,12,\.72\)/.test(css) &&
+    /body\.agent-on \.term-head\{border-bottom:1px solid rgba\(168,50,72,\.24\)/.test(css) &&
+    /body\.agent-on \.fprev-head\{background:rgba\(24,10,15,\.95\)\}/.test(css) &&
+    /body\.agent-on \.sel-bar\{background:rgba\(24,10,15,\.92\)/.test(css) &&
+    /body\.agent-on \.boot-core\{background:radial-gradient\(circle,#fff,#e8c4cf 40%,#6e1c2c\)\}/.test(css) &&
+    /body\.agent-on \.nav-item\.active\{[\s\S]*?border-left:2px solid #a83248\}/.test(css),
+    'EVERY hover/selected state is harmonized wine light — and Q passes over topbar, new-chat button, terminal, preview, selection bar, boot, tabs');
   assert(!/body\.agent-on \.boost-btn\.on\{color:#ff8f9c/.test(css),
     'boost stays GOLD inside the agent theme');
   // СЦЕНАРИЙ: «сегодня» молчит, полоса недолгая, название без рамки, стоп рвёт всё
@@ -1915,8 +1944,9 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     'the ember glow lives ONLY INSIDE the track: nothing bleeds outside the toggle');
   // свет приборов: свечение = размытые тени, включается СРАЗУ, набухает и замирает
   assert(!/qtGlowIn/.test(css) && !/:hover::before\{/.test(css) &&
-    /\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover,\.comp-btn:not\(\.on\):hover\{[^}]*transition:color \.55s ease,background-color \.55s ease,border-color \.55s ease/s.test(css),
-    'no disc animation: blurred shadow glow swells instantly on hover and freezes');
+    /\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover,\.comp-btn:not\(\.on\):hover\{[^}]*transition:color \.55s ease,background-color \.55s ease,border-color \.55s ease/s.test(css) &&
+    !/inset 0 0 22px/.test(css),
+    'buttons are BACK to the loved N glow, only dimmer at the edges — no extra brightness added');
   // РАЗВЁРТЫВАНИЕ КОДА С ПЕРВОГО РАЗА: следы анимации сворачивания стираются
   assert(/node\.style\.height = '';/.test(extractFunction(js, 'collapseToThumb')) &&
     /node\.style\.opacity = '';/.test(extractFunction(js, 'collapseToThumb')),
@@ -1926,8 +1956,15 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /'tool-card' \+ \(waitVisual \? ' tool-wait' : ''\)/.test(js) &&
     /function flushAgentGroup/.test(js) && /finishToolWait\(node\);/.test(js) &&
     /TOOL_WAIT_AFTER_PAINT_MS = 800/.test(js) &&
-    /if \(e\.target\.closest\('\.ql-row'\)\) return;/.test(extractFunction(js, 'makeCard')),
-    'AGENT keeps its OWN tool cards with groups; clicking a tool inside a group NEVER collapses the group');
+    /if \(e\.target\.closest\('\.ql-row'\)\) return;/.test(extractFunction(js, 'makeCard')) &&
+    /function cancelFoldSoon\(card\)/.test(js) &&
+    /card\._foldT = setTimeout\(\(\) => \{/.test(js) &&
+    /collapseSoon\(card, \{/.test(extractFunction(js, 'flushAgentGroup')) &&
+    extractFunction(js, 'flushAgentGroup').includes(
+      "cancelFoldSoon(card);\n      row.classList.toggle('open');") &&
+    /\.ql-row,\.qt-row,\.ag-rows,\.qt-kids'\);/.test(extractFunction(js, 'addFoldButton')) &&
+    /node\.addEventListener\('click', bgFold\);/.test(extractFunction(js, 'addFoldButton')),
+    'AGENT keeps its OWN tool cards with groups; opening a tool inside a group CANCELS the pending group collapse — behaviorally');
 }
 
 function testProactiveModesBudgetAndAbortContracts() {
@@ -1999,12 +2036,13 @@ function testProactiveModesBudgetAndAbortContracts() {
   assert(/\.md pre\{[^}]*max-height:min\(30vh,260px\)/s.test(css) &&
     /\.md pre code\{[^}]*color:#d4d9e0\}/s.test(css) &&
     /\.md pre\.live-code\{max-height:min\(30vh,260px\)/.test(css) &&
-    /\.md pre\.code-compact\{max-height:32px/.test(css) &&
-    /pre\.classList\.add\('code-compact'\);/.test(js) &&
-    /closest\('pre\.code-compact'\)/.test(js) &&
+    /function foldOneCodeBlock\(pre, ui, idx\)/.test(js) &&
+    /foldOneCodeBlock\(pre, ui, idx\);/.test(js) &&
+    /_codePeek\.add\(idx\);/.test(js) &&
+    !/code-compact/.test(js) && !/code-compact/.test(css) &&
     /tag: S\.agentMode \? 'развернуть' : ''/.test(js) &&
     /tag: 'развернуть',/.test(js),
-    'code thumbnails carry «развернуть» ONLY in AGENT mode; quiet mode stays clean');
+    'closed fence becomes a slim thumbnail tab THE MOMENT it closes (mid-answer too); quiet mode stays clean');
   // панель ФАЙЛЫ: «Импорт», иконка обновления (две круговые стрелки),
   // «Очистить» замьючена, когда чистить нечего
   assert(/id="uploadHere" title="Импорт"/.test(html) &&
@@ -2012,10 +2050,18 @@ function testProactiveModesBudgetAndAbortContracts() {
     /id="refreshFiles"[^>]*title="Обновить"/.test(html) &&
     /const spin = \$\('#refreshFiles svg'\);/.test(js) &&
     /spin\.classList\.add\('spin'\);/.test(js) &&
+    /const left = 650 - \(performance\.now\(\) - started\);/.test(js) &&
     /@keyframes btnSpin\{to\{transform:rotate\(360deg\)\}\}/.test(css) &&
-    /\.btn:disabled,\.btn:disabled:hover\{opacity:\.52;cursor:not-allowed/.test(css) &&
+    /\.btn:disabled\{opacity:\.52;cursor:default[^}]*pointer-events:none\}/.test(css) &&
     /wipe\.disabled = !\(\(info\.files \|\| 0\) > 0\);/.test(js),
     'files panel: UPLOAD icon (arrow up over a bar), spinning refresh arrows, «Очистить» visibly muted');
+  // Q-ФАЙЛЫ: чип в диалоге тянется в песочницу с тем же шлейфом; бросок
+  // файлов в сетку «Файлов» — импорт в песочницу, а не вложение в чат
+  assert(/a\.draggable = true;/.test(extractFunction(js, 'attachFileChip')) &&
+    /startDragGhosts\(e, \[a\], a\);/.test(extractFunction(js, 'attachFileChip')) &&
+    /await uploadToSandbox\(Array\.from\(e\.dataTransfer\.files\), S\.fdir \|\| ''\);/.test(js) &&
+    /e\.target\.closest\('#view-files'\)\) return;/.test(js),
+    'a file chip in chat drags into the sandbox with the SAME ghost trail; dropping OS files onto the files grid imports them into the sandbox');
   // поток: полоса удлиняется ПЕРВОЙ, строка пишется после неё
   assert(/qt-flowline qt-wait/.test(js) &&
     /classList\.remove\('qt-wait'\), 230\)/.test(js) &&

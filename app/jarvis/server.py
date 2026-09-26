@@ -881,7 +881,8 @@ class Handler(BaseHTTPRequestHandler):
                     # иначе при возврате в диалог они снова всплывут строчками
                     if not tools.is_silent(event.get("name", "")):
                         trace.append({"kind": "tool", "name": event.get("name", ""),
-                                      "label": event.get("label", ""), "args": event.get("args")})
+                                      "label": event.get("label", ""), "args": event.get("args"),
+                                      "group": tools.group_of(event.get("name", ""))})
                 elif etype == "plan":
                     trace.append({"kind": "plan", "steps": event.get("steps", [])})
                 elif etype == "question":

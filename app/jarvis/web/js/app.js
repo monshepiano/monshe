@@ -485,6 +485,43 @@ function showView(name) {
   if (name === 'settings') renderSettings();
 }
 $$('.nav-item').forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)));
+/* ВКЛАДКА «ФАЙЛЫ» — ПРИЁМНИК ПЕРЕНОСА: бросить файл из диалога (или папку
+   с рабочего стола) можно прямо на вкладку: файл уедет в песочницу, вкладка
+   мигнёт — тот же сигнал, что при обычной загрузке в песочницу. */
+(() => {
+  const tab = $('.nav-item[data-view="files"]');
+  if (!tab) return;
+  tab.addEventListener('dragover', (e) => {
+    const types = Array.from((e.dataTransfer && e.dataTransfer.types) || []);
+    if (types.includes('Files') || types.includes('text/jarvis-path')) {
+      e.preventDefault();
+      tab.classList.add('drop-hot');
+    }
+  });
+  tab.addEventListener('dragleave', () => tab.classList.remove('drop-hot'));
+  tab.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    tab.classList.remove('drop-hot');
+    const inner = e.dataTransfer.getData('text/jarvis-path');
+    if (inner) {
+      // файл из диалога: тот же жест, что и в песочнице — перемещение в корень
+      let paths = [inner];
+      try {
+        const many = JSON.parse(e.dataTransfer.getData('text/jarvis-paths') || '[]');
+        if (Array.isArray(many) && many.length) paths = many;
+      } catch (err) { /* тянули один файл */ }
+      const r = await api('/api/sandbox/move_many', { paths, dest: '', chat_id: S.chatId || '' });
+      if (r.moved) toast('Перемещено в песочницу: ' + r.moved, 'success');
+      if ((r.errors || []).length) toast(r.errors[0].error || 'не удалось переместить', 'error');
+      pulseNav('files', false);
+      loadFiles();
+      return;
+    }
+    const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+    if (files.length) await uploadToSandbox(files, '');
+  });
+})();
 
 /* Сохранение подсвечивает назначение, а не показывает ещё один toast. Класс
    перезапускается на каждом фактическом успехе; Memory намеренно чуть ярче. */
@@ -801,7 +838,7 @@ async function syncChatTail() {
     const node = addAiMsg(m.created_at);
     node.root.dataset.msgId = m.id;
     typeAutoReply(node, m.content, (ui) => {
-      foldCodeBlocks(node.body);
+      keepCodeOpen(node.body);
       mountUiPanels(node.body);
       (meta.files || []).forEach((f) => attachFileChip(node.body, f));
       addMsgActions(node, m.content);
@@ -983,7 +1020,7 @@ function renderMessages(host, messages) {
       // ход мыслей и действия из прошлого ответа — свёрнутыми строчками
       restoreTrace(node, meta);
       node.body.appendChild(el('div', 'md', MD.render(m.content)));
-      foldCodeBlocks(node.body);
+      keepCodeOpen(node.body);
       mountUiPanels(node.body);
       (meta.files || []).forEach((f) => attachFileChip(node.body, f));
       addMsgActions(node, m.content);
@@ -1548,8 +1585,40 @@ function memoryTraceCard(facts) {
 
 /* Восстановить ход мыслей и список действий у сохранённого ответа.
    Показываем сразу свёрнутыми строчками — история не теряется, но и не мешает. */
+/* Прошлые инструменты — ТИХАЯ КУХНЯ: папки семейств со строками, точно как
+   выглядит конец тихого ответа. Режим, включённый сейчас, не перекрашивает
+   историю: AGENT меняет только текущую анимацию и дизайн новых карточек. */
+function renderToolKitchen(node, traces) {
+  if (!traces.length) return;
+  const groups = new Map();
+  traces.forEach((t) => {
+    const g = t.group || 'base';
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(t);
+  });
+  groups.forEach((items, g) => {
+    const f = el('div', 'qt-folder');
+    f.dataset.group = g;
+    f._items = items.map((t) => ({
+      name: t.name, label: t.label || t.name, group: g,
+      args: t.args || {}, ok: true, elapsed: t.elapsed,
+    }));
+    f.innerHTML =
+      '<div class="qt-head">' +
+        '<span class="qt-ico">' + qtFamilyIcon(g, '') + '</span>' +
+        '<span class="qt-name"></span>' +
+        '<span class="qt-mark"></span>' +
+      '</div>' +
+      '<div class="qt-kids"><span class="qt-rail"></span><div class="qt-rows"></div></div>';
+    f.querySelector('.qt-head').addEventListener('click', () => qtToggleFolder(f));
+    qtFolderSync(f);
+    node.body.appendChild(f);
+  });
+}
+
 function restoreTrace(node, meta) {
   const think = (meta.thinking || '').trim();
+  const toolTraces = [];
   if (think) {
     const card = makeCard('◇', 'Ход мыслей', 'think-card', false);
     const ts = el('div', 'think-stream');
@@ -1577,12 +1646,8 @@ function restoreTrace(node, meta) {
         sub: facts.map((fact) => fact.value || '').filter(Boolean).join(', ').slice(0, 80),
         tag: 'готово', instant: true });
     } else if (t.kind === 'tool') {
-      const label = t.label || t.name || 'инструмент';
-      const card = makeCard('⚙', label, 'tool-card', false);
-      if (t.args) card.inner.appendChild(el('div', 'kv', esc(JSON.stringify(t.args).slice(0, 400))));
-      node.body.appendChild(card);
-      collapseToThumb(card, { cls: 'th-tool', icon: '⚙', title: label,
-        tag: 'готово', instant: true });
+      // собираем в кухню после цикла (нужны все инструменты сразу)
+      toolTraces.push(t);
     } else if (t.kind === 'question') {
       // заданный ранее вопрос и выбранный ответ — сразу свёрнуты в строку
       const card = questionCard(t, null);
@@ -1591,6 +1656,7 @@ function restoreTrace(node, meta) {
         sub: t.question || '', tag: t.answer || 'без ответа', instant: true });
     }
   });
+  renderToolKitchen(node, toolTraces);
 }
 
 /* ============ РАСКРЫТИЕ И ЗАКРЫТИЕ ТЕЛА КАРТОЧКИ ============
@@ -1759,6 +1825,17 @@ function attachFileChip(container, f) {
   a.innerHTML = '<span class="fi">' + fileIcon(f.name) + '</span><span>' + esc(f.name) +
     '</span><small>' + fmtSize(f.size) + '</small>';
   a.addEventListener('click', (e) => { e.preventDefault(); openPreview(f); });
+  // файл из диалога можно ПЕРЕТАЩИТЬ в песочницу — тем же жестом и с той же
+  // анимацией шлейфа, что и перенос карточек внутри «Файлов»
+  a.draggable = true;
+  a.dataset.path = f.path || f.name;
+  a.addEventListener('dragstart', (e) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/jarvis-path', a.dataset.path);
+    e.dataTransfer.setData('text/jarvis-paths', JSON.stringify([a.dataset.path]));
+    e.dataTransfer.setData('text/plain', f.name);
+    startDragGhosts(e, [a], a);
+  });
   dlCorner(a, f);
   container.appendChild(a);
 }
@@ -2413,6 +2490,12 @@ function markBorn(card) {
 
 
 
+function cancelFoldSoon(card) {
+  if (!card) return;
+  if (card._foldT) { clearTimeout(card._foldT); card._foldT = null; }
+  card.dataset.folding = '';
+}
+
 function collapseSoon(card, opts) {
   if (!card || !card.isConnected) return;
   if (card.dataset.folding === '1') return;
@@ -2424,7 +2507,8 @@ function collapseSoon(card, opts) {
   const bornRaw = parseFloat(card.dataset.born);
   const born = Number.isFinite(bornRaw) ? bornRaw : performance.now();
   const left = Math.max(0, CARD_MIN_MS - (performance.now() - born));
-  setTimeout(() => {
+  card._foldT = setTimeout(() => {
+    card._foldT = null;
     if (card.isConnected) collapseToThumb(card, opts);
   }, left);
 }
@@ -2449,7 +2533,11 @@ function addFoldButton(node, opts) {
   // взаимодействуют (ссылки, кнопки, поля, видео, картинки), плюс выделение
   // текста. Всё остальное — фон, по которому и сворачиваем.
   const bgOk = (t) => !t.closest('a,button,input,textarea,select,label,video,canvas,' +
-    '.file-chip,.img-out,.msg-actions,.ver-switch');
+    '.file-chip,.img-out,.msg-actions,.ver-switch,.ql-row,.qt-row,.ag-rows,.qt-kids');
+  // ИСТИННЫЙ КОРЕНЬ «группа закрывается при клике по инструменту»: этот
+  // слушатель висит на ВСЕЙ карточке и сворачивает её по клику в любом
+  // месте. Строки-инструменты (.ql-row агента, .qt-row кухни) — сами по
+  // себе интерактив: их клик разворачивает деталь, а не закрывает группу.
   function bgFold(e) {
     if (window.getSelection && String(window.getSelection()).length) return;
     if (!bgOk(e.target)) return;
@@ -2980,6 +3068,34 @@ function mountUiPanels(root) {
         if (e.key === 'Enter') { e.preventDefault(); if (touched) fire(); }
       });
     }
+  });
+}
+
+/* Открытие диалога: код стоит РАЗВЁРНУТЫМ — с панелью языка и копирования,
+   но в компактном окне (высота поменьше, скролл внутри). Миниатюры остаются
+   живым зрелищем во время ответа; в истории важнее сразу видеть код. */
+function keepCodeOpen(root) {
+  if (!root) return;
+  // если код успел свернуться в миниатюры (реплика авто печаталась тем же
+  // тайпером) — разворачиваем их: в истории код виден сразу
+  $$('.thumb.th-code', root).forEach((t) => t.click());
+  $$('pre', root).forEach((pre) => {
+    if (pre.closest('.code-block')) return;
+    const code = pre.textContent || '';
+    if (code.split('\n').length < 4 && code.length < 200) return;
+    const lang = pre.getAttribute('data-lang') || '';
+    const wrap = el('div', 'code-block code-open');
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+    const bar = el('div', 'code-bar');
+    bar.appendChild(el('span', 'cb-lang', lang || 'код'));
+    const cp = el('button', 'cb-copy', 'Копировать');
+    cp.addEventListener('click', (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(code).then(() => toast('Код скопирован', 'success'));
+    });
+    bar.appendChild(cp);
+    wrap.insertBefore(bar, pre);
   });
 }
 
@@ -3974,32 +4090,51 @@ function qtFold(ui, node, isLast) {
   folder._items.push({ name: t.name, label: t.label, group: t.group, args: t.args,
                        ok: t.ok, elapsed: t.elapsed, result: t.result });
   qtFolderSync(folder);
-  // ИНСТРУМЕНТ ЗАЛЕЗАЕТ В ПАПКУ, РАСТВОРЯЯСЬ. КОНЕЧНАЯ ТОЧКА — центр
-  // строки папки (раньше узел недолёживал выше/ниже имени, и имя
-  // инструмента накладывалось на имя группы). Полоса закрывается В ТОТ ЖЕ
-  // ТАКТ, что и полёт: одно движение, а не «полоса, потом группировка».
-  const h0 = node.getBoundingClientRect().height;
-  let dy = -10;
-  if (!fresh) {
-    const fr = folder.getBoundingClientRect();
-    const nr = node.getBoundingClientRect();
-    // ПОСАДКА ВЕРХОМ УЗЛА НА НИЗ ПАПКИ (исходная формула): инструмент
-    // подплывает вплотную к группе снизу и тает на ней
-    dy = Math.max(-90, Math.min(-6, fr.bottom - nr.top));
-  }
+  // ПОЛЁТ ВНЕ ПОТОКА. КОРЕНЬ «УЛЕТАЮТ ВЫШЕ ПАПКИ»: вальс складывает узлы
+  // с перекрытием, и пока инструмент летит, СЖИМАЮЩИЕСЯ соседи сверху
+  // поднимают его вместе с макетом — рассчитанный смещённый пролёт
+  // перелетал группу. Теперь узел выходит из потока (его место занимает
+  // плавно сжимающийся призрак), а цель пересчитывается КАЖДЫЙ КАДР по
+  // живому положению папки: посадка точно ПОД голову группы, всегда.
+  const nrect = node.getBoundingClientRect();
+  const h0 = nrect.height;
+  const ghost = el('div');
+  ghost.style.height = h0 + 'px';
+  node.parentNode.insertBefore(ghost, node);
+  node.style.position = 'fixed';
+  node.style.left = nrect.left + 'px';
+  node.style.top = nrect.top + 'px';
+  node.style.width = nrect.width + 'px';
+  node.style.height = h0 + 'px';
+  node.style.margin = '0';
+  node.style.zIndex = '6';
   node.style.overflow = 'hidden';
   node.style.transition = 'none';
-  node.style.height = h0 + 'px';
-  void node.offsetHeight;
-  node.style.transition =
-    'height 1.05s cubic-bezier(.2,.5,.2,1), transform 1.05s cubic-bezier(.2,.5,.2,1), ' +
-    'opacity .55s ease .5s, filter .55s ease .5s';
-  node.style.transform = 'translateY(' + dy + 'px) scale(.93)';
-  // РАСТВОРЕНИЕ ДО ПОЛНОГО ПРИЛЁТА: к моменту, когда имя доезжает до имени
-  // папки, его уже не видно — шрифты не смешиваются никогда
-  node.style.filter = 'blur(3px)';
-  node.style.opacity = '0';
-  node.style.height = '0px';
+  document.body.appendChild(node);
+  // призрак сжимается той же кривой — лента едет гладко, без скачков
+  void ghost.offsetHeight;
+  ghost.style.transition = 'height 1.05s cubic-bezier(.2,.5,.2,1)';
+  ghost.style.height = '0px';
+  const t0 = performance.now();
+  const DUR = 1050;
+  const ease = (k) => (k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+  const homing = () => {
+    const k = Math.min(1, (performance.now() - t0) / DUR);
+    const e = ease(k);
+    // цель — низ головы папки: инструмент прилетает ПРЯМО под группу
+    const fr = folder.getBoundingClientRect();
+    const y0 = nrect.top;
+    const y1 = fr.bottom;
+    node.style.top = (y0 + (y1 - y0) * e) + 'px';
+    node.style.height = Math.max(0, h0 * (1 - e)) + 'px';
+    node.style.transform = 'scale(' + (1 - .07 * e) + ')';
+    // растворение во второй половине полёта: имя гаснет до прилёта
+    const fade = Math.max(0, Math.min(1, (k - .42) / .5));
+    node.style.opacity = String(1 - fade);
+    node.style.filter = 'blur(' + (3 * fade) + 'px)';
+    if (k < 1) requestAnimationFrame(homing);
+  };
+  requestAnimationFrame(homing);
   folder._pend = (folder._pend || 0) + 1;
   const folderBlink = () => {
     if (!folder.isConnected) return;
@@ -4009,6 +4144,7 @@ function qtFold(ui, node, isLast) {
   };
   setTimeout(() => {
     node.remove();
+    ghost.remove();
     folder._pend -= 1;
   }, 1080);
   // ПОСЛЕДНИЙ ИНСТРУМЕНТ ЕЩЁ ЛЕТИТ — папка уже «охнула»: мигание начинается
@@ -4031,7 +4167,7 @@ function qtToggleFolder(f) {
     rows.forEach((r, i) => {
       r.style.transition = 'opacity .42s ease ' + (i * 55) + 'ms, transform .42s cubic-bezier(.4,.6,.4,1) ' + (i * 55) + 'ms';
       r.style.opacity = '0';
-      r.style.transform = 'translateY(-9px)';
+      r.style.transform = 'translateY(9px)';
     });
     const h0 = kids.getBoundingClientRect().height;
     kids.style.overflow = 'hidden';
@@ -4072,7 +4208,7 @@ function qtToggleFolder(f) {
     // порядок обращён — от первой к последней; те же длительности
     allRows.forEach((r, i) => {
       r.style.opacity = '0';
-      r.style.transform = 'translateY(-9px)';
+      r.style.transform = 'translateY(9px)';
       r.style.transition = 'opacity .42s ease ' + (i * 55) + 'ms, transform .42s cubic-bezier(.4,.6,.4,1) ' + (i * 55) + 'ms';
       void r.offsetHeight;
       r.style.opacity = '1';
@@ -4215,7 +4351,12 @@ function flushAgentGroup(ui) {
           (t.elapsed != null ? ' ' + t.elapsed + 'с' : '') + '</span>' +
       '</span>' +
       '<pre class="ql-detail">' + esc(qtDetail(t.args, t.result)) + '</pre>';
-    row.addEventListener('click', () => row.classList.toggle('open'));
+    row.addEventListener('click', () => {
+      // пользователь разбирает группу — авто-сворачивание отменяется,
+      // группа не «проглатывает» раскрытый инструмент через секунду
+      cancelFoldSoon(card);
+      row.classList.toggle('open');
+    });
     rows.appendChild(row);
   });
   card.inner.appendChild(rows);
@@ -4520,23 +4661,16 @@ function renderTyped(ui) {
     livePre.classList.add('live-code');
     livePre.scrollTop = livePre.scrollHeight;
   }
-  // СВЁРТКА В СТРОКУ — СРАЗУ ПОСЛЕ ЗАКРЫТИЯ FENCE, не в конце ответа:
-  // пока блок пишется — он окно live-code; закрылся — в тот же тик
-  // становится стройной строкой (клик раскрывает обратно). Миниатюра-вкладка
-  // в конце ответа строится как раньше, foldCodeBlocks.
+  // ЗАКРЫВШИЙСЯ FENCE СРАЗУ СТАНОВИТСЯ МИНИАТЮРОЙ-ВКЛАДКОЙ: пишется блок —
+  // живое окно live-code; закрылся — вкладка в тот же тик (не в конце
+  // ответа). Раскрытые пользователем блоки не сжимаются снова.
   typedPres.forEach((pre, idx) => {
     if (pre === livePre && inCodeBlock(text)) return;
-    if (pre.closest('.code-block')) return;
-    const code = pre.textContent || '';
-    if (code.split('\n').length < 4 && code.length < 200) return;
-    if (ui.mdEl._codePeek && ui.mdEl._codePeek.has(idx)) return;
-    pre.classList.add('code-compact');
+    foldOneCodeBlock(pre, ui, idx);
   });
-  // КОД БОЛЬШЕ НЕ СХЛОПЫВАЕТСЯ В ПОЛОСУ С КНОПКОЙ «развернуть»: законченный
-  // блок остаётся полным (окно live-code у активного fence скроллится само),
-  // а вкладка-миниатюра строится один раз в конце ответа (foldCodeBlocks).
-  // Прежняя полоса ломала индекс блока при перерисовках и «частично
-  // открывала» код — теперь открытый инструмент всегда показывает всё.
+  // АКТИВНЫЙ fence остаётся живым окном (скроллится сам), закрытые — уже
+  // свёрнуты выше. Развёрнутый пользователем блок (миниатюра среди печати)
+  // не сжимается снова: индекс блока запоминается в _codePeek.
   if (measure) {
     ui.lastHeightCheck = now;
     const after = ui.mdEl.offsetHeight;
@@ -4757,22 +4891,41 @@ function typerFlush(ui) {
   typerStart(ui);
 }
 
-/* клик по стройной строке кода — раскрыть обратно в окно (со скроллом).
-   Слушатель один, на документе: typer перерисовывает innerHTML каждый тик,
-   слушатели на самих pre жить не могут. Раскрытое запоминаем по индексу
-   блока — до конца ответа оно не сожмётся снова. */
-document.addEventListener('click', (e) => {
-  const p = e.target && e.target.closest ? e.target.closest('pre.code-compact') : null;
-  if (!p) return;
-  const root = p.closest('.md');
-  if (!root) return;
-  const pres = $$('pre', root);
-  const idx = pres.indexOf(p);
-  if (idx < 0) return;
-  if (!root._codePeek) root._codePeek = new Set();
-  root._codePeek.add(idx);
-  p.classList.remove('code-compact');
-});
+/* МИНИАТЮРА КОДА — СРАЗУ ПОСЛЕ ЗАКРЫТИЯ FENCE: вкладка (иконка, язык,
+   размер) строится в тот же тик, когда fence закрылся, — не в конце ответа.
+   Раскрыл пользователь вкладку среди печати — запоминаем индекс блока:
+   до конца ответа блок не сворачивается снова. */
+function foldOneCodeBlock(pre, ui, idx) {
+  const code = pre.textContent || '';
+  if (code.split('\n').length < 4 && code.length < 200) return;   // короткие сниппеты живут как есть
+  if (pre.closest('.code-block')) return;
+  const lang = pre.getAttribute('data-lang') || '';
+  const wrap = el('div', 'code-block');
+  pre.parentNode.insertBefore(wrap, pre);
+  wrap.appendChild(pre);
+  const bar = el('div', 'code-bar');
+  bar.appendChild(el('span', 'cb-lang', lang || 'код'));
+  const cp = el('button', 'cb-copy', 'Копировать');
+  cp.addEventListener('click', (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(code).then(() => toast('Код скопирован', 'success'));
+  });
+  bar.appendChild(cp);
+  wrap.insertBefore(bar, pre);
+  if (ui && ui.mdEl && ui.mdEl._codePeek && ui.mdEl._codePeek.has(idx)) return;
+  const thumb = collapseToThumb(wrap, {
+    instant: true, cls: 'th-code inline-thumb', icon: ICO.code,
+    title: lang ? 'Код · ' + lang : 'Код',
+    sub: code.split('\n').length + ' стр. · ' + fmtSize(code.length),
+    tag: S.agentMode ? 'развернуть' : '',
+  });
+  // раскрытие среди печати запоминаем: следующий тик не сожмёт блок снова
+  if (thumb) thumb.addEventListener('click', () => {
+    if (!ui.mdEl) return;
+    if (!ui.mdEl._codePeek) ui.mdEl._codePeek = new Set();
+    ui.mdEl._codePeek.add(idx);
+  });
+}
 
 /* МЕТКА «ОСТАНОВЛЕНО»: единая точка. Раньше её рисовал только обработчик
    AbortError — а если обрыв приходил другим путём (стоп из сценария, из
@@ -5741,6 +5894,9 @@ $('#fileInput').addEventListener('change', (e) => {
 document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', (e) => {
   e.preventDefault();
+  // бросок в панель «Файлы» — это импорт в песочницу (его обрабатывает
+  // сетка файлов), а не вложение к сообщению
+  if (e.target && e.target.closest && e.target.closest('#view-files')) return;
   Array.from(e.dataTransfer.files || []).forEach(uploadFile);
 });
 $('#input').addEventListener('paste', (e) => {
@@ -7126,13 +7282,16 @@ $('#addTaskBtn').addEventListener('click', () => {
    перетаскивать файлы мышью, переименовывать, создавать папки и удалять. */
 
 async function loadFiles(dir) {
-  // стрелки обновления совершают оборот, пока идёт загрузка списка
+  // стрелки обновления совершают оборот: локальный список прилетает быстрее
+  // кадра, поэтому оборот держим минимум 650мс — движение всегда видно
   const spin = $('#refreshFiles svg');
   if (spin) spin.classList.add('spin');
+  const started = performance.now();
   try {
     await loadFilesInner(dir);
   } finally {
-    if (spin) spin.classList.remove('spin');
+    const left = 650 - (performance.now() - started);
+    setTimeout(() => { if (spin) spin.classList.remove('spin'); }, Math.max(0, left));
   }
 }
 
@@ -7807,6 +7966,13 @@ window.addEventListener('keydown', (e) => {
   grid.addEventListener('drop', async (e) => {
     e.preventDefault();
     grid.classList.remove('drop-root');
+    const inner = e.dataTransfer.getData('text/jarvis-path');
+    if (!inner && (e.dataTransfer.files || []).length) {
+      // в песочницу можно закинуть файлы и руками: бросили прямо в сетку —
+      // импортируем, вкладка «Файлы» мигает (pulseNav внутри uploadToSandbox)
+      await uploadToSandbox(Array.from(e.dataTransfer.files), S.fdir || '');
+      return;
+    }
     await dropOnto(e, S.fdir || '');
   });
 })();
