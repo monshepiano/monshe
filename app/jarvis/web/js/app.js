@@ -3806,7 +3806,9 @@ function glideFlow(flow, inner) {
       if (first.parentNode === inner) first.remove();
       inner.style.transform = 'none';
       // поток всё ещё переполнен — продолжаем лететь без паузы
-      if (inner.scrollHeight > flow.clientHeight + 4) step();
+      // (сравнение с ПОТОЛКОМ окна, а не с clientHeight: высота едет
+      // переходом и на старте отстаёт — было бы ложное «не переполнен»)
+      if (inner.scrollHeight > 88 + 4) step();
       else { flow._glide = false; flow.classList.remove('full'); }
     }, 520);
   };
