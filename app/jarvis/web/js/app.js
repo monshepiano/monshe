@@ -3773,7 +3773,7 @@ function qtFeed(flow, text) {
       flow._h = h;
       flow.style.height = h + 'px';
     }
-    if (inner.scrollHeight > flow.clientHeight + 4) {
+    if (inner.scrollHeight > 88 + 4) {
       flow.classList.add('full');
       flow._h = 88;
       flow.style.height = '88px';
@@ -3971,7 +3971,7 @@ function qtFold(ui, node) {
   if (!fresh) {
     const fr = folder.getBoundingClientRect();
     const nr = node.getBoundingClientRect();
-    dy = Math.max(-320, Math.min(-6, (fr.top + fr.height / 2) - (nr.top + nr.height / 2)));
+    dy = Math.max(-360, Math.min(-6, fr.top - nr.top));
   }
   node.style.overflow = 'hidden';
   node.style.transition = 'none';
@@ -4120,11 +4120,12 @@ function flushQt(ui) {
   const st = ui && ui.statusEl;
   const host = (st && st.parentNode) || (ui && ui.node ? ui.node.body : null);
   if (!host) return;
+  let i = 0;
   $$('.qt-node', host).forEach((n) => {
     if (n.dataset.folded === '1') return;
     const t = n._tool || {};
     if (!n.querySelector('.qt-mark').textContent) qtMark(n, t.ok, t.elapsed);
-    qtFold(ui, n);
+    setTimeout(() => qtFold(ui, n), i++ * 150);
   });
 }
 

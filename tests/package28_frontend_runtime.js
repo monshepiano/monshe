@@ -1491,8 +1491,10 @@ function testThinkingGradientContract() {
   assert(/\.agent-switch-track:has\(input:checked\)\s*\{[^}]*rgba\(74,13,24,\.5\)/s.test(css) &&
     /\.agent-switch-track input:checked \+ i\{[^}]*background:linear-gradient\(180deg,#b23a52,#8f2739\)/s.test(css) &&
     /\.agent-switch-track input:checked \+ i\{[^}]*color:#ffe9ee/s.test(css) &&
+    /\.agent-switch-track i\{[^}]*background:var\(--tx3\)/s.test(css) &&
+    !/\.agent-switch-track i\{[^}]*#2fa8d8/s.test(css) &&
     /\.agent-switch-track:has\(input:checked\)\{\s*animation:agGlow 2\.2s ease-in-out infinite\}/.test(css) &&
-    /@keyframes agGlow\{\s*0%,100%\{box-shadow:0 0 12px 2px rgba\(255,110,135,\.24\),0 0 26px 5px rgba\(170,40,60,\.14\)\}\s*50%\{box-shadow:0 0 24px 5px rgba\(255,120,140,\.5\),0 0 50px 14px rgba\(178,48,68,\.32\)\}\}/.test(css),
+    /@keyframes agGlow\{\s*0%,100%\{box-shadow:0 0 10px 1px rgba\(255,110,135,\.16\),0 0 22px 4px rgba\(170,40,60,\.09\)\}\s*50%\{box-shadow:0 0 20px 4px rgba\(255,120,140,\.34\),0 0 42px 10px rgba\(178,48,68,\.2\)\}\}/.test(css),
     'the WHOLE track pulses: colored glow spreads beyond the toggle borders, letter A stays crisp bordo');
 }
 
@@ -1523,20 +1525,19 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   assert(/#tgCamera\{--sp:/.test(css) && /#tgComputer\{--sp:178,168,246\}/.test(css) &&
     /#tgBudget\{--sp:240,190,70\}/.test(css),
     'camera stays teal, computer is violet, budget gold');
-  assert(/\.toggle:not\(\.on\):hover::before[\s\S]*?radial-gradient\(circle at 50% 50%,rgba\(var\(--sp\),\.26\)/.test(css) &&
-    /\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover\{[^}]*background:rgba\(var\(--sp\),\.12\)/s.test(css) &&
-    /text-shadow:0 0 9px rgba\(var\(--sp\),\.4\)/.test(css) &&
-    /animation:qtGlowIn 1\.05s cubic-bezier\(\.25,\.65,\.35,1\) both/.test(css) &&
-    /opacity:0;transform:scale\(\.14\);/.test(css) &&
-    /@keyframes qtGlowIn\{[\s\S]*?0%\{opacity:0;transform:scale\(\.14\)\}[\s\S]*?100%\{opacity:1;transform:scale\(1\)\}\}/.test(css) &&
+  assert(!/qtGlowIn/.test(css) &&
+    !/\.toggle:not\(\.on\):hover::before/.test(css) &&
+    /\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover,\.comp-btn:not\(\.on\):hover\{[^}]*box-shadow:0 0 12px 1px rgba\(var\(--sp\),\.22\),0 0 30px 7px rgba\(var\(--sp\),\.11\)/s.test(css) &&
+    /\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover,\.comp-btn:not\(\.on\):hover\{[^}]*background:rgba\(var\(--sp\),\.1\)/s.test(css) &&
+    /text-shadow:0 0 9px rgba\(var\(--sp\),\.35\)/.test(css) &&
     /\.comp-btn\{--sp:130,190,215\}/.test(css) &&
     !/@keyframes ibBreath/.test(css),
-    'the center light REALLY animates: transform+opacity interpolate — a bright dot smoothly grows into the glow');
+    'the glow is pure BLURRED-SHADOW LIGHT (no disc, no rim): swells instantly on hover, the button fills with juice');
   assert(!/\.toggle:not\(\.on\):hover\{transform:rotate/.test(css) &&
     !/\.budget-btn:not\(\.on\):hover\{transform:rotate/.test(css) &&
     !/\[data-tip\]::after\{transform:translateX\(-50%\) rotate\(/.test(css),
     'no tilt anywhere and tooltips need no rotation compensation');
-  assert(/\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover\{[^}]*rgba\(var\(--sp\),\.38\)/s.test(css) &&
+  assert(/\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover,\.comp-btn:not\(\.on\):hover\{[^}]*rgba\(var\(--sp\),\.42\)/s.test(css) &&
     /\.toggle:not\(\.on\):hover \.tg-dot\{background:rgba\(var\(--sp\),\.7\)/.test(css),
     'the button, label and contour glow a bit DIMMER in their own color');
   // тумблер AGENT — РЕЗИНКА: круглёшек тянется вправо и РЫВКОМ (плавно)
@@ -1544,9 +1545,9 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   // за правый край (остаётся свечение справа), по контуру бежит ЯВНАЯ
   // искра насыщенного красного, в конце замедляется и гаснет.
   assert(/animation:agKnobRubber 1\.1s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
-    /@keyframes agKnobRubber\{[\s\S]*?44%\{transform:translateX\(6px\)\}[\s\S]*?76%\{transform:translateX\(-1\.8px\)\}[\s\S]*?100%\{transform:translateX\(0\);background:linear-gradient\(180deg,#2fa8d8,#1b7fae\);color:#eaf7ff;text-shadow:0 1px 2px rgba\(6,28,42,\.6\)\}\}/.test(css) &&
-    /30%\{background:linear-gradient\(180deg,#b23a52,#8f2739\);color:#ffe9ee;text-shadow/.test(css) &&
-    'the knob paints itself BORDO on the way right and returns to its old BLUE as it jumps back');
+    /@keyframes agKnobRubber\{[\s\S]*?44%\{transform:translateX\(6px\);background:#5f2230\}/.test(css) &&
+    /@keyframes agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:var\(--tx3\)\}\}/.test(css),
+    'the knob is ITS OLD GREY self, painting DARK bordo on the way right and unpainting on the way back, synced to the motion');
   assert(/animation:agEmberRun 1s cubic-bezier\(\.3,\.5,\.35,1\) both/.test(css) &&
     /rgba\(255,150,168,\.7\),rgba\(255,86,112,\.38\) 48%/.test(css) &&
     /@keyframes agEmberRun\{[\s\S]*?40%\{transform:translateX\(14px\)\}[\s\S]*?70%\{transform:translateX\(21px\)\}[\s\S]*?100%\{opacity:\.85;transform:translateX\(26px\)\}\}/.test(css) &&
@@ -1571,7 +1572,7 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
     !/\.agent-switch-track i\{color:#2a1216;background:#a4898f\}/.test(css),
     'the OFF agent switch is neutral: red appears only on hover or when ON');
   assert(/\.agent-switch-track:has\(input:checked\)\{\s*animation:agGlow 2\.2s ease-in-out infinite\}/.test(css) &&
-    /@keyframes agGlow\{\s*0%,100%\{box-shadow:0 0 12px 2px rgba\(255,110,135,\.24\),0 0 26px 5px rgba\(170,40,60,\.14\)\}\s*50%\{box-shadow:0 0 24px 5px rgba\(255,120,140,\.5\),0 0 50px 14px rgba\(178,48,68,\.32\)\}\}/.test(css),
+    /@keyframes agGlow\{\s*0%,100%\{box-shadow:0 0 10px 1px rgba\(255,110,135,\.16\),0 0 22px 4px rgba\(170,40,60,\.09\)\}\s*50%\{box-shadow:0 0 20px 4px rgba\(255,120,140,\.34\),0 0 42px 10px rgba\(178,48,68,\.2\)\}\}/.test(css),
     'the WHOLE track pulses with a colored glow that spreads beyond its borders');
   assert(/\.budget-pop\[hidden\]\{display:none\}/.test(css),
   'the budget popup actually closes ([hidden] beats display:flex)');
@@ -1666,7 +1667,8 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /\.qt-flowin\{[^}]*will-change:transform/s.test(css) &&
     /\.qt-flow\.full\{[\s\S]*?mask-image:linear-gradient\(180deg,transparent,#000 22%,#000 82%,transparent\)/s.test(css) &&
     /function glideFlow/.test(js) &&
-    /inner\.scrollHeight > flow\.clientHeight \+ 4/.test(extractFunction(js, 'qtFeed')) &&
+    /inner\.scrollHeight > 88 \+ 4/.test(extractFunction(js, 'qtFeed')) &&
+    !/flow\.clientHeight \+ 4/.test(extractFunction(js, 'qtFeed')) &&
     js.includes('<div class="qt-flowin"></div>') &&
     /transition:height \.32s/.test(css) &&
     /flow\._h = h;/.test(extractFunction(js, 'qtFeed')) &&
@@ -1691,13 +1693,22 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /if \(!ui\.agentMode && !ui\._qtSwept\)/.test(js) &&
     /qtResultLine\(node, ev\);/.test(js),
     'a finished tool becomes a miniature and shows its result line; the family folder closes the WHOLE streak at once');
+  // КОНЕЦ ОТВЕТА — ТОТ ЖЕ ВАЛЬС: инструменты улетают под группу ОДИН ЗА
+  // ДРУГИМ (150мс), каждый со своей полосой одновременно (внутри qtFold)
+  const fq = extractFunction(js, 'flushQt');
+  assert(/setTimeout\(\(\) => qtFold\(ui, n\), i\+\+ \* 150\);/.test(fq) &&
+    /let i = 0;/.test(fq),
+    'answer end folds tools ONE BY ONE into the group, strip compressing in the same beat');
+
   assert(/'height \.9s cubic-bezier\(\.25,\.55,\.3,1\)/.test(js) &&
-    /\(fr\.top \+ fr\.height \/ 2\) - \(nr\.top \+ nr\.height \/ 2\)/.test(extractFunction(js, 'qtFold')) &&
+    /dy = Math\.max\(-360, Math\.min\(-6, fr\.top - nr\.top\)\);/.test(extractFunction(js, 'qtFold')) &&
     /node\.style\.filter = 'blur\(3px\)'/.test(extractFunction(js, 'qtFold')) &&
     /folder\._pend = \(folder\._pend \|\| 0\) \+ 1;/.test(extractFunction(js, 'qtFold')) &&
     /folder\.classList\.add\('blink'\)/.test(extractFunction(js, 'qtFold')) &&
-    /\.qt-folder\.blink \.qt-name\{animation:qtBlink \.55s ease-out both\}/.test(css) &&
-    /@keyframes qtBlink\{[\s\S]*?45%\{filter:brightness\(1\.85\);[\s\S]*?text-shadow:/.test(css),
+    /\.qt-folder\.blink \.qt-name\{animation:qtBlink \.5s ease-out both\}/.test(css) &&
+    /0%\{filter:brightness\(1\.3\)\}/.test(css) &&
+    /30%\{filter:brightness\(2\.2\)\}/.test(css) &&
+    !/qtBlink[\s\S]*?text-shadow/.test(css.match(/@keyframes qtBlink\{[\s\S]*?\}\}/)[0]) &&
     'the fold is slow and gentle, lines DISSOLVE (blur) as they fly to the folder, which BLINKS its glow right as the streak lands');
   assert(/_qtHold = performance\.now\(\) \+ \(folded - 1\) \* 150 \+ 480/.test(js) &&
     /ui\.holdUntil = ui\._qtHold \|\| 0;/.test(js),
@@ -1774,10 +1785,10 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     'the wave can be born from the permission-card toggle rect');
   const waveCss = css.match(/\.agent-wave\{([^}]*)\}/s)[1];
   assert(!/border:3px/.test(waveCss) && /filter:blur\(8px\)/.test(waveCss) &&
-    /rgba\(116,18,33,\.52\) 0%/.test(waveCss) && /rgba\(255,96,124,\.3\) 52%/.test(waveCss),
+    /rgba\(116,18,33,\.4\) 0%/.test(waveCss) && /rgba\(255,96,124,\.3\) 45%/.test(waveCss),
     'the wave is a WIDE SOFT PAINTED FRONT: the area behind it reads as already colored');
   assert(/animation:agentWave \.72s linear both/.test(css) &&
-    /@keyframes agentWave\{[\s\S]*?78%\{opacity:\.97\}[\s\S]*?100%\{transform:translate\(-50%,-50%\) scale\(1\.9\);opacity:0\}\}/.test(css) &&
+    /@keyframes agentWave\{[\s\S]*?88%\{opacity:\.97\}[\s\S]*?100%\{transform:translate\(-50%,-50%\) scale\(3\.2\);opacity:0\}\}/.test(css) &&
     /wave\.style\.setProperty\('--aw', \(radius \* 2\.6\) \+ 'px'\)/.test(js) &&
     /function agentPaint\(/.test(js) &&
     /document\.body\.classList\.add\('agent-on'\);[\s\S]*?requestAnimationFrame\(\(\) => \{/.test(js.slice(js.indexOf('function agentPaint'), js.indexOf('function agentPaint') + 2600)) &&
@@ -1807,6 +1818,12 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     'CODE is readable on navy; tables get a wine head and navy zebra');
   assert(/body\.agent-on \.hello span\{background:linear-gradient\(90deg,#f2b9c7,#d98a9b 42%,#eec2ce 74%,#f2b9c7\)/.test(css),
     'the AGENT greeting is BRIGHT and readable on the navy page');
+  const agBlock = css.slice(css.indexOf('body.agent-on{'));
+  assert(!/168,159,242/.test(agBlock) && !/47,156,146/.test(agBlock) &&
+    !/c3a9f0/.test(agBlock) && !/94,42,92/.test(agBlock) &&
+    !/152,124,150/.test(agBlock) && !/c99aa3/.test(agBlock) &&
+    !/e290a2/.test(agBlock) && !/2fa8d8/.test(agBlock),
+    'THEME PURITY: only bordo and navy survive in the agent block — no violet, teal, pink or blue leftovers');
   assert(!/body\.agent-on \.plan-dock \{/.test(css) &&
     !/body\.agent-on \.plan-dock ./.test(css),
     'the plan dock is NEVER touched by the agent theme: gold frame, gold segments, green done — as it was');
@@ -1889,12 +1906,10 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     'the ember STOPS at the right blind zone and STAYS alive while hovered — it never escapes or dies');
   assert(/@keyframes agRestGlow\{to\{box-shadow:inset 0 1px 5px rgba\(0,0,0,\.42\),\s*\n?\s*inset 14px 0 26px -8px rgba\(255,86,112,\.4\)\}\}/.test(css),
     'the ember glow lives ONLY INSIDE the track: nothing bleeds outside the toggle');
-  // свет приборов: СРАЗУ при наведении — свечение из центра, ~1с до краёв и ЗАМИРАЕТ
-  assert(/animation:qtGlowIn 1\.05s cubic-bezier\(\.25,\.65,\.35,1\) both/.test(css) &&
-    /opacity:0;transform:scale\(\.14\);/.test(css) &&
-    /rgba\(var\(--sp\),\.26\),rgba\(var\(--sp\),\.12\) 36%,rgba\(var\(--sp\),\.04\) 58%,transparent 74%/.test(css) &&
-    /100%\{opacity:1;transform:scale\(1\)\}/.test(css),
-    'the composer-button glow starts INSTANTLY on hover, reaches the borders in ~1s and FREEZES');
+  // свет приборов: свечение = размытые тени, включается СРАЗУ, набухает и замирает
+  assert(!/qtGlowIn/.test(css) && !/:hover::before\{/.test(css) &&
+    /\.toggle:not\(\.on\):hover,\.budget-btn:not\(\.on\):hover,\.comp-btn:not\(\.on\):hover\{[^}]*transition:color \.55s ease,background-color \.55s ease,border-color \.55s ease/s.test(css),
+    'no disc animation: blurred shadow glow swells instantly on hover and freezes');
   // РАЗВЁРТЫВАНИЕ КОДА С ПЕРВОГО РАЗА: следы анимации сворачивания стираются
   assert(/node\.style\.height = '';/.test(extractFunction(js, 'collapseToThumb')) &&
     /node\.style\.opacity = '';/.test(extractFunction(js, 'collapseToThumb')),
