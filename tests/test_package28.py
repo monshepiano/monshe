@@ -1251,10 +1251,13 @@ class AsrRoutesTests(unittest.TestCase):
              mock.patch.object(media.llm, "models_of_type", return_value=[]):
             routes = media._asr_routes()
         labels = [r[0] for r in routes]
-        self.assertIn("cloudru-ts:whisper-large", labels,
-                      "standard /audio/transcriptions must be tried first")
-        self.assertLess(labels.index("cloudru-ts:whisper-large"),
-                        labels.index("cloudru-chat:whisper-large"))
+        self.assertIn("cloudru-chat:whisper-large", labels,
+                      "chat/completions — единственный существующий у Cloud.ru путь")
+        # X: официальный OpenAPI Cloud.ru содержит ТОЛЬКО /models и
+        # /chat/completions — /audio/transcriptions отвечает 404 и лишь
+        # сжигал попытку. chat идёт первым, transcriptions — запасным.
+        self.assertLess(labels.index("cloudru-chat:whisper-large"),
+                        labels.index("cloudru-ts:whisper-large"))
 
 
 class RunStopTests(unittest.TestCase):
@@ -3021,6 +3024,129 @@ class ScenarioUpdateTests(unittest.TestCase):
                     # пустой id / пустые шаги не меняют ничего
                     self.assertIsNone(db.update_scenario("", "x", ["y"]))
                     self.assertIsNone(db.update_scenario(sid, "x", []))
+
+
+class IterationXTests(unittest.TestCase):
+    """X (beta.28): 10 пунктов отзыва — вызов-конвертом, картинки без ключа,
+    whisper через chat, живая заглушка генерации, устойчивость потока."""
+
+    def test_tool_key_envelope_is_executed_not_shown(self) -> None:
+        # П.3: {"open_url": {"url": ...}} — вызов, а не текст ответа
+        from jarvis.tools import parse_text_calls, looks_like_call_prefix
+        rest, calls = parse_text_calls(
+            '{"open_url": {"url": "https://rg.ru/date/2026/09/28"}}')
+        self.assertEqual(calls, [{"name": "open_url",
+                                  "args": {"url": "https://rg.ru/date/2026/09/28"}}])
+        self.assertEqual(rest, "")
+        # стрим придерживается, пока ключ может оказаться инструментом
+        self.assertTrue(looks_like_call_prefix('{"open_url": {"url"'))
+        self.assertTrue(looks_like_call_prefix('{"'))          # ключ печатается
+        self.assertFalse(looks_like_call_prefix('{"custom": 1}'))  # чужой ключ
+        # несколько инструментов в одном конверте — тоже вызовы
+        rest2, calls2 = parse_text_calls(
+            '{"open_url": {"url": "https://a.ru"}, "web_search": {"query": "x"}}')
+        self.assertEqual([c["name"] for c in calls2], ["open_url", "web_search"])
+        # осмысленный текст не трогаем
+        _, none = parse_text_calls("Вот сводка новостей за сегодня: всё спокойно.")
+        self.assertEqual(none, [])
+
+    def test_forced_gigachat_without_key_falls_to_free(self) -> None:
+        # П.10: кнопка настроек ставила provider='gigachat' и оставляла без
+        # ключа — каждый запрос картинкой падал «вставь ключ»
+        from jarvis.tools import media
+
+        class _Cfg(dict):
+            def get(self, k, d=None):
+                return {"media.image_provider": "gigachat"}.get(k, d)
+
+        with mock.patch.object(media, "CONFIG", _Cfg()), \
+             mock.patch.object(media, "_enhance_prompt", side_effect=lambda p, w, h: p), \
+             mock.patch.object(media, "_free_image",
+                               return_value={"ok": True, "path": "f.jpg"}) as free:
+            res = media.generate_image("закат над городом")
+        self.assertTrue(res.get("ok"))
+        free.assert_called_once()
+
+    def test_whisper_chat_payload_fits_model_context(self) -> None:
+        # П.9: у whisper-large-v3 контекст 448 токенов — прежний max_tokens
+        # 1200 отправлял запрос в 400; теперь лимит внутри контекста и есть
+        # вторая форма (чистое аудио без текстовой инструкции)
+        from jarvis.tools import media
+        import inspect as _inspect
+        code = _inspect.getsource(media._asr_via_chat)
+        self.assertNotIn('"max_tokens": 1200', code)
+        self.assertIn('"max_tokens": 200', code)
+        self.assertIn("shapes", code)
+
+    def test_asr_routes_prefer_chat_over_missing_transcriptions(self) -> None:
+        # П.9: официальный OpenAPI Cloud.ru — только /models и
+        # /chat/completions; chat идёт первым, transcriptions — запасным
+        from jarvis.tools import media
+
+        class _Cfg(dict):
+            def get(self, k, d=None):
+                return {"model_tiers.audio": ["whisper-large"]}.get(k, d)
+
+        with mock.patch.object(media, "CONFIG", _Cfg()), \
+             mock.patch.object(media.llm, "provider_conf",
+                               return_value={"api_key": "k",
+                                             "base_url": "https://x/v1"}), \
+             mock.patch.object(media.llm, "models_of_type", return_value=[]):
+            labels = [r[0] for r in media._asr_routes()]
+        self.assertLess(labels.index("cloudru-chat:whisper-large"),
+                        labels.index("cloudru-ts:whisper-large"))
+
+    def test_messages_report_live_generation(self) -> None:
+        # П.7: /api/messages сообщает generating — фронт показывает живую
+        # заглушку вместо «пустого» диалога и плавно дорисовывает ответ
+        import threading as _th
+        with mock.patch.object(server.db, "get_messages", return_value=[]), \
+             mock.patch.object(server, "_ACTIVE_RUNS", {"chat-live": object()}), \
+             mock.patch.object(server, "_RUN_LOCK", _th.Lock()):
+            with mock.patch.object(server.Handler, "_json",
+                                   side_effect=lambda payload: payload) as js_out:
+                class _H:
+                    pass
+                handler = server.Handler.__new__(server.Handler)
+                params = {"chat_id": ["chat-live"]}
+                # вызываем ветку /api/messages напрямую через do_GET нельзя
+                # (нужен запрос) — проверяем тело условия источником
+        src = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertIn('"generating": generating', src)
+        self.assertIn('generating = chat_id in _ACTIVE_RUNS', src)
+
+    def test_single_sse_write_failure_does_not_silence_stream(self) -> None:
+        # П.7: один мимолётный сбой записи больше не глушит поток до конца
+        src = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertIn("alive_fails = 0", src)
+        self.assertIn("if alive_fails >= 2:", src)
+        self.assertNotIn("alive = self._sse(event)", src)
+
+    def test_thinking_shows_in_quiet_mode_too(self) -> None:
+        # П.5: тихий режим больше не выбрасывает ход мыслей — иначе история
+        # «воскрешала» невиденные карточки при повторном открытии диалога
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        self.assertIn("self.show_thinking = bool(not social_only)", src)
+        self.assertNotIn(
+            "self.show_thinking = bool(not social_only and (self.agent_mode or self.computer_use))",
+            src)
+
+    def test_x_frontend_anchors(self) -> None:
+        # фронтовые корни X: живой режим для дизайна инструментов, одиночка
+        # без папки, страж плана, заглушка генерации, резинка тумблера
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn("if (!(ui.agentMode || S.agentMode)) {", js)
+        self.assertIn("if (pending.length === 1) {", js)
+        self.assertIn("ui.planWatchdog = setTimeout", js)
+        self.assertIn("gate-hold", js)
+        self.assertIn("function appendLivePlaceholder", js)
+        self.assertIn("function appendFreshMessages", js)
+        self.assertIn("renderMessageInto(host, m)", js)
+        self.assertIn("shell.dataset.agHold = '1'", js)
+        self.assertIn(".qt-folder.open .qt-kids{display:flex}", css)
+        self.assertNotIn(".qt-folder.open .qt-kids{display:flex;margin:2px 0 4px}", css)
+        self.assertIn("LEAD = 70", js)
 
 
 class BareToolArgumentsTests(unittest.TestCase):

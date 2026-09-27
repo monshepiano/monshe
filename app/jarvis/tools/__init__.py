@@ -512,10 +512,16 @@ def _balanced(text: str, start: int) -> int:
 _CALL_STARTS = ("<tool_call", "```json", "```tool", "```python", "functions.", "functions ",
                 "function ", "function.", "functioncall", "function call", "call ",
                 "tool_call", "tool:", '{"name"', "{'name'", "{\"tool\"")
+_ENVELOPE_KEYS = ("name", "tool", "function", "arguments", "parameters", "tool_calls")
 
 
 def looks_like_call_prefix(text: str) -> bool:
-    """Похоже ли начало ответа на псевдо-вызов инструмента (для придержки стрима)."""
+    """Похоже ли начало ответа на псевдо-вызов инструмента (для придержки стрима).
+
+    X: добавлен конверт ``{"имя_инструмента": {...}}`` — модель печатает
+    вызов ключом-именем. Пока ключ не дописан или совпал с инструментом,
+    текст придерживаем: сырой JSON не должен выливаться в чат.
+    """
     s = (text or "").lstrip()
     if not s:
         return True
@@ -523,6 +529,14 @@ def looks_like_call_prefix(text: str) -> bool:
     for p in _CALL_STARTS:
         if head.startswith(p) or p.startswith(head):
             return True
+    if head.startswith('{"'):
+        key = re.match(r'\{"([A-Za-z_][A-Za-z0-9_]*)"', s[:120])
+        if not key:
+            return True          # ключ ещё печатается — держим
+        k = key.group(1).lower()
+        if k in TOOLS or k in _ENVELOPE_KEYS:
+            return True          # имя инструмента/конверта — это вызов
+        return False             # чужой ключ — обычный JSON-ответ
     for name in TOOLS:
         low = name.lower()
         if head.startswith(low) or low.startswith(head):
@@ -537,7 +551,11 @@ _INLINE_RE = re.compile(r"`[^`\n]+`")
 def _looks_like_call(body: str) -> bool:
     b = (body or "").strip()
     if b.startswith("{") and b.endswith("}"):
-        return bool(re.search(r"\"(?:name|tool|function)\"\s*:", b))
+        if re.search(r"\"(?:name|tool|function)\"\s*:", b):
+            return True
+        # X: конверт {"имя_инструмента": {...}} в кодовом блоке
+        key = re.match(r"\{\s*\"([A-Za-z_][A-Za-z0-9_]*)\s*\":", b)
+        return bool(key and key.group(1) in TOOLS)
     m = re.match(_PREFIX_RE + r"([A-Za-z_][A-Za-z0-9_]*)\s*\(", b)
     return bool(m and m.group(1) in TOOLS)
 
@@ -642,6 +660,28 @@ def parse_text_calls(text: str) -> Tuple[str, List[Dict[str, Any]]]:
                         best_name, best_hit = tname, hit
                 if best_name:
                     found.append({"name": best_name, "args": cand})
+                    out = ""
+
+    # 1.7) X: КОНВЕРТ «ИМЯ-КЛЮЧОМ»: {"open_url": {"url": "…"}}. Модель
+    # кладёт вызов в объект, где ключ — имя инструмента, а значение —
+    # аргументы. Ни конверт {"name": …}, ни голые аргументы, ни синтаксис
+    # name(...) такой текст не распознают — и сырой JSON уезжал пользователю
+    # («дай сводку новостей» → на экране {"open_url": …}). Теперь это вызов.
+    if not found:
+        stripped = out.strip()
+        if stripped.startswith("{") and len(stripped) < 800:
+            try:
+                cand = json.loads(_balanced_json(stripped))
+            except Exception:
+                cand = None
+            if isinstance(cand, dict) and cand and len(cand) <= 4:
+                keys = list(cand.keys())
+                if all(k in TOOLS for k in keys):
+                    for k in keys:
+                        args = cand[k]
+                        if not isinstance(args, dict):
+                            args = {}
+                        found.append({"name": k, "args": args})
                     out = ""
 
     # 2) синтаксис вызова: function name(...) / name({...})

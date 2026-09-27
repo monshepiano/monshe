@@ -1125,10 +1125,15 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 @keyframes qtRise{from{opacity:0;transform:translateY(15px)}}
 /* ПАПКА семейства: без полосы; дети выплывают из неё по одному */
 .qt-folder .qt-kids{display:none}
-.qt-folder.open .qt-kids{display:flex;margin:2px 0 4px}
+/* X: БЕЗ вертикальных margin — они включались вместе с .open и выключались
+   вместе с ним: в первый кадр открытия всё снизу прыгало на 6px вниз, в
+   последний кадр закрытия — на 6px вверх. Тот самый «микролюфт». Внешняя
+   геометрия теперь спокойна, зазор живёт внутри тела (padding у .qt-rows). */
+.qt-folder.open .qt-kids{display:flex}
 .qt-kids{align-items:stretch}
 .qt-kids>.qt-rail{flex:0 0 1px;background:rgba(154,202,219,.35);margin-left:6px}
-.qt-kids>.qt-rows{flex:1;margin-left:11px;display:flex;flex-direction:column;gap:2px}
+.qt-kids>.qt-rows{flex:1;margin-left:11px;display:flex;flex-direction:column;gap:2px;
+  padding:2px 0 3px}
 .qt-row{min-width:0}
 .qt-row .qt-name{font-size:11px}
 /* текст инструмента: полоса от иконки, БЕЗ затемнений, скролл только вниз */
@@ -1650,9 +1655,12 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
    выглядел зависшим. Мягкое мерцание прозрачностью остаётся всегда: это не
    движение, а признак жизни. */
 @media (prefers-reduced-motion:reduce){
-  .tw-caret,.caret{animation:caretDim 1.6s ease-in-out!important}
+  .tw-caret,.caret{animation:caretDim 1.6s ease-in-out infinite!important}
 }
 @keyframes caretDim{0%,100%{opacity:1}50%{opacity:.35}}
+/* X: во время вступления плана скрыта только ПОДПИСЬ статуса — сам курсор
+   продолжает дышать, «думает» видно в любой момент */
+.thinking-line.gate-hold .tw-quip{display:none}
 
 /* =================== МИНИАТЮРЫ ОТРАБОТАВШИХ БЛОКОВ ===================
    Камера после закрытия, уведомление после крестика, санкция после решения —

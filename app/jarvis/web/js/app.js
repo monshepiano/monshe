@@ -656,7 +656,13 @@ $('#tgAgent').addEventListener('change', function () {
   // переключает режим. После клика tooltip гаснет, даже пока указатель на track.
   S.agentMode = this.checked;
   const shell = this.closest('.agent-switch');
-  if (shell) shell.classList.add('tip-dismissed');
+  if (shell) {
+    shell.classList.add('tip-dismissed');
+    // ПЕРЕКЛЮЧЕНИЕ ГАСИТ РЕЗИНКУ ДО НОВОГО НАВЕДЕНИЯ (X): клик по тумблеру
+    // — уже ответ интерфейса; резинка не должна дёргаться следом за ним.
+    shell.classList.remove('ag-play');
+    shell.dataset.agHold = '1';
+  }
   beep(S.agentMode ? 760 : 420, 0.1);
   // ТУМБЛЕР НЕ ТРОГАЮТ, ПОКА ИГРАЕТ ПЕРЕСАДКА: волна и смена темы — единый
   // жест, двойной клик посреди него ломал бы последовательность.
@@ -691,6 +697,9 @@ $('#tgAgent').addEventListener('change', function () {
 });
 $$('.agent-switch').forEach((sw) => sw.addEventListener('mouseleave', function () {
   this.classList.remove('tip-dismissed');
+  // гашение резинки живёт ровно до ухода курсора: следующее наведение
+  // играет анимацию как обычно
+  delete this.dataset.agHold;
 }));
 /* РЕЗИНКА ТУМБЛЕРА ИГРАЕТ РОВНО ОДИН РАЗ за наведение. Раньше анимации
    висели на :hover — мелкое дрожание курсора на краю перезапускало их,
@@ -698,7 +707,7 @@ $$('.agent-switch').forEach((sw) => sw.addEventListener('mouseleave', function (
    и снимается после проигрыша; повторное наведение в паузе игнорируется. */
 $$('.agent-switch').forEach((sw) => {
   sw.addEventListener('mouseenter', () => {
-    if (sw.classList.contains('ag-switching')) return;
+    if (sw.classList.contains('ag-switching') || sw.dataset.agHold) return;
     // РЕСТАРТ ВСЕГДА: даже мгновенный повтор входа проигрывает резинку
     // с нуля — снять класс, принудительный reflow, поставить заново
     sw.classList.remove('ag-play');
@@ -978,48 +987,56 @@ async function openChat(id) {
   stream.classList.add('history-rendering');
   stream.innerHTML = '';
   renderMessages(stream, r.messages || []);
+  // ОТВЕТ ЕЩЁ ПИШЕТСЯ НА СЕРВЕРЕ (X): раньше в этот момент диалог выглядел
+  // ПУСТЫМ («ответ исчез»), а потом готовое сообщение вдруг возникало
+  // целиком — резко, с перерисовкой всей ленты. Теперь сразу стоит живая
+  // строка «отвечает…» с дышащим курсором, а готовый ответ доезжает мягко.
+  if (r.generating) appendLivePlaceholder();
   pinToBottom(stream);
   stream.classList.remove('history-rendering');
   loadChats();
-  // диалог, который дописывался в фоне: тихо перечитываем, пока не появится ответ
-  if (S.detached === id) watchDetached(id);
+  // диалог, который дописывался в фоне (или открыт во время генерации):
+  // тихо перечитываем, пока не появится ответ
+  if (r.generating || S.detached === id) watchDetached(id);
 }
 
 /* Отрисовка переписки в заданный контейнер. Вынесена из openChat, потому что
    тот же список нужно уметь перерисовать ВНУТРИ карточки камеры — иначе
    переключение версии выбрасывало разговор в основную ленту. */
+function renderMessageInto(host, m) {
+  if (m.role === 'user') {
+    const mt = m.meta || {};
+    // выбор, отправленный панелью ```ui, в ленте не показываем — ни сейчас,
+    // ни при возврате в диалог: он и был задуман бесшумным
+    if (mt.silent) return;
+    addUserMsg(m.content, mt.attachments || [],
+      { id: m.id, versions: mt.versions || [], version: mt.version || 0, ts: m.created_at });
+  }
+  else if (m.role === 'assistant') {
+    const node = addAiMsg(m.created_at);
+    node.root.dataset.msgId = m.id;
+    const meta = m.meta || {};
+    updateResponseMeta({
+      node,
+      routeTier: meta.tier || '',
+      modelName: meta.model || '',
+      routeReason: '',
+      routeEl: null,
+    });
+    // ход мыслей и действия из прошлого ответа — свёрнутыми строчками
+    restoreTrace(node, meta);
+    node.body.appendChild(el('div', 'md', MD.render(m.content)));
+    foldCodeBlocks(node.body);
+    mountUiPanels(node.body);
+    (meta.files || []).forEach((f) => attachFileChip(node.body, f));
+    addMsgActions(node, m.content);
+  }
+}
+
 function renderMessages(host, messages) {
   const prevHost = S.forceHost;
   S.forceHost = host;
-  (messages || []).forEach((m) => {
-    if (m.role === 'user') {
-      const mt = m.meta || {};
-      // выбор, отправленный панелью ```ui, в ленте не показываем — ни сейчас,
-      // ни при возврате в диалог: он и был задуман бесшумным
-      if (mt.silent) return;
-      addUserMsg(m.content, mt.attachments || [],
-        { id: m.id, versions: mt.versions || [], version: mt.version || 0, ts: m.created_at });
-    }
-    else if (m.role === 'assistant') {
-      const node = addAiMsg(m.created_at);
-      node.root.dataset.msgId = m.id;
-      const meta = m.meta || {};
-      updateResponseMeta({
-        node,
-        routeTier: meta.tier || '',
-        modelName: meta.model || '',
-        routeReason: '',
-        routeEl: null,
-      });
-      // ход мыслей и действия из прошлого ответа — свёрнутыми строчками
-      restoreTrace(node, meta);
-      node.body.appendChild(el('div', 'md', MD.render(m.content)));
-      foldCodeBlocks(node.body);
-      mountUiPanels(node.body);
-      (meta.files || []).forEach((f) => attachFileChip(node.body, f));
-      addMsgActions(node, m.content);
-    }
-  });
+  (messages || []).forEach((m) => renderMessageInto(host, m));
   S.forceHost = prevHost;
   // Варианты продолжения принадлежат последнему ответу Джарвиса. Возвращаясь
   // в диалог, пользователь должен видеть их снова — иначе они выглядели бы
@@ -1032,26 +1049,70 @@ function renderMessages(host, messages) {
   }
 }
 
-/* Ответ дописывается на сервере, а мы уже в другом диалоге. Периодически
-   перечитываем переписку: как только ассистент договорил — показываем. */
+/* Живая строка «отвечает…» — в диалоге, где генерация ещё идёт на сервере.
+   Курсор тот же, что и при обычном ответе: возвращение в диалог посреди
+   генерации читается как «он всё ещё пишет», а не «ответ исчез». */
+function appendLivePlaceholder() {
+  const node = addAiMsg(Date.now() / 1000);
+  node.root.dataset.livePlaceholder = '1';
+  const st = el('div', 'thinking-line');
+  node.body.appendChild(st);
+  runStatus({ statusEl: st, node }, ['Джарвись отвечает…', 'дописывает ответ', 'ещё немного'],
+    { caret: true, shuffle: true, every: 2600 });
+  return node;
+}
+
+/* Ответ дописывается на сервере, а мы уже смотрим этот диалог. Периодически
+   перечитываем переписку: как только ассистент договорил — ДОРИСОВЫВАЕМ
+   только новые сообщения поверх живой ленты. Раньше здесь стоял полный
+   openChat: лента мигала, скролл прыгал, готовый ответ «возникал резко». */
 function watchDetached(id) {
   clearTimeout(S.detachTimer);
   let tries = 0;
   const tick = async () => {
     if (S.chatId !== id) return;
     const r = await api('/api/messages?chat_id=' + encodeURIComponent(id));
+    if (S.chatId !== id) return;
     const msgs = r.messages || [];
     const last = msgs[msgs.length - 1];
     if (last && last.role === 'assistant') {
       S.detached = null;
-      if (!$$('.msg-ai', stream()).length || stream().lastElementChild.classList.contains('msg-user')) {
-        openChat(id);
-      }
+      appendFreshMessages(msgs);
       return;
     }
-    if (++tries < 120) S.detachTimer = setTimeout(tick, 1500);
+    // сервер уже не генерирует, а ответа всё нет — прогон умер до
+    // сохранения: убираем заглушку, не морочим голову «отвечает…»
+    if (!r.generating && tries > 3) {
+      const ph = stream().querySelector('[data-live-placeholder]');
+      if (ph) ph.remove();
+      return;
+    }
+    if (++tries < 400) S.detachTimer = setTimeout(tick, 1500);
   };
   S.detachTimer = setTimeout(tick, 1200);
+}
+
+/* Готовый ответ приезжает ПЛАВНО: дорисовываем только то, чего в ленте ещё
+   нет (по msgId), заглушку снимаем, скролл мягко едет вниз. */
+function appendFreshMessages(msgs) {
+  const host = stream();
+  const known = new Set();
+  $$('.msg', host).forEach((m) => {
+    if (m.dataset && m.dataset.msgId) known.add(m.dataset.msgId);
+  });
+  const ph = host.querySelector('[data-live-placeholder]');
+  if (ph) ph.remove();
+  const fresh = (msgs || []).filter((m) => !known.has(m.id));
+  if (!fresh.length) return;
+  const prevHost = S.forceHost;
+  S.forceHost = host;
+  fresh.forEach((m) => renderMessageInto(host, m));
+  S.forceHost = prevHost;
+  const lastAi = fresh[fresh.length - 1];
+  if (lastAi && lastAi.role === 'assistant') {
+    showReplies(((lastAi.meta || {}).replies) || []);
+  }
+  pinToBottom(host);
 }
 
 /* Подсказки на пустом экране. Сервер отдаёт их ГОТОВЫМИ (считает заранее в
@@ -2150,22 +2211,30 @@ function beginPlanGate(ui) {
   if (ui.planGate) return;
   ui.planGate = true;
   ui.planDeferred = [];
-  // Во время вступления на экране пишется только сам план. Старый статус
-  // «Думаю» не удаляем (после перелёта тот же стабильный caret продолжит
-  // работу), а временно исключаем из layout. Так нет ни второй надписи, ни
-  // пересоздания/рывка status-узла.
+  // Во время вступления на экране пишется только сам план. Статус не
+  // удаляем и не прячем целиком: гасим ТОЛЬКО ПОДПИСЬ — курсор продолжает
+  // дышать всё вступление. Если цепочка плана споткнётся, у пользователя
+  // останется живой курсор, а не «исчез и завис».
   if (ui.statusEl && ui.statusEl.isConnected) {
     ui.planStatusDisplay = ui.statusEl.style.display || '';
-    ui.statusEl.style.display = 'none';
+    ui.statusEl.classList.add('gate-hold');
   }
+  // СТРАЖ ЖИВУЧЕСТИ (X): показ плана — цепочка таймеров; оборвись одно
+  // звено, gate держал бы ВСЕ события в очереди навсегда. Страж в любом
+  // случае выпускает очередь — ответ не может «зависнуть» навечно.
+  ui.planWatchdog = setTimeout(() => {
+    if (ui.planGate) releasePlanGate(ui);
+  }, 15000);
   ui.planIntroPromise = new Promise((resolve) => { ui.resolvePlanIntro = resolve; });
 }
 
 function releasePlanGate(ui) {
   if (!ui.planGate) return;
   ui.planGate = false;
+  clearTimeout(ui.planWatchdog);
   if (ui.statusEl && ui.statusEl.isConnected) {
     ui.statusEl.style.display = ui.planStatusDisplay || '';
+    ui.statusEl.classList.remove('gate-hold');
   }
   ui.planStatusDisplay = '';
   const queued = (ui.planDeferred || []).splice(0);
@@ -3566,7 +3635,11 @@ async function send(opts) {
       const line = part.split(/\r?\n/).find((l) => l.startsWith('data:'));
       if (!line) return;
       let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch (e) { return; }
-      dispatchStreamEvent(ev, ui);
+      // ОДНО БИТОЕ СОБЫТИЕ НЕ УБИВАЕТ ПОТОК (X): раньше исключение в любом
+      // обработчике рвало весь цикл чтения — курсор замирал, ответ
+      // «зависал». Плохое событие уходит в консоль, печать живёт дальше.
+      try { dispatchStreamEvent(ev, ui); }
+      catch (e) { try { console.error('SSE handler:', e); } catch (e2) {} }
     };
     while (true) {
       const { done, value } = await reader.read();
@@ -4016,6 +4089,14 @@ function qtSweep(ui, keepGroup) {
     folded++;
     pending.push([nn, i++ * 170]);
   });
+  if (pending.length === 1) {
+    // ОДИНОЧКЕ ПАПКА НЕ НУЖНА (X): папка из одного инструмента — лишний
+    // клик без смысла. Он остаётся своей строкой; тело уже закрыла
+    // миниатюра, а если череда оборвалась раньше — закрываем сейчас.
+    const solo = pending[0][0];
+    if (!solo.dataset.mini) qtMiniaturize(solo);
+    return 0;
+  }
   pending.forEach(([nn, delay], idx) => {
     setTimeout(() => qtFold(ui, nn, idx === pending.length - 1), delay);
   });
@@ -4097,7 +4178,21 @@ function qtFold(ui, node, isLast) {
   // макет вокруг.
   const fr0 = folder.getBoundingClientRect();
   const base0 = node.getBoundingClientRect().top;
-  const C0 = (fr0.top + fr0.height / 2) - base0 - 4;   // центр НАЗВАНИЯ группы: текст тает прямо в нём
+  // ПОСАДКА ПОДПИСИ В НАЗВАНИЕ ГРУППЫ. Раньше прицел шёл по ВЕРХУ узла —
+  // а у карточки свой верхний отступ, поэтому текст останавливался на
+  // полстроки НИЖЕ названия. Теперь центрируем ПОДПИСЬ узла в ЦЕНТР
+  // НАЗВАНИЯ папки: текст растворяется прямо в нём, не ниже.
+  const titleEl = folder.querySelector('.qt-head .qt-name') || folder.querySelector('.qt-head') || folder;
+  const labEl = node.querySelector('.qt-head .qt-name');
+  const tRect = titleEl.getBoundingClientRect();
+  const lRect = labEl ? labEl.getBoundingClientRect() : node.getBoundingClientRect();
+  const titleC = () => {
+    const r = titleEl.getBoundingClientRect();
+    return r.top + r.height / 2;
+  };
+  // центр подписи относительно верха узла, с поправкой на сжатие scale(.93)
+  const labOff = ((lRect.top + lRect.height / 2) - base0) * .93 + h0 * .035;
+  const C0 = (tRect.top + tRect.height / 2) - base0 - labOff;
   let aim = C0;
   const flight = node.animate(
     [{ transform: 'translateY(0px) scale(1)' },
@@ -4105,11 +4200,16 @@ function qtFold(ui, node, isLast) {
     { duration: DUR, easing: 'cubic-bezier(.2,.5,.2,1)', fill: 'forwards' });
   const homing = () => {
     const k = Math.min(1, (performance.now() - t0) / DUR);
-    const e = ease(k);
+    // прогресс берём у САМОЙ анимации (easing уже применён) — параллельная
+    // кривая в старом расчёте расходилась с реальным трансформом
+    let pr;
+    try { pr = flight.effect.getComputedTiming().progress || 0; }
+    catch (err) { pr = ease(k); }
     const nr = node.getBoundingClientRect();
-    const base = nr.top - e * aim;         // где узел жил бы без полёта
-    const rise = Math.max(0, base0 - base);  // насколько лента поднялась
-    const need = C0 + rise;                  // цель с учётом подъёма
+    const base = nr.top - pr * aim;          // где узел жил бы без полёта
+    // ЦЕЛЬ ЖИВАЯ, КАЖДЫЙ КАДР: папка сама может подняться (выше неё
+    // сворачивается другое семейство) — снимок из прошлого промахивался.
+    const need = titleC() - labOff - base;
     if (Math.abs(need - aim) > 0.5) {
       aim = need;
       flight.effect.setKeyframes([
@@ -4166,7 +4266,7 @@ function qtToggleFolder(f) {
   // закрытия, когда авто-высота мигала перед уборкой).
   kids.style.overflow = 'hidden';
   kids.style.height = (wasOpen ? H : 0) + 'px';
-  const STEP = 55, FLY = 500, LEAD = 120;
+  const STEP = 55, FLY = 500, LEAD = 70;   // X: было 120 — клик и первый инструмент разделяла заметная пауза
   // ЗАКРЫТИЕ = ОТКРЫТИЕ НАОБОРОТ, кадр в кадр: те же кривые и стаггер,
   // только кадры развёрнуты (строка уезжает ПОД голову, растворяясь) и
   // очередь обращена — первой уходит НИЖНЯЯ строка. Никакого «проиграть
@@ -5415,9 +5515,10 @@ function handleEvent(ev, ui) {
       break;
 
     case 'thinking': {
-      // Ход мыслей — привилегия AGENT-режима: обычный ответ держит одну
-      // строку состояния у курсора, без второй «кухни» в чате.
-      if (!ui.agentMode) break;
+      // ХОД МЫСЛЕЙ — В ЛЮБОМ РЕЖИМЕ (X): тихий раньше молча выбрасывал
+      // мысли, а restoreTrace при повторном открытии их «воскрешал» —
+      // казалось, инструменты появились из ниоткуда. Что видел живьём —
+      // то и вернётся из истории; дизайн подхватывает текущая тема.
       // ПОЧЕМУ «ДУМАЛКА» ОТКРЫВАЛАСЬ НЕ ВЕЗДЕ. Её показ решался ЗАРАНЕЕ, по
       // длине вопроса (verbose приходит из score). Короткая просьба, которая
       // на деле разворачивалась в работу с инструментами, получала verbose:false
@@ -5530,7 +5631,10 @@ function handleEvent(ev, ui) {
       busyMode(ui, toolTicker(ev), 2200);
       termLine('$ ' + ev.name + ' ' + JSON.stringify(ev.args || {}).slice(0, 300), 'cmd');
       ui._qtSwept = false;
-      if (!ui.agentMode) {
+      // РЕЖИМ РЕШАЕТСЯ «СЕЙЧАС» (X): включили AGENT после старта ответа —
+      // инструменты этого диалога рисуются в агентском дизайне, а не в
+      // тихом (и наоборот). Снимок на момент отправки врал о режиме.
+      if (!(ui.agentMode || S.agentMode)) {
         // ОБЫЧНЫЙ РЕЖИМ — СЕРАЯ КУХНЯ: имя, полоса, поток строк. Инструмент
         // другого типа закрывает прежнее семейство — его миниатюры уезжают
         // в папку только теперь, чередой, а не по одному.

@@ -295,7 +295,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "chats": db.list_chats()})
         if path == "/api/messages":
             chat_id = (params.get("chat_id") or [""])[0]
-            return self._json({"ok": True, "messages": db.get_messages(chat_id)})
+            with _RUN_LOCK:
+                generating = chat_id in _ACTIVE_RUNS
+            return self._json({"ok": True, "messages": db.get_messages(chat_id),
+                               "generating": generating})
         if path == "/api/tasks":
             return self._json({"ok": True, "tasks": db.list_tasks(),
                                "paused": auto.is_paused()})
@@ -904,6 +907,7 @@ class Handler(BaseHTTPRequestHandler):
         thinking: List[str] = []
         trace: List[Dict[str, Any]] = (
             [{"kind": "memory", "facts": memory_facts}] if memory_facts else [])
+        alive_fails = 0
         try:
             for event in runner.run(
                     messages, user_text=text, has_image=has_image,
@@ -947,7 +951,17 @@ class Handler(BaseHTTPRequestHandler):
                     used_tools = event.get("tools", [])
                     selected_tier = str(event.get("tier") or selected_tier)
                 if alive:
-                    alive = self._sse(event)
+                    if self._sse(event):
+                        alive_fails = 0
+                    else:
+                        # X: ОДИН МИМОЛЕТНЫЙ СБОЙ ЗАПИСИ НЕ ГЛУШИТ ПОТОК:
+                        # раньше единственная неудача навсегда выключала
+                        # отправку — клиент смотрел на замерший курсор, пока
+                        # сервер молча доигрывал ответ. Мёртвым соединение
+                        # считается после двух подряд неудач.
+                        alive_fails += 1
+                        if alive_fails >= 2:
+                            alive = False
                     alive_box[0] = alive
                 # Если пользователь ушёл из диалога, соединение рвётся. Раньше мы
                 # прекращали работу и ответ пропадал. Теперь генерация доводится

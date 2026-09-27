@@ -366,9 +366,12 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: st
             return _gateway_image(refined, int(width or 1024), int(height or 1024))
         if provider == "free":
             return _free_image(refined, int(width or 1024), int(height or 1024))
-        if provider == "auto" and not CONFIG.get("media.gigachat_auth_key", ""):
-            # БЕЗ КЛЮЧА GIGACHAT ГЕНЕРАЦИЯ ВСЁ РАВНО РАБОТАЕТ: открытый flux
-            # не требует ни ключей, ни VPN — картинки доступны из коробки
+        if not str(CONFIG.get("media.gigachat_auth_key", "") or "").strip():
+            # X: БЕЗ КЛЮЧА GIGACHAT ГЕНЕРАЦИЯ ВСЁ РАВНО РАБОТАЕТ — в любом
+            # положении провайдера. Кнопка настроек однажды ставила
+            # provider='gigachat' и оставляла его без ключа навсегда: каждый
+            # запрос падал «вставь ключ». Форс без ключа — это незавершённая
+            # настройка, а не приказ отказать: открытый flux рисует из коробки.
             return _free_image(refined, int(width or 1024), int(height or 1024))
 
         model = str(CONFIG.get("media.gigachat_model", "GigaChat") or "GigaChat").strip()
@@ -422,8 +425,10 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: st
             "image_id": file_id,
         }
     except GigaChatError as exc:
-        if provider == "auto":
-            # платный маршрут споткнулся — бесплатный flux доедет до конца
+        if provider in ("auto", "gigachat"):
+            # X: платный маршрут споткнулся — бесплатный flux доедет до конца
+            # (в том числе когда форсированный gigachat упал по своей вине:
+            # пользователь просил картинку, а не разбор поломки)
             try:
                 return _free_image(refined, int(width or 1024), int(height or 1024))
             except Exception:
@@ -552,34 +557,46 @@ def _asr_via_chat(conf: Dict[str, Any], model: str, path: Path,
     """
     fmt, _mime = _audio_mime(path)
     b64 = base64.b64encode(path.read_bytes()).decode()
-    payload = {
-        "model": model,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text":
-                    "Запиши текст этой аудиозаписи дословно на языке оригинала (%s). "
-                    "Верни ТОЛЬКО расшифровку, без комментариев, кавычек и пояснений. "
-                    "Если речи нет — верни пустую строку." % language},
-                {"type": "input_audio", "input_audio": {"data": b64, "format": fmt}},
-            ],
-        }],
-        "max_tokens": 1200,
-        "temperature": 0,
-    }
     url = conf["base_url"].rstrip("/") + "/chat/completions"
-    try:
-        req = urllib.request.Request(
-            url, data=json.dumps(payload).encode("utf-8"), method="POST",
-            headers={"Authorization": "Bearer " + conf["api_key"],
-                     "Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout, context=_CTX) as resp:
-            body = json.loads(resp.read().decode("utf-8", "replace"))
-        msg = ((body.get("choices") or [{}])[0].get("message") or {})
-        text = (msg.get("content") or "").strip().strip('"«»')
-        return {"http_ok": True, "text": text}
-    except Exception as exc:
-        return {"http_ok": False, "error": str(exc)[:200]}
+    # X: whisper-large-v3 в каталоге Cloud.ru имеет контекст 448 токенов —
+    # прежний max_tokens:1200 отправлял запрос в 400, и «ушки» не отвечали
+    # никогда. Теперь лимит внутри контекста, и на всякий случай пробуем
+    # ДВЕ формы: с текстовой инструкцией и чистое аудио (у аудиомоделей
+    # свои капризы к лишнему тексту).
+    shapes = (
+        [
+            {"type": "text", "text":
+                "Запиши текст этой аудиозаписи дословно на языке оригинала (%s). "
+                "Верни ТОЛЬКО расшифровку." % language},
+            {"type": "input_audio", "input_audio": {"data": b64, "format": fmt}},
+        ],
+        [
+            {"type": "input_audio", "input_audio": {"data": b64, "format": fmt}},
+        ],
+    )
+    last_error = ""
+    for content in shapes:
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": 200,
+            "temperature": 0,
+        }
+        try:
+            req = urllib.request.Request(
+                url, data=json.dumps(payload).encode("utf-8"), method="POST",
+                headers={"Authorization": "Bearer " + conf["api_key"],
+                         "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=timeout, context=_CTX) as resp:
+                body = json.loads(resp.read().decode("utf-8", "replace"))
+            msg = ((body.get("choices") or [{}])[0].get("message") or {})
+            text = (msg.get("content") or "").strip().strip('"«»')
+            if text:
+                return {"http_ok": True, "text": text}
+            last_error = "пустая расшифровка"
+        except Exception as exc:
+            last_error = str(exc)[:200]
+    return {"http_ok": False, "error": last_error}
 
 
 def _asr_free(path: Path, language: str, timeout: int = 180) -> Dict[str, Any]:
@@ -622,12 +639,15 @@ def _asr_routes() -> list:
         prefs = [p for p in (CONFIG.get("model_tiers.audio", []) or []) if p]
         catalog = llm.models_of_type("cloudru", "audio")
         for name in prefs + [m for m in catalog if m not in prefs]:
-            # стандартный transcriptions-эндпоинт — основной путь для аудиомоделей
-            routes.append(("cloudru-ts:" + name,
-                           lambda p, l, m=name, c=conf: _asr_via_transcriptions(c, m, p, l)))
-            # запасной: некоторые «ушки» принимают аудио прямо в chat
+            # X: chat/completions — ЕДИНСТВЕННЫЙ путь, который у Cloud.ru
+            # существует (OpenAPI-спецификация: только /models и
+            # /chat/completions; /audio/transcriptions отвечает 404 и лишь
+            # сжигал попытку). Потому chat идёт первым, transcriptions —
+            # запасным на случай, когда провайдер его добавит.
             routes.append(("cloudru-chat:" + name,
                            lambda p, l, m=name, c=conf: _asr_via_chat(c, m, p, l)))
+            routes.append(("cloudru-ts:" + name,
+                           lambda p, l, m=name, c=conf: _asr_via_transcriptions(c, m, p, l)))
     routes.append(("free:whisper-large-v3", _asr_free))
     return routes
 

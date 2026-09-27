@@ -574,21 +574,26 @@ function testPlanTypingCompletionAndDockRaces() {
   // race the visual plan intro. They remain in source order until the flight
   // callback releases the gate.
   const handled = [];
+  const gateTimers = [];
   const gateCtx = loadFunctions(
     ['beginPlanGate', 'dispatchStreamEvent', 'releasePlanGate', 'cancelPlanGate'],
-    { Promise, handleEvent(ev) { handled.push(ev.type); } },
+    { Promise, handleEvent(ev) { handled.push(ev.type); },
+      setTimeout(fn, ms) { gateTimers.push({ fn, ms }); return gateTimers.length; },
+      clearTimeout() {} },
   );
   const planStatus = new MiniNode('div');
   const gated = { statusEl: planStatus };
   gateCtx.beginPlanGate(gated);
-  assert.strictEqual(planStatus.style.display, 'none',
-    'only the plan is visible during its typing and flight; the stable status node is held, not rebuilt');
+  assert(planStatus.classList.contains('gate-hold'),
+    'X: during the plan intro the caret line stays ALIVE — only its caption hides, so the user never sees a dead screen');
+  assert(gated.planWatchdog, 'plan gate must arm a liveness watchdog');
   gateCtx.dispatchStreamEvent({ type: 'delta' }, gated);
   gateCtx.dispatchStreamEvent({ type: 'tool_start' }, gated);
   assert.deepStrictEqual(handled, [], 'no answer/tool content may appear while the plan is writing or flying');
   gateCtx.releasePlanGate(gated);
   assert.deepStrictEqual(handled, ['delta', 'tool_start'], 'the original SSE order must resume after arrival');
-  assert.strictEqual(planStatus.style.display, '', 'the same status node returns only after the plan arrives');
+  assert(!planStatus.classList.contains('gate-hold'),
+    'the caption returns together with the answer after the plan arrives');
   assert.strictEqual(gated.planGate, false);
   assert.strictEqual(gated.planIntroPromise, null);
 
@@ -1191,8 +1196,8 @@ function testRussianImageAndHudFollowupContract() {
   const clearMeta = extractFunction(js, 'clearRunRoute');
   assert(/updateResponseMeta\(ui\)/.test(clearMeta) && !/\.remove\(\)/.test(clearMeta),
     'scenario and model persist above their response after visual completion');
-  assert(/routeTier:\s*meta\.tier \|\| ''/.test(extractFunction(js, 'renderMessages')),
-    'history restores the persisted scenario together with the model');
+  assert(/routeTier:\s*meta\.tier \|\| ''/.test(extractFunction(js, 'renderMessageInto')),
+    'history restores the persisted scenario together with the model (X: per-message renderer extracted, fresh arrivals reuse it)');
 
   const metaRoot = new MiniNode('div');
   const metaHead = new MiniNode('div'); metaHead.className = 'ai-name'; metaRoot.appendChild(metaHead);
@@ -1741,9 +1746,10 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /requestAnimationFrame\(homing\)/.test(rf) &&
     /const flight = node\.animate\(/.test(rf) &&
     /flight\.effect\.setKeyframes\(\[/.test(rf) &&
-    /const C0 = \(fr0\.top \+ fr0\.height \/ 2\) - base0 - 4;/.test(rf) &&
-    /const need = C0 \+ rise;/.test(rf) &&
-    /const rise = Math\.max\(0, base0 - base\);/.test(rf) &&
+    /const C0 = \(tRect\.top \+ tRect\.height \/ 2\) - base0 - labOff;/.test(rf) &&
+    /const labOff = \(\(lRect\.top \+ lRect\.height \/ 2\) - base0\) \* \.93 \+ h0 \* \.035;/.test(rf) &&
+    /const need = titleC\(\) - labOff - base;/.test(rf) &&
+    /getComputedTiming\(\)\.progress/.test(rf) &&
     /easing: 'cubic-bezier\(\.2,\.5,\.2,1\)', fill: 'forwards'/.test(rf) &&
     /'opacity \.34s ease \.68s, filter \.34s ease \.68s'/.test(rf) &&
     /function qtFold\(ui, node, isLast\)/.test(js) &&
@@ -1997,7 +2003,7 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /node\.style\.opacity = '';/.test(extractFunction(js, 'collapseToThumb')),
     'expanding a thumb clears leftover inline styles: code opens bright on the FIRST click');
   // AGENT: свои инструментальные карточки,厨房 только в обычном режиме
-  assert(/if \(!ui\.agentMode\) \{[\s\S]*?qtSweep\(ui, ev\.group\);[\s\S]*?qtOpen\(ui, ev\);[\s\S]*?break;[\s\S]*?\}/.test(js) &&
+  assert(/if \(!\(ui\.agentMode \|\| S\.agentMode\)\) \{[\s\S]*?qtSweep\(ui, ev\.group\);[\s\S]*?qtOpen\(ui, ev\);[\s\S]*?break;[\s\S]*?\}/.test(js) &&
     /'tool-card' \+ \(waitVisual \? ' tool-wait' : ''\)/.test(js) &&
     /function flushAgentGroup/.test(js) && /finishToolWait\(node\);/.test(js) &&
     /TOOL_WAIT_AFTER_PAINT_MS = 800/.test(js) &&
@@ -2009,6 +2015,49 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /\.ql-row,\.qt-row,\.ag-rows,\.qt-kids'\);/.test(extractFunction(js, 'addFoldButton')) &&
     /node\.addEventListener\('click', bgFold\);/.test(extractFunction(js, 'addFoldButton')),
     'AGENT keeps its OWN tool cards with groups; opening a tool inside a group CANCELS the pending group collapse — behaviorally');
+}
+
+function testIterationXContracts() {
+  // ================= ИТЕРАЦИЯ X (beta.28) — 10 пунктов отзыва =================
+  // П.1: вальс целится ПОДПИСЬЮ инструмента в НАЗВАНИЕ группы (текст тает
+  // в названии, не ниже) — прицел по верху узла опускал его на полстроки
+  const fold = extractFunction(js, 'qtFold');
+  assert(/titleEl/.test(fold) && /labEl/.test(fold) &&
+    /const C0 = \(tRect\.top \+ tRect\.height \/ 2\) - base0 - labOff;/.test(fold) &&
+    /const need = titleC\(\) - labOff - base;/.test(fold),
+    'X1: the flying tool aims its LABEL at the group TITLE line — dissolves in it, never below');
+  // П.2: папки — внешний вертикальный margin тела убран (скачок 6px в первый
+  // кадр открытия и в последний кадр закрытия), зазор живёт внутри
+  assert(/\.qt-folder\.open \.qt-kids\{display:flex\}/.test(css) &&
+    !/\.qt-folder\.open \.qt-kids\{display:flex;margin/.test(css) &&
+    /\.qt-kids>\.qt-rows\{[^}]*padding:2px 0 3px/.test(css) &&
+    /LEAD = 70/.test(js),
+    'X2: folder body keeps its outer geometry calm — no 6px jump at open start / close end');
+  // П.4/П.8: дизайн инструментов решает ЖИВОЙ режим; одиночка не сворачивается
+  // в папку; ход мыслей показывается в любом режиме
+  assert(/if \(!\(ui\.agentMode \|\| S\.agentMode\)\) \{/.test(js) &&
+    !/if \(!ui\.agentMode\) break;/.test(extractFunction(js, 'handleEvent')) &&
+    /if \(pending\.length === 1\) \{/.test(extractFunction(js, 'qtSweep')),
+    'X4/X8: live mode picks the tool design; a lone tool stays its own line — never a one-item folder');
+  // П.6: после переключения тумблера резинка молчит до СЛЕДУЮЩЕГО наведения
+  assert(/shell\.dataset\.agHold = '1';/.test(js) &&
+    /sw\.dataset\.agHold/.test(js) &&
+    /delete this\.dataset\.agHold;/.test(js),
+    'X6: the knob rubber plays after a toggle only on the NEXT hover');
+  // П.7: одно битое событие не убивает поток; план-gate со стражем; курсор
+  // дышит под планом и в reduced-motion; вход в диалог во время генерации
+  // показывает живую заглушку, ответ доезжает плавно
+  assert(/try \{ dispatchStreamEvent\(ev, ui\); \}/.test(js) &&
+    /ui\.planWatchdog = setTimeout/.test(js) &&
+    /gate-hold/.test(js) && /\.thinking-line\.gate-hold \.tw-quip\{display:none\}/.test(css) &&
+    /caretDim 1\.6s ease-in-out infinite!important/.test(css) &&
+    /function appendLivePlaceholder/.test(js) &&
+    /function appendFreshMessages/.test(js) &&
+    /r\.generating \|\| S\.detached === id/.test(js),
+    'X7: a broken event cannot kill the stream; the plan gate has a watchdog; the caret never dies; an in-flight answer greets you with a live line and arrives smoothly');
+  // П.3: сервер узнаёт вызов-конверт {"open_url": {...}} (python-тест
+  // проверяет исполнение; здесь — фронтовая часть: стрим придерживается)
+  // П.9/П.10 — серверные, их контракты живут в python-тестах.
 }
 
 function testProactiveModesBudgetAndAbortContracts() {
@@ -2048,12 +2097,15 @@ function testProactiveModesBudgetAndAbortContracts() {
     /beep\(S\.computerUse \? 760 : 420, 0\.1\)/.test(js),
   'camera/computer buttons beep exactly like the agent switch');
   // РЕЖИМЫ ЖИВУТ ПО-РАЗНОМУ: обычный — серая qt-кухня, AGENT — свои
-  // карточки с группами; ход мыслей — привилегия AGENT
+  // карточки с группами. X: дизайн решает ЖИВОЙ режим, а не снимок на
+  // момент отправки; ход мыслей показывается в ЛЮБОМ режиме (тихому тоже,
+  // своим дизайном) — иначе история «воскрешала» невиденные карточки
   assert(/termLine\('\$ ' \+ ev\.name \+ ' ' \+ JSON\.stringify/.test(js) &&
     /qtOpen\(ui, ev\);/.test(js) &&
     /'tool-card' \+ \(waitVisual \? ' tool-wait' : ''\)/.test(js) &&
-    /case 'thinking':\s*\{\s*\n\s*\/\/ Ход мыслей — привилегия AGENT[\s\S]*?if \(!ui\.agentMode\) break;/.test(js),
-    'normal mode runs the gray kitchen; AGENT runs its own cards; thinking stays agent-only');
+    /if \(!\(ui\.agentMode \|\| S\.agentMode\)\) \{/.test(js) &&
+    !/if \(!ui\.agentMode\) break;/.test(extractFunction(js, 'handleEvent')),
+    'normal mode runs the gray kitchen; AGENT runs its own cards; the LIVE mode decides the design and thinking shows in every mode');
   // подписи: пауза ~1с, компактные, у микрофона и вложения
   assert(/animation:tipIn \.16s 1\.45s both/.test(css) &&
     /@keyframes tipIn/.test(css) && /max-width:180px/.test(css) &&
@@ -2129,7 +2181,7 @@ function testProactiveModesBudgetAndAbortContracts() {
     /willOpen \? 440 : 380/.test(extractFunction(js, 'flushAgentGroup')),
     'tools inside an agent group expand/collapse with the SAME height animation as ordinary tools');
   // W: курсор думания не замирает при системном «уменьшить движение»
-  assert(/\.tw-caret,\.caret\{animation:caretDim 1\.6s ease-in-out!important\}/.test(css) &&
+  assert(/\.tw-caret,\.caret\{animation:caretDim 1\.6s ease-in-out infinite!important\}/.test(css) &&
     /@keyframes caretDim/.test(css),
     'the thinking caret keeps a gentle opacity breathe even under prefers-reduced-motion — never looks frozen');
   // U: тумблер — значение регистрируется ДО звука, звук в try-catch,
@@ -2226,7 +2278,8 @@ function testProactiveModesBudgetAndAbortContracts() {
   testBudgetScenariosDraftsAndTailRaceContracts();
   testProactiveModesBudgetAndAbortContracts();
   testQuietToolsBoostAskStylesAndAgentTheme();
-  console.log('package28_frontend_runtime: 15 regression groups passed');
+  testIterationXContracts();
+  console.log('package28_frontend_runtime: 16 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
