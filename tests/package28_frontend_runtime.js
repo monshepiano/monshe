@@ -1728,8 +1728,9 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   assert(/'height 1\.05s cubic-bezier\(\.2,\.5,\.2,1\), '/.test(rf) &&
     !/position = 'fixed'/.test(rf) && !/ghost/.test(rf) &&
     /requestAnimationFrame\(homing\)/.test(rf) &&
-    /node\.__qDy = e \* need;/.test(rf) &&
-    /const need = fr\.bottom - base;/.test(rf) &&
+    /const D0 = fr0\.bottom - base0;/.test(rf) &&
+    /const base0 = node\.getBoundingClientRect\(\)\.top;/.test(rf) &&
+    /node\.__qDy = e \* D0 \+ Math\.max\(0, base0 - base\);/.test(rf) &&
     /const base = nr\.top - node\.__qDy;/.test(rf) &&
     /function qtFold\(ui, node, isLast\)/.test(js) &&
     /if \(isLast\) setTimeout\(folderBlink, 820\);/.test(rf) &&
@@ -1752,18 +1753,18 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /\.qt-kids>\.qt-rail\{/.test(css) && /\.qt-rows\{/.test(css),
     'the folder has no rail when closed; opened, a rail runs down from the icon');
   const tf = extractFunction(js, 'qtToggleFolder');
-  assert(/i \* 55\)/.test(tf) && /'opacity \.45s ease '/.test(tf) &&
-    /const dist = r\.getBoundingClientRect\(\)\.top - headRect\.bottom;/.test(tf) &&
-    (tf.match(/translateY\(' \+ \(-dist\) \+ 'px\) scale\(\.93\)'/g) || []).length >= 2 &&
-    /r\.style\.filter = 'blur\(3px\)';/.test(tf) &&
-    /kids\.style\.height = '0px';/.test(tf) &&
-    /Array\.from\(f\.querySelectorAll\('\.qt-row'\)\)\.reverse\(\);/.test(tf) &&
-    /const span = 120 \+ \(rows\.length - 1\) \* 55 \+ 520;/.test(tf) &&
-    /const span = 120 \+ \(allRows\.length - 1\) \* 55 \+ 520;/.test(tf) &&
-    (tf.match(/'height ' \+ span \+ 'ms cubic-bezier\(\.2,\.5,\.2,1\)'/g) || []).length >= 2 &&
-    /kids\.style\.height = h \+ 'px';/.test(tf) &&
-    !/height \.3s cubic-bezier\(\.4,\.5,\.4,1\)/.test(tf),
-    'MANUAL open/close is the SAME flight mirrored: rows dive under the head BOTTOM-FIRST, and the rail moves WITH the tools the whole span — never before, never after');
+  assert(/r\.animate\(frames,/.test(tf) &&
+    /const wait = wasOpen \? \(rows\.length - 1 - i\) : i;/.test(tf) &&
+    /duration: FLY, delay: LEAD \+ wait \* STEP,/.test(tf) &&
+    /easing: 'cubic-bezier\(\.2,\.5,\.2,1\)', fill: 'both'/.test(tf) &&
+    !/\.reverse\(\)/.test(tf) &&
+    /const pr = a\.effect\.getComputedTiming\(\)\.progress;/.test(tf) &&
+    /sum \+= pr == null \? 0 : pr;/.test(tf) &&
+    /const dir = wasOpen \? -1 : 1;/.test(tf) &&
+    /H \* \(dir < 0 \? 1 - avg : avg\)/.test(tf) &&
+    /Promise\.all\(anims\.map\(\(a\) => a\.finished\)\)/.test(tf) &&
+    !/setTimeout\(/.test(tf),
+    'MANUAL open/close is ONE animation: closing plays the SAME frames inverted (bottom row leaves first), and the rail height tracks the rows AVERAGE PROGRESS every frame — perfectly in sync, never ahead');
   assert(tf.indexOf("kids.style.height = '0px'") < tf.indexOf("f.classList.remove('open')"),
     'CLOSING keeps the folder open until the reverse animation finishes — it never snaps to display:none');
   assert(/'height \.44s cubic-bezier\(\.3,\.6,\.3,1\), opacity \.3s ease'/.test(extractFunction(js, 'qtToggleDetail')) &&
@@ -2071,10 +2072,11 @@ function testProactiveModesBudgetAndAbortContracts() {
     /\.code-slot\{display:contents\}/.test(css) &&
     /_codePeek\.add\(key\.split\('\\u0001'\)\[0\]\);/.test(js) &&
     /_codePeek\.has\(key\.split\('\\u0001'\)\[0\]\)/.test(js) &&
+    /instant: false, cls: 'th-code inline-thumb'/.test(extractFunction(js, 'foldOneCodeBlock')) &&
     !/code-compact/.test(js) && !/code-compact/.test(css) &&
     /tag: S\.agentMode \? 'развернуть' : ''/.test(js) &&
     /tag: 'развернуть',/.test(js),
-    'closed fence becomes a slim thumbnail tab THE MOMENT it closes; the cached slot SURVIVES the typer repaint — no 10x/sec thrash');
+    'closed fence becomes a slim thumbnail tab THE MOMENT it closes, WITH its shrink animation (instant:false), once — the cached slot survives the typer repaint');
   // панель ФАЙЛЫ: «Импорт», иконка обновления (две круговые стрелки),
   // «Очистить» замьючена, когда чистить нечего
   assert(/id="uploadHere" title="Импорт"/.test(html) &&

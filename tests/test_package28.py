@@ -127,6 +127,13 @@ class RoutingAndPlanCostTests(unittest.TestCase):
             {"role": "user", "content": "поле 30, скорость средняя"},
         ]
         self.assertTrue(agent.plan_owed_by_history(hist))
+        # T: ход-вопрос БЕЗ текста (ask_user) тоже считается вопросом
+        asked = [
+            {"role": "user", "content": "напиши игру змейка с уровнями"},
+            {"role": "assistant", "content": ""},
+            {"role": "user", "content": "поле 30, скорость средняя"},
+        ]
+        self.assertTrue(agent.plan_owed_by_history(asked))
         # план уже шёл ([ШАГ …]) — второго плана не нужно
         ran = [
             {"role": "user", "content": "напиши игру"},

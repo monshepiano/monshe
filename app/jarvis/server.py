@@ -923,7 +923,11 @@ class Handler(BaseHTTPRequestHandler):
                     _RUN_EVENTS.pop(chat_id, None)
             if not final_text:
                 final_text = _canonical_response_content(partial, "")
-            if final_text:
+            # ХОД-ВОПРОС НЕ ПРОПАДАЕТ: ask_user и ходы с инструментами часто
+            # не имеют текста вовсе — раньше такой ответ не сохранялся, и при
+            # открытии диалога исчезали вопрос, интерактивная панель и трасса.
+            has_ask = any(t.get("kind") in ("question", "tool", "plan") for t in trace)
+            if final_text or has_ask or files:
                 # Ход мыслей и список действий сохраняем вместе с ответом: раньше
                 # они жили только в браузере и пропадали, стоило выйти из диалога.
                 # Прерванный пользователем ответ помечается: обрывок кода не должен

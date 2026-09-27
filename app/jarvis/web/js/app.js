@@ -4078,15 +4078,21 @@ function qtFold(ui, node, isLast) {
   const t0 = performance.now();
   const DUR = 1050;
   const ease = (k) => (k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+  // ПРИЦЕЛ: путь до головы папки фиксируется НА СТАРТЕ (D0), а каждый кадр
+  // компенсирует подъём ленты — вальс сжимает соседей сверху, узел едет
+  // вверх сам, и прежний «живой» пересчёт цели к концу вырождался в ноль:
+  // инструменты таяли на местах НИЖЕ группы, не долетая. Теперь конец
+  // полёта всегда — верх узла точно у низа головы папки.
+  const fr0 = folder.getBoundingClientRect();
+  const base0 = node.getBoundingClientRect().top;
+  const D0 = fr0.bottom - base0;
   node.__qDy = 0;
   const homing = () => {
     const k = Math.min(1, (performance.now() - t0) / DUR);
     const e = ease(k);
-    const fr = folder.getBoundingClientRect();
     const nr = node.getBoundingClientRect();
     const base = nr.top - node.__qDy;      // где узел жил бы без полёта
-    const need = fr.bottom - base;         // путь до низа головы папки
-    node.__qDy = e * need;
+    node.__qDy = e * D0 + Math.max(0, base0 - base);
     node.style.transform = 'translateY(' + node.__qDy + 'px) scale(.93)';
     if (k < 1) requestAnimationFrame(homing);
   };
@@ -4107,91 +4113,90 @@ function qtFold(ui, node, isLast) {
   if (isLast) setTimeout(folderBlink, 820);
 }
 
+/* РУЧНОЕ ОТКРЫТИЕ/ЗАКРЫТИЕ ПАПКИ — ОДНА АНИМАЦИЯ В ДВЕ СТОРОНЫ.
+   Строки выплывают из-под головы группы одна за другой. Вертикальная
+   линия НЕ живёт своей жизнью: её высота на каждом кадре = СРЕДНИЙ
+   прогресс прилёта строк — линия движется строго с инструментами, не
+   раньше и не позже. Закрытие проигрывает ТЕ ЖЕ анимации задом наперёд
+   (reverse): нижняя строка уходит первой, линия задвигается зеркально.
+   Отличается только направление, не рисунок. */
 function qtToggleFolder(f) {
   const kids = f.querySelector('.qt-kids');
   if (!kids || f._anim) return;      // анимация играет — клики не рвут её
-  f._anim = true;
-  const free = () => { f._anim = false; };
-  const headRect = f.querySelector('.qt-head').getBoundingClientRect();
-  if (f.classList.contains('open')) {
-    // ЗАКРЫТИЕ — ТОЧНОЕ ЗЕРКАЛО ОТКРЫТИЯ: строки улетают ПОД голову группы
-    // с ПОСЛЕДНЕЙ (нижней) к первой, теми же длительностями и кривыми, что
-    // прилетали. Полоса-тело задвигается НЕ после посадки последней, а
-    // ОДНОВРЕМЕННО с полётом — линия и инструменты движутся одним тактом.
-    const rows = Array.from(f.querySelectorAll('.qt-row')).reverse();
-    rows.forEach((r, i) => {
-      const dist = r.getBoundingClientRect().top - headRect.bottom;
-      r.style.transition =
-        'transform .5s cubic-bezier(.2,.5,.2,1) ' + (i * 55) + 'ms, ' +
-        'opacity .45s ease ' + (i * 55 + 150) + 'ms, ' +
-        'filter .45s ease ' + (i * 55 + 150) + 'ms';
-      r.style.transform = 'translateY(' + (-dist) + 'px) scale(.93)';
-      r.style.filter = 'blur(3px)';
-      r.style.opacity = '0';
-    });
-    const span = 120 + (rows.length - 1) * 55 + 520;
-    const h0 = kids.getBoundingClientRect().height;
-    kids.style.overflow = 'hidden';
-    kids.style.transition = 'none';
-    kids.style.height = h0 + 'px';
-    void kids.offsetHeight;
-    kids.style.transition = 'height ' + span + 'ms cubic-bezier(.2,.5,.2,1)';
-    kids.style.height = '0px';
-    setTimeout(() => {
-      f.classList.remove('open');
-      kids.classList.remove('open');
-      kids.style.cssText = '';
-      rows.forEach((r) => { r.style.cssText = ''; });
-      free();
-    }, span + 140);
-  } else {
+  const wasOpen = f.classList.contains('open');
+  const head = f.querySelector('.qt-head');
+  if (!wasOpen) {
     const box = f.querySelector('.qt-rows');
     box.replaceChildren();
     (f._items || []).forEach((t) => box.appendChild(qtRow(t)));
     kids.classList.add('open');
     f.classList.add('open');
-    // ОТКРЫТИЕ: тело папки вырастает из нуля, инструменты ВЫПЛЫВАЮТ
-    // из-под неё один за другим — неторопливо и плавно.
-    // ОТКРЫТИЕ — ТОЧНОЕ ЗЕРКАЛО СВЁРТКИ: тело папки вырастает ОДНОВРЕМЕННО
-    // с выплыванием строк (от первой к последней, снизу вверх), те же
-    // длительности и кривые, что у закрытия — только в обратную сторону
-    const h = kids.getBoundingClientRect().height;
-    const allRows = f.querySelectorAll('.qt-row');
-    // ОТКРЫТИЕ — ТОЧНОЕ ЗЕРКАЛО ЗАКРЫТИЯ: строки рождаются ПОД головой
-    // группы (сдвинуты вверх на свой путь, растворены) и одна за другой
-    // выплывают на место; тело папки опускается одновременно с первой.
-    allRows.forEach((r, i) => {
-      const dist = r.getBoundingClientRect().top - headRect.bottom;
-      r.style.transition = 'none';
-      r.style.transform = 'translateY(' + (-dist) + 'px) scale(.93)';
-      r.style.filter = 'blur(3px)';
-      r.style.opacity = '0';
-    });
-    const span = 120 + (allRows.length - 1) * 55 + 520;
-    kids.style.overflow = 'hidden';
-    kids.style.transition = 'none';
-    kids.style.height = '0px';
-    void kids.offsetHeight;
-    // ЛИНИЯ ОПУСКАЕТСЯ ВСЮ ДЛИТЕЛЬНОСТЬ ПОЛЁТА — тем же темпом, что и
-    // строки: последняя строка приходит на место ровно к развёртке линии
-    kids.style.transition = 'height ' + span + 'ms cubic-bezier(.2,.5,.2,1)';
-    kids.style.height = h + 'px';
-    allRows.forEach((r, i) => {
-      void r.offsetHeight;
-      r.style.transition =
-        'transform .5s cubic-bezier(.2,.5,.2,1) ' + (120 + i * 55) + 'ms, ' +
-        'opacity .45s ease ' + (270 + i * 55) + 'ms, ' +
-        'filter .45s ease ' + (270 + i * 55) + 'ms';
-      r.style.transform = 'translateY(0) scale(1)';
-      r.style.filter = 'blur(0px)';
-      r.style.opacity = '1';
-    });
-    setTimeout(() => {
-      kids.style.cssText = '';
-      allRows.forEach((r) => { r.style.cssText = ''; });
-      free();
-    }, span + 140);
   }
+  const rows = Array.from(f.querySelectorAll('.qt-row'));
+  if (!rows.length) return;
+  f._anim = true;
+  // геометрия снимается при открытом теле: путь каждой строки до головы
+  const headBottom = head.getBoundingClientRect().bottom;
+  const H = kids.getBoundingClientRect().height;
+  const STEP = 55, FLY = 500, LEAD = 120;
+  // ЗАКРЫТИЕ = ОТКРЫТИЕ НАОБОРОТ, кадр в кадр: те же кривые и стаггер,
+  // только кадры развёрнуты (строка уезжает ПОД голову, растворяясь) и
+  // очередь обращена — первой уходит НИЖНЯЯ строка. Никакого «проиграть
+  // задом наперёд»: только те же длительности, только зеркальный рисунок.
+  const anims = rows.map((r, i) => {
+    const dist = Math.max(4, r.getBoundingClientRect().top - headBottom);
+    const wait = wasOpen ? (rows.length - 1 - i) : i;   // закрытие: снизу вверх
+    const frames = wasOpen
+      ? [{ transform: 'translateY(0) scale(1)', opacity: '1', filter: 'blur(0px)' },
+         { transform: 'translateY(' + (-dist) + 'px) scale(.93)', opacity: '0', filter: 'blur(3px)' }]
+      : [{ transform: 'translateY(' + (-dist) + 'px) scale(.93)', opacity: '0', filter: 'blur(3px)' },
+         { transform: 'translateY(0) scale(1)', opacity: '1', filter: 'blur(0px)' }];
+    return r.animate(frames,
+      { duration: FLY, delay: LEAD + wait * STEP,
+        easing: 'cubic-bezier(.2,.5,.2,1)', fill: 'both' });
+  });
+  // ЛИНИЯ = СРЕДНИЙ ПРОГРЕСС СТРОК: при открытии растёт от нуля к полной
+  // ровно с прилётом строк; при закрытии тем же темпом съёживается к нулю.
+  // Не раньше инструментов и не позже — всегда их средний такт.
+  const dir = wasOpen ? -1 : 1;    // закрытие: прогресс 1 = строка ушла
+  kids.style.overflow = 'hidden';
+  let raf = 0;
+  const tick = () => {
+    let sum = 0;
+    anims.forEach((a) => {
+      const pr = a.effect.getComputedTiming().progress;
+      sum += pr == null ? 0 : pr;
+    });
+    const avg = sum / anims.length;
+    kids.style.height = Math.max(0, Math.min(H, H * (dir < 0 ? 1 - avg : avg))) + 'px';
+    if (anims.some((a) => a.playState === 'running')) {
+      raf = requestAnimationFrame(tick);
+    } else {
+      kids.style.height = (dir < 0 ? 0 : H) + 'px';
+    }
+  };
+  raf = requestAnimationFrame(tick);
+  Promise.all(anims.map((a) => a.finished)).then(() => {
+    cancelAnimationFrame(raf);
+    anims.forEach((a) => a.cancel());
+    if (wasOpen) {
+      f.classList.remove('open');
+      kids.classList.remove('open');
+    }
+    kids.style.cssText = '';
+    rows.forEach((r) => { r.style.cssText = ''; });
+    f._anim = false;
+  }).catch(() => {
+    cancelAnimationFrame(raf);
+    anims.forEach((a) => { try { a.cancel(); } catch (err) { /* уже мертва */ } });
+    if (wasOpen) {
+      f.classList.remove('open');
+      kids.classList.remove('open');
+    }
+    kids.style.cssText = '';
+    rows.forEach((r) => { r.style.cssText = ''; });
+    f._anim = false;
+  });
 }
 
 function qtRow(t) {
@@ -4913,7 +4918,7 @@ function foldOneCodeBlock(pre, ui, key) {
   if (ui && ui.mdEl && ui.mdEl._codePeek &&
       ui.mdEl._codePeek.has(key.split('\u0001')[0])) return;
   const thumb = collapseToThumb(wrap, {
-    instant: true, cls: 'th-code inline-thumb', icon: ICO.code,
+    instant: false, cls: 'th-code inline-thumb', icon: ICO.code,
     title: lang ? 'Код · ' + lang : 'Код',
     sub: code.split('\n').length + ' стр. · ' + fmtSize(code.length),
     tag: S.agentMode ? 'развернуть' : '',

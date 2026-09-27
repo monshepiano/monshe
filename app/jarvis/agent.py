@@ -1399,7 +1399,7 @@ def plan_owed_by_history(messages: List[Dict[str, Any]]) -> bool:
     ответ на неё содержал ```ui-панель, а шагов плана [ШАГ …] ещё не было.
     """
     hist = [m for m in (messages or [])
-            if isinstance(m.get("content"), str) and m.get("content")]
+            if isinstance(m.get("content"), str)]
     # последняя реплика в истории — текущая: смотрим предыдущие
     for i in range(len(hist) - 2, -1, -1):
         m = hist[i]
@@ -1408,7 +1408,8 @@ def plan_owed_by_history(messages: List[Dict[str, Any]]) -> bool:
         if not needs_plan(m["content"]):
             return False          # предыдущая реплика задачей не была
         after = hist[i + 1:]
-        asked_panel = any(x.get("role") == "assistant" and "```ui" in x["content"]
+        asked_panel = any(x.get("role") == "assistant"
+                          and ("```ui" in x["content"] or not x["content"].strip())
                           for x in after)
         ran_plan = any(x.get("role") == "assistant" and "[ШАГ" in x["content"]
                        for x in after)
@@ -2272,6 +2273,17 @@ class Agent:
                         joined_now = "".join(acc_text)
                         if len(joined_now) > 260 and not tools.looks_like_call_prefix(joined_now):
                             text_released = True
+                            # ДЛИННЫЙ ТЕКСТ = НАЧАЛО РАБОТЫ. Задача была
+                            # многошаговой (plan_pending жив) — план объявляется
+                            # СЕЙЧАС, до придержанных событий и текста: работа
+                            # текстом (игра кодом в ответе) — тоже работа, и
+                            # план над ней обязан стоять.
+                            if plan_pending and not plan_announced:
+                                plan_pending = False
+                                plan = self.make_plan(user_text, [])
+                                if plan:
+                                    for plan_event in announce_plan():
+                                        yield plan_event
                             for held_event in list(deferred_work_events):
                                 yield held_event
                             deferred_work_events.clear()
