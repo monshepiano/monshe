@@ -331,14 +331,34 @@ def _fallback_title(text: str) -> str:
 
 
 def _make_title(text: str, kind: str = "chat") -> str:
-    """Локальный заголовок без auxiliary LLM и конкуренции с основным ответом.
+    """Заголовок придумывает ИИ (nano), локальный — только запасной.
 
-    Для навигационного ярлыка уже достаточно измеримых ключевых слов исходной
-    просьбы. Второй облачный ответ делал первый turn медленнее, мог дважды ждать
-    retry и иногда всё равно возвращал общий заголовок. ``kind`` сохранён в API,
-    но алгоритму не нужна тематическая таблица.
+    Название диалога — это лицо переписки, и пользователь просил именно
+    ИИ-вариант. Запрос идёт ПОСЛЕ закрытия SSE (в _finish_local_post), поэтому
+    первый turn он не замедляет; жёсткий таймаут 4с и одна попытка — второй
+    раз не ждём. Любая ошибка означает локальный запасной, а не отсутствие
+    заголовка.
     """
     del kind
+    clean = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not clean:
+        return _fallback_title(text)
+    try:
+        from . import llm as _llm   # локальный импорт: без цикла зависимостей
+        result = _llm.chat([
+            {"role": "system", "content":
+             "Придумай КОРОТКОЕ название диалога (2-4 слова) по первой "
+             "реплике пользователя. Только суть, без кавычек и точки. "
+             "Пиши по-русски, с заглавной буквы. Ответ — только название."},
+            {"role": "user", "content": clean[:400]},
+        ], tier="nano", max_tokens=24, temperature=0.4, timeout=4,
+           operation="chat_title")
+        title = re.sub(r"\s+", " ", str(result.get("content") or "")).strip()
+        title = title.strip("\u00ab\u00bb\"'«»\"'").strip()
+        if 2 <= len(title) <= 60:
+            return title
+    except Exception:
+        pass
     return _fallback_title(text)
 
 

@@ -161,6 +161,42 @@ class RoutingAndPlanCostTests(unittest.TestCase):
             plain = agent.build_system_prompt(False)
             self.assertIn("дай выбрать размер поля", plain)
 
+    def test_chat_title_uses_llm_with_local_fallback(self) -> None:
+        # U: заголовок снова придумывает ИИ (nano); ошибка/пустой ответ —
+        # локальный запасной, но не отсутствие заголовка
+        with mock.patch.object(orchestrator, "_fallback_title",
+                               return_value="Локальный запасной") as fb, \
+             mock.patch("jarvis.llm.chat",
+                        return_value={"content": "Космическая аркада"}):
+            self.assertEqual(orchestrator.make_chat_title("напиши игру про космос"),
+                             "Космическая аркада")
+        with mock.patch("jarvis.llm.chat", side_effect=RuntimeError("net")):
+            fb2 = orchestrator._make_title("напиши игру про космос")
+            self.assertTrue(fb2)          # запасной заголовок есть всегда
+
+    def test_interrupted_answer_closes_the_turn(self) -> None:
+        # U: прерванный ответ не оставляет «висящий вопрос»: на месте обрыва
+        # метка, модель не отвечает первым делом на старую задачу
+        hist = [
+            {"role": "user", "content": "напиши игру"},
+            {"role": "assistant", "content": "Начинаю делать…",
+             "meta": {"interrupted": True}},
+        ]
+        def rows(msgs):
+            out = []
+            for m in msgs:
+                if m["role"] not in ("user", "assistant") or not m["content"]:
+                    continue
+                if m["role"] == "assistant" and (m.get("meta") or {}).get("interrupted"):
+                    out.append({"role": "assistant",
+                                "content": "[Ответ был прерван пользователем]"})
+                    continue
+                out.append({"role": m["role"], "content": m["content"]})
+            return out
+        got = rows(hist)
+        self.assertEqual(len(got), 2)
+        self.assertEqual(got[1]["content"], "[Ответ был прерван пользователем]")
+
     def test_social_gate_beats_agent_mode_and_forced_tier(self) -> None:
         original_get = orchestrator.CONFIG.get
 

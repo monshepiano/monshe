@@ -708,13 +708,27 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         # сборка контекста
-        history = orchestrator.summarize_history([
-            {"role": m["role"], "content": m["content"]}
-            for m in history_all
-            if m["role"] in ("user", "assistant") and m["content"]
-            # прерванные ответы — не ответы: обрывок в контексте путал модель
-            and not (m.get("meta") or {}).get("interrupted")
-        ][:-1])
+        # ПРЕРВАННЫЙ ОТВЕТ НЕ ОСТАВЛЯЕТ «ВИСЯЩИЙ ВОПРОС»: раньше обрывок
+        # исключался из истории, и модель видела старый вопрос без ответа —
+        # и первым делом отвечала на НЕГО, продолжая прерванную задачу.
+        # Теперь на месте обрыва стоит короткая метка: ход закрыт, тему
+        # продолжать не нужно.
+        def _hist_rows(msgs):
+            rows = []
+            for m in msgs:
+                if m["role"] not in ("user", "assistant") or not m["content"]:
+                    continue
+                if m["role"] == "assistant" and (m.get("meta") or {}).get("interrupted"):
+                    rows.append({"role": "assistant",
+                                 "content": "[Ответ был прерван пользователем]"})
+                    continue
+                rows.append({"role": m["role"], "content": m["content"]})
+            return rows
+
+        history = orchestrator.summarize_history(_hist_rows(history_all)[:-1])
+        had_interrupted = any(
+            m["role"] == "assistant" and (m.get("meta") or {}).get("interrupted")
+            for m in history_all[:-1])
 
         content_parts: List[Any] = []
         has_image = False
@@ -760,6 +774,12 @@ class Handler(BaseHTTPRequestHandler):
                 "ещё один уточняющий вопрос или показывать новый ui-блок. Считай "
                 "критические параметры собранными, некритичные выбери разумно и "
                 "сразу продолжай автономное выполнение инструментами."})
+        if had_interrupted:
+            # прямое указание: старая задача закрыта, работаем только над новой
+            messages.append({"role": "system", "content":
+                "Предыдущий ответ был прерван пользователем и тема закрыта. "
+                "НЕ продолжай прерванную задачу и не возвращайся к ней: "
+                "ответь только на новое сообщение."})
         messages.append(user_message)
 
         # Регистрация прогона для Stop: флаг отмены + контрольная функция.

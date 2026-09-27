@@ -1979,8 +1979,12 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   font-family:var(--ff);transition:.15s;text-transform:none}
 .code-bar .cb-copy:hover{color:var(--cy);border-color:var(--line2);background:rgba(0,200,240,.15)}
 .code-block pre{margin:0;border:0;border-radius:0;max-height:min(30vh,260px)}
-/* слот-обёртка свернутого кода: коробки не создаёт, служит якорем кэша */
+/* слот-обёртка свернутого кода: коробки не создаёт, служит якорем кэша.
+   Миниатюра внутри слота НЕ проигрывает появление заново: печать
+   перезаменяет узел каждый тик, и перезапуск анимации десятки раз в
+   секунду был и дёрганьем, и лишней работой композитора */
 .code-slot{display:contents}
+.code-slot .thumb{animation:none}
 
 /* --- карточка «задача ушла в фон» --- */
 .bg-card{margin:10px 0;border:1px solid rgba(47,156,146,.32);border-radius:12px;
@@ -2068,6 +2072,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 /* тумблер */
 .ui-toggle{display:flex;align-items:center;justify-content:space-between;gap:14px}
 .ui-lab-t{font-size:13px;color:var(--tx)}
+.ui-sw:focus,.ask-opt:focus,.ui-tile:focus{outline:none}
 .ui-sw{position:relative;width:46px;height:24px;border-radius:999px;flex:0 0 auto;
   border:1px solid var(--line2);background:rgba(255,255,255,.05);cursor:pointer;
   transition:background .22s,border-color .22s,box-shadow .22s}
@@ -2179,10 +2184,14 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 
 /* ---- дата и цвет ---- */
 .ui-date{color-scheme:dark;font-family:var(--fm)}
-.ui-color{width:100%;height:38px;padding:0;border-radius:10px;cursor:pointer;
-  background:transparent;border:1px solid rgba(var(--h),.3)}
-.ui-color::-webkit-color-swatch-wrapper{padding:3px}
-.ui-color::-webkit-color-swatch{border:0;border-radius:7px}
+.ui-color{width:100%;height:38px;padding:3px;border-radius:10px;cursor:pointer;
+  background:rgba(var(--h),.07);border:1px solid rgba(var(--h),.3);outline:none}
+.ui-color:focus{border-color:rgba(var(--h),.6)}
+/* ОДИН контур, а не два: собственная рамка нативного свотча снята в обоих
+   движках — раньше WebKit/Firefox рисовали свою рамку поверх нашей */
+.ui-color::-webkit-color-swatch-wrapper{padding:0}
+.ui-color::-webkit-color-swatch{border:0;border-radius:6px}
+.ui-color::-moz-color-swatch{border:0;border-radius:6px}
 
 /* ---- оценка звёздами ---- */
 .ui-stars{display:flex;gap:4px}

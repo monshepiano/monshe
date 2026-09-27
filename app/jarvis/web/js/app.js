@@ -2987,8 +2987,17 @@ function mountUiPanels(root) {
         const sw = el('button', 'ui-sw' + (it.val ? ' on' : ''));
         sw.innerHTML = '<i></i>';
         sw.addEventListener('click', () => {
-          it.val = !it.val; sw.classList.toggle('on', it.val); blip(it.val);
+          it.val = !it.val; sw.classList.toggle('on', it.val);
+          // ЗНАЧЕНИЕ СНАЧАЛА, звук потом: любой сбой звука (контекст
+          // аудио уснул) не имеет права съесть регистрацию значения —
+          // иначе переключатель «иногда не работает»
           controlChanged();
+          try { blip(it.val); } catch (err) { /* звук не важен */ }
+        });
+        // клик по ПОДПИСИ тоже переключает: цель крупнее, мимо не промахнуться
+        row.addEventListener('click', (e) => {
+          if (sw.contains(e.target)) return;
+          sw.click();
         });
         row.appendChild(sw);
 
@@ -4078,22 +4087,35 @@ function qtFold(ui, node, isLast) {
   const t0 = performance.now();
   const DUR = 1050;
   const ease = (k) => (k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
-  // ПРИЦЕЛ: путь до головы папки фиксируется НА СТАРТЕ (D0), а каждый кадр
-  // компенсирует подъём ленты — вальс сжимает соседей сверху, узел едет
-  // вверх сам, и прежний «живой» пересчёт цели к концу вырождался в ноль:
-  // инструменты таяли на местах НИЖЕ группы, не долетая. Теперь конец
-  // полёта всегда — верх узла точно у низа головы папки.
+  // ПОЛЁТ ЧЕРЕЗ WAAPI: у анимации Web Animations приоритет выше ЛЮБЫХ
+  // CSS-переходов и анимаций — ничто больше не может заглушить трансформ
+  // (inline-transform в прошлых версиях местами перекрывался стилями, и
+  // инструмент таял на месте, ниже группы). ЦЕЛЬ — ЦЕНТР строки приходит
+  // В ЦЕНТР головы папки: инструмент визуально входит В саму группу.
+  // Лента вальса поднимается (соседи сверху сжимаются) — конец ключа
+  // ПЕРЕЦЕЛИВАЕТСЯ каждый кадр: посадка всегда в голову, что бы ни делал
+  // макет вокруг.
   const fr0 = folder.getBoundingClientRect();
   const base0 = node.getBoundingClientRect().top;
-  const D0 = fr0.bottom - base0;
-  node.__qDy = 0;
+  const C0 = (fr0.top + fr0.height / 2) - base0;   // центр головы минус старт
+  let aim = C0;
+  const flight = node.animate(
+    [{ transform: 'translateY(0px) scale(1)' },
+     { transform: 'translateY(' + aim + 'px) scale(.93)' }],
+    { duration: DUR, easing: 'cubic-bezier(.2,.5,.2,1)', fill: 'forwards' });
   const homing = () => {
     const k = Math.min(1, (performance.now() - t0) / DUR);
     const e = ease(k);
     const nr = node.getBoundingClientRect();
-    const base = nr.top - node.__qDy;      // где узел жил бы без полёта
-    node.__qDy = e * D0 + Math.max(0, base0 - base);
-    node.style.transform = 'translateY(' + node.__qDy + 'px) scale(.93)';
+    const base = nr.top - e * aim;         // где узел жил бы без полёта
+    const rise = Math.max(0, base0 - base);  // насколько лента поднялась
+    const need = C0 + rise;                  // цель с учётом подъёма
+    if (Math.abs(need - aim) > 0.5) {
+      aim = need;
+      flight.effect.setKeyframes([
+        { transform: 'translateY(0px) scale(1)' },
+        { transform: 'translateY(' + aim + 'px) scale(.93)' }]);
+    }
     if (k < 1) requestAnimationFrame(homing);
   };
   requestAnimationFrame(homing);
@@ -4178,21 +4200,24 @@ function qtToggleFolder(f) {
   raf = requestAnimationFrame(tick);
   Promise.all(anims.map((a) => a.finished)).then(() => {
     cancelAnimationFrame(raf);
-    anims.forEach((a) => a.cancel());
+    // СНАЧАЛА прячем тело (display:none), и только потом cancel: cancel
+    // снимает fill-конец анимаций, и строки успевали вспыхнуть видимыми
+    // на последний кадр — «закрытие подлагивает».
     if (wasOpen) {
       f.classList.remove('open');
       kids.classList.remove('open');
     }
+    anims.forEach((a) => { try { a.cancel(); } catch (err) { /* уже мертва */ } });
     kids.style.cssText = '';
     rows.forEach((r) => { r.style.cssText = ''; });
     f._anim = false;
   }).catch(() => {
     cancelAnimationFrame(raf);
-    anims.forEach((a) => { try { a.cancel(); } catch (err) { /* уже мертва */ } });
     if (wasOpen) {
       f.classList.remove('open');
       kids.classList.remove('open');
     }
+    anims.forEach((a) => { try { a.cancel(); } catch (err) { /* уже мертва */ } });
     kids.style.cssText = '';
     rows.forEach((r) => { r.style.cssText = ''; });
     f._anim = false;
@@ -4809,7 +4834,7 @@ function typerStart(ui) {
     // Пропущенный браузером кадр не превращаем в долг, который затем выдаётся
     // пачкой. Реальное время всё равно прошло; после stall продолжаем тем же
     // ровным темпом вместо визуального «выстрела» на 100–250 мс текста.
-    const elapsed = Math.max(1, Math.min(32, now - lastTick));
+    const elapsed = Math.max(1, Math.min(250, now - lastTick));
     lastTick = now;
     const left = ui.buffer.length - ui.shown.length;
     if (left <= 0) {

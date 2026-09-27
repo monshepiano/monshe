@@ -403,8 +403,8 @@ function testImportantHeadingCaretAndTrail() {
   assert(!/heading|important/i.test(typer), 'typer must not inspect markdown headings');
   assert(/performance\.now\(\)/.test(typer) && /CPS_SMOOTH_MS/.test(typer),
     'elapsed-time CPS must survive delayed timer frames');
-  assert(/Math\.min\(32,\s*now\s*-\s*lastTick\)/.test(typer),
-    'a delayed browser frame must not be paid back as a visible character burst');
+  assert(/Math\.min\(250,\s*now\s*-\s*lastTick\)/.test(typer),
+    'a delayed browser frame is credited HONESTLY (up to 250ms): heavy frames must never slow the text pace — the step cap already prevents bursts');
   assert(/step\s*=\s*Math\.min\(step,\s*left,\s*\(code\s*\?\s*\(ui\.fastFinish\s*\?\s*26\s*:\s*10\)\s*:\s*4\)\s*\*\s*turbo\)/.test(typer),
     'step limit stays 4 for prose, rises for dense content after done, and doubles under turbo');
   assert(/const turbo = S\.turbo \? 16 : 1;/.test(typer) &&
@@ -1283,6 +1283,14 @@ function testReadinessFollowHistoryAndLiveCodeContracts() {
     /\.md pre\.live-code\{max-height:min\(30vh,260px\)/.test(css) &&
     /\.code-block pre\{[^}]*max-height:min\(30vh,260px\)/.test(css),
     'opening a chat folds code back into slim rows; the expanded code window is COMPACT (a third of the screen)');
+  // U: тик печати кредитует ЧЕСТНОЕ время (до 250мс), а не максимум 32мс:
+  // тяжёлый кадр больше не режет темп текста — от пачек защищает предел шага
+  assert(/Math\.min\(250, now - lastTick\)/.test(extractFunction(js, 'typerStart')) &&
+    !/Math\.min\(32, now - lastTick\)/.test(js),
+    'typer credits HONEST elapsed time (cap 250ms): heavy frames cut DOM frequency, never the text pace');
+  // U: миниатюры в слотах кода не перезапускают анимацию при каждой перерисовке
+  assert(/\.code-slot \.thumb\{animation:none\}/.test(css),
+    'thumbs inside code slots never replay their pop-in animation on typer repaints');
   // S: печать больше не перестраивает ГОЛОВУ целиком — корень лага после
   // кода: innerHTML всей ленты на каждом тике парсил сотни килобайт заново
   const rt = extractFunction(js, 'renderTyped');
@@ -1728,10 +1736,12 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   assert(/'height 1\.05s cubic-bezier\(\.2,\.5,\.2,1\), '/.test(rf) &&
     !/position = 'fixed'/.test(rf) && !/ghost/.test(rf) &&
     /requestAnimationFrame\(homing\)/.test(rf) &&
-    /const D0 = fr0\.bottom - base0;/.test(rf) &&
-    /const base0 = node\.getBoundingClientRect\(\)\.top;/.test(rf) &&
-    /node\.__qDy = e \* D0 \+ Math\.max\(0, base0 - base\);/.test(rf) &&
-    /const base = nr\.top - node\.__qDy;/.test(rf) &&
+    /const flight = node\.animate\(/.test(rf) &&
+    /flight\.effect\.setKeyframes\(\[/.test(rf) &&
+    /const C0 = \(fr0\.top \+ fr0\.height \/ 2\) - base0;/.test(rf) &&
+    /const need = C0 \+ rise;/.test(rf) &&
+    /const rise = Math\.max\(0, base0 - base\);/.test(rf) &&
+    /easing: 'cubic-bezier\(\.2,\.5,\.2,1\)', fill: 'forwards'/.test(rf) &&
     /function qtFold\(ui, node, isLast\)/.test(js) &&
     /if \(isLast\) setTimeout\(folderBlink, 820\);/.test(rf) &&
     /node\.style\.filter = 'blur\(3px\)'/.test(rf) &&
@@ -1763,7 +1773,8 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /const dir = wasOpen \? -1 : 1;/.test(tf) &&
     /H \* \(dir < 0 \? 1 - avg : avg\)/.test(tf) &&
     /Promise\.all\(anims\.map\(\(a\) => a\.finished\)\)/.test(tf) &&
-    !/setTimeout\(/.test(tf),
+    !/setTimeout\(/.test(tf) &&
+    tf.indexOf("f.classList.remove('open')") < tf.indexOf('a.cancel()'),
     'MANUAL open/close is ONE animation: closing plays the SAME frames inverted (bottom row leaves first), and the rail height tracks the rows AVERAGE PROGRESS every frame — perfectly in sync, never ahead');
   assert(tf.indexOf("kids.style.height = '0px'") < tf.indexOf("f.classList.remove('open')"),
     'CLOSING keeps the folder open until the reverse animation finishes — it never snaps to display:none');
@@ -2101,6 +2112,12 @@ function testProactiveModesBudgetAndAbortContracts() {
   assert(/document\.addEventListener\('drop', \(\) => stopDragGhosts\(\), true\);/.test(js) &&
     /document\.addEventListener\('dragend', \(\) => stopDragGhosts\(\), true\);/.test(js),
     'the drag ghost layer is killed on EVERY drop/dragend path — it can never freeze on screen');
+  // U: тумблер — значение регистрируется ДО звука, звук в try-catch,
+  // клик по подписи тоже переключает
+  assert(/controlChanged\(\);\n          try \{ blip\(it\.val\); \} catch/.test(js) &&
+    /if \(sw\.contains\(e\.target\)\) return;/.test(js) &&
+    /sw\.click\(\);/.test(js),
+    'ui toggle registers its value BEFORE the sound (sound is try-caught) and the whole row is clickable');
   // S: «не найдено» при переносе в песочницу больше не тупик: чип несёт
   // ссылку, содержимое ввезётся заново
   assert(/function importByUrl\(url, name, destDir\)/.test(js) &&
