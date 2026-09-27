@@ -1275,20 +1275,19 @@ function testReadinessFollowHistoryAndLiveCodeContracts() {
   // foldCodeBlocks съёживает блок ОТ ВИДИМОЙ высоты и лишь потом снимает класс
   assert(/foldCodeBlocks\(ui\.mdEl,\s*true\)/.test(finish),
     'completed code folds with the animate path, never expanding to full height first');
-  // Q2: при ОТКРЫТИИ диалога код РАЗВЁРНУТ в компактном окне — keepCodeOpen
-  assert(/function keepCodeOpen\(root\)/.test(js) &&
-    /keepCodeOpen\(node\.body\);/.test(js) &&
-    (js.match(/keepCodeOpen\(node\.body\);/g) || []).length >= 2 &&
-    !/foldCodeBlocks\(node\.body\);/.test(js) &&
-    /'code-block code-open'/.test(extractFunction(js, 'keepCodeOpen')) &&
-    /\.code-block\.code-open pre\{max-height:min\(34vh,280px\)\}/.test(css),
-    'opening a chat shows code EXPANDED in a compact window (not thumbnails)');
+  // R: при ОТКРЫТИИ диалога код снова СВОРАЧИВАЕТСЯ в стройные строки;
+  // окно развёрнутого кода — полноразмерное (никто не просил его уменьшать)
+  assert(!/keepCodeOpen/.test(js) && !/code-open/.test(css) &&
+    (js.match(/foldCodeBlocks\(node\.body\);/g) || []).length >= 2 &&
+    /\.md pre\{[^}]*max-height:460px/s.test(css) &&
+    /\.md pre\.live-code\{max-height:460px/.test(css),
+    'opening a chat folds code back into slim rows; the expanded code window is FULL-SIZE again');
   const fold = extractFunction(js, 'foldCodeBlocks');
   assert(/classList\.remove\('live-code'\)/.test(fold) &&
     /getBoundingClientRect\(\)\.height/.test(fold),
     'folding measures the visible height before removing the live-code cap');
-  assert(/\.md pre\.live-code\s*\{[^}]*max-height:min\(30vh,260px\)[^}]*overflow:auto/s.test(css),
-    'typing code remains in a bounded, COMPACT internally scrolling viewport');
+  assert(/\.md pre\.live-code\s*\{[^}]*max-height:460px[^}]*overflow:auto/s.test(css),
+    'typing code remains in a bounded, FULL-SIZE internally scrolling viewport');
 }
 
 
@@ -1710,15 +1709,16 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /const pending = \[\];/.test(fq),
     'answer end folds tools ONE BY ONE into the group (170ms), strip compressing in the same beat');
 
-  assert(/'height 1\.05s cubic-bezier\(\.2,\.5,\.2,1\)'/.test(extractFunction(js, 'qtFold')) &&
-    /const ghost = el\('div'\);/.test(extractFunction(js, 'qtFold')) &&
-    /node\.style\.position = 'fixed';/.test(extractFunction(js, 'qtFold')) &&
-    /requestAnimationFrame\(homing\)/.test(extractFunction(js, 'qtFold')) &&
-    /ghost\.style\.height = '0px';/.test(extractFunction(js, 'qtFold')) &&
-    /node\.style\.top = \(y0 \+ \(y1 - y0\) \* e\) \+ 'px';/.test(extractFunction(js, 'qtFold')) &&
+  const rf = extractFunction(js, 'qtFold');
+  assert(/'height 1\.05s cubic-bezier\(\.2,\.5,\.2,1\), '/.test(rf) &&
+    !/position = 'fixed'/.test(rf) && !/ghost/.test(rf) &&
+    /requestAnimationFrame\(homing\)/.test(rf) &&
+    /node\.__qDy = e \* need;/.test(rf) &&
+    /const need = fr\.bottom - base;/.test(rf) &&
+    /const base = nr\.top - node\.__qDy;/.test(rf) &&
     /function qtFold\(ui, node, isLast\)/.test(js) &&
-    /if \(isLast\) setTimeout\(folderBlink, 820\);/.test(extractFunction(js, 'qtFold')) &&
-    /node\.style\.filter = 'blur\(' \+ \(3 \* fade\) \+ 'px\)';/.test(extractFunction(js, 'qtFold')) &&
+    /if \(isLast\) setTimeout\(folderBlink, 820\);/.test(rf) &&
+    /node\.style\.filter = 'blur\(3px\)'/.test(rf) &&
     /folder\._pend = \(folder\._pend \|\| 0\) \+ 1;/.test(extractFunction(js, 'qtFold')) &&
     /folder\.classList\.add\('blink'\)/.test(extractFunction(js, 'qtFold')) &&
     /\.qt-folder\.blink \.qt-name\{animation:qtBlink \.5s ease-out both\}/.test(css) &&
@@ -1737,14 +1737,17 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /\.qt-kids>\.qt-rail\{/.test(css) && /\.qt-rows\{/.test(css),
     'the folder has no rail when closed; opened, a rail runs down from the icon');
   const tf = extractFunction(js, 'qtToggleFolder');
-  assert(/i \* 55\)/.test(tf) && /'opacity \.42s ease '/.test(tf) &&
-    /'height \.46s cubic-bezier\(\.4,\.5,\.4,1\)'/.test(tf) &&
-    /r\.style\.transform = 'translateY\(9px\)';/.test(tf) &&
-    (tf.match(/translateY\(9px\)/g) || []).length >= 2 &&
+  assert(/i \* 55\)/.test(tf) && /'opacity \.45s ease '/.test(tf) &&
+    /const dist = r\.getBoundingClientRect\(\)\.top - headRect\.bottom;/.test(tf) &&
+    (tf.match(/translateY\(' \+ \(-dist\) \+ 'px\) scale\(\.93\)'/g) || []).length >= 2 &&
+    /r\.style\.filter = 'blur\(3px\)';/.test(tf) &&
+    /kids\.style\.height = '0px';/.test(tf) &&
     /f\._anim/.test(tf) &&
-    /const rowsT = rows\.length \* 55 \+ 500;/.test(tf) &&
-    /kids\.style\.height = '0px';/.test(tf) && /kids\.style\.height = h \+ 'px';/.test(tf),
-    'closing folds rows and folder body TOGETHER (mirrored on open); clicks never break the animation');
+    /const flyT = rows\.length \* 55 \+ 560;/.test(tf) &&
+    /const rowsT = flyT \+ 120;/.test(tf) &&
+    /kids\.style\.height = h \+ 'px';/.test(tf) &&
+    /'height \.3s cubic-bezier\(\.4,\.5,\.4,1\)'/.test(tf),
+    'MANUAL open/close is the SAME flight animation mirrored: rows dive under the group head one by one, the strip zips up after the last one lands');
   assert(tf.indexOf("kids.style.height = '0px'") < tf.indexOf("f.classList.remove('open')"),
     'CLOSING keeps the folder open until the reverse animation finishes — it never snaps to display:none');
   assert(/'height \.44s cubic-bezier\(\.3,\.6,\.3,1\), opacity \.3s ease'/.test(extractFunction(js, 'qtToggleDetail')) &&
@@ -1832,9 +1835,17 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     'WINE NIGHT everywhere: wine sky, wine panels, wine scroll, bright-rose energy — plan stays GOLD');
   assert(/body\.agent-on \.md pre\{background:rgba\(20,9,13,\.92\)/.test(css) &&
     /body\.agent-on \.md pre code\{color:#d8dde6\}/.test(css) &&
+    /body\.agent-on \.md code\{background:rgba\(20,9,13,\.85\);color:#d8dde6\}/.test(css) &&
     /body\.agent-on \.md th\{background:rgba\(74,20,34,\.7\)/.test(css) &&
     /body\.agent-on \.md tr:nth-child\(even\)\{background:rgba\(46,19,27,\.35\)\}/.test(css),
-    'CODE sits on a dark-wine slab with neutral readable font; wine head and wine zebra');
+    /body\.agent-on \.att\{background:rgba\(168,50,72,\.12\)/.test(css) &&
+    /body\.agent-on \.thumb\{background:rgba\(30,12,18,\.5\)\}/.test(css) &&
+    /body\.agent-on \.ui-panel\{border-color:rgba\(196,84,104,\.26\)/.test(css) &&
+    /body\.agent-on \.day-separator\{color:#d9b3bd/.test(css) &&
+    /body\.agent-on \.chat-item:hover\{background:rgba\(168,50,72,\.14\)/.test(css) &&
+    /body\.agent-on \.brand-name\{text-shadow:0 0 18px rgba\(196,84,104,\.45\)\}/.test(css) &&
+    /body\.agent-on \.nav-item\.drop-hot\{background:rgba\(168,50,72,\.2\)/.test(css),
+    'CODE stays NEUTRAL in agent mode (no red code lines); final sweep: attachments, thumbs, ui-panels, day separators, chat list, brand, drop glow — all wine');
   assert(/body\.agent-on \.hello span\{background:linear-gradient\(90deg,#eec2ce,#d39aa9 42%,#e8c4cf 74%,#eec2ce\);[\s\S]*?-webkit-background-clip:text;background-clip:text;color:transparent;[\s\S]*?filter:drop-shadow\(0 0 22px rgba\(196,84,104,\.28\)\)\}/.test(css),
     'the AGENT greeting paints ONLY the letters (clip:text) — no square gradient slab behind JARVIS');
   // ИСТОРИЯ ИНСТРУМЕНТОВ — ВСЕГДА ТИХАЯ КУХНЯ: restoreTrace собирает папки
@@ -2033,16 +2044,20 @@ function testProactiveModesBudgetAndAbortContracts() {
     'code NEVER collapses into a slim «развернуть» row: opening a tool shows the full code (scrollable)');
   // дописанный код: окно ограничено по высоте, нейтральный цвет строк,
   // стройная строка СРАЗУ после закрытия fence, клик раскрывает обратно
-  assert(/\.md pre\{[^}]*max-height:min\(30vh,260px\)/s.test(css) &&
+  assert(/\.md pre\{[^}]*max-height:460px/s.test(css) &&
     /\.md pre code\{[^}]*color:#d4d9e0\}/s.test(css) &&
-    /\.md pre\.live-code\{max-height:min\(30vh,260px\)/.test(css) &&
-    /function foldOneCodeBlock\(pre, ui, idx\)/.test(js) &&
-    /foldOneCodeBlock\(pre, ui, idx\);/.test(js) &&
-    /_codePeek\.add\(idx\);/.test(js) &&
+    /\.md pre\.live-code\{max-height:460px/.test(css) &&
+    /function foldOneCodeBlock\(pre, ui, key\)/.test(js) &&
+    /function refoldCodeBlocks\(ui, root, livePre, text\)/.test(js) &&
+    /refoldCodeBlocks\(ui, ui\.mdEl, livePre, text\);/.test(js) &&
+    /ui\._codeCache\.set\(key, slot\);/.test(js) &&
+    /pre\.replaceWith\(slot\);/.test(extractFunction(js, 'refoldCodeBlocks')) &&
+    /\.code-slot\{display:contents\}/.test(css) &&
+    /_codePeek\.add\(key\);/.test(js) &&
     !/code-compact/.test(js) && !/code-compact/.test(css) &&
     /tag: S\.agentMode \? 'развернуть' : ''/.test(js) &&
     /tag: 'развернуть',/.test(js),
-    'closed fence becomes a slim thumbnail tab THE MOMENT it closes (mid-answer too); quiet mode stays clean');
+    'closed fence becomes a slim thumbnail tab THE MOMENT it closes; the cached slot SURVIVES the typer repaint — no 10x/sec thrash');
   // панель ФАЙЛЫ: «Импорт», иконка обновления (две круговые стрелки),
   // «Очистить» замьючена, когда чистить нечего
   assert(/id="uploadHere" title="Импорт"/.test(html) &&
@@ -2062,6 +2077,11 @@ function testProactiveModesBudgetAndAbortContracts() {
     /await uploadToSandbox\(Array\.from\(e\.dataTransfer\.files\), S\.fdir \|\| ''\);/.test(js) &&
     /e\.target\.closest\('#view-files'\)\) return;/.test(js),
     'a file chip in chat drags into the sandbox with the SAME ghost trail; dropping OS files onto the files grid imports them into the sandbox');
+  // R: шлейф гаснет в САМОМ броске — drop на документе (capture) и dragend,
+  // иначе перерисовка сетки съедает источник и миниатюры висят вечно
+  assert(/document\.addEventListener\('drop', \(\) => stopDragGhosts\(\), true\);/.test(js) &&
+    /document\.addEventListener\('dragend', \(\) => stopDragGhosts\(\), true\);/.test(js),
+    'the drag ghost layer is killed on EVERY drop/dragend path — it can never freeze on screen');
   // поток: полоса удлиняется ПЕРВОЙ, строка пишется после неё
   assert(/qt-flowline qt-wait/.test(js) &&
     /classList\.remove\('qt-wait'\), 230\)/.test(js) &&

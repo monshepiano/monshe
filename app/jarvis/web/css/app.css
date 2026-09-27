@@ -760,12 +760,12 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .md strong{color:#fff;font-weight:600}
 .md code{font-family:var(--fm);font-size:12.3px;background:rgba(0,212,255,.11);padding:2px 6px;border-radius:5px;color:#8ce9ff}
 .md pre{margin:11px 0;padding:12px 14px;border-radius:11px;background:rgba(0,0,0,.5);border:1px solid var(--line);
-  /* развёрнутый код — компактное окно со скроллом, НЕ весь экран */
-  max-height:min(30vh,260px);overflow:auto;position:relative}
+  /* развёрнутый код — полноразмерное окно, как у готовых блоков */
+  max-height:460px;overflow:auto;position:relative}
 .md pre code{background:none;padding:0;font-size:12px;line-height:1.6;color:#d4d9e0}
 /* Незаконченный code fence не растягивает весь чат: окно следует за новыми
    строками само, а после visual done обычный foldCodeBlocks сворачивает код. */
-.md pre.live-code{max-height:min(30vh,260px);overflow:auto;overscroll-behavior:contain}
+.md pre.live-code{max-height:460px;overflow:auto;overscroll-behavior:contain}
 /* ЗАКОНЧЕННЫЙ БЛОК — СТРОЙНАЯ СТРОКА СРАЗУ ПОСЛЕ ЗАКРЫТИЯ FENCE: клик
    раскрывает обратно в окно. Никакой кнопки «развернуть» — просто строка */
 /* ДОПИСАННЫЙ код сворачивается в строку СРАЗУ после написания — не ждём
@@ -1979,8 +1979,8 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   font-family:var(--ff);transition:.15s;text-transform:none}
 .code-bar .cb-copy:hover{color:var(--cy);border-color:var(--line2);background:rgba(0,200,240,.15)}
 .code-block pre{margin:0;border:0;border-radius:0;max-height:460px}
-/* код в ОТКРЫТОМ диалоге: развёрнут, но окно ещё компактнее */
-.code-block.code-open pre{max-height:min(34vh,280px)}
+/* слот-обёртка свернутого кода: коробки не создаёт, служит якорем кэша */
+.code-slot{display:contents}
 
 /* --- карточка «задача ушла в фон» --- */
 .bg-card{margin:10px 0;border:1px solid rgba(47,156,146,.32);border-radius:12px;
@@ -2769,7 +2769,7 @@ body.agent-on .md blockquote{border-left-color:#c94760;background:rgba(143,39,57
 body.agent-on .md ::selection{background:rgba(168,50,72,.45)}
 
 /* --- 5. КОД: тёмно-винная плита, светлый нейтральный текст --- */
-body.agent-on .md code{background:rgba(38,17,24,.85);color:#f0c4cf}
+body.agent-on .md code{background:rgba(20,9,13,.85);color:#d8dde6}
 body.agent-on .md pre{background:rgba(20,9,13,.92);border-color:rgba(196,84,104,.22)}
 body.agent-on .md pre code{color:#d8dde6}
 body.agent-on .code-block{border-color:rgba(196,84,104,.26);background:rgba(20,9,13,.9)}
@@ -2924,6 +2924,25 @@ body.agent-on .boot-log{color:#8a5f6a}
 body.agent-on .crumbs .cr{border-color:rgba(168,50,72,.3);color:#cf8a9b}
 body.agent-on .crumbs .cr:hover{border-color:rgba(224,120,140,.5)}
 body.agent-on .fp-stat b{color:#e8c4cf}
+
+/* --- 19b. ФИНАЛЬНЫЙ ПРОХОД: чипы вложений, миниатюры, ui-панели,
+       разделители дней, список диалогов, шлейф дропа — всё вино --- */
+body.agent-on .att{background:rgba(168,50,72,.12);border-color:rgba(196,84,104,.3)}
+body.agent-on .att b{color:#e8a7b8}
+body.agent-on .thumb{background:rgba(30,12,18,.5)}
+body.agent-on .thumb:hover{background:rgba(168,50,72,.16);color:#d3a0ac}
+body.agent-on .thumb:hover .th-open{color:#e8a7b8}
+body.agent-on .ui-panel{border-color:rgba(196,84,104,.26);
+  background:linear-gradient(180deg,rgba(46,19,27,.42),rgba(24,10,15,.42))}
+body.agent-on .day-separator{color:#d9b3bd;
+  filter:drop-shadow(0 0 9px rgba(196,84,104,.16))}
+body.agent-on .day-separator::before,body.agent-on .day-separator::after{
+  background:linear-gradient(90deg,transparent,rgba(196,84,104,.3))}
+body.agent-on .chat-item:hover{background:rgba(168,50,72,.14);color:#f0c4cf}
+body.agent-on .brand-name{text-shadow:0 0 18px rgba(196,84,104,.45)}
+body.agent-on .nav-item.drop-hot{background:rgba(168,50,72,.2);
+  border-color:rgba(224,120,140,.55);
+  box-shadow:0 0 0 1px rgba(224,120,140,.4),0 4px 14px rgba(168,50,72,.22)}
 
 /* --- 20. ТУЛТИПЫ: тёмно-винные с розовой кромкой --- */
 body.agent-on .toggle[data-tip]:is(:hover,:focus-visible)::after,

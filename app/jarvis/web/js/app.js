@@ -838,7 +838,7 @@ async function syncChatTail() {
     const node = addAiMsg(m.created_at);
     node.root.dataset.msgId = m.id;
     typeAutoReply(node, m.content, (ui) => {
-      keepCodeOpen(node.body);
+      foldCodeBlocks(node.body);
       mountUiPanels(node.body);
       (meta.files || []).forEach((f) => attachFileChip(node.body, f));
       addMsgActions(node, m.content);
@@ -1020,7 +1020,7 @@ function renderMessages(host, messages) {
       // ход мыслей и действия из прошлого ответа — свёрнутыми строчками
       restoreTrace(node, meta);
       node.body.appendChild(el('div', 'md', MD.render(m.content)));
-      keepCodeOpen(node.body);
+      foldCodeBlocks(node.body);
       mountUiPanels(node.body);
       (meta.files || []).forEach((f) => attachFileChip(node.body, f));
       addMsgActions(node, m.content);
@@ -3071,34 +3071,6 @@ function mountUiPanels(root) {
   });
 }
 
-/* Открытие диалога: код стоит РАЗВЁРНУТЫМ — с панелью языка и копирования,
-   но в компактном окне (высота поменьше, скролл внутри). Миниатюры остаются
-   живым зрелищем во время ответа; в истории важнее сразу видеть код. */
-function keepCodeOpen(root) {
-  if (!root) return;
-  // если код успел свернуться в миниатюры (реплика авто печаталась тем же
-  // тайпером) — разворачиваем их: в истории код виден сразу
-  $$('.thumb.th-code', root).forEach((t) => t.click());
-  $$('pre', root).forEach((pre) => {
-    if (pre.closest('.code-block')) return;
-    const code = pre.textContent || '';
-    if (code.split('\n').length < 4 && code.length < 200) return;
-    const lang = pre.getAttribute('data-lang') || '';
-    const wrap = el('div', 'code-block code-open');
-    pre.parentNode.insertBefore(wrap, pre);
-    wrap.appendChild(pre);
-    const bar = el('div', 'code-bar');
-    bar.appendChild(el('span', 'cb-lang', lang || 'код'));
-    const cp = el('button', 'cb-copy', 'Копировать');
-    cp.addEventListener('click', (e) => {
-      e.stopPropagation();
-      navigator.clipboard.writeText(code).then(() => toast('Код скопирован', 'success'));
-    });
-    bar.appendChild(cp);
-    wrap.insertBefore(bar, pre);
-  });
-}
-
 function foldCodeBlocks(root, animate) {
   if (!root) return;
   $$('pre', root).forEach((pre) => {
@@ -4090,48 +4062,34 @@ function qtFold(ui, node, isLast) {
   folder._items.push({ name: t.name, label: t.label, group: t.group, args: t.args,
                        ok: t.ok, elapsed: t.elapsed, result: t.result });
   qtFolderSync(folder);
-  // ПОЛЁТ ВНЕ ПОТОКА. КОРЕНЬ «УЛЕТАЮТ ВЫШЕ ПАПКИ»: вальс складывает узлы
-  // с перекрытием, и пока инструмент летит, СЖИМАЮЩИЕСЯ соседи сверху
-  // поднимают его вместе с макетом — рассчитанный смещённый пролёт
-  // перелетал группу. Теперь узел выходит из потока (его место занимает
-  // плавно сжимающийся призрак), а цель пересчитывается КАЖДЫЙ КАДР по
-  // живому положению папки: посадка точно ПОД голову группы, всегда.
-  const nrect = node.getBoundingClientRect();
-  const h0 = nrect.height;
-  const ghost = el('div');
-  ghost.style.height = h0 + 'px';
-  node.parentNode.insertBefore(ghost, node);
-  node.style.position = 'fixed';
-  node.style.left = nrect.left + 'px';
-  node.style.top = nrect.top + 'px';
-  node.style.width = nrect.width + 'px';
-  node.style.height = h0 + 'px';
-  node.style.margin = '0';
-  node.style.zIndex = '6';
+  // СТАРАЯ АНИМАЦИЯ, НО С ТОЧНОЙ ПОСАДКОЙ: узел остаётся в потоке и сжимается
+  // по высоте (как раньше), а СМЕЩЕНИЕ ПОЛЁТА пересчитывается КАЖДЫЙ КАДР —
+  // вальс сжимает соседей сверху, и заранее рассчитанный пролёт перелетал
+  // группу. Прицеливание по живому низу головы папки: посадка ВСЕГДА под ней.
+  const h0 = node.getBoundingClientRect().height;
   node.style.overflow = 'hidden';
   node.style.transition = 'none';
-  document.body.appendChild(node);
-  // призрак сжимается той же кривой — лента едет гладко, без скачков
-  void ghost.offsetHeight;
-  ghost.style.transition = 'height 1.05s cubic-bezier(.2,.5,.2,1)';
-  ghost.style.height = '0px';
+  node.style.height = h0 + 'px';
+  void node.offsetHeight;
+  node.style.transition =
+    'height 1.05s cubic-bezier(.2,.5,.2,1), ' +
+    'opacity .55s ease .5s, filter .55s ease .5s';
+  node.style.filter = 'blur(3px)';
+  node.style.opacity = '0';
+  node.style.height = '0px';
   const t0 = performance.now();
   const DUR = 1050;
   const ease = (k) => (k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+  node.__qDy = 0;
   const homing = () => {
     const k = Math.min(1, (performance.now() - t0) / DUR);
     const e = ease(k);
-    // цель — низ головы папки: инструмент прилетает ПРЯМО под группу
     const fr = folder.getBoundingClientRect();
-    const y0 = nrect.top;
-    const y1 = fr.bottom;
-    node.style.top = (y0 + (y1 - y0) * e) + 'px';
-    node.style.height = Math.max(0, h0 * (1 - e)) + 'px';
-    node.style.transform = 'scale(' + (1 - .07 * e) + ')';
-    // растворение во второй половине полёта: имя гаснет до прилёта
-    const fade = Math.max(0, Math.min(1, (k - .42) / .5));
-    node.style.opacity = String(1 - fade);
-    node.style.filter = 'blur(' + (3 * fade) + 'px)';
+    const nr = node.getBoundingClientRect();
+    const base = nr.top - node.__qDy;      // где узел жил бы без полёта
+    const need = fr.bottom - base;         // путь до низа головы папки
+    node.__qDy = e * need;
+    node.style.transform = 'translateY(' + node.__qDy + 'px) scale(.93)';
     if (k < 1) requestAnimationFrame(homing);
   };
   requestAnimationFrame(homing);
@@ -4144,7 +4102,6 @@ function qtFold(ui, node, isLast) {
   };
   setTimeout(() => {
     node.remove();
-    ghost.remove();
     folder._pend -= 1;
   }, 1080);
   // ПОСЛЕДНИЙ ИНСТРУМЕНТ ЕЩЁ ЛЕТИТ — папка уже «охнула»: мигание начинается
@@ -4157,26 +4114,36 @@ function qtToggleFolder(f) {
   if (!kids || f._anim) return;      // анимация играет — клики не рвут её
   f._anim = true;
   const free = () => { f._anim = false; };
+  const headRect = f.querySelector('.qt-head').getBoundingClientRect();
   if (f.classList.contains('open')) {
-    // КЛАСС open НЕ СНИМАЕТСЯ ДО КОНЦА: раньше display:none включался
-    // мгновенно и строки исчезали одним кадром — «обратной анимации не было»
-    const rows = Array.from(f.querySelectorAll('.qt-row')).reverse();
-    // ЗАКРЫТИЕ: строки тонут одна за другой (от последней к первой) И
-    // ОДНОВРЕМЕННО с ними съёживается тело папки — два действия в один
-    // движение, чуть быстрее прежнего
+    // ЗАКРЫТИЕ = ВАЛЬС В ОБРАТНУЮ СТОРОНУ: каждая строка ПО ОЧЕРЕДИ
+    // заплывает вверх ПОД голову группы и растворяется на ней (blur+fade),
+    // а когда прилетела последняя — тело папки съёживается одной пуфтой,
+    // полоса задвигается. Класс open не снимается до конца: display:none
+    // включался мгновенно и строки исчезали одним кадром.
+    const rows = Array.from(f.querySelectorAll('.qt-row'));
     rows.forEach((r, i) => {
-      r.style.transition = 'opacity .42s ease ' + (i * 55) + 'ms, transform .42s cubic-bezier(.4,.6,.4,1) ' + (i * 55) + 'ms';
+      const dist = r.getBoundingClientRect().top - headRect.bottom;
+      r.style.transition =
+        'transform .5s cubic-bezier(.2,.5,.2,1) ' + (i * 55) + 'ms, ' +
+        'opacity .45s ease ' + (i * 55 + 150) + 'ms, ' +
+        'filter .45s ease ' + (i * 55 + 150) + 'ms';
+      r.style.transform = 'translateY(' + (-dist) + 'px) scale(.93)';
+      r.style.filter = 'blur(3px)';
       r.style.opacity = '0';
-      r.style.transform = 'translateY(9px)';
     });
-    const h0 = kids.getBoundingClientRect().height;
-    kids.style.overflow = 'hidden';
-    kids.style.transition = 'none';
-    kids.style.height = h0 + 'px';
-    void kids.offsetHeight;
-    kids.style.transition = 'height .46s cubic-bezier(.4,.5,.4,1)';
-    kids.style.height = '0px';
-    const rowsT = rows.length * 55 + 500;
+    const flyT = rows.length * 55 + 560;
+    setTimeout(() => {
+      // последняя строка села — полоса задвигается
+      const h0 = kids.getBoundingClientRect().height;
+      kids.style.overflow = 'hidden';
+      kids.style.transition = 'none';
+      kids.style.height = h0 + 'px';
+      void kids.offsetHeight;
+      kids.style.transition = 'height .3s cubic-bezier(.4,.5,.4,1)';
+      kids.style.height = '0px';
+    }, flyT - 320);
+    const rowsT = flyT + 120;
     setTimeout(() => {
       f.classList.remove('open');
       kids.classList.remove('open');
@@ -4196,29 +4163,38 @@ function qtToggleFolder(f) {
     // с выплыванием строк (от первой к последней, снизу вверх), те же
     // длительности и кривые, что у закрытия — только в обратную сторону
     const h = kids.getBoundingClientRect().height;
+    const allRows = f.querySelectorAll('.qt-row');
+    // ОТКРЫТИЕ — ТОЧНОЕ ЗЕРКАЛО ЗАКРЫТИЯ: строки рождаются ПОД головой
+    // группы (сдвинуты вверх на свой путь, растворены) и одна за другой
+    // выплывают на место; тело папки опускается одновременно с первой.
+    allRows.forEach((r, i) => {
+      const dist = r.getBoundingClientRect().top - headRect.bottom;
+      r.style.transition = 'none';
+      r.style.transform = 'translateY(' + (-dist) + 'px) scale(.93)';
+      r.style.filter = 'blur(3px)';
+      r.style.opacity = '0';
+    });
     kids.style.overflow = 'hidden';
     kids.style.transition = 'none';
     kids.style.height = '0px';
     void kids.offsetHeight;
-    kids.style.transition = 'height .4s cubic-bezier(.4,.5,.4,1)';
+    kids.style.transition = 'height .3s cubic-bezier(.4,.5,.4,1)';
     kids.style.height = h + 'px';
-    const allRows = f.querySelectorAll('.qt-row');
-    // ОТКРЫТИЕ — ПЛЁНКА ЗАКРЫТИЯ НАЗАД: строка начинается там, где
-    // закончила свёртка (чуть выше, у папки), и оседает вниз на место;
-    // порядок обращён — от первой к последней; те же длительности
     allRows.forEach((r, i) => {
-      r.style.opacity = '0';
-      r.style.transform = 'translateY(9px)';
-      r.style.transition = 'opacity .42s ease ' + (i * 55) + 'ms, transform .42s cubic-bezier(.4,.6,.4,1) ' + (i * 55) + 'ms';
       void r.offsetHeight;
+      r.style.transition =
+        'transform .5s cubic-bezier(.2,.5,.2,1) ' + (120 + i * 55) + 'ms, ' +
+        'opacity .45s ease ' + (270 + i * 55) + 'ms, ' +
+        'filter .45s ease ' + (270 + i * 55) + 'ms';
+      r.style.transform = 'translateY(0) scale(1)';
+      r.style.filter = 'blur(0px)';
       r.style.opacity = '1';
-      r.style.transform = 'translateY(0)';
     });
     setTimeout(() => {
       kids.style.cssText = '';
       allRows.forEach((r) => { r.style.cssText = ''; });
       free();
-    }, allRows.length * 60 + 420);
+    }, allRows.length * 55 + 700);
   }
 }
 
@@ -4662,12 +4638,9 @@ function renderTyped(ui) {
     livePre.scrollTop = livePre.scrollHeight;
   }
   // ЗАКРЫВШИЙСЯ FENCE СРАЗУ СТАНОВИТСЯ МИНИАТЮРОЙ-ВКЛАДКОЙ: пишется блок —
-  // живое окно live-code; закрылся — вкладка в тот же тик (не в конце
-  // ответа). Раскрытые пользователем блоки не сжимаются снова.
-  typedPres.forEach((pre, idx) => {
-    if (pre === livePre && inCodeBlock(text)) return;
-    foldOneCodeBlock(pre, ui, idx);
-  });
+  // живое окно live-code; закрылся — вкладка в тот же тик. Перерисовка
+  // печати не рождает вкладку заново: готовые слоты встают из кэша.
+  refoldCodeBlocks(ui, ui.mdEl, livePre, text);
   // АКТИВНЫЙ fence остаётся живым окном (скроллится сам), закрытые — уже
   // свёрнуты выше. Развёрнутый пользователем блок (миниатюра среди печати)
   // не сжимается снова: индекс блока запоминается в _codePeek.
@@ -4893,15 +4866,18 @@ function typerFlush(ui) {
 
 /* МИНИАТЮРА КОДА — СРАЗУ ПОСЛЕ ЗАКРЫТИЯ FENCE: вкладка (иконка, язык,
    размер) строится в тот же тик, когда fence закрылся, — не в конце ответа.
-   Раскрыл пользователь вкладку среди печати — запоминаем индекс блока:
-   до конца ответа блок не сворачивается снова. */
-function foldOneCodeBlock(pre, ui, idx) {
+   Блок живёт в СЛОТЕ (code-slot): слот кэшируется по содержимому, и когда
+   печать перерисовывает ленту, готовый слот просто встаёт на место —
+   вкладка не рождается заново десять раз в секунду. */
+function foldOneCodeBlock(pre, ui, key) {
   const code = pre.textContent || '';
   if (code.split('\n').length < 4 && code.length < 200) return;   // короткие сниппеты живут как есть
   if (pre.closest('.code-block')) return;
   const lang = pre.getAttribute('data-lang') || '';
+  const slot = el('div', 'code-slot');
   const wrap = el('div', 'code-block');
-  pre.parentNode.insertBefore(wrap, pre);
+  pre.replaceWith(slot);
+  slot.appendChild(wrap);
   wrap.appendChild(pre);
   const bar = el('div', 'code-bar');
   bar.appendChild(el('span', 'cb-lang', lang || 'код'));
@@ -4912,7 +4888,8 @@ function foldOneCodeBlock(pre, ui, idx) {
   });
   bar.appendChild(cp);
   wrap.insertBefore(bar, pre);
-  if (ui && ui.mdEl && ui.mdEl._codePeek && ui.mdEl._codePeek.has(idx)) return;
+  if (ui && key) ui._codeCache.set(key, slot);
+  if (ui && ui.mdEl && ui.mdEl._codePeek && ui.mdEl._codePeek.has(key)) return;
   const thumb = collapseToThumb(wrap, {
     instant: true, cls: 'th-code inline-thumb', icon: ICO.code,
     title: lang ? 'Код · ' + lang : 'Код',
@@ -4923,8 +4900,34 @@ function foldOneCodeBlock(pre, ui, idx) {
   if (thumb) thumb.addEventListener('click', () => {
     if (!ui.mdEl) return;
     if (!ui.mdEl._codePeek) ui.mdEl._codePeek = new Set();
-    ui.mdEl._codePeek.add(idx);
+    ui.mdEl._codePeek.add(key);
   });
+}
+
+/* Проход по свеже-перерисованной ленте: готовые слоты встают на место
+   своих pre, новые закрываются один раз. Ключ — содержимое блока плюс
+   номер вхождения: два одинаковых блока живут в двух слотах. */
+function refoldCodeBlocks(ui, root, livePre, text) {
+  if (!ui._codeCache) ui._codeCache = new Map();
+  const seen = new Map();
+  const used = new Set();
+  $$('pre', root).forEach((pre) => {
+    if (pre.closest('.code-block')) return;
+    if (pre === livePre && inCodeBlock(text)) return;
+    const code = pre.textContent || '';
+    if (code.split('\n').length < 4 && code.length < 200) return;
+    const ck = (pre.getAttribute('data-lang') || '') + '\u0000' + code;
+    const occ = seen.get(ck) || 0;
+    seen.set(ck, occ + 1);
+    const key = ck + '\u0001' + occ;
+    const slot = ui._codeCache.get(key);
+    if (slot) { pre.replaceWith(slot); used.add(key); return; }
+    foldOneCodeBlock(pre, ui, key);
+    used.add(key);
+  });
+  // слоты, которых в этом кадре не оказалось (текст перерисовался иначе),
+  // из кэша убираем — он не растёт бесконечно
+  ui._codeCache.forEach((slot, key) => { if (!used.has(key)) ui._codeCache.delete(key); });
 }
 
 /* МЕТКА «ОСТАНОВЛЕНО»: единая точка. Раньше её рисовал только обработчик
@@ -7722,6 +7725,12 @@ function clearDropMarks() {
 }
 document.addEventListener('dragend', clearDropMarks, true);
 document.addEventListener('drop', clearDropMarks, true);
+// ШЛЕЙФ ГАСНЕТ В САМОМ БРОСКЕ: после drop сетка перерисовывается, карточка-
+// источник уходит из DOM и dragend до неё не доходит — миниатюры висели
+// на плашке до перезагрузки. Capture-слушатель на документе покрывает все
+// пути броска, что бы ни случилось с источником.
+document.addEventListener('dragend', () => stopDragGhosts(), true);
+document.addEventListener('drop', () => stopDragGhosts(), true);
 window.addEventListener('blur', () => { clearDropMarks(); stopDragGhosts(); });
 
 function stopDragGhosts() {
