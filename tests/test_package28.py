@@ -2739,15 +2739,86 @@ class LatencyAndResilienceTests(unittest.TestCase):
         self.assertIn("реплика 11", compact[0]["content"])
         self.assertEqual(compact[1:], messages[-10:])
 
-    def test_post_sse_bookkeeping_cannot_start_semantic_llm_or_thread(self) -> None:
-        with mock.patch.object(server.orchestrator, "make_chat_title", return_value="Локальный заголовок"), \
+    def test_bg_title_never_blocks_the_request_thread(self) -> None:
+        # W: название работает В ФОНОВОМ ПОТОКЕ с самого старта ответа —
+        # поток запроса не ждёт ни одного LLM-вызова; обрыв SSE не мешает
+        with mock.patch.object(server.orchestrator, "make_chat_title") as mk, \
              mock.patch.object(server.db, "rename_chat") as rename, \
-             mock.patch.object(server.agent, "remember_semantic_facts") as semantic, \
              mock.patch.object(server.threading, "Thread") as thread:
-            server._finish_local_post("chat-1", "Длинная тема", title=True)
-        rename.assert_called_once_with("chat-1", "Локальный заголовок")
-        semantic.assert_not_called()
-        thread.assert_not_called()
+            server._start_bg_title("chat-1", "Длинная тема")
+        thread.assert_called_once()
+        self.assertTrue(thread.call_args.kwargs.get("daemon"))
+        worker = thread.call_args.kwargs["target"]
+        mk.assert_not_called()               # LLM НЕ в потоке запроса
+        rename.assert_not_called()
+        # осознанное имя (сценарий, камера) — воркер его не трогает
+        with mock.patch.object(server.db, "get_chat",
+                               return_value={"title": "Сценарий: утро"}), \
+             mock.patch.object(server.orchestrator, "make_chat_title") as mk2:
+            worker()
+        mk2.assert_not_called()
+
+    def test_bg_title_renames_unnamed_chat_and_notifies(self) -> None:
+        notify = mock.Mock()
+        with mock.patch.object(server.threading, "Thread") as thread:
+            server._start_bg_title("chat-2", "напиши игру", notify)
+        worker = thread.call_args.kwargs["target"]
+        with mock.patch.object(server.db, "get_chat",
+                               return_value={"title": "Новый диалог"}), \
+             mock.patch.object(server.orchestrator, "make_chat_title",
+                               return_value="Космическая аркада"), \
+             mock.patch.object(server.db, "rename_chat") as rename:
+            worker()
+        rename.assert_called_once_with("chat-2", "Космическая аркада")
+        notify.assert_called_once_with("Космическая аркада")
+
+    def test_bg_title_alive_box_is_bound_before_use(self) -> None:
+        # W-регрессия: notify читает alive_box по ссылке; флаг обязан
+        # присваиваться РАНЬШЕ потока названия, иначе UnboundLocalError
+        import ast as _ast
+        tree = _ast.parse(Path("app/jarvis/server.py").read_text(encoding="utf-8"))
+        for fn in [n for n in _ast.walk(tree)
+                   if isinstance(n, _ast.FunctionDef) and n.name == "_chat_stream"]:
+            store = min([n.lineno for n in _ast.walk(fn)
+                         if isinstance(n, _ast.Name) and n.id == "alive_box"
+                         and isinstance(n.ctx, _ast.Store)] or [10**9])
+            load = min([n.lineno for n in _ast.walk(fn)
+                        if isinstance(n, _ast.Name) and n.id == "alive_box"
+                        and isinstance(n.ctx, _ast.Load)] or [-1])
+            self.assertLess(store, load,
+                            "alive_box должен жить до старта фонового потока названия")
+
+    def test_asr_empty_route_never_kills_the_chain(self) -> None:
+        # W: маршрут с http 200 и ПУСТЫМ текстом больше не останавливает
+        # цепочку «Тишиной» — следующий маршрут слышит и отвечает
+        from jarvis.tools import media as media_mod
+        ok_route = mock.Mock(return_value={"http_ok": True, "text": "привет"})
+        mute_route = mock.Mock(return_value={"http_ok": True, "text": ""})
+        with tempfile.TemporaryDirectory() as td, \
+             mock.patch.object(media_mod, "_ws", return_value=Path(td)), \
+             mock.patch.object(media_mod, "_to_wav", return_value=Path(td) / "x.wav"), \
+             mock.patch.object(media_mod, "_asr_routes",
+                               return_value=[("mute", mute_route), ("good", ok_route)]):
+            res = media_mod.transcribe_audio(
+                "data:audio/webm;base64," + ("AAAA" * 4000))
+        self.assertTrue(res.get("ok"))
+        self.assertEqual(res.get("text"), "привет")
+        mute_route.assert_called_once()
+
+    def test_generate_image_has_free_route_without_keys(self) -> None:
+        # W: без gateway и GigaChat-ключа генерация НЕ отказывает — работает
+        # открытый бесплатный маршрут (Cloud.ru FM картинки не генерит)
+        from jarvis.tools import media as media_mod
+        with mock.patch.object(media_mod, "_enhance_prompt", side_effect=lambda p, w, h: p), \
+             mock.patch.object(media_mod, "_free_image",
+                               return_value={"ok": True, "path": "image_1.jpg"}) as free, \
+             mock.patch.object(media_mod.CONFIG, "get",
+                               side_effect=lambda k, d=None: {
+                                   "media.image_provider": "auto",
+                               }.get(k, d)):
+            res = media_mod.generate_image("кот-космонавт")
+        self.assertTrue(res.get("ok"))
+        free.assert_called_once()
 
     def test_ideas_and_proactivity_do_not_use_hidden_llm_calls(self) -> None:
         with mock.patch.object(llm, "chat") as hidden_llm, \

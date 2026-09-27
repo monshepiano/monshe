@@ -179,6 +179,12 @@ def list_chats(limit: int = 60) -> List[Dict[str, Any]]:
                  "ORDER BY updated_at DESC LIMIT ?", (limit,))
 
 
+def get_chat(chat_id: str) -> Optional[Dict[str, Any]]:
+    """Строка диалога по id (или None) — для проверок перед фоновым rename."""
+    rows = query("SELECT * FROM chats WHERE id=?", (chat_id,))
+    return rows[0] if rows else None
+
+
 def rename_chat(chat_id: str, title: str) -> None:
     execute("UPDATE chats SET title=?, updated_at=? WHERE id=?", (title, now(), chat_id))
 

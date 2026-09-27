@@ -4097,7 +4097,7 @@ function qtFold(ui, node, isLast) {
   // макет вокруг.
   const fr0 = folder.getBoundingClientRect();
   const base0 = node.getBoundingClientRect().top;
-  const C0 = (fr0.top + fr0.height / 2) - base0 + 6;   // центр головы + чуть глубже: В папку
+  const C0 = (fr0.top + fr0.height / 2) - base0 - 4;   // центр НАЗВАНИЯ группы: текст тает прямо в нём
   let aim = C0;
   const flight = node.animate(
     [{ transform: 'translateY(0px) scale(1)' },
@@ -4160,6 +4160,12 @@ function qtToggleFolder(f) {
   // геометрия снимается при открытом теле: путь каждой строки до головы
   const headBottom = head.getBoundingClientRect().bottom;
   const H = kids.getBoundingClientRect().height;
+  // ВЫСОТА ТЕЛА — СИНХРОННО С КЛИКОМ, до первого кадра: раньше она ставилась
+  // только в первом rAF-тике, и браузер успевал показать тело полной высоты
+  // на один кадр — тот самый «микролюфт» в начале открытия (и в конце
+  // закрытия, когда авто-высота мигала перед уборкой).
+  kids.style.overflow = 'hidden';
+  kids.style.height = (wasOpen ? H : 0) + 'px';
   const STEP = 55, FLY = 500, LEAD = 120;
   // ЗАКРЫТИЕ = ОТКРЫТИЕ НАОБОРОТ, кадр в кадр: те же кривые и стаггер,
   // только кадры развёрнуты (строка уезжает ПОД голову, растворяясь) и
@@ -4184,7 +4190,6 @@ function qtToggleFolder(f) {
   // ровно с прилётом строк; при закрытии тем же темпом съёживается к нулю.
   // Не раньше инструментов и не позже — всегда их средний такт.
   const dir = wasOpen ? -1 : 1;    // закрытие: прогресс 1 = строка ушла
-  kids.style.overflow = 'hidden';
   let raf = 0;
   const tick = () => {
     let sum = 0;
@@ -4360,7 +4365,34 @@ function flushAgentGroup(ui) {
       // пользователь разбирает группу — авто-сворачивание отменяется,
       // группа не «проглатывает» раскрытый инструмент через секунду
       cancelFoldSoon(card);
-      row.classList.toggle('open');
+      // РАСКРЫТИЕ С АНИМАЦИЕЙ — той же, что у обычных инструментов кухни:
+      // деталь вырастает по высоте от нуля, а не щёлкает мгновенно
+      const det = row.querySelector('.ql-detail');
+      const willOpen = !row.classList.contains('open');
+      let h = 0;
+      if (det) {
+        if (willOpen) {
+          row.classList.add('open');
+          h = det.scrollHeight;
+        } else {
+          h = det.scrollHeight;
+          row.classList.remove('open');
+        }
+      } else {
+        row.classList.toggle('open');
+      }
+      if (det && h > 0) {
+        det.style.overflow = 'hidden';
+        const anim = det.animate(
+          willOpen
+            ? [{ height: '0px', opacity: '0' }, { height: h + 'px', opacity: '1' }]
+            : [{ height: h + 'px', opacity: '1' }, { height: '0px', opacity: '0' }],
+          { duration: willOpen ? 440 : 380,
+            easing: willOpen ? 'cubic-bezier(.22,.8,.3,1)' : 'cubic-bezier(.3,.6,.3,1)' });
+        anim.finished.then(() => { det.style.overflow = ''; }).catch(() => {
+          det.style.overflow = '';
+        });
+      }
     });
     rows.appendChild(row);
   });
@@ -5326,8 +5358,24 @@ function handleEvent(ev, ui) {
         if (ui.cameraNode && ui.cameraNode === S.camNode) S.camChatId = ev.chat_id;
       } else {
         S.chatId = ev.chat_id;
+        // НОВЫЙ ДИАЛОГ: имя придумывается фоном, параллельно ответу. Пока
+        // его нет — в списке живое «…» вместо казённого «Новый диалог».
+        loadChats().then(() => {
+          const it = $$('.chat-item').find((x) => x.classList.contains('active'));
+          const t = it && it.querySelector('.chat-title');
+          if (t && /^(новый диалог|диалог)$/i.test((t.textContent || '').trim())) {
+            t.textContent = '…';
+            t.classList.add('title-pending');
+          }
+        });
       }
       break;
+
+    case 'chat_title': {
+      // фоновое название приехало прямо в живой поток — обновляем список
+      if (ev.title) loadChats();
+      break;
+    }
 
     case 'user_msg': {
       // id относится к пузырю ЭТОГО запроса. Поиск «последнего .msg-user во
@@ -5951,6 +5999,12 @@ function handleEvent(ev, ui) {
       // конец потока: что не закрыл done, закрываем здесь — кухня не должна
       // остаться раскрытой после ответа
       flushTools(ui);
+      // имя диалога могло прийти фоном с опозданием (или не прийти в этот
+      // поток вообще — обрыв): обновим список ещё пару раз, «…» не зависнет
+      [1600, 4200].forEach((ms) => setTimeout(() => {
+        const cur = (S.chats || []).find((c) => c.id === S.chatId);
+        if (cur && (!cur.title || cur.title === 'Новый диалог')) loadChats();
+      }, ms));
       // end означает только конец SSE. Если done потерялся, всё равно дренируем
       // локальный буфер; Stop → Send переключит finally после visualDonePromise.
       if (!ui.doneReceived) queueResponseFinish(ui, ui.buffer, false);
@@ -6320,9 +6374,10 @@ function stopCam() {
   ++S.camRun;
   if (S.camTimer) { clearInterval(S.camTimer); S.camTimer = null; }
   if (S.camStream) { S.camStream.getTracks().forEach((t) => t.stop()); S.camStream = null; }
-  // Ответы, принятые камерой, возвращаются в основную ленту ДО сворачивания
-  // карточки — иначе они исчезли бы вместе с ней.
-  releaseRunFromCam();
+  // Ответы камеры живут В её карточке: свернулись вместе с ней, развернул —
+  // увидел разговор. В основную ленту они выходят только когда камера была
+  // ПРИВЯЗАНА к текущему диалогу (те ответы и так сохранены в нём).
+  if (S.camLink) releaseRunFromCam();
   const node = S.camNode;
   const v = node && node.querySelector('.cam-video');
   if (v) v.srcObject = null;

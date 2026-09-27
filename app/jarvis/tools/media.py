@@ -311,12 +311,48 @@ def _gateway_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
         raise GigaChatError("не удалось связаться с облачной генерацией: %s" % exc) from None
 
 
+def _free_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
+    """Открытая бесплатная генерация (flux) — без ключей, работает из России.
+
+    Cloud.ru Foundation Models картинки не генерирует вообще (в каталоге
+    только LLM/embedding/rerank/audio/OCR), а GigaChat требует отдельного
+    ключа. Этот маршрут — последний в цепочке: генерация работает из коробки,
+    пусть и очередью медленнее платных.
+    """
+    seed = int(time.time() * 1000) % 10 ** 8
+    url = ("https://image.pollinations.ai/prompt/%s?width=%d&height=%d"
+           "&nologo=true&seed=%d"
+           % (urllib.parse.quote(prompt)[:900], width, height, seed))
+    req = urllib.request.Request(url, headers={"User-Agent": _UA})
+    with urllib.request.urlopen(req, timeout=180, context=_CTX) as resp:
+        image = resp.read()
+    if not image or len(image) < 1200:
+        return {"ok": False, "error": "генератор вернул пустой ответ"}
+    name = "image_%d.jpg" % (int(time.time() * 1000) % 10 ** 8)
+    target = sandbox.safe_path(name)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_bytes(image)
+    tmp.replace(target)
+    return {
+        "ok": True,
+        "path": name,
+        "name": name,
+        "size": len(image),
+        "download_url": sandbox.dl(name),
+        "preview_url": sandbox.dl(name),
+        "prompt": prompt,
+        "model": "flux · free",
+        "provider": "free",
+        "watermark": False,
+    }
+
+
 def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: str = "") -> Dict[str, Any]:
-    """Создать ровно одно watermark-free изображение через gateway или GigaChat."""
+    """Создать ровно одно watermark-free изображение: gateway → GigaChat → free."""
     provider = str(CONFIG.get("media.image_provider", "auto") or "auto")
     if provider == "off":
         return {"ok": False, "error": "генерация изображений выключена в настройках"}
-    if provider not in ("auto", "gateway", "gigachat"):
+    if provider not in ("auto", "gateway", "gigachat", "free"):
         return {"ok": False, "error": "неподдерживаемый провайдер изображений: " + provider}
     clean = (str(prompt or "") + ((", " + str(style).strip()) if str(style or "").strip() else "")).strip()
     if not clean:
@@ -328,8 +364,12 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: st
                            CONFIG.get("media.image_gateway_token", ""))
         if provider == "gateway" or (provider == "auto" and has_gateway):
             return _gateway_image(refined, int(width or 1024), int(height or 1024))
+        if provider == "free":
+            return _free_image(refined, int(width or 1024), int(height or 1024))
         if provider == "auto" and not CONFIG.get("media.gigachat_auth_key", ""):
-            raise GigaChatError("облачная генерация не подключена в этой сборке")
+            # БЕЗ КЛЮЧА GIGACHAT ГЕНЕРАЦИЯ ВСЁ РАВНО РАБОТАЕТ: открытый flux
+            # не требует ни ключей, ни VPN — картинки доступны из коробки
+            return _free_image(refined, int(width or 1024), int(height or 1024))
 
         model = str(CONFIG.get("media.gigachat_model", "GigaChat") or "GigaChat").strip()
         payload = {
@@ -382,8 +422,19 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: st
             "image_id": file_id,
         }
     except GigaChatError as exc:
+        if provider == "auto":
+            # платный маршрут споткнулся — бесплатный flux доедет до конца
+            try:
+                return _free_image(refined, int(width or 1024), int(height or 1024))
+            except Exception:
+                pass
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
+        if provider == "auto":
+            try:
+                return _free_image(refined, int(width or 1024), int(height or 1024))
+            except Exception:
+                pass
         return {"ok": False, "error": "не удалось сохранить изображение: %s" % exc}
 
 
@@ -624,17 +675,26 @@ def transcribe_audio(path_or_data_url: str, language: str = "ru") -> Dict[str, A
     if _ASR_ROUTE and time.time() - _ASR_ROUTE_AT < 3600:
         routes.sort(key=lambda r: 0 if r[0] == _ASR_ROUTE else 1)
 
+    # ГЛУБОКИЙ КОРЕНЬ «микрофон не работает»: первый маршрут, ответивший 200
+    # с ПУСТЫМ текстом (модель-«ушки» без слуха, кривой формат), останавливал
+    # всю цепочку словами «Тишина» — хотя запасные маршруты (включая открытый
+    # Whisper) услышали бы всё. Пустой ответ = тишина ТОЛЬКО этого маршрута:
+    # пробуем следующий. «Тишина» честная лишь когда ВСЕ замолчали.
     errors = []
+    silent = []
     for label, fn in routes:
         res = fn(upload, language)
         if res.get("http_ok"):
             text = (res.get("text") or "").strip()
-            _ASR_ROUTE, _ASR_ROUTE_AT = label, time.time()
             if text:
+                _ASR_ROUTE, _ASR_ROUTE_AT = label, time.time()
                 return {"ok": True, "text": text, "model": label}
-            return {"ok": False, "error": "Тишина — слов не разобрал. Скажи ещё раз."}
+            silent.append(label)
+            continue
         errors.append("%s: %s" % (label, res.get("error", "")))
     _ASR_ROUTE = None
+    if silent and not errors:
+        return {"ok": False, "error": "Тишина — слов не разобрал. Скажи ещё раз."}
     # Человеческое сообщение вместо стека технических ошибок: пользователь
     # не должен читать про 404 и чужие unauthorized.
     return {"ok": False,

@@ -1577,6 +1577,9 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   assert(/animation:agKnobRubber 1\.1s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
     /15%\{background:#a03c50;color:#1d060b\}/.test(css) &&
     /@keyframes agKnobRubber\{[\s\S]*?44%\{transform:translateX\(6px\);background:#c4475e;color:#1d060b\}/.test(css) &&
+    /52%\{transform:translateX\(6px\)/.test(css) &&
+    /68%\{transform:translateX\(-1\.8px\)/.test(css) &&
+    /82%\{transform:translateX\(\.7px\)/.test(css) &&
     /@keyframes agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:#8d4d5e;color:#1d060b\}\}/.test(css) &&
     !/agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:var\(--tx3\)\}\}/.test(css),
     'the knob is ITS OLD GREY self, painting DARK bordo on the way right and unpainting on the way back, synced to the motion');
@@ -1738,7 +1741,7 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /requestAnimationFrame\(homing\)/.test(rf) &&
     /const flight = node\.animate\(/.test(rf) &&
     /flight\.effect\.setKeyframes\(\[/.test(rf) &&
-    /const C0 = \(fr0\.top \+ fr0\.height \/ 2\) - base0 \+ 6;/.test(rf) &&
+    /const C0 = \(fr0\.top \+ fr0\.height \/ 2\) - base0 - 4;/.test(rf) &&
     /const need = C0 \+ rise;/.test(rf) &&
     /const rise = Math\.max\(0, base0 - base\);/.test(rf) &&
     /easing: 'cubic-bezier\(\.2,\.5,\.2,1\)', fill: 'forwards'/.test(rf) &&
@@ -1765,6 +1768,7 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     'the folder has no rail when closed; opened, a rail runs down from the icon');
   const tf = extractFunction(js, 'qtToggleFolder');
   assert(/r\.animate\(frames,/.test(tf) &&
+    /kids\.style\.height = \(wasOpen \? H : 0\) \+ 'px';/.test(tf) &&
     !/filter: 'blur/.test(tf) &&
     /const wait = wasOpen \? \(rows\.length - 1 - i\) : i;/.test(tf) &&
     /duration: FLY, delay: LEAD \+ wait \* STEP,/.test(tf) &&
@@ -2001,8 +2005,7 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /function cancelFoldSoon\(card\)/.test(js) &&
     /card\._foldT = setTimeout\(\(\) => \{/.test(js) &&
     /collapseSoon\(card, \{/.test(extractFunction(js, 'flushAgentGroup')) &&
-    extractFunction(js, 'flushAgentGroup').includes(
-      "cancelFoldSoon(card);\n      row.classList.toggle('open');") &&
+    /cancelFoldSoon\(card\);/.test(extractFunction(js, 'flushAgentGroup')) &&
     /\.ql-row,\.qt-row,\.ag-rows,\.qt-kids'\);/.test(extractFunction(js, 'addFoldButton')) &&
     /node\.addEventListener\('click', bgFold\);/.test(extractFunction(js, 'addFoldButton')),
     'AGENT keeps its OWN tool cards with groups; opening a tool inside a group CANCELS the pending group collapse — behaviorally');
@@ -2114,6 +2117,21 @@ function testProactiveModesBudgetAndAbortContracts() {
   assert(/document\.addEventListener\('drop', \(\) => stopDragGhosts\(\), true\);/.test(js) &&
     /document\.addEventListener\('dragend', \(\) => stopDragGhosts\(\), true\);/.test(js),
     'the drag ghost layer is killed on EVERY drop/dragend path — it can never freeze on screen');
+  // W: название диалога — «…» вместо «Новый диалог», приезд из фона
+  assert(/case 'chat_title':/.test(js) &&
+    /title-pending/.test(js) &&
+    /\.chat-title\.title-pending\{animation:titlePulse 1\.15s ease-in-out infinite\}/.test(css) &&
+    /@keyframes titlePulse/.test(css) &&
+    /\[1600, 4200\]\.forEach/.test(js),
+    'a fresh chat shows a live «…» instead of «Новый диалог»; the background title arrives via chat_title or a delayed list refresh — it can NEVER stay unnamed');
+  // W: инструменты в группе агента раскрываются С анимацией высоты
+  assert(/det\.animate\(/.test(extractFunction(js, 'flushAgentGroup')) &&
+    /willOpen \? 440 : 380/.test(extractFunction(js, 'flushAgentGroup')),
+    'tools inside an agent group expand/collapse with the SAME height animation as ordinary tools');
+  // W: курсор думания не замирает при системном «уменьшить движение»
+  assert(/\.tw-caret,\.caret\{animation:caretDim 1\.6s ease-in-out!important\}/.test(css) &&
+    /@keyframes caretDim/.test(css),
+    'the thinking caret keeps a gentle opacity breathe even under prefers-reduced-motion — never looks frozen');
   // U: тумблер — значение регистрируется ДО звука, звук в try-catch,
   // клик по подписи тоже переключает
   assert(/controlChanged\(\);\n          try \{ blip\(it\.val\); \} catch/.test(js) &&
@@ -2147,7 +2165,7 @@ function testProactiveModesBudgetAndAbortContracts() {
   // ответ продолжается В камере, когда её включили во время стрима
   assert(/function adoptRunIntoCam/.test(js) && /function releaseRunFromCam/.test(js) &&
     /if \(S\.streaming && S\.followUi\) adoptRunIntoCam\(\);/.test(js) &&
-    /releaseRunFromCam\(\);/.test(js),
+    /if \(S\.camLink\) releaseRunFromCam\(\);/.test(js),
   'opening the camera mid-answer adopts the live reply into the cam chat');
   // request_mode доступен модели, но не параллелится и не заменяет разрешение
   // лимит на лету: смена во время стрима уходит на сервер и гаснет после ответа

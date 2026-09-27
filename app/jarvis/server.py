@@ -101,19 +101,28 @@ def _canonical_response_content(chunks: List[str], done_content: Any) -> str:
     return str(done_content or "")
 
 
-def _finish_local_post(chat_id: str, text: str, *, title: bool) -> None:
-    """Do cheap local bookkeeping only after the foreground SSE is closed.
+def _start_bg_title(chat_id: str, text: str, notify=None) -> None:
+    """Название диалога — параллельно ответу, фоновым потоком.
 
-    The former daemon could start a 25-second semantic LLM request just before
-    the user's next message. Memory is now written by the verbatim local parser
-    before generation; this boundary deliberately contains no network work.
+    Раньше rename ждал конца SSE: обрыв (Stop, закрытие окна, пауза сети)
+    означал «Новый диалог» навсегда. Теперь лёгкая модель работает с самого
+    старта и пишет результат прямо в БД — название доедет в любом случае,
+    а живое соединение получает его событием chat_title. Чат с осознанным
+    именем (сценарий, камера) не переименовывается.
     """
-    if not title:
-        return
-    try:
-        db.rename_chat(chat_id, orchestrator.make_chat_title(text))
-    except Exception:
-        pass
+    def _work() -> None:
+        try:
+            row = db.get_chat(chat_id) or {}
+            if (row.get("title") or "") not in ("", "Новый диалог"):
+                return
+            title = orchestrator.make_chat_title(text)
+            if title and title not in ("", "Новый диалог"):
+                db.rename_chat(chat_id, title)
+                if notify:
+                    notify(title)
+        except Exception:
+            pass
+    threading.Thread(target=_work, daemon=True).start()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -223,10 +232,15 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def _sse(self, event: Dict[str, Any]) -> bool:
+        # блокировка: события может писать и фоновый поток (название диалога)
+        lock = getattr(self, "_sse_lock", None)
+        if lock is None:
+            lock = self._sse_lock = threading.Lock()
         try:
             chunk = "data: %s\n\n" % json.dumps(event, ensure_ascii=False)
-            self.wfile.write(chunk.encode("utf-8"))
-            self.wfile.flush()
+            with lock:
+                self.wfile.write(chunk.encode("utf-8"))
+                self.wfile.flush()
             return True
         except (BrokenPipeError, ConnectionResetError, OSError):
             return False
@@ -704,7 +718,6 @@ class Handler(BaseHTTPRequestHandler):
             self._sse({"type": "end"})
             self._sse_close()
             foreground_span.finish("ok", background=True)
-            _finish_local_post(chat_id, text, title=post_title)
             return
 
         # сборка контекста
@@ -791,6 +804,19 @@ class Handler(BaseHTTPRequestHandler):
         if run_token:
             with _RUN_LOCK:
                 _RUN_STOPS[run_token] = stop_event
+        # Живой флаг соединения:FALSE когда браузер ушёл. Объявляется ДО
+        # фонового потока названия — поток ловит его по ссылке и молчит,
+        # если окна уже нет.
+        alive_box = [True]
+        # НАЗВАНИЕ НОВОГО ДИАЛОГА — ФОНОМ, ПАРАЛЛЕЛЬНО ОТВЕТУ: rename больше
+        # не зависит от того, чем закончится поток (Stop/обрыв не мешают)
+        if post_title and body.get("kind") != "cam":
+            def _notify_title(title: str, _box=alive_box) -> None:
+                if _box[0]:
+                    self._sse({"type": "chat_title", "chat_id": chat_id,
+                               "title": title})
+            _start_bg_title(chat_id, text, _notify_title)
+
         # Живой прогон этого диалога: монетка ₽ меняет лимит на лету.
         # НОВОЕ СООБЩЕНИЕ СУПЕРСЕДИРУЕТ ПРЕЖНИЙ ПРОГОН: пока старый молча
         # доигрывался после обрыва/Stop, его реплики падали в историю после
@@ -802,7 +828,6 @@ class Handler(BaseHTTPRequestHandler):
                 old_event.set()
             _RUN_EVENTS[chat_id] = stop_event
             _ACTIVE_RUNS[chat_id] = runner
-        alive_box = [True]
 
         def _run_cancelled() -> bool:
             return stop_event.is_set() or (computer_use and not alive_box[0])
@@ -972,7 +997,6 @@ class Handler(BaseHTTPRequestHandler):
                 "error" if run_error else "ok", model=runner.model_used,
                 tier=selected_tier, tool_count=len(used_tools),
                 error_type=run_error or None)
-            _finish_local_post(chat_id, text, title=post_title)
 
 
 def _prefetch_replies(msg_id: str, user_text: str, answer: str,

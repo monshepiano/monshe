@@ -269,6 +269,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .block-head{display:flex;align-items:center;justify-content:space-between;padding:8px 10px 6px;
   font-size:10.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--tx3)}
 .chat-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px;padding-right:2px}
+.chat-title.title-pending{animation:titlePulse 1.15s ease-in-out infinite}
+@keyframes titlePulse{0%,100%{opacity:.95}50%{opacity:.35}}
 .chat-item{display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:9px;cursor:pointer;
   font-size:12.5px;color:var(--tx2);transition:.18s;border:1px solid transparent;animation:slideIn .3s both}
 .chat-item:hover{background:rgba(0,212,255,.07);color:var(--tx)}
@@ -1213,9 +1215,9 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   0%{transform:translateX(0);background:var(--tx3);color:var(--panel2)}
   15%{background:#a03c50;color:#1d060b}
   44%{transform:translateX(6px);background:#c4475e;color:#1d060b}
-  60%{transform:translateX(6px);background:#c4475e;color:#1d060b}
-  76%{transform:translateX(-1.8px);background:#aa4456;color:#1d060b}
-  88%{transform:translateX(.7px);background:#96505f;color:#1d060b}
+  52%{transform:translateX(6px);background:#c4475e;color:#1d060b}
+  68%{transform:translateX(-1.8px);background:#aa4456;color:#1d060b}
+  82%{transform:translateX(.7px);background:#96505f;color:#1d060b}
   100%{transform:translateX(0);background:#8d4d5e;color:#1d060b}}
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)) i{
   /* цвета едут внутри agKnobRubber: статичной подмены больше нет */
@@ -1643,6 +1645,14 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   .bubble-user{max-width:88%}
 }
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+/* КУРСОР ДУМАНИЯ — ЕДИНСТВЕННОЕ исключение: системное «уменьшить движение»
+   гасило его анимацию полностью, и мигающий курсор застывал камнем — ответ
+   выглядел зависшим. Мягкое мерцание прозрачностью остаётся всегда: это не
+   движение, а признак жизни. */
+@media (prefers-reduced-motion:reduce){
+  .tw-caret,.caret{animation:caretDim 1.6s ease-in-out!important}
+}
+@keyframes caretDim{0%,100%{opacity:1}50%{opacity:.35}}
 
 /* =================== МИНИАТЮРЫ ОТРАБОТАВШИХ БЛОКОВ ===================
    Камера после закрытия, уведомление после крестика, санкция после решения —
