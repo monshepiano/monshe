@@ -351,7 +351,7 @@ def _make_title(text: str, kind: str = "chat") -> str:
              "реплике пользователя. Только суть, без кавычек и точки. "
              "Пиши по-русски, с заглавной буквы. Ответ — только название."},
             {"role": "user", "content": clean[:400]},
-        ], tier="nano", max_tokens=24, temperature=0.4, timeout=4,
+        ], tier="nano", max_tokens=20, temperature=0.3, timeout=2.5,
            operation="chat_title")
         title = re.sub(r"\s+", " ", str(result.get("content") or "")).strip()
         title = title.strip("\u00ab\u00bb\"'«»\"'").strip()

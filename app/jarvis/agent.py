@@ -1851,6 +1851,22 @@ class Agent:
 
 
     # ------------------------------------------------------------- planning
+    def local_plan(self, task: str) -> List[str]:
+        """Мгновенный локальный план — без сети и без ожидания.
+
+        Нужно ровно одно: карточка плана существует ВСЕГДА, когда задача
+        многошаговая, — даже если планировщик не ответил или ответ ещё едет.
+        """
+        text = re.sub(r"\s+", " ", str(task or "")).strip()
+        if not text:
+            return []
+        subject = text[:64].rstrip() + ("…" if len(text) > 64 else "")
+        return [
+            "%s: собрать вводные и материалы" % subject,
+            "%s: выполнить основную часть" % subject,
+            "%s: проверить результат и исправить детали" % subject,
+        ]
+
     def make_plan(self, task: str, starting_tools: Optional[List[str]] = None) -> List[str]:
         """Построить семантический план уже доказанной автономной работы.
 
@@ -1899,6 +1915,8 @@ class Agent:
             "%s: выполнить основную часть (%s)" % (subject, tools_hint),
             "%s: проверить результат и исправить детали" % subject,
         ]
+
+    # (локальный запасной план без сети — см. local_plan выше)
 
     # ------------------------------------------------------------------ run
     def run(self, messages: List[Dict[str, Any]], user_text: str = "",
@@ -2083,6 +2101,7 @@ class Agent:
             plan_worthy = plan_owed_by_history(messages)
         plan_pending = bool(self.visible_plan and self.agent_mode and user_text
                             and not social_only and plan_worthy)
+        plan_box = None      # фоновый планировщик для текстовой работы
         # ПЕРВЫЙ ХОД AGENT ДЕРЖИТСЯ ДО ЕГО КОНЦА даже когда плана не будет:
         # пока ход не закончился, нельзя знать, не окажется ли текст повтором
         # preflight-вопроса или уточнением с ui-панелью. Раньше это держал сам
@@ -2269,21 +2288,36 @@ class Agent:
                     # а не вызов инструмента и не короткий уточняющий вопрос.
                     # Решение о плане не трогаем: если инструменты придут после
                     # вступления, план всё равно объявится как всегда.
+                    # ПЛАН ИЗ ФОНОВОГО ПЛАНИРОВЩИКА ГОТОВ — объявляем его
+                    # первым, поверх начавшейся печати: без остановки текста
+                    if (plan_box is not None and not plan_announced
+                            and plan_box["steps"] is not None):
+                        plan_pending = False
+                        if plan_box["steps"]:
+                            plan = plan_box["steps"]
+                            for plan_event in announce_plan():
+                                yield plan_event
+                        plan_box = None
                     if not text_released and intro_hold:
                         joined_now = "".join(acc_text)
                         if len(joined_now) > 260 and not tools.looks_like_call_prefix(joined_now):
                             text_released = True
                             # ДЛИННЫЙ ТЕКСТ = НАЧАЛО РАБОТЫ. Задача была
-                            # многошаговой (plan_pending жив) — план объявляется
-                            # СЕЙЧАС, до придержанных событий и текста: работа
-                            # текстом (игра кодом в ответе) — тоже работа, и
-                            # план над ней обязан стоять.
+                            # многошаговой (plan_pending жив) — планировщик
+                            # уходит В ФОН: ни один llm-запрос больше не имеет
+                            # права останавливать печать. План приедет событием
+                            # позже — прямо в поток печати.
                             if plan_pending and not plan_announced:
                                 plan_pending = False
-                                plan = self.make_plan(user_text, [])
-                                if plan:
-                                    for plan_event in announce_plan():
-                                        yield plan_event
+                                box = {"steps": None}
+
+                                def _bg_plan(b=box):
+                                    try:
+                                        b["steps"] = self.make_plan(user_text, [])
+                                    except Exception:
+                                        b["steps"] = []
+                                threading.Thread(target=_bg_plan, daemon=True).start()
+                                plan_box = box
                             for held_event in list(deferred_work_events):
                                 yield held_event
                             deferred_work_events.clear()
@@ -2614,6 +2648,19 @@ class Agent:
                                   "словами, что он готов."})
                     yield {"type": "status", "text": "Готовлю нормальный ответ"}
                     continue
+                # ФИНАЛ: план так и не объявили (ответ короткий/поток не успел)
+                # — ставим мгновенный локальный план, НЕ ждём фоновый поток:
+                # ни при каких условиях ответ не должен «догружаться» после
+                # своего последнего слова.
+                if plan_box is not None and not plan_announced:
+                    if plan_box["steps"] is not None and plan_box["steps"]:
+                        plan = plan_box["steps"]
+                    else:
+                        plan = self.local_plan(user_text)
+                    plan_box = None
+                    if plan:
+                        for plan_event in announce_plan():
+                            yield plan_event
                 # Текстовый результат закрывает оставшиеся фазы одним
                 # естественным model turn. Сегменты всё равно проходят по порядку,
                 # но мы больше не платим за пустые «перейди к шагу N» запросы.

@@ -4080,7 +4080,7 @@ function qtFold(ui, node, isLast) {
   void node.offsetHeight;
   node.style.transition =
     'height 1.05s cubic-bezier(.2,.5,.2,1), ' +
-    'opacity .55s ease .5s, filter .55s ease .5s';
+    'opacity .34s ease .68s, filter .34s ease .68s';
   node.style.filter = 'blur(3px)';
   node.style.opacity = '0';
   node.style.height = '0px';
@@ -4097,7 +4097,7 @@ function qtFold(ui, node, isLast) {
   // макет вокруг.
   const fr0 = folder.getBoundingClientRect();
   const base0 = node.getBoundingClientRect().top;
-  const C0 = (fr0.top + fr0.height / 2) - base0;   // центр головы минус старт
+  const C0 = (fr0.top + fr0.height / 2) - base0 + 6;   // центр головы + чуть глубже: В папку
   let aim = C0;
   const flight = node.animate(
     [{ transform: 'translateY(0px) scale(1)' },
@@ -4168,11 +4168,14 @@ function qtToggleFolder(f) {
   const anims = rows.map((r, i) => {
     const dist = Math.max(4, r.getBoundingClientRect().top - headBottom);
     const wait = wasOpen ? (rows.length - 1 - i) : i;   // закрытие: снизу вверх
+    // ТОЛЬКО transform и opacity: анимация blur заставляла браузер
+    // ПЕРЕРИСОВЫВАТЬ размытие текста каждый кадр — отсюда подлагивание
+    // закрытия. Композиторные свойства идут на GPU без единой перерисовки.
     const frames = wasOpen
-      ? [{ transform: 'translateY(0) scale(1)', opacity: '1', filter: 'blur(0px)' },
-         { transform: 'translateY(' + (-dist) + 'px) scale(.93)', opacity: '0', filter: 'blur(3px)' }]
-      : [{ transform: 'translateY(' + (-dist) + 'px) scale(.93)', opacity: '0', filter: 'blur(3px)' },
-         { transform: 'translateY(0) scale(1)', opacity: '1', filter: 'blur(0px)' }];
+      ? [{ transform: 'translateY(0) scale(1)', opacity: '1' },
+         { transform: 'translateY(' + (-dist) + 'px) scale(.93)', opacity: '0' }]
+      : [{ transform: 'translateY(' + (-dist) + 'px) scale(.93)', opacity: '0' },
+         { transform: 'translateY(0) scale(1)', opacity: '1' }];
     return r.animate(frames,
       { duration: FLY, delay: LEAD + wait * STEP,
         easing: 'cubic-bezier(.2,.5,.2,1)', fill: 'both' });

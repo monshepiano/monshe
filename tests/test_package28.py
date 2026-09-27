@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import importlib.util
+import inspect
 import json
 import sqlite3
 import ssl
@@ -196,6 +197,26 @@ class RoutingAndPlanCostTests(unittest.TestCase):
         got = rows(hist)
         self.assertEqual(len(got), 2)
         self.assertEqual(got[1]["content"], "[Ответ был прерван пользователем]")
+
+    def test_text_work_plan_never_blocks_the_stream(self) -> None:
+        # V: план для текстовой работы строится В ФОНОВОМ ПОТОКЕ — ни один
+        # llm-запрос не останавливает печать; на финале — мгновенный локальный
+        ag = agent.Agent(agent_mode=True)
+        steps = ag.local_plan("напиши игру про космос")
+        self.assertEqual(len(steps), 3)
+        self.assertTrue(all("напиши игру про космос" in s for s in steps))
+        self.assertEqual(ag.local_plan(""), [])
+        run_src = inspect.getsource(agent.Agent._run_body)
+        self.assertIn("threading.Thread(target=_bg_plan, daemon=True).start()", run_src)
+        self.assertIn('plan_box["steps"] is not None', run_src)
+        self.assertIn("self.local_plan(user_text)", run_src)
+        self.assertNotIn("plan = self.make_plan(user_text, [])", run_src)
+
+    def test_chat_title_is_fast(self) -> None:
+        # V: заголовок — самая дешёвая модель, жёсткий лимит 2.5с
+        src = inspect.getsource(orchestrator._make_title)
+        self.assertIn('tier="nano"', src)
+        self.assertIn("timeout=2.5", src)
 
     def test_social_gate_beats_agent_mode_and_forced_tier(self) -> None:
         original_get = orchestrator.CONFIG.get

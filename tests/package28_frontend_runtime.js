@@ -1738,10 +1738,11 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /requestAnimationFrame\(homing\)/.test(rf) &&
     /const flight = node\.animate\(/.test(rf) &&
     /flight\.effect\.setKeyframes\(\[/.test(rf) &&
-    /const C0 = \(fr0\.top \+ fr0\.height \/ 2\) - base0;/.test(rf) &&
+    /const C0 = \(fr0\.top \+ fr0\.height \/ 2\) - base0 \+ 6;/.test(rf) &&
     /const need = C0 \+ rise;/.test(rf) &&
     /const rise = Math\.max\(0, base0 - base\);/.test(rf) &&
     /easing: 'cubic-bezier\(\.2,\.5,\.2,1\)', fill: 'forwards'/.test(rf) &&
+    /'opacity \.34s ease \.68s, filter \.34s ease \.68s'/.test(rf) &&
     /function qtFold\(ui, node, isLast\)/.test(js) &&
     /if \(isLast\) setTimeout\(folderBlink, 820\);/.test(rf) &&
     /node\.style\.filter = 'blur\(3px\)'/.test(rf) &&
@@ -1764,6 +1765,7 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     'the folder has no rail when closed; opened, a rail runs down from the icon');
   const tf = extractFunction(js, 'qtToggleFolder');
   assert(/r\.animate\(frames,/.test(tf) &&
+    !/filter: 'blur/.test(tf) &&
     /const wait = wasOpen \? \(rows\.length - 1 - i\) : i;/.test(tf) &&
     /duration: FLY, delay: LEAD \+ wait \* STEP,/.test(tf) &&
     /easing: 'cubic-bezier\(\.2,\.5,\.2,1\)', fill: 'both'/.test(tf) &&
