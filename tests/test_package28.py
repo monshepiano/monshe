@@ -118,6 +118,42 @@ class BackgroundRoutingTests(unittest.TestCase):
 
 
 class RoutingAndPlanCostTests(unittest.TestCase):
+    def test_plan_is_owed_after_preflight_panel(self) -> None:
+        # S: многошаговая задача получила preflight-панель вместо работы —
+        # ответ на панель обязан всё равно получить план
+        hist = [
+            {"role": "user", "content": "напиши игру змейка с уровнями"},
+            {"role": "assistant", "content": "Выбери:\n```ui\ntiles Поле: 20 | 30\n```"},
+            {"role": "user", "content": "поле 30, скорость средняя"},
+        ]
+        self.assertTrue(agent.plan_owed_by_history(hist))
+        # план уже шёл ([ШАГ …]) — второго плана не нужно
+        ran = [
+            {"role": "user", "content": "напиши игру"},
+            {"role": "assistant", "content": "[ШАГ 1] Готовлю поле\n```ui\ntiles Оформление: тёмное | светлое\n```"},
+            {"role": "user", "content": "тёмное"},
+        ]
+        self.assertFalse(agent.plan_owed_by_history(ran))
+        # панели не было — задолженности нет
+        plain = [
+            {"role": "user", "content": "напиши игру"},
+            {"role": "assistant", "content": "Готово: game.html в песочнице"},
+            {"role": "user", "content": "спасибо"},
+        ]
+        self.assertFalse(agent.plan_owed_by_history(plain))
+        self.assertFalse(agent.plan_owed_by_history([]))
+
+    def test_agent_prompt_does_not_teach_questioning_instead_of_work(self) -> None:
+        # S: в AGENT «напиши игру» — не анкета: агент выбирает некритичное сам
+        with mock.patch.object(agent.db, "recall", return_value=[]), \
+             mock.patch.object(agent, "_now_str", return_value="сегодня"):
+            ag = agent.build_system_prompt(True)
+            self.assertIn("НЕ повод для анкеты", ag)
+            self.assertNotIn("дай выбрать размер поля", ag)
+            # в обычном режиме пример с игрой остаётся
+            plain = agent.build_system_prompt(False)
+            self.assertIn("дай выбрать размер поля", plain)
+
     def test_social_gate_beats_agent_mode_and_forced_tier(self) -> None:
         original_get = orchestrator.CONFIG.get
 

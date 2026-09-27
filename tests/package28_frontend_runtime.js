@@ -1275,19 +1275,34 @@ function testReadinessFollowHistoryAndLiveCodeContracts() {
   // foldCodeBlocks съёживает блок ОТ ВИДИМОЙ высоты и лишь потом снимает класс
   assert(/foldCodeBlocks\(ui\.mdEl,\s*true\)/.test(finish),
     'completed code folds with the animate path, never expanding to full height first');
-  // R: при ОТКРЫТИИ диалога код снова СВОРАЧИВАЕТСЯ в стройные строки;
-  // окно развёрнутого кода — полноразмерное (никто не просил его уменьшать)
+  // S: при ОТКРЫТИИ диалога код сворачивается в стройные строки;
+  // окно кода в развёрнутом виде — КОМПАКТНОЕ по высоте (треть экрана)
   assert(!/keepCodeOpen/.test(js) && !/code-open/.test(css) &&
     (js.match(/foldCodeBlocks\(node\.body\);/g) || []).length >= 2 &&
-    /\.md pre\{[^}]*max-height:460px/s.test(css) &&
-    /\.md pre\.live-code\{max-height:460px/.test(css),
-    'opening a chat folds code back into slim rows; the expanded code window is FULL-SIZE again');
+    /\.md pre\{[^}]*max-height:min\(30vh,260px\)/s.test(css) &&
+    /\.md pre\.live-code\{max-height:min\(30vh,260px\)/.test(css) &&
+    /\.code-block pre\{[^}]*max-height:min\(30vh,260px\)/.test(css),
+    'opening a chat folds code back into slim rows; the expanded code window is COMPACT (a third of the screen)');
+  // S: печать больше не перестраивает ГОЛОВУ целиком — корень лага после
+  // кода: innerHTML всей ленты на каждом тике парсил сотни килобайт заново
+  const rt = extractFunction(js, 'renderTyped');
+  assert(/el\('div', 'md-frozen'\)/.test(rt) && /el\('div', 'md-tail'\)/.test(rt) &&
+    /if \(ui\._frozenSrc !== src\) \{/.test(rt) &&
+    /frozenEl\.innerHTML = html;/.test(rt) &&
+    /tailEl\.innerHTML = MD\.render\(stripSteps\(text\.slice\(src\.length\)\)\);/.test(rt) &&
+    !/ui\.mdEl\.innerHTML = html \+ MD\.render/.test(js) &&
+    /refoldCodeBlocks\(ui, frozenEl, null, ''\);/.test(rt),
+    'renderTyped splits the FROZEN HEAD from the live TAIL: the head (with its code slots) is parsed ONCE, only the tail repaints — no lag after big code');
+  assert(/i < ui\._tailKeys\.length/.test(extractFunction(js, 'refoldCodeBlocks')) &&
+    /ui\._tailKeys\[i\] = key;/.test(extractFunction(js, 'refoldCodeBlocks')) &&
+    /_codePeek\.has\(key\.split\('\\u0001'\)\[0\]\)/.test(extractFunction(js, 'refoldCodeBlocks')),
+    'tail slots are placed by POSITION key — big code text is not re-read on every typer tick');
   const fold = extractFunction(js, 'foldCodeBlocks');
   assert(/classList\.remove\('live-code'\)/.test(fold) &&
     /getBoundingClientRect\(\)\.height/.test(fold),
     'folding measures the visible height before removing the live-code cap');
-  assert(/\.md pre\.live-code\s*\{[^}]*max-height:460px[^}]*overflow:auto/s.test(css),
-    'typing code remains in a bounded, FULL-SIZE internally scrolling viewport');
+  assert(/\.md pre\.live-code\s*\{[^}]*max-height:min\(30vh,260px\)[^}]*overflow:auto/s.test(css),
+    'typing code remains in a bounded, COMPACT internally scrolling viewport');
 }
 
 
@@ -1742,12 +1757,13 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     (tf.match(/translateY\(' \+ \(-dist\) \+ 'px\) scale\(\.93\)'/g) || []).length >= 2 &&
     /r\.style\.filter = 'blur\(3px\)';/.test(tf) &&
     /kids\.style\.height = '0px';/.test(tf) &&
-    /f\._anim/.test(tf) &&
-    /const flyT = rows\.length \* 55 \+ 560;/.test(tf) &&
-    /const rowsT = flyT \+ 120;/.test(tf) &&
+    /Array\.from\(f\.querySelectorAll\('\.qt-row'\)\)\.reverse\(\);/.test(tf) &&
+    /const span = 120 \+ \(rows\.length - 1\) \* 55 \+ 520;/.test(tf) &&
+    /const span = 120 \+ \(allRows\.length - 1\) \* 55 \+ 520;/.test(tf) &&
+    (tf.match(/'height ' \+ span \+ 'ms cubic-bezier\(\.2,\.5,\.2,1\)'/g) || []).length >= 2 &&
     /kids\.style\.height = h \+ 'px';/.test(tf) &&
-    /'height \.3s cubic-bezier\(\.4,\.5,\.4,1\)'/.test(tf),
-    'MANUAL open/close is the SAME flight animation mirrored: rows dive under the group head one by one, the strip zips up after the last one lands');
+    !/height \.3s cubic-bezier\(\.4,\.5,\.4,1\)/.test(tf),
+    'MANUAL open/close is the SAME flight mirrored: rows dive under the head BOTTOM-FIRST, and the rail moves WITH the tools the whole span — never before, never after');
   assert(tf.indexOf("kids.style.height = '0px'") < tf.indexOf("f.classList.remove('open')"),
     'CLOSING keeps the folder open until the reverse animation finishes — it never snaps to display:none');
   assert(/'height \.44s cubic-bezier\(\.3,\.6,\.3,1\), opacity \.3s ease'/.test(extractFunction(js, 'qtToggleDetail')) &&
@@ -2044,16 +2060,17 @@ function testProactiveModesBudgetAndAbortContracts() {
     'code NEVER collapses into a slim «развернуть» row: opening a tool shows the full code (scrollable)');
   // дописанный код: окно ограничено по высоте, нейтральный цвет строк,
   // стройная строка СРАЗУ после закрытия fence, клик раскрывает обратно
-  assert(/\.md pre\{[^}]*max-height:460px/s.test(css) &&
+  assert(/\.md pre\{[^}]*max-height:min\(30vh,260px\)/s.test(css) &&
     /\.md pre code\{[^}]*color:#d4d9e0\}/s.test(css) &&
-    /\.md pre\.live-code\{max-height:460px/.test(css) &&
+    /\.md pre\.live-code\{max-height:min\(30vh,260px\)/.test(css) &&
     /function foldOneCodeBlock\(pre, ui, key\)/.test(js) &&
     /function refoldCodeBlocks\(ui, root, livePre, text\)/.test(js) &&
-    /refoldCodeBlocks\(ui, ui\.mdEl, livePre, text\);/.test(js) &&
+    /refoldCodeBlocks\(ui, tailEl, livePre, text\);/.test(js) &&
     /ui\._codeCache\.set\(key, slot\);/.test(js) &&
     /pre\.replaceWith\(slot\);/.test(extractFunction(js, 'refoldCodeBlocks')) &&
     /\.code-slot\{display:contents\}/.test(css) &&
-    /_codePeek\.add\(key\);/.test(js) &&
+    /_codePeek\.add\(key\.split\('\\u0001'\)\[0\]\);/.test(js) &&
+    /_codePeek\.has\(key\.split\('\\u0001'\)\[0\]\)/.test(js) &&
     !/code-compact/.test(js) && !/code-compact/.test(css) &&
     /tag: S\.agentMode \? 'развернуть' : ''/.test(js) &&
     /tag: 'развернуть',/.test(js),
@@ -2082,6 +2099,14 @@ function testProactiveModesBudgetAndAbortContracts() {
   assert(/document\.addEventListener\('drop', \(\) => stopDragGhosts\(\), true\);/.test(js) &&
     /document\.addEventListener\('dragend', \(\) => stopDragGhosts\(\), true\);/.test(js),
     'the drag ghost layer is killed on EVERY drop/dragend path — it can never freeze on screen');
+  // S: «не найдено» при переносе в песочницу больше не тупик: чип несёт
+  // ссылку, содержимое ввезётся заново
+  assert(/function importByUrl\(url, name, destDir\)/.test(js) &&
+    /setData\('text\/jarvis-url', f\.url \|\| ''\);/.test(extractFunction(js, 'attachFileChip')) &&
+    /не найдено\|not found/.test(extractFunction(js, 'dropOnto')) &&
+    /await importByUrl\(url, name, destDir\);/.test(extractFunction(js, 'dropOnto')) &&
+    /await dropOnto\(e, ''\);/.test(js),
+    'dragging a chat chip into the sandbox NEVER dead-ends: a missing path falls back to importing the file by its URL');
   // поток: полоса удлиняется ПЕРВОЙ, строка пишется после неё
   assert(/qt-flowline qt-wait/.test(js) &&
     /classList\.remove\('qt-wait'\), 230\)/.test(js) &&

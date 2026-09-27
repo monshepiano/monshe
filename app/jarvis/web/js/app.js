@@ -505,15 +505,9 @@ $$('.nav-item').forEach((b) => b.addEventListener('click', () => showView(b.data
     tab.classList.remove('drop-hot');
     const inner = e.dataTransfer.getData('text/jarvis-path');
     if (inner) {
-      // файл из диалога: тот же жест, что и в песочнице — перемещение в корень
-      let paths = [inner];
-      try {
-        const many = JSON.parse(e.dataTransfer.getData('text/jarvis-paths') || '[]');
-        if (Array.isArray(many) && many.length) paths = many;
-      } catch (err) { /* тянули один файл */ }
-      const r = await api('/api/sandbox/move_many', { paths, dest: '', chat_id: S.chatId || '' });
-      if (r.moved) toast('Перемещено в песочницу: ' + r.moved, 'success');
-      if ((r.errors || []).length) toast(r.errors[0].error || 'не удалось переместить', 'error');
+      // файл из диалога: тот же жест и та же логика, что в песочнице, —
+      // включая ввоз по ссылке, если пути в песочнице уже нет
+      await dropOnto(e, '');
       pulseNav('files', false);
       loadFiles();
       return;
@@ -1833,6 +1827,10 @@ function attachFileChip(container, f) {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/jarvis-path', a.dataset.path);
     e.dataTransfer.setData('text/jarvis-paths', JSON.stringify([a.dataset.path]));
+    // ссылка и имя — страховка: если файла уже нет в песочнице диалога,
+    // перенос всё равно сработает: содержимое ввезётся по ссылке
+    e.dataTransfer.setData('text/jarvis-url', f.url || '');
+    e.dataTransfer.setData('text/jarvis-name', f.name || '');
     e.dataTransfer.setData('text/plain', f.name);
     startDragGhosts(e, [a], a);
   });
@@ -4116,12 +4114,11 @@ function qtToggleFolder(f) {
   const free = () => { f._anim = false; };
   const headRect = f.querySelector('.qt-head').getBoundingClientRect();
   if (f.classList.contains('open')) {
-    // ЗАКРЫТИЕ = ВАЛЬС В ОБРАТНУЮ СТОРОНУ: каждая строка ПО ОЧЕРЕДИ
-    // заплывает вверх ПОД голову группы и растворяется на ней (blur+fade),
-    // а когда прилетела последняя — тело папки съёживается одной пуфтой,
-    // полоса задвигается. Класс open не снимается до конца: display:none
-    // включался мгновенно и строки исчезали одним кадром.
-    const rows = Array.from(f.querySelectorAll('.qt-row'));
+    // ЗАКРЫТИЕ — ТОЧНОЕ ЗЕРКАЛО ОТКРЫТИЯ: строки улетают ПОД голову группы
+    // с ПОСЛЕДНЕЙ (нижней) к первой, теми же длительностями и кривыми, что
+    // прилетали. Полоса-тело задвигается НЕ после посадки последней, а
+    // ОДНОВРЕМЕННО с полётом — линия и инструменты движутся одним тактом.
+    const rows = Array.from(f.querySelectorAll('.qt-row')).reverse();
     rows.forEach((r, i) => {
       const dist = r.getBoundingClientRect().top - headRect.bottom;
       r.style.transition =
@@ -4132,25 +4129,21 @@ function qtToggleFolder(f) {
       r.style.filter = 'blur(3px)';
       r.style.opacity = '0';
     });
-    const flyT = rows.length * 55 + 560;
-    setTimeout(() => {
-      // последняя строка села — полоса задвигается
-      const h0 = kids.getBoundingClientRect().height;
-      kids.style.overflow = 'hidden';
-      kids.style.transition = 'none';
-      kids.style.height = h0 + 'px';
-      void kids.offsetHeight;
-      kids.style.transition = 'height .3s cubic-bezier(.4,.5,.4,1)';
-      kids.style.height = '0px';
-    }, flyT - 320);
-    const rowsT = flyT + 120;
+    const span = 120 + (rows.length - 1) * 55 + 520;
+    const h0 = kids.getBoundingClientRect().height;
+    kids.style.overflow = 'hidden';
+    kids.style.transition = 'none';
+    kids.style.height = h0 + 'px';
+    void kids.offsetHeight;
+    kids.style.transition = 'height ' + span + 'ms cubic-bezier(.2,.5,.2,1)';
+    kids.style.height = '0px';
     setTimeout(() => {
       f.classList.remove('open');
       kids.classList.remove('open');
       kids.style.cssText = '';
       rows.forEach((r) => { r.style.cssText = ''; });
       free();
-    }, rowsT);
+    }, span + 140);
   } else {
     const box = f.querySelector('.qt-rows');
     box.replaceChildren();
@@ -4174,11 +4167,14 @@ function qtToggleFolder(f) {
       r.style.filter = 'blur(3px)';
       r.style.opacity = '0';
     });
+    const span = 120 + (allRows.length - 1) * 55 + 520;
     kids.style.overflow = 'hidden';
     kids.style.transition = 'none';
     kids.style.height = '0px';
     void kids.offsetHeight;
-    kids.style.transition = 'height .3s cubic-bezier(.4,.5,.4,1)';
+    // ЛИНИЯ ОПУСКАЕТСЯ ВСЮ ДЛИТЕЛЬНОСТЬ ПОЛЁТА — тем же темпом, что и
+    // строки: последняя строка приходит на место ровно к развёртке линии
+    kids.style.transition = 'height ' + span + 'ms cubic-bezier(.2,.5,.2,1)';
     kids.style.height = h + 'px';
     allRows.forEach((r, i) => {
       void r.offsetHeight;
@@ -4194,7 +4190,7 @@ function qtToggleFolder(f) {
       kids.style.cssText = '';
       allRows.forEach((r) => { r.style.cssText = ''; });
       free();
-    }, allRows.length * 55 + 700);
+    }, span + 140);
   }
 }
 
@@ -4625,7 +4621,30 @@ function renderTyped(ui) {
   const now = performance.now();
   const measure = now - (ui.lastHeightCheck || 0) >= 100;
   const before = measure ? ui.mdEl.offsetHeight : 0;
-  ui.mdEl.innerHTML = html + MD.render(stripSteps(text.slice(src.length)));
+  // ГОЛОВА И ХВОСТ В РАЗНЫХ УЗЛАХ: замороженная часть не перестраивается —
+  // её HTML фиксируется один раз, а свёрнутые вкладки кода (слоты с кнопками
+  // и слушателями) стоят в ней неподвижно. Переписывается только хвост.
+  let frozenEl = ui.mdEl.firstElementChild;
+  if (!frozenEl || !frozenEl.classList.contains('md-frozen')) {
+    ui.mdEl.replaceChildren();
+    frozenEl = el('div', 'md-frozen');
+    ui.mdEl.appendChild(frozenEl);
+    ui._frozenSrc = null;
+    ui._tailKeys = [];
+  }
+  let tailEl = frozenEl.nextElementSibling;
+  if (!tailEl || !tailEl.classList.contains('md-tail')) {
+    tailEl = el('div', 'md-tail');
+    ui.mdEl.appendChild(tailEl);
+  }
+  if (ui._frozenSrc !== src) {
+    frozenEl.innerHTML = html;
+    ui._frozenSrc = src;
+    // свернуть код головы один раз — и больше не трогать до конца ответа
+    refoldCodeBlocks(ui, frozenEl, null, '');
+    ui._tailKeys = [];
+  }
+  tailEl.innerHTML = MD.render(stripSteps(text.slice(src.length)));
   markImportantThought(ui.mdEl);
   placeCaret(ui.mdEl);
   // Незаконченный длинный code fence живёт в ограниченном окне и следует за
@@ -4640,7 +4659,7 @@ function renderTyped(ui) {
   // ЗАКРЫВШИЙСЯ FENCE СРАЗУ СТАНОВИТСЯ МИНИАТЮРОЙ-ВКЛАДКОЙ: пишется блок —
   // живое окно live-code; закрылся — вкладка в тот же тик. Перерисовка
   // печати не рождает вкладку заново: готовые слоты встают из кэша.
-  refoldCodeBlocks(ui, ui.mdEl, livePre, text);
+  refoldCodeBlocks(ui, tailEl, livePre, text);
   // АКТИВНЫЙ fence остаётся живым окном (скроллится сам), закрытые — уже
   // свёрнуты выше. Развёрнутый пользователем блок (миниатюра среди печати)
   // не сжимается снова: индекс блока запоминается в _codePeek.
@@ -4889,7 +4908,10 @@ function foldOneCodeBlock(pre, ui, key) {
   bar.appendChild(cp);
   wrap.insertBefore(bar, pre);
   if (ui && key) ui._codeCache.set(key, slot);
-  if (ui && ui.mdEl && ui.mdEl._codePeek && ui.mdEl._codePeek.has(key)) return;
+  // раскрытие помнится по СОДЕРЖИМОМУ блока: когда хвост доедет до границы
+  // заморозки и ключ сменит позицию, раскрытая вкладка не сожмётся снова
+  if (ui && ui.mdEl && ui.mdEl._codePeek &&
+      ui.mdEl._codePeek.has(key.split('\u0001')[0])) return;
   const thumb = collapseToThumb(wrap, {
     instant: true, cls: 'th-code inline-thumb', icon: ICO.code,
     title: lang ? 'Код · ' + lang : 'Код',
@@ -4900,34 +4922,49 @@ function foldOneCodeBlock(pre, ui, key) {
   if (thumb) thumb.addEventListener('click', () => {
     if (!ui.mdEl) return;
     if (!ui.mdEl._codePeek) ui.mdEl._codePeek = new Set();
-    ui.mdEl._codePeek.add(key);
+    ui.mdEl._codePeek.add(key.split('\u0001')[0]);
   });
 }
 
-/* Проход по свеже-перерисованной ленте: готовые слоты встают на место
-   своих pre, новые закрываются один раз. Ключ — содержимое блока плюс
-   номер вхождения: два одинаковых блока живут в двух слотах. */
+/* Проход по ленте: готовые слоты встают на место своих pre, новые блоки
+   закрываются один раз. Ключ = содержимое + позиция блока (порядок блоков
+   в ответе стабилен). В ХВОСТЕ ключ позиции известен заранее: слот ставится
+   БЕЗ чтения текста блока — большой код не перечитывается на каждом тике.
+   Голова обрабатывается один раз на границе заморозки. */
 function refoldCodeBlocks(ui, root, livePre, text) {
   if (!ui._codeCache) ui._codeCache = new Map();
-  const seen = new Map();
-  const used = new Set();
-  $$('pre', root).forEach((pre) => {
-    if (pre.closest('.code-block')) return;
-    if (pre === livePre && inCodeBlock(text)) return;
+  if (!ui._tailKeys) ui._tailKeys = [];
+  const inTail = root.classList.contains('md-tail');
+  const pres = $$('pre', root);
+  for (let i = 0; i < pres.length; i++) {
+    const pre = pres[i];
+    if (pre.closest('.code-block')) continue;            // уже в слоте
+    if (pre === livePre && inCodeBlock(text)) continue;  // пишется сейчас
+    // быстрый путь: позиция уже была свернута — слот из кэша, без чтения
+    if (inTail && i < ui._tailKeys.length && ui._tailKeys[i]) {
+      const key = ui._tailKeys[i];
+      const slot = ui._codeCache.get(key);
+      const peeked = ui.mdEl._codePeek && ui.mdEl._codePeek.has(key.split('\u0001')[0]);
+      if (slot && !peeked) { pre.replaceWith(slot); continue; }
+      if (slot && peeked) continue;   // пользователь раскрыл — блок развёрнут
+    }
     const code = pre.textContent || '';
-    if (code.split('\n').length < 4 && code.length < 200) return;
-    const ck = (pre.getAttribute('data-lang') || '') + '\u0000' + code;
-    const occ = seen.get(ck) || 0;
-    seen.set(ck, occ + 1);
-    const key = ck + '\u0001' + occ;
+    if (code.split('\n').length < 4 && code.length < 200) {
+      if (inTail) ui._tailKeys[i] = null;    // короткий сниппет — не блок
+      continue;
+    }
+    const key = (pre.getAttribute('data-lang') || '') + '\u0000' + code +
+      '\u0001' + i + (inTail ? 't' : 'f');
     const slot = ui._codeCache.get(key);
-    if (slot) { pre.replaceWith(slot); used.add(key); return; }
+    if (slot) {
+      const peeked = ui.mdEl._codePeek && ui.mdEl._codePeek.has(key.split('\u0001')[0]);
+      if (!peeked) pre.replaceWith(slot);
+      if (inTail) ui._tailKeys[i] = key;
+      continue;
+    }
     foldOneCodeBlock(pre, ui, key);
-    used.add(key);
-  });
-  // слоты, которых в этом кадре не оказалось (текст перерисовался иначе),
-  // из кэша убираем — он не растёт бесконечно
-  ui._codeCache.forEach((slot, key) => { if (!used.has(key)) ui._codeCache.delete(key); });
+    if (inTail) ui._tailKeys[i] = key;
+  }
 }
 
 /* МЕТКА «ОСТАНОВЛЕНО»: единая точка. Раньше её рисовал только обработчик
@@ -7746,6 +7783,32 @@ function stopDragGhosts() {
 }
 
 /* Обработка броска: либо перенос внутри песочницы, либо загрузка с компьютера. */
+/* Ввоз файла в песочницу ПО ССЫЛКЕ: чип из переписки ссылается на файл,
+   которого может уже не быть в песочнице диалога (диалог пересоздан, файл
+   переехал). Тогда перемещение по пути отвечает «не найдено» — вместо
+   ошибки качаем содержимое по ссылке и заливаем его в песочницу заново. */
+async function importByUrl(url, name, destDir) {
+  try {
+    const blob = await (await fetch(url)).blob();
+    const data = await new Promise((res) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.onerror = () => res(null);
+      fr.readAsDataURL(blob);
+    });
+    if (!data) return false;
+    const r = await api('/api/upload', { name, data, chat_id: S.chatId || '' });
+    if (!r.ok) { toast(r.error || 'не удалось перенести', 'error'); return false; }
+    const target = destDir != null ? destDir : (S.fdir || '');
+    if (target) await api('/api/sandbox/move', { path: r.name, dest: target, chat_id: S.chatId || '' });
+    toast(name + ' — в песочнице', 'success');
+    return true;
+  } catch (err) {
+    toast('не удалось перенести', 'error');
+    return false;
+  }
+}
+
 async function dropOnto(e, destDir) {
   const inner = e.dataTransfer.getData('text/jarvis-path');
   if (inner) {
@@ -7767,6 +7830,17 @@ async function dropOnto(e, destDir) {
     S.fselAuto = false;
     const r = await api('/api/sandbox/move_many', { paths, dest: destDir, chat_id: S.chatId || '' });
     if (r.moved) toast('Перемещено: ' + r.moved, 'success');
+    const missing = (r.errors || []).some((x) => /не найдено|not found/i.test(x.error || ''));
+    if (missing) {
+      // файла нет в песочнице диалога — ввозим содержимое по ссылке чипа
+      const url = e.dataTransfer.getData('text/jarvis-url');
+      const name = e.dataTransfer.getData('text/jarvis-name');
+      if (url && name) {
+        const okImp = await importByUrl(url, name, destDir);
+        if (okImp) { clearSelection(); pulseNav('files', false); loadFiles(); }
+        return;
+      }
+    }
     if ((r.errors || []).length) toast(r.errors[0].error || 'не удалось переместить', 'error');
     clearSelection();
     loadFiles();
