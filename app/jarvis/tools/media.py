@@ -311,23 +311,48 @@ def _gateway_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
         raise GigaChatError("не удалось связаться с облачной генерацией: %s" % exc) from None
 
 
+# Y: ЦЕПОЧКА БЕСПЛАТНЫХ МОДЕЛЕЙ — от свежих к старым. Прежний безымянный
+# дефолт рисованием напоминал «первые ИИ-модели»: Z-Image Turbo делает
+# картинку с 2x-апскейлом, FLUX.2 Klein — новое поколение, классический
+# flux остаётся последним запасным. Рабочая модель запоминается.
+_FREE_IMAGE_MODELS = ("zimage", "klein", "flux")
+_FREE_IMAGE_STATE: Dict[str, Any] = {"model": ""}
+
+
 def _free_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
-    """Открытая бесплатная генерация (flux) — без ключей, работает из России.
+    """Открытая бесплатная генерация — без ключей, работает из России.
 
     Cloud.ru Foundation Models картинки не генерирует вообще (в каталоге
     только LLM/embedding/rerank/audio/OCR), а GigaChat требует отдельного
-    ключа. Этот маршрут — последний в цепочке: генерация работает из коробки,
-    пусть и очередью медленнее платных.
+    ключа. Этот маршрут — последний в цепочке: генерация работает из коробки.
     """
     seed = int(time.time() * 1000) % 10 ** 8
-    url = ("https://image.pollinations.ai/prompt/%s?width=%d&height=%d"
-           "&nologo=true&seed=%d"
-           % (urllib.parse.quote(prompt)[:900], width, height, seed))
-    req = urllib.request.Request(url, headers={"User-Agent": _UA})
-    with urllib.request.urlopen(req, timeout=180, context=_CTX) as resp:
-        image = resp.read()
-    if not image or len(image) < 1200:
-        return {"ok": False, "error": "генератор вернул пустой ответ"}
+    remembered = _FREE_IMAGE_STATE.get("model") or ""
+    order = ((remembered,) + tuple(m for m in _FREE_IMAGE_MODELS if m != remembered)
+             if remembered in _FREE_IMAGE_MODELS else _FREE_IMAGE_MODELS)
+    image = b""
+    used = ""
+    last_error = ""
+    for model in order:
+        url = ("https://image.pollinations.ai/prompt/%s?width=%d&height=%d"
+               "&nologo=true&seed=%d&model=%s"
+               % (urllib.parse.quote(prompt)[:900], width, height, seed, model))
+        req = urllib.request.Request(url, headers={"User-Agent": _UA})
+        try:
+            with urllib.request.urlopen(req, timeout=180, context=_CTX) as resp:
+                image = resp.read()
+        except Exception as exc:
+            last_error = str(exc)[:160]
+            continue
+        if image and len(image) >= 1200:
+            used = model
+            _FREE_IMAGE_STATE["model"] = model
+            break
+        last_error = "пустой ответ от " + model
+        image = b""
+    if not image:
+        return {"ok": False,
+                "error": "бесплатный генератор недоступен: " + (last_error or "пустой ответ")}
     name = "image_%d.jpg" % (int(time.time() * 1000) % 10 ** 8)
     target = sandbox.safe_path(name)
     tmp = target.with_suffix(target.suffix + ".tmp")
@@ -341,7 +366,7 @@ def _free_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
         "download_url": sandbox.dl(name),
         "preview_url": sandbox.dl(name),
         "prompt": prompt,
-        "model": "flux · free",
+        "model": (used or "flux") + " · free",
         "provider": "free",
         "watermark": False,
     }

@@ -1135,6 +1135,11 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .qt-kids>.qt-rows{flex:1;margin-left:11px;display:flex;flex-direction:column;gap:2px;
   padding:2px 0 3px}
 .qt-row{min-width:0}
+/* Y: ХОД МЫСЛЕЙ В ТИХОМ РЕЖИМЕ — та же кухня, что у инструментов: серая
+   строка с потоком, никаких агентских карточек и рамок */
+.qt-think .qt-ico{font-size:12px;color:rgba(154,202,219,.72)}
+.qt-think .qt-name{color:rgba(154,202,219,.72)}
+.qt-think .qt-mark{color:rgba(154,202,219,.55)}
 .qt-row .qt-name{font-size:11px}
 /* текст инструмента: полоса от иконки, БЕЗ затемнений, скролл только вниз */
 .qt-detail-wrap{display:none;margin-left:6px}
@@ -1208,8 +1213,10 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
    — :hover дрожал на краях и искры пробегали дважды). */
 .agent-switch-track{overflow:hidden}
 /* пока курсор на тумблере — трек держит винный свет и свечение огонька */
-.agent-switch.ag-play .agent-switch-track:not(:has(input:checked)),
-.agent-switch-track:not(:has(input:checked)):hover{
+/* Y: ПОСЛЕ ПЕРЕКЛЮЧЕНИЯ ТУМБЛЕРА подсветка под курсором молчит — data-ag-hold
+   держит её выключенной до ухода курсора; заиграет только при НОВОМ наведении */
+.agent-switch.ag-play:not([data-ag-hold]) .agent-switch-track:not(:has(input:checked)),
+.agent-switch:not([data-ag-hold]) .agent-switch-track:not(:has(input:checked)):hover{
   border-color:rgba(224,96,118,.52);
   background:rgba(143,39,57,.1)}
 @keyframes agKnobRubber{

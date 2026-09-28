@@ -1671,17 +1671,84 @@ function renderToolKitchen(node, traces) {
   });
 }
 
+/* Y: ПРОШЛЫЕ ИНСТРУМЕНТЫ АГЕНТСКОГО ОТВЕТА — АГЕНТСКИМ ДИЗАЙНОМ: одна
+   групповая карточка на семейство, свёрнутая в строку. Дизайн истории
+   повторяет дизайн ЖИВОГО ответа (meta.agent), а не текущий режим:
+   тихий ответ никогда не «переодевается» в агентский при возврате. */
+function renderAgentTraceGroups(node, traces) {
+  if (!traces.length) return;
+  const groups = new Map();
+  traces.forEach((t) => {
+    const g = t.group || 'base';
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(t);
+  });
+  groups.forEach((items, g) => {
+    const fam = QT_FAMILY[g] || QT_FAMILY.base;
+    const card = makeCard(qtFamilyIcon(g, ''), fam.label, 'tool-card ag-group', true);
+    const head = card.querySelector('.k');
+    if (head) head.innerHTML = esc(fam.label) + '<span class="ag-count"> × ' + items.length + '</span>';
+    const rows = el('div', 'ag-rows');
+    items.forEach((t) => {
+      const row = el('div', 'ql-row');
+      row.innerHTML =
+        '<span class="ql-head">' +
+          '<span class="qs-ico">' + qtFamilyIcon(t.group || g, t.name) + '</span>' +
+          '<span class="ql-label">' + esc(t.label || t.name) + '</span>' +
+          '<span class="qs-state">✓</span>' +
+        '</span>' +
+        '<pre class="ql-detail">' + esc(qtDetail(t.args || {}, t.result || {})) + '</pre>';
+      row.addEventListener('click', () => {
+        const det = row.querySelector('.ql-detail');
+        const willOpen = !row.classList.contains('open');
+        row.classList.toggle('open', willOpen);
+        if (det && det.animate) {
+          const h = det.scrollHeight;
+          det.style.overflow = 'hidden';
+          const anim = det.animate(
+            willOpen
+              ? [{ height: '0px', opacity: '0' }, { height: h + 'px', opacity: '1' }]
+              : [{ height: h + 'px', opacity: '1' }, { height: '0px', opacity: '0' }],
+            { duration: willOpen ? 440 : 380,
+              easing: willOpen ? 'cubic-bezier(.22,.8,.3,1)' : 'cubic-bezier(.3,.6,.3,1)' });
+          anim.finished.then(() => { det.style.overflow = ''; }).catch(() => { det.style.overflow = ''; });
+        }
+      });
+      rows.appendChild(row);
+    });
+    card.inner.appendChild(rows);
+    node.body.appendChild(card);
+    collapseToThumb(card, {
+      cls: 'th-ok', icon: ICO.code, title: fam.label + ' × ' + items.length,
+      sub: '', tag: 'готово', instant: true,
+    });
+  });
+}
+
 function restoreTrace(node, meta) {
   const think = (meta.thinking || '').trim();
   const toolTraces = [];
+  const agentAnswer = !!meta.agent;   // Y: дизайн истории = дизайн ответа
   if (think) {
-    const card = makeCard('◇', 'Ход мыслей', 'think-card', false);
-    const ts = el('div', 'think-stream');
-    ts.textContent = think;
-    card.inner.appendChild(ts);
-    node.body.appendChild(card);
-    collapseToThumb(card, { cls: 'th-think', icon: '◇', title: 'Ход мыслей',
-      sub: think.slice(0, 60), tag: 'свёрнут', instant: true });
+    if (agentAnswer) {
+      const card = makeCard('◇', 'Ход мыслей', 'think-card', false);
+      const ts = el('div', 'think-stream');
+      ts.textContent = think;
+      card.inner.appendChild(ts);
+      node.body.appendChild(card);
+      collapseToThumb(card, { cls: 'th-think', icon: '◇', title: 'Ход мыслей',
+        sub: think.slice(0, 60), tag: 'свёрнут', instant: true });
+    } else {
+      // Y: тихий ответ — тихая строка кухни, без агентской карточки
+      const row = el('div', 'qt-node qt-think');
+      row.innerHTML =
+        '<div class="qt-head">' +
+          '<span class="qt-ico">◇</span>' +
+          '<span class="qt-name">Ход мыслей</span>' +
+          '<span class="qt-mark">✓ ' + fmtSize(think.length) + '</span>' +
+        '</div>';
+      node.body.appendChild(row);
+    }
   }
   (meta.trace || []).forEach((t) => {
     if (t.kind === 'plan' && (t.steps || []).length) {
@@ -1711,7 +1778,8 @@ function restoreTrace(node, meta) {
         sub: t.question || '', tag: t.answer || 'без ответа', instant: true });
     }
   });
-  renderToolKitchen(node, toolTraces);
+  if (agentAnswer) renderAgentTraceGroups(node, toolTraces);
+  else renderToolKitchen(node, toolTraces);
 }
 
 /* ============ РАСКРЫТИЕ И ЗАКРЫТИЕ ТЕЛА КАРТОЧКИ ============
@@ -3680,12 +3748,18 @@ async function send(opts) {
       // «недозакрытым»: развёрнутый код и раскрытые карточки висели открытыми.
       foldCodeBlocks(ui.mdEl, true);
       if (ui.thinkCard && ui.thinkCard.isConnected) {
-        const ts = thinkFlush(ui.thinkCard);
-        collapseSoon(ui.thinkCard, {
-          cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
-          sub: ts ? fmtSize((ts.textContent || '').length) : '',
-          tag: 'развернуть',
-        });
+        if (ui.thinkCard.classList.contains('qt-think')) {
+          const mk = ui.thinkCard.querySelector('.qt-mark');
+          if (mk) mk.textContent = '✓';
+          qtMiniaturize(ui.thinkCard);
+        } else {
+          const ts = thinkFlush(ui.thinkCard);
+          collapseSoon(ui.thinkCard, {
+            cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
+            sub: ts ? fmtSize((ts.textContent || '').length) : '',
+            tag: 'развернуть',
+          });
+        }
       }
       markStopped(ui);
       settleVisualDone(ui);
@@ -3775,7 +3849,19 @@ const THINK_QUIPS = [
    живёт мигающий курсор. Круглый spinner исключён из жизненного цикла ответа:
    при долгом ожидании и при «уменьшить движение» он выглядел зависшим. */
 function runStatus(ui, lines, opts) {
-  const box = ui && ui.statusEl;
+  // Y: СТРОКА СОСТОЯНИЯ ВОЗРОЖДАЕТСЯ САМА. В многошаговом ответе её
+  // разбирали после текста шага, а следующий ход модели («status»/
+  // «thinking») приходил к ПУСТОМУ ui.statusEl — runStatus молча
+  // выходил, и экран оставался без курсора. Вот он, «исчезающий
+  // курсор в агенте». Теперь строка создаётся здесь же, на месте.
+  if (!ui) return;
+  // isConnected === false (не undefined): в живом DOM оторванная строка
+  // обязана возродиться сразу здесь, на месте
+  if (!ui.statusEl || ui.statusEl.isConnected === false) {
+    if (!ui.node || !ui.node.body) return;   // некуда ставить — тихо выходим
+    ui.statusEl = ensureStatus(ui);
+  }
+  const box = ui.statusEl;
   if (!box) return;
   const o = opts || {};
   const list = (Array.isArray(lines) ? lines : [lines]).filter(Boolean);
@@ -4155,13 +4241,28 @@ function qtFold(ui, node, isLast) {
   // вальс сжимает соседей сверху, и заранее рассчитанный пролёт перелетал
   // группу. Прицеливание по живому низу головы папки: посадка ВСЕГДА под ней.
   const h0 = node.getBoundingClientRect().height;
+  // Y: ПОТОК СКЛАДЫВАЕТСЯ БЫСТРО И ПЕРВЫМ. Раньше высота узла резала
+  // подпись ещё в полёте — текст обрезался задолго до названия группы
+  // и «растворялся» ниже него. Поток строк уходит за .3с, а строка-
+  // заголовок остаётся читаемой почти до самой посадки в название.
+  const bodyEl = node.querySelector('.qt-body');
+  if (bodyEl && !node.dataset.mini) {
+    const bh = bodyEl.getBoundingClientRect().height;
+    bodyEl.style.overflow = 'hidden';
+    bodyEl.style.transition = 'none';
+    bodyEl.style.height = bh + 'px';
+    void bodyEl.offsetHeight;
+    bodyEl.style.transition = 'height .3s ease, opacity .22s ease';
+    bodyEl.style.height = '0px';
+    bodyEl.style.opacity = '0';
+  }
   node.style.overflow = 'hidden';
   node.style.transition = 'none';
   node.style.height = h0 + 'px';
   void node.offsetHeight;
   node.style.transition =
     'height 1.05s cubic-bezier(.2,.5,.2,1), ' +
-    'opacity .34s ease .68s, filter .34s ease .68s';
+    'opacity .3s ease-in .84s, filter .3s ease-in .84s';
   node.style.filter = 'blur(3px)';
   node.style.opacity = '0';
   node.style.height = '0px';
@@ -4191,7 +4292,7 @@ function qtFold(ui, node, isLast) {
     return r.top + r.height / 2;
   };
   // центр подписи относительно верха узла, с поправкой на сжатие scale(.93)
-  const labOff = ((lRect.top + lRect.height / 2) - base0) * .93 + h0 * .035;
+  const labOff = ((lRect.top + lRect.height / 2) - base0) * .93 + h0 * .035 + 4;   // Y: чуть выше — тает В названии
   const C0 = (tRect.top + tRect.height / 2) - base0 - labOff;
   let aim = C0;
   const flight = node.animate(
@@ -4229,7 +4330,7 @@ function qtFold(ui, node, isLast) {
   setTimeout(() => {
     node.remove();
     folder._pend -= 1;
-  }, 1080);
+  }, 1200);   // Y: растворение доигрывает до конца (fade .84с+.3с)
   // ПОСЛЕДНИЙ ИНСТРУМЕНТ ЕЩЁ ЛЕТИТ — папка уже «охнула»: мигание начинается
   // чуть раньше прилёта, впихивание последнего читается живым
   if (isLast) setTimeout(folderBlink, 820);
@@ -5344,12 +5445,18 @@ function queueResponseFinish(ui, content, success) {
         () => openPreview({ name: im.alt || 'изображение', url: im.src })));
 
       if (ui.thinkCard && ui.thinkCard.isConnected) {
-        const ts = thinkFlush(ui.thinkCard);
-        collapseSoon(ui.thinkCard, {
-          cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
-          sub: ts ? fmtSize((ts.textContent || '').length) : '',
-          tag: 'развернуть',
-        });
+        if (ui.thinkCard.classList.contains('qt-think')) {
+          const mk = ui.thinkCard.querySelector('.qt-mark');
+          if (mk) mk.textContent = '✓';
+          qtMiniaturize(ui.thinkCard);
+        } else {
+          const ts = thinkFlush(ui.thinkCard);
+          collapseSoon(ui.thinkCard, {
+            cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
+            sub: ts ? fmtSize((ts.textContent || '').length) : '',
+            tag: 'развернуть',
+          });
+        }
       }
 
       if (success) {
@@ -5515,16 +5622,30 @@ function handleEvent(ev, ui) {
       break;
 
     case 'thinking': {
-      // ХОД МЫСЛЕЙ — В ЛЮБОМ РЕЖИМЕ (X): тихий раньше молча выбрасывал
-      // мысли, а restoreTrace при повторном открытии их «воскрешал» —
-      // казалось, инструменты появились из ниоткуда. Что видел живьём —
-      // то и вернётся из истории; дизайн подхватывает текущая тема.
-      // ПОЧЕМУ «ДУМАЛКА» ОТКРЫВАЛАСЬ НЕ ВЕЗДЕ. Её показ решался ЗАРАНЕЕ, по
-      // длине вопроса (verbose приходит из score). Короткая просьба, которая
-      // на деле разворачивалась в работу с инструментами, получала verbose:false
-      // — и реальный ход мыслей, уже пришедший с сервера, молча выбрасывался.
-      // Предсказание не может отменять факт: если мысли пришли, их показываем.
-      // verbose остаётся только для того, что мы дорисовываем сами (терминал).
+      // Y: ХОД МЫСЛЕЙ — КАЖДОМУ РЕЖИМУ СВОЙ ДИЗАЙН. Тихому — та же кухня,
+      // что и инструментам: серая строка с потоком строк; агенту — его
+      // карточка. А показываются мысли в тихом режиме только у рабочих
+      // ответов (первый инструмент / второй ход) — это решает сервер.
+      if (!(ui.agentMode || S.agentMode)) {
+        if (!ui.thinkCard || !ui.thinkCard.classList.contains('qt-think')) {
+          const qn = el('div', 'qt-node qt-think');
+          qn.innerHTML =
+            '<div class="qt-head">' +
+              '<span class="qt-ico">◇</span>' +
+              '<span class="qt-name">Ход мыслей</span>' +
+              '<span class="qt-mark"></span>' +
+            '</div>' +
+            '<div class="qt-body"><span class="qt-rail"></span><div class="qt-flow">' +
+              '<div class="qt-flowin"></div></div></div>';
+          ui.thinkCard = qn;
+          markBorn(qn);
+          node.body.insertBefore(qn, ensureStatus(ui));
+        }
+        const flow = ui.thinkCard.querySelector('.qt-flow');
+        if (flow && ev.text) qtFeed(flow, ev.text);
+        scrollDown();
+        break;
+      }
       if (!ui.thinkCard) {
         // карточка раскрыта сразу: мысли должны бежать на глазах, как в терминале
         ui.thinkCard = makeCard('◇', 'Ход мыслей', 'think-card', true);
@@ -6029,13 +6150,20 @@ function handleEvent(ev, ui) {
       if (!ui.mdEl) {
         dropStatus(ui);
         if (ui.thinkCard) ui.thinkCard.classList.remove('live');
-        // пошёл ответ — ход мыслей сразу убираем в миниатюру, чтобы не мешал читать
+        // пошёл ответ — ход мыслей сразу убираем, чтобы не мешал читать
         if (ui.thinkCard && ui.thinkCard.isConnected) {
-          const ts0 = thinkFlush(ui.thinkCard);
-          collapseSoon(ui.thinkCard, {
-            cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
-            sub: ts0 ? fmtSize((ts0.textContent || '').length) : '',
-          });
+          if (ui.thinkCard.classList.contains('qt-think')) {
+            // Y: тихий дизайн сворачивается как строка кухни
+            const mk = ui.thinkCard.querySelector('.qt-mark');
+            if (mk) mk.textContent = '✓';
+            qtMiniaturize(ui.thinkCard);
+          } else {
+            const ts0 = thinkFlush(ui.thinkCard);
+            collapseSoon(ui.thinkCard, {
+              cls: 'th-think', icon: ICO.think, title: 'Ход мыслей',
+              sub: ts0 ? fmtSize((ts0.textContent || '').length) : '',
+            });
+          }
         }
         ui.mdEl = el('div', 'md typing');
         node.body.appendChild(ui.mdEl);
@@ -6284,6 +6412,50 @@ function micHintOff() {
   setTimeout(() => t.remove(), 300);
 }
 
+/* Y: ЗАПИСЬ → WAV 16 кГц МОНО ПРЯМО В БРАУЗЕРЕ. decodeAudioData понимает
+   и webm/opus (Chrome), и mp4/aac (Safari); OfflineAudioContext сам
+   приводит к 16 кГц; дальше — честный RIFF-заголовок и 16-бит PCM.
+   Никакого ffmpeg, никакого «формата, который не примет ни одна
+   слуховая модель». */
+async function blobToWav16k(blob) {
+  const buf = await blob.arrayBuffer();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const actx = new AC();
+  let decoded;
+  try {
+    decoded = await actx.decodeAudioData(buf);
+  } finally {
+    try { actx.close(); } catch (e) { /* уже закрыт */ }
+  }
+  const rate = 16000;
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const off = new OAC(1, Math.max(1, Math.ceil(decoded.duration * rate)), rate);
+  const src = off.createBufferSource();
+  src.buffer = decoded;
+  src.connect(off.destination);
+  src.start();
+  const rendered = await off.startRendering();
+  const pcm = rendered.getChannelData(0);
+  const bytes = new ArrayBuffer(44 + pcm.length * 2);
+  const v = new DataView(bytes);
+  const wstr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  wstr(0, 'RIFF'); v.setUint32(4, 36 + pcm.length * 2, true); wstr(8, 'WAVE');
+  wstr(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true); wstr(36, 'data'); v.setUint32(40, pcm.length * 2, true);
+  let o = 44;
+  for (let i = 0; i < pcm.length; i++, o += 2) {
+    const s = Math.max(-1, Math.min(1, pcm[i]));
+    v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  let bin = '';
+  const u8 = new Uint8Array(bytes);
+  for (let i = 0; i < u8.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  }
+  return 'data:audio/wav;base64,' + btoa(bin);
+}
+
 async function serverASR(btn, silentStart) {
   if (S.recorder && S.recorder.state === 'recording') { S.recorder.stop(); return; }
   try {
@@ -6302,22 +6474,35 @@ async function serverASR(btn, silentStart) {
       S.recorder = null;
       btn.classList.remove('rec');
       const blob = new Blob(S.recChunks, { type: rec.mimeType || mime || 'audio/webm' });
-      const fr = new FileReader();
-      fr.onload = async () => {
-        micHint('Распознаю речь…');
-        const r = await api('/api/transcribe', { audio: fr.result, language: 'ru' });
-        // Ответ сервера окончательный: он больше не отправляет нас обратно в
-        // браузер. Один запрос — один результат, никакого пинг-понга.
-        if (r.ok && r.text) {
-          $('#input').value = ($('#input').value + ' ' + r.text).trim();
-          autoGrow(); $('#input').focus(); updateSendBtn();
-          micHintOff();
-          beep(760, 0.08);
-        } else {
-          micHint(r.error || 'Не удалось распознать', 'error');
-        }
-      };
-      fr.readAsDataURL(blob);
+      // Y: ДЕКОДИРУЕМ В WAV ПРЯМО В БРАУЗЕРЕ — ГЛУБОКИЙ КОРЕНЬ «микрофон
+      // не работает». Chrome пишет webm/opus, Safari — mp4, а слуховые
+      // модели понимают только wav/mp3/flac: сырую webm-запись они
+      // отвергают ВСЕГДА, и вся цепочка падала на первом шаге. Конвертация
+      // на сервере требовала ffmpeg — его на машине может не быть вовсе.
+      // Теперь браузер сам превращает запись в чистый WAV 16 кГц моно.
+      micHint('Распознаю речь…');
+      let payload = '';
+      try {
+        payload = await blobToWav16k(blob);
+      } catch (e) {
+        // декодер не осилил — отдаём как есть, сервер попробует сам
+        payload = await new Promise((res) => {
+          const fr = new FileReader();
+          fr.onload = () => res(fr.result);
+          fr.readAsDataURL(blob);
+        });
+      }
+      const r = await api('/api/transcribe', { audio: payload, language: 'ru' });
+      // Ответ сервера окончательный: он больше не отправляет нас обратно в
+      // браузер. Один запрос — один результат, никакого пинг-понга.
+      if (r.ok && r.text) {
+        $('#input').value = ($('#input').value + ' ' + r.text).trim();
+        autoGrow(); $('#input').focus(); updateSendBtn();
+        micHintOff();
+        beep(760, 0.08);
+      } else {
+        micHint(r.error || 'Не удалось распознать', 'error');
+      }
     };
     rec.start();
     btn.classList.add('rec');

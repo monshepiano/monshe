@@ -2155,11 +2155,14 @@ class Agent:
 
         # Сложность задачи не угадываем по теме: берём измеримые признаки.
         # Остальным включателем служит сам ход работы — см. ниже, шаг >= 2.
-        # X: ХОД МЫСЛЕЙ — В ЛЮБОМ РЕЖИМЕ. Тихий раньше молча выбрасывал
-        # мысли, а история при повторном открытии «воскрешала» их — выходило,
-        # что инструменты появились из ниоткуда. Теперь что показалось живьём,
-        # то и вернётся из переписки; дизайн подбирает фронт.
-        self.show_thinking = bool(not social_only)
+        # Y: ХОД МЫСЛЕЙ — КАЖДОМУ РЕЖИМУ СВОЁ. Агенту — сразу и полностью
+        # (его рубка). Тихому — ТОЛЬКО у рабочих ответов: пока не появился
+        # первый инструмент (или не пошёл второй ход), мысли копятся
+        # молча — короткая болтовня их не показывает вовсе.
+        self.quiet_thinking = bool(not social_only
+                                   and not self.agent_mode and not self.computer_use)
+        self.show_thinking = bool(not social_only
+                                  and (self.agent_mode or self.computer_use))
 
         convo = list(messages)
         final_text = ""
@@ -2180,7 +2183,9 @@ class Agent:
         # порога накопленное показывается целиком, дальнейшие chunks идут живьём.
         thinking_pending: List[str] = []
         thinking_visible = False
-        thinking_min_chars = 90
+        # Y: тихому режиму нужен ДЕЙСТВИТЕЛЬНО длинный ход мыслей (800 зн.),
+        # иначе показываем только после первого инструмента; агенту — 90
+        thinking_min_chars = 90 if self.show_thinking else 800
 
         for step in range(max_steps):
             if self._cancelled():
@@ -2247,7 +2252,7 @@ class Agent:
                 elif etype == "reasoning":
                     # МЫСЛИ НУЖНЫ НЕ ВСЕГДА. Даже в сложном режиме одна короткая
                     # служебная фраза не заслуживает отдельной карточки.
-                    if self.show_thinking:
+                    if self.show_thinking or self.quiet_thinking:
                         piece = str(event.get("text") or "")
                         if thinking_visible:
                             if piece:
@@ -2687,6 +2692,15 @@ class Agent:
             if self.plan_at and self.plan_at < min(2, self.plan_len) and not self._plan_marked:
                 for progress in self._advance_plan(2):
                     yield progress
+
+            # Y: ТИХИЙ РЕЖИМ — МЫСЛИ ЖИВУТ ТОЛЬКО С ИНСТРУМЕНТАМИ: до
+            # первого вызова они копились молча; работа началась — теперь
+            # показать накопленное и дальше пускать живьём. Именно такой
+            # ответ (несколько инструментов / долгий) их и заслуживает.
+            if self.quiet_thinking and not thinking_visible and thinking_pending:
+                thinking_visible = True
+                yield {"type": "thinking", "text": "".join(thinking_pending)}
+                thinking_pending = []
 
             # ---------- подготовка и исполнение вызовов ----------
             parsed_calls: List[Dict[str, Any]] = []

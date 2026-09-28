@@ -1747,11 +1747,11 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     /const flight = node\.animate\(/.test(rf) &&
     /flight\.effect\.setKeyframes\(\[/.test(rf) &&
     /const C0 = \(tRect\.top \+ tRect\.height \/ 2\) - base0 - labOff;/.test(rf) &&
-    /const labOff = \(\(lRect\.top \+ lRect\.height \/ 2\) - base0\) \* \.93 \+ h0 \* \.035;/.test(rf) &&
+    /const labOff = \(\(lRect\.top \+ lRect\.height \/ 2\) - base0\) \* \.93 \+ h0 \* \.035 \+ 4;/.test(rf) &&
     /const need = titleC\(\) - labOff - base;/.test(rf) &&
     /getComputedTiming\(\)\.progress/.test(rf) &&
     /easing: 'cubic-bezier\(\.2,\.5,\.2,1\)', fill: 'forwards'/.test(rf) &&
-    /'opacity \.34s ease \.68s, filter \.34s ease \.68s'/.test(rf) &&
+    /'opacity \.3s ease-in \.84s, filter \.3s ease-in \.84s'/.test(rf) &&
     /function qtFold\(ui, node, isLast\)/.test(js) &&
     /if \(isLast\) setTimeout\(folderBlink, 820\);/.test(rf) &&
     /node\.style\.filter = 'blur\(3px\)'/.test(rf) &&
@@ -2060,6 +2060,42 @@ function testIterationXContracts() {
   // П.9/П.10 — серверные, их контракты живут в python-тестах.
 }
 
+function testIterationYContracts() {
+  // ================= ИТЕРАЦИЯ Y (beta.29) — 7 пунктов =================
+  const ev = extractFunction(js, 'handleEvent');
+  const fold = extractFunction(js, 'qtFold');
+  // П.1: ход мыслей — тихому режиму СВОЙ дизайн (кухня), не агентская карточка
+  assert(/qt-node qt-think/.test(ev) && /qtFeed\(flow, ev\.text\)/.test(ev) &&
+    /\.qt-think \.qt-ico\{font-size:12px/.test(css) &&
+    /qtMiniaturize\(ui\.thinkCard\);/.test(js),
+    'Y1: quiet mode renders thinking in KITCHEN design (gray stream line), never an agent card');
+  // П.1: показывается только у рабочих ответов (решает сервер, но свёртка тихая)
+  // П.3: история восстанавливает ДИЗАЙН ТОГО ОТВЕТА — meta.agent решает
+  assert(/const agentAnswer = !!meta\.agent;/.test(extractFunction(js, 'restoreTrace')) &&
+    /renderAgentTraceGroups\(node, toolTraces\)/.test(extractFunction(js, 'restoreTrace')) &&
+    /renderToolKitchen\(node, toolTraces\)/.test(extractFunction(js, 'restoreTrace')) &&
+    /function renderAgentTraceGroups/.test(js),
+    'Y3: an answer saved in quiet mode restores in QUIET design, agent answers in AGENT design — never mixed');
+  // П.2: подпись доживает до названия: поток складывается первым, фейд у самой посадки
+  assert(/bodyEl\.style\.transition = 'height \.3s ease, opacity \.22s ease';/.test(fold) &&
+    /'opacity \.3s ease-in \.84s, filter \.3s ease-in \.84s'/.test(fold) &&
+    /\}, 1200\);/.test(fold),
+    'Y2: the flying label survives until the group TITLE: stream collapses first, fade starts at arrival');
+  // П.5: строка статуса возрождается сама — курсор не умирает между ходами
+  assert(/isConnected === false/.test(extractFunction(js, 'runStatus')) &&
+    /ui\.statusEl = ensureStatus\(ui\);/.test(extractFunction(js, 'runStatus')),
+    'Y5: runStatus resurrects the status line itself — the caret can never vanish between model turns');
+  // П.4: подсветка выключенного тумблера молчит до нового наведения
+  assert(/\.agent-switch:not\(\[data-ag-hold\]\) \.agent-switch-track:not\(:has\(input:checked\)\):hover/.test(css),
+    'Y4: the off-toggle glow stays silent while the cursor never left; plays again only on the NEXT hover');
+  // П.6: запись превращается в WAV 16кГц прямо в браузере — ffmpeg больше не нужен
+  const wav = extractFunction(js, 'blobToWav16k');
+  assert(/function blobToWav16k/.test(js) && /decodeAudioData/.test(wav) &&
+    /v\.setUint32\(24, rate, true\)/.test(wav) && /data:audio\/wav;base64,/.test(wav) &&
+    /blobToWav16k\(blob\)/.test(extractFunction(js, 'serverASR')),
+    'Y6: the browser itself converts the recording to 16kHz mono WAV — webm/opus is rejected by every ASR model and ffmpeg may be absent');
+}
+
 function testProactiveModesBudgetAndAbortContracts() {
   // проактивные режимы: «зачем» сверху, ПОД ним — ИМЕНОВАННЫЙ тумблер
   // (иконка + название + выключенный круглешок, свой цвет на режим) и «Пропустить»
@@ -2279,7 +2315,8 @@ function testProactiveModesBudgetAndAbortContracts() {
   testProactiveModesBudgetAndAbortContracts();
   testQuietToolsBoostAskStylesAndAgentTheme();
   testIterationXContracts();
-  console.log('package28_frontend_runtime: 16 regression groups passed');
+  testIterationYContracts();
+  console.log('package28_frontend_runtime: 17 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

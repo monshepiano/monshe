@@ -3123,13 +3123,44 @@ class IterationXTests(unittest.TestCase):
         self.assertNotIn("alive = self._sse(event)", src)
 
     def test_thinking_shows_in_quiet_mode_too(self) -> None:
-        # П.5: тихий режим больше не выбрасывает ход мыслей — иначе история
-        # «воскрешала» невиденные карточки при повторном открытии диалога
+        # Y: ход мыслей — в ЛЮБОМ режиме, но тихому — только у рабочих
+        # ответов: первый инструмент выпускает накопленное, короткая
+        # болтовня не показывает ничего (агенту — сразу, порог 90)
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
-        self.assertIn("self.show_thinking = bool(not social_only)", src)
-        self.assertNotIn(
-            "self.show_thinking = bool(not social_only and (self.agent_mode or self.computer_use))",
-            src)
+        self.assertIn("self.quiet_thinking = bool(not social_only", src)
+        self.assertIn("if self.show_thinking or self.quiet_thinking:", src)
+        self.assertIn("thinking_min_chars = 90 if self.show_thinking else 800", src)
+        self.assertIn("if self.quiet_thinking and not thinking_visible and thinking_pending:",
+                      src)
+
+    def test_free_image_prefers_newer_models(self) -> None:
+        # П.7: безымянный дефолт рисовал как «первые ИИ» — теперь цепочка
+        # от свежих моделей к старым: zimage (2x-апскейл) → klein → flux
+        from jarvis.tools import media
+        self.assertEqual(media._FREE_IMAGE_MODELS, ("zimage", "klein", "flux"))
+        code = Path("app/jarvis/tools/media.py").read_text(encoding="utf-8")
+        self.assertIn("&model=%s", code)
+        self.assertIn("_FREE_IMAGE_STATE", code)
+
+    def test_y_frontend_anchors(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # тихий ход мыслей — дизайн кухни
+        self.assertIn("qt-node qt-think", js)
+        self.assertIn(".qt-think .qt-ico{font-size:12px", css)
+        # история — дизайн ТОГО ответа
+        self.assertIn("function renderAgentTraceGroups", js)
+        self.assertIn("const agentAnswer = !!meta.agent;", js)
+        # вальс: фейд у посадки, тело складывается первым
+        self.assertIn("opacity .3s ease-in .84s", js)
+        self.assertIn("height .3s ease, opacity .22s ease", js)
+        # курсор: статус возрождается
+        self.assertIn("ui.statusEl = ensureStatus(ui)", js)
+        # тумблер: глоуш под gait-флагом
+        self.assertIn(".agent-switch:not([data-ag-hold]) .agent-switch-track", css)
+        # микрофон: WAV в браузере
+        self.assertIn("function blobToWav16k", js)
+        self.assertIn("blobToWav16k(blob)", js)
 
     def test_x_frontend_anchors(self) -> None:
         # фронтовые корни X: живой режим для дизайна инструментов, одиночка
