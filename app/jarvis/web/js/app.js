@@ -994,6 +994,11 @@ async function openChat(id) {
   if (r.generating) appendLivePlaceholder();
   pinToBottom(stream);
   stream.classList.remove('history-rendering');
+  // Z: ПЛАН ПРИВЯЗАН К ДИАЛОГУ: панель чужого диалога прячется, своего —
+  // возвращается на экран в актуальном состоянии (шаги, прогресс)
+  $$('.plan-dock').forEach((d) => {
+    d.style.display = (d.dataset.chatId === id) ? '' : 'none';
+  });
   loadChats();
   // диалог, который дописывался в фоне (или открыт во время генерации):
   // тихо перечитываем, пока не появится ответ
@@ -1104,10 +1109,16 @@ function appendFreshMessages(msgs) {
   if (ph) ph.remove();
   const fresh = (msgs || []).filter((m) => !known.has(m.id));
   if (!fresh.length) return;
+  const before = host.children.length;
   const prevHost = S.forceHost;
   S.forceHost = host;
   fresh.forEach((m) => renderMessageInto(host, m));
   S.forceHost = prevHost;
+  // Z: ПЛАВНЫЙ ПРИЕЗД — готовый ответ доезжает мягким проявлением,
+  // а не «резко появляется» после пустого экрана
+  Array.prototype.slice.call(host.children, before).forEach((c) => {
+    c.style.animation = 'freshIn .32s ease both';
+  });
   const lastAi = fresh[fresh.length - 1];
   if (lastAi && lastAi.role === 'assistant') {
     showReplies(((lastAi.meta || {}).replies) || []);
@@ -2422,6 +2433,7 @@ function dockPlan(ui, arrived) {
   // потеряна при смене контейнера камеры, завершение найдёт и уберёт СВОЙ dock,
   // не задевая план более нового ответа.
   dock.dataset.runId = String(ui.runId);
+  dock.dataset.chatId = ui.chatId || S.chatId || '';   // Z: план принадлежит диалогу
   dock.innerHTML =
     '<div class="pd-top">' +
       '<span class="pd-ico">☰</span>' +
@@ -3619,6 +3631,7 @@ async function send(opts) {
     runId,
     userMsgNode,
     cameraNode: requestCamNode,
+    chatId: requestChatId,
     isolatedCamera: requestIsolatedCam,
     statusEl: null,
     thinkCard: null,
@@ -3662,6 +3675,17 @@ async function send(opts) {
   ui.statusEl = el('div', 'thinking-line');
   node.body.appendChild(ui.statusEl);
   thinkMode(ui, 'Соединяюсь');
+  // Z: СТРАЖ СТРОКИ СОСТОЯНИЯ. Каким бы путём ни пошёл ответ (план, мысли,
+  // инструменты, гонки таймеров), на экране ВСЕГДА есть живая строка с
+  // курсором. Пропала — через 1.6с она возвращается сама с «думаю…».
+  const statusWatch = setInterval(() => {
+    if (S.streamRun !== runId || !S.streaming) return;
+    if (ui.planGate || ui.planDock) return;          // план на экране — курсор не нужен
+    if (ui.mdEl && ui.mdEl.isConnected) return;      // печать ответа — курсор в тексте
+    if (ui.statusEl && ui.statusEl.isConnected) return;
+    ui.statusEl = ensureStatus(ui);
+    if (ui.statusEl) busyMode(ui, ['думаю…', 'готовлю ответ', 'ещё секунду'], 1500);
+  }, 1600);
 
   const controller = new AbortController();
   S.abort = controller;
@@ -3703,6 +3727,10 @@ async function send(opts) {
       const line = part.split(/\r?\n/).find((l) => l.startsWith('data:'));
       if (!line) return;
       let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch (e) { return; }
+      // Z: ГОЛОСОВОЙ РЕЖИМ слушает поток ответа — Джарвис говорит
+      // предложениями, не дожидаясь конца генерации
+      if (opts.onDelta && ev.type === 'delta') opts.onDelta(ev.text || '');
+      if (opts.onDone && ev.type === 'done') opts.onDone(ev.content || '');
       // ОДНО БИТОЕ СОБЫТИЕ НЕ УБИВАЕТ ПОТОК (X): раньше исключение в любом
       // обработчике рвало весь цикл чтения — курсор замирал, ответ
       // «зависал». Плохое событие уходит в консоль, печать живёт дальше.
@@ -3765,7 +3793,8 @@ async function send(opts) {
       settleVisualDone(ui);
     }
   } finally {
-    // SSE часто успевает закрыться, пока вступительный план ещё летит. Ждём gate,
+    clearInterval(statusWatch);
+    // SSE часто успевается закрыться, пока вступительный план ещё летит. Ждём gate,
     // иначе fallback-finish сам начал бы ответ раньше завершения перелёта.
     await waitForPlanGate(ui);
     // Сокет — не источник истины для кнопки Stop и звука. Если сервер закрылся
@@ -4163,6 +4192,10 @@ function qtSweep(ui, keepGroup) {
   const pending = [];
   $$('.qt-node', host).forEach((nn) => {
     if (nn.dataset.folded === '1') return;
+    // Z: СТРОКА ХОДА МЫСЛЕЙ — НЕ ИНСТРУМЕНТ: в папку не собирается.
+    // Раньше она попадала в семейство «Работа» как безымянный инструмент
+    // с непонятной иконкой.
+    if (nn.classList.contains('qt-think')) return;
     const t = nn._tool || {};
     if (keepGroup && t.group === keepGroup) return;
     if (!nn.dataset.mini) {
@@ -4260,9 +4293,12 @@ function qtFold(ui, node, isLast) {
   node.style.transition = 'none';
   node.style.height = h0 + 'px';
   void node.offsetHeight;
+  // Z: ВЫСОТА СХЛОПЫВАЕТСЯ ПОЗДНО И БЫСТРО. Раньше она резала подпись с
+  // самого начала полёта — текст обрезался на полпути и «таял ниже
+  // названия». Теперь подпись целиком доживает до самой папки.
   node.style.transition =
-    'height 1.05s cubic-bezier(.2,.5,.2,1), ' +
-    'opacity .3s ease-in .84s, filter .3s ease-in .84s';
+    'height .42s cubic-bezier(.4,.6,.3,1) .58s, ' +
+    'opacity .26s ease-in .78s, filter .26s ease-in .78s';
   node.style.filter = 'blur(3px)';
   node.style.opacity = '0';
   node.style.height = '0px';
@@ -4279,45 +4315,40 @@ function qtFold(ui, node, isLast) {
   // макет вокруг.
   const fr0 = folder.getBoundingClientRect();
   const base0 = node.getBoundingClientRect().top;
-  // ПОСАДКА ПОДПИСИ В НАЗВАНИЕ ГРУППЫ. Раньше прицел шёл по ВЕРХУ узла —
-  // а у карточки свой верхний отступ, поэтому текст останавливался на
-  // полстроки НИЖЕ названия. Теперь центрируем ПОДПИСЬ узла в ЦЕНТР
-  // НАЗВАНИЯ папки: текст растворяется прямо в нём, не ниже.
+  // Z: ПОСАДКА ТОЧНАЯ ПО ПОСТРОЕНИЮ — без поправочных констант. Прицел:
+  // ЦЕНТР ПОДПИСИ узла в ЦЕНТР НАЗВАНИЯ папки. Полёт — чистый сдвиг:
+  // прежнее лёгкое сжатие карточки (до 93%) тащило подпись к центру узла
+  // на ПЕРЕМЕННУЮ величину (высота-то анимируется) — вот почему текст
+  // годами «таял ниже названия», сколько его ни поднимали.
   const titleEl = folder.querySelector('.qt-head .qt-name') || folder.querySelector('.qt-head') || folder;
   const labEl = node.querySelector('.qt-head .qt-name');
-  const tRect = titleEl.getBoundingClientRect();
-  const lRect = labEl ? labEl.getBoundingClientRect() : node.getBoundingClientRect();
+  const lRect0 = labEl ? labEl.getBoundingClientRect() : node.getBoundingClientRect();
+  const labC = (lRect0.top + lRect0.height / 2) - base0;   // подпись живёт на фикс. смещении от верха узла
   const titleC = () => {
     const r = titleEl.getBoundingClientRect();
     return r.top + r.height / 2;
   };
-  // центр подписи относительно верха узла, с поправкой на сжатие scale(.93)
-  const labOff = ((lRect.top + lRect.height / 2) - base0) * .93 + h0 * .035 + 4;   // Y: чуть выше — тает В названии
-  const C0 = (tRect.top + tRect.height / 2) - base0 - labOff;
-  let aim = C0;
+  let aim = titleC() - labC - base0;
   const flight = node.animate(
-    [{ transform: 'translateY(0px) scale(1)' },
-     { transform: 'translateY(' + aim + 'px) scale(.93)' }],
+    [{ transform: 'translateY(0px)' },
+     { transform: 'translateY(' + aim + 'px)' }],
     { duration: DUR, easing: 'cubic-bezier(.2,.5,.2,1)', fill: 'forwards' });
   const homing = () => {
-    const k = Math.min(1, (performance.now() - t0) / DUR);
-    // прогресс берём у САМОЙ анимации (easing уже применён) — параллельная
-    // кривая в старом расчёте расходилась с реальным трансформом
-    let pr;
+    // прогресс — у самой анимации; уравнение решается каждый кадр по
+    // живым координатам: aim = название − подпись − база узла
+    let pr = 0;
     try { pr = flight.effect.getComputedTiming().progress || 0; }
-    catch (err) { pr = ease(k); }
+    catch (err) { pr = Math.min(1, (performance.now() - t0) / DUR); }
     const nr = node.getBoundingClientRect();
-    const base = nr.top - pr * aim;          // где узел жил бы без полёта
-    // ЦЕЛЬ ЖИВАЯ, КАЖДЫЙ КАДР: папка сама может подняться (выше неё
-    // сворачивается другое семейство) — снимок из прошлого промахивался.
-    const need = titleC() - labOff - base;
+    const baseTop = nr.top - pr * aim;      // где узел стоит без трансформа
+    const need = titleC() - labC - baseTop;
     if (Math.abs(need - aim) > 0.5) {
       aim = need;
       flight.effect.setKeyframes([
-        { transform: 'translateY(0px) scale(1)' },
-        { transform: 'translateY(' + aim + 'px) scale(.93)' }]);
+        { transform: 'translateY(0px)' },
+        { transform: 'translateY(' + aim + 'px)' }]);
     }
-    if (k < 1) requestAnimationFrame(homing);
+    if (pr < 1) requestAnimationFrame(homing);
   };
   requestAnimationFrame(homing);
   folder._pend = (folder._pend || 0) + 1;
@@ -4486,6 +4517,8 @@ function flushQt(ui) {
   const pending = [];
   $$('.qt-node', host).forEach((n) => {
     if (n.dataset.folded === '1') return;
+    // Z: ход мыслей — не инструмент, в папку не собирается
+    if (n.classList.contains('qt-think')) return;
     const t = n._tool || {};
     if (!n.querySelector('.qt-mark').textContent) qtMark(n, t.ok, t.elapsed);
     pending.push(n);
@@ -6521,6 +6554,294 @@ $('#micBtn').addEventListener('click', function () {
   }
   if (browserASR(this)) return;   // основной путь
   serverASR(this);                // запасной
+});
+
+/* ============================ ГОЛОСОВОЙ РЕЖИМ ============================
+   Отдельное окно, как камера: говоришь с Джарвисом голосом — он отвечает
+   голосом (системный синтез речи macOS). Разговор пишется в текущий диалог
+   как обычная переписка. Схема: слушаю → тишина 1.4с = конец фразы →
+   распознаю → думаю → говорю ПРЕДЛОЖЕНИЯМИ, не дожидаясь конца генерации
+   → снова слушаю. Пока Джарвис говорит, микрофон живёт: услышал человека —
+   замолкает и слушает (перебой, как в GPT). */
+const VOICE = { open: false, phase: 'idle', rec: null, chunks: [], stream: null,
+                ctx: null, an: null, raf: 0, heard: false, lastVoice: 0,
+                startedAt: 0, pending: '', barge: 0 };
+let VOICE_RU = null;
+
+function voiceRu() {
+  if (VOICE_RU) return VOICE_RU;
+  try {
+    const vs = window.speechSynthesis ? (window.speechSynthesis.getVoices() || []) : [];
+    VOICE_RU = vs.find((v) => /^ru/i.test(v.lang || '')) || null;
+  } catch (e) { /* голосов нет — скажет системным */ }
+  return VOICE_RU;
+}
+if (window.speechSynthesis) {
+  window.speechSynthesis.onvoiceschanged = () => { VOICE_RU = null; };
+}
+
+function voiceSetPhase(p) {
+  VOICE.phase = p;
+  const veil = $('#voiceVeil');
+  if (veil) veil.className = 'voice-veil ' + p;
+  const st = $('#voiceStatus');
+  if (st) st.textContent = p === 'listening' ? 'Слушаю…' :
+    p === 'thinking' ? 'Думаю…' : p === 'speaking' ? 'Говорю…' : '';
+}
+
+function voiceBuild() {
+  if ($('#voiceVeil')) return;
+  const veil = el('div', 'voice-veil listening');
+  veil.id = 'voiceVeil';
+  veil.hidden = true;
+  veil.innerHTML =
+    '<div class="voice-stage">' +
+      '<button class="voice-close" aria-label="Закрыть">✕</button>' +
+      '<div class="v-orb"><i class="v-ring r1"></i><i class="v-ring r2"></i><b></b></div>' +
+      '<div class="voice-status" id="voiceStatus">Слушаю…</div>' +
+      '<div class="voice-heard" id="voiceHeard"></div>' +
+      '<div class="voice-bars" id="voiceBars">' +
+        Array.from({ length: 14 }, () => '<i></i>').join('') + '</div>' +
+      '<div class="voice-hint">Говори обычным голосом · Esc — выйти</div>' +
+    '</div>';
+  document.body.appendChild(veil);
+  veil.querySelector('.voice-close').addEventListener('click', closeVoiceMode);
+}
+
+async function openVoiceMode() {
+  if (VOICE.open) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast('Браузер не даёт доступ к микрофону', 'error');
+    return;
+  }
+  voiceBuild();
+  $('#voiceVeil').hidden = false;
+  VOICE.open = true;
+  beep(760, 0.08);
+  try {
+    VOICE.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    closeVoiceMode();
+    toast('Нет доступа к микрофону', 'error');
+    return;
+  }
+  voiceListen();
+}
+
+function closeVoiceMode() {
+  VOICE.open = false;
+  cancelAnimationFrame(VOICE.raf);
+  try { if (VOICE.rec && VOICE.rec.state === 'recording') VOICE.rec.stop(); } catch (e) { /* уже мёртв */ }
+  VOICE.rec = null;
+  if (VOICE.stream) { VOICE.stream.getTracks().forEach((t) => t.stop()); VOICE.stream = null; }
+  if (VOICE.ctx) { try { VOICE.ctx.close(); } catch (e) { /* уже закрыт */ } VOICE.ctx = null; VOICE.an = null; }
+  try { window.speechSynthesis.cancel(); } catch (e) { /* синтеза нет */ }
+  VOICE.chunks = []; VOICE.pending = ''; VOICE.barge = 0;
+  const veil = $('#voiceVeil');
+  if (veil) veil.hidden = true;
+  voiceSetPhase('idle');
+}
+
+/* СЛУШАЮ. Запись идёт кусками; уровень звука кормит полоски и решает,
+   когда фраза закончилась (слова были + 1.4с тишины). */
+function voiceListen() {
+  if (!VOICE.open || !VOICE.stream) return;
+  VOICE.chunks = [];
+  VOICE.heard = false;
+  VOICE.lastVoice = 0;
+  VOICE.startedAt = performance.now();
+  const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+    .find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+  try {
+    VOICE.rec = new MediaRecorder(VOICE.stream, mime ? { mimeType: mime } : undefined);
+  } catch (e) { closeVoiceMode(); return; }
+  VOICE.rec.ondataavailable = (e) => { if (e.data && e.data.size) VOICE.chunks.push(e.data); };
+  VOICE.rec.onstop = voiceTranscribe;
+  VOICE.rec.start(250);
+  if (!VOICE.ctx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    VOICE.ctx = new AC();
+    const src = VOICE.ctx.createMediaStreamSource(VOICE.stream);
+    VOICE.an = VOICE.ctx.createAnalyser();
+    VOICE.an.fftSize = 1024;
+    src.connect(VOICE.an);
+  }
+  voiceSetPhase('listening');
+  $('#voiceHeard').textContent = '';
+  const buf = new Uint8Array(VOICE.an.fftSize);
+  const tick = () => {
+    if (!VOICE.open || VOICE.phase !== 'listening') return;
+    VOICE.an.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) { const d = (buf[i] - 128) / 128; sum += d * d; }
+    const level = Math.sqrt(sum / buf.length);
+    voiceBars(level);
+    const now = performance.now();
+    if (level > 0.055) { VOICE.heard = true; VOICE.lastVoice = now; }
+    if (VOICE.heard && now - VOICE.lastVoice > 1400) { voiceStopRec(); return; }
+    if (now - VOICE.startedAt > 30000) { voiceStopRec(); return; }   // страховка от вечной записи
+    VOICE.raf = requestAnimationFrame(tick);
+  };
+  VOICE.raf = requestAnimationFrame(tick);
+}
+
+function voiceBars(level) {
+  $$('#voiceBars i').forEach((b, i) => {
+    const wobble = Math.sin(performance.now() / 90 + i * 1.7) * 0.5 + 0.5;
+    const h = 4 + Math.min(1, level * 6.5) * wobble * 34;
+    b.style.height = h.toFixed(1) + 'px';
+  });
+}
+
+function voiceStopRec() {
+  cancelAnimationFrame(VOICE.raf);
+  if (VOICE.rec && VOICE.rec.state === 'recording') {
+    try { VOICE.rec.stop(); } catch (e) { voiceListen(); }
+  } else if (VOICE.phase === 'listening') {
+    voiceListen();
+  }
+}
+
+async function voiceTranscribe() {
+  if (!VOICE.open) return;
+  voiceSetPhase('thinking');
+  $('#voiceStatus').textContent = 'Распознаю…';
+  const blob = new Blob(VOICE.chunks, { type: (VOICE.rec && VOICE.rec.mimeType) || 'audio/webm' });
+  VOICE.rec = null;
+  if (!blob.size || blob.size < 1200) { voiceRetry(); return; }
+  let payload = '';
+  try {
+    payload = await blobToWav16k(blob);
+  } catch (e) {
+    payload = await new Promise((res) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.readAsDataURL(blob);
+    });
+  }
+  const r = await api('/api/transcribe', { audio: payload, language: 'ru' });
+  if (!VOICE.open) return;
+  if (r.ok && r.text && r.text.trim()) {
+    const text = r.text.trim();
+    $('#voiceHeard').textContent = text;
+    voiceAsk(text);
+  } else {
+    voiceRetry();
+  }
+}
+
+function voiceRetry() {
+  if (!VOICE.open) return;
+  $('#voiceStatus').textContent = 'Не расслышал — говори ещё';
+  setTimeout(() => { if (VOICE.open && VOICE.phase === 'thinking') voiceListen(); }, 900);
+}
+
+/* Спрашиваю Джарвиса: обычный send() пишет обмен в открытый диалог,
+   а поток ответа идёт нам — говорим предложениями по мере генерации. */
+async function voiceAsk(text) {
+  voiceSetPhase('thinking');
+  VOICE.pending = '';
+  try {
+    await send({
+      text,
+      onDelta: (chunk) => { if (chunk) voiceFeed(chunk); },
+      onDone: (content) => {
+        if (!content) voiceAfterSpeak();
+      },
+    });
+  } catch (e) { voiceAfterSpeak(); }
+  voiceAfterSpeak();
+}
+
+/* Готовые предложения уходят в речь сразу; длинный кусок без знаков
+   режется по слову, чтобы Джарвис не молчал полминуты. */
+function voiceFeed(chunk) {
+  VOICE.pending += chunk;
+  let out = '';
+  let idx;
+  while ((idx = VOICE.pending.search(/[.!?…](\s|$)/)) >= 0) {
+    out += VOICE.pending.slice(0, idx + 1) + ' ';
+    VOICE.pending = VOICE.pending.slice(idx + 1).replace(/^\s+/, '');
+  }
+  const flat = VOICE.pending.replace(/\s+/g, ' ').trim();
+  if (flat.length >= 170) {
+    const sp = flat.lastIndexOf(' ', 150);
+    if (sp > 30) {
+      out += flat.slice(0, sp) + '… ';
+      VOICE.pending = flat.slice(sp + 1);
+    }
+  }
+  if (out) voiceSpeak(out.trim());
+}
+
+function voiceSpeak(text) {
+  if (!VOICE.open || !text) return;
+  try {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ru-RU';
+    const v = voiceRu();
+    if (v) u.voice = v;
+    u.rate = 1.04;
+    u.pitch = 1;
+    u.onstart = () => {
+      if (VOICE.phase !== 'speaking') {
+        voiceSetPhase('speaking');
+        cancelAnimationFrame(VOICE.raf);
+        VOICE.raf = requestAnimationFrame(voiceBargeLoop);
+      }
+    };
+    u.onend = () => { voiceAfterSpeak(); };
+    u.onerror = () => { voiceAfterSpeak(); };
+    window.speechSynthesis.speak(u);
+  } catch (e) { voiceAfterSpeak(); }
+}
+
+/* ПЕРЕБОЙ: пока Джарвис говорит, микрофон слушает. Услышал человека
+   (~250мс речи) — замолкает и начинает слушать фразу. */
+function voiceBargeLoop() {
+  if (!VOICE.open || VOICE.phase !== 'speaking') return;
+  let level = 0;
+  if (VOICE.an) {
+    const buf = new Uint8Array(VOICE.an.fftSize);
+    VOICE.an.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) { const d = (buf[i] - 128) / 128; sum += d * d; }
+    level = Math.sqrt(sum / buf.length);
+    voiceBars(level * 1.2);
+  }
+  if (level > 0.09) {
+    VOICE.barge += 1;
+    if (VOICE.barge >= 5) {
+      VOICE.barge = 0;
+      try { window.speechSynthesis.cancel(); } catch (e) { /* синтеза нет */ }
+      voiceListen();
+      return;
+    }
+  } else {
+    VOICE.barge = 0;
+  }
+  VOICE.raf = requestAnimationFrame(voiceBargeLoop);
+}
+
+/* Договорил? Проверяем: генерация закончена, хвост текста озвучен,
+   синтезатор свободен — тогда снова слушаем. */
+function voiceAfterSpeak() {
+  if (!VOICE.open) return;
+  if (S.streaming) return;                       // ответ ещё пишется
+  const flat = VOICE.pending.trim();
+  if (flat) { VOICE.pending = ''; voiceSpeak(flat); return; }   // озвучить хвост
+  setTimeout(() => {
+    if (!VOICE.open || S.streaming) return;
+    if (window.speechSynthesis && window.speechSynthesis.speaking) return;
+    if (VOICE.phase !== 'listening') voiceListen();
+  }, 450);
+}
+
+$('#voiceBtn').addEventListener('click', () => {
+  if (VOICE.open) closeVoiceMode(); else openVoiceMode();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && VOICE.open) closeVoiceMode();
 });
 
 /* ============================ камера в диалоге ============================ */

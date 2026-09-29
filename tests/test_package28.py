@@ -3151,9 +3151,11 @@ class IterationXTests(unittest.TestCase):
         # история — дизайн ТОГО ответа
         self.assertIn("function renderAgentTraceGroups", js)
         self.assertIn("const agentAnswer = !!meta.agent;", js)
-        # вальс: фейд у посадки, тело складывается первым
-        self.assertIn("opacity .3s ease-in .84s", js)
+        # вальс: фейд у посадки, тело складывается первым, подпись доживает
+        self.assertIn("opacity .26s ease-in .78s", js)
+        self.assertIn("height .42s cubic-bezier(.4,.6,.3,1) .58s", js)
         self.assertIn("height .3s ease, opacity .22s ease", js)
+        self.assertNotIn("scale(.93)", js.split("function qtFold")[1].split("\nfunction ")[0])
         # курсор: статус возрождается
         self.assertIn("ui.statusEl = ensureStatus(ui)", js)
         # тумблер: глоуш под gait-флагом
@@ -3178,6 +3180,60 @@ class IterationXTests(unittest.TestCase):
         self.assertIn(".qt-folder.open .qt-kids{display:flex}", css)
         self.assertNotIn(".qt-folder.open .qt-kids{display:flex;margin:2px 0 4px}", css)
         self.assertIn("LEAD = 70", js)
+
+
+class IterationZTests(unittest.TestCase):
+    """Z (beta.30): 8 пунктов — точный вальс, мысль вне папок, план по
+    диалогам, страж курсора, голосовой режим, негативный промпт."""
+
+    def test_z_frontend_anchors(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        fold = js.split("function qtFold(ui, node, isLast)")[1].split("\nfunction ")[0]
+        # П.1: чистый сдвиг + живое уравнение прицела + поздняя высота
+        self.assertIn("const need = titleC() - labC - baseTop;", fold)
+        self.assertNotIn("scale(.93)", fold)
+        self.assertIn("height .42s cubic-bezier(.4,.6,.3,1) .58s", fold)
+        # П.2/3: ход мыслей не собирается в папки
+        sweep = js.split("function qtSweep")[1].split("\nfunction ")[0]
+        fq = js.split("function flushQt")[1].split("\nfunction ")[0]
+        self.assertIn("qt-think", sweep)
+        self.assertIn("qt-think", fq)
+        # П.4: тумблер быстрее
+        self.assertIn("agKnobRubber .82s", css)
+        # П.5: страж курсора + мягкий приезд
+        send = js.split("async function send(opts)")[1].split("\nasync function ")[0]
+        self.assertIn("const statusWatch = setInterval", send)
+        self.assertIn("clearInterval(statusWatch);", send)
+        self.assertIn("'думаю…', 'готовлю ответ', 'ещё секунду'", send)
+        self.assertIn("freshIn .32s ease both", js)
+        self.assertIn("@keyframes freshIn", css)
+        # П.6: план привязан к диалогу
+        self.assertIn("dock.dataset.chatId", js)
+        open_chat = js.split("async function openChat")[1].split("\nasync function ")[0]
+        self.assertIn("d.dataset.chatId === id", open_chat)
+        # П.7: голосовой режим
+        for marker in ("function openVoiceMode", "function closeVoiceMode",
+                       "function voiceListen", "function voiceTranscribe",
+                       "function voiceBargeLoop", "SpeechSynthesisUtterance",
+                       "opts.onDelta && ev.type === 'delta'"):
+            self.assertIn(marker, js)
+        self.assertIn('id="voiceBtn"', html)
+        self.assertIn(".voice-veil{position:fixed", css)
+        self.assertIn(".voice-veil.speaking .v-orb b{", css)
+        # голосовой режим переиспользует браузерный WAV — тот же корень п.6(Y)
+        vt = js.split("async function voiceTranscribe")[1].split("\nfunction ")[0]
+        self.assertIn("blobToWav16k", vt)
+
+    def test_free_image_sends_negative_prompt(self) -> None:
+        # П.8: негативный промпт убирает типичный мусор бесплатных генераторов
+        code = Path("app/jarvis/tools/media.py").read_text(encoding="utf-8")
+        self.assertIn("&negative_prompt=%s", code)
+        self.assertIn("watermark", code)
+        self.assertIn("bad anatomy", code)
+        # версия
+        self.assertIn("beta.30", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class BareToolArgumentsTests(unittest.TestCase):

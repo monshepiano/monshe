@@ -334,9 +334,13 @@ def _free_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
     used = ""
     last_error = ""
     for model in order:
+        # Z: НЕГАТИВНЫЙ ПРОМПТ — убирает типичный мусор бесплатных генераторов
+        # (текст на картинке, водяные знаки, мыло, кривые руки)
         url = ("https://image.pollinations.ai/prompt/%s?width=%d&height=%d"
-               "&nologo=true&seed=%d&model=%s"
-               % (urllib.parse.quote(prompt)[:900], width, height, seed, model))
+               "&nologo=true&seed=%d&model=%s&negative_prompt=%s"
+               % (urllib.parse.quote(prompt)[:900], width, height, seed, model,
+                  urllib.parse.quote("text, watermark, logo, signature, blurry, "
+                                     "low quality, deformed, extra fingers, bad anatomy")))
         req = urllib.request.Request(url, headers={"User-Agent": _UA})
         try:
             with urllib.request.urlopen(req, timeout=180, context=_CTX) as resp:

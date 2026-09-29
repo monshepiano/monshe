@@ -1579,7 +1579,7 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   // возвращается, как под действием резинки; насыщенный огонёк уходит
   // за правый край (остаётся свечение справа), по контуру бежит ЯВНАЯ
   // искра насыщенного красного, в конце замедляется и гаснет.
-  assert(/animation:agKnobRubber 1\.1s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
+  assert(/animation:agKnobRubber \.82s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
     /15%\{background:#a03c50;color:#1d060b\}/.test(css) &&
     /@keyframes agKnobRubber\{[\s\S]*?44%\{transform:translateX\(6px\);background:#c4475e;color:#1d060b\}/.test(css) &&
     /52%\{transform:translateX\(6px\)/.test(css) &&
@@ -1588,7 +1588,7 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
     /@keyframes agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:#8d4d5e;color:#1d060b\}\}/.test(css) &&
     !/agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:var\(--tx3\)\}\}/.test(css),
     'the knob is ITS OLD GREY self, painting DARK bordo on the way right and unpainting on the way back, synced to the motion');
-  assert(/animation:agEmberRun 1s cubic-bezier\(\.3,\.5,\.35,1\) both/.test(css) &&
+  assert(/animation:agEmberRun \.72s cubic-bezier\(\.3,\.5,\.35,1\) both/.test(css) &&
     /rgba\(255,150,168,\.7\),rgba\(255,86,112,\.38\) 48%/.test(css) &&
     /@keyframes agEmberRun\{[\s\S]*?40%\{transform:translateX\(14px\)\}[\s\S]*?70%\{transform:translateX\(21px\)\}[\s\S]*?100%\{opacity:\.85;transform:translateX\(26px\)\}\}/.test(css) &&
     /filter:blur\(7px\)/.test(css) &&
@@ -1596,9 +1596,9 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
     /\.agent-switch-track\{overflow:hidden\}/.test(css),
     'the ember is DIMMED to the background: bigger, blurrier, freezes at the right edge INSIDE the track');
   assert(/@keyframes agRestGlow\{to\{box-shadow:inset 0 1px 5px rgba\(0,0,0,\.42\),[\s\S]*?inset 14px 0 26px -8px rgba\(255,86,112,\.4\)\}\}/.test(css) &&
-    /animation:agRestGlow \.55s ease \.75s both/.test(css),
+    /animation:agRestGlow \.4s ease \.5s both/.test(css),
     'the ember glow is GENEROUS and stays outside at the right edge');
-  assert(/animation:agSparkRun 1\.2s linear both/.test(css) &&
+  assert(/animation:agSparkRun \.88s linear both/.test(css) &&
     /rgba\(255,84,112,\.55\) 50%/.test(css) &&
     /background-repeat:no-repeat/.test(css) &&
     /@keyframes agSparkRun\{[\s\S]*?0%\{background-position:135% 0;opacity:0\}[\s\S]*?100%\{background-position:-11% 0;opacity:0\}\}/.test(css) &&
@@ -1741,17 +1741,18 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     'answer end folds tools ONE BY ONE into the group (170ms), strip compressing in the same beat');
 
   const rf = extractFunction(js, 'qtFold');
-  assert(/'height 1\.05s cubic-bezier\(\.2,\.5,\.2,1\), '/.test(rf) &&
+  assert(/'height \.42s cubic-bezier\(\.4,\.6,\.3,1\) \.58s, '/.test(rf) &&
     !/position = 'fixed'/.test(rf) && !/ghost/.test(rf) &&
     /requestAnimationFrame\(homing\)/.test(rf) &&
     /const flight = node\.animate\(/.test(rf) &&
     /flight\.effect\.setKeyframes\(\[/.test(rf) &&
-    /const C0 = \(tRect\.top \+ tRect\.height \/ 2\) - base0 - labOff;/.test(rf) &&
-    /const labOff = \(\(lRect\.top \+ lRect\.height \/ 2\) - base0\) \* \.93 \+ h0 \* \.035 \+ 4;/.test(rf) &&
-    /const need = titleC\(\) - labOff - base;/.test(rf) &&
+    /const labC = \(lRect0\.top \+ lRect0\.height \/ 2\) - base0;/.test(rf) &&
+    /let aim = titleC\(\) - labC - base0;/.test(rf) &&
+    /const need = titleC\(\) - labC - baseTop;/.test(rf) &&
+    !/scale\(\.93\)/.test(rf) &&
     /getComputedTiming\(\)\.progress/.test(rf) &&
     /easing: 'cubic-bezier\(\.2,\.5,\.2,1\)', fill: 'forwards'/.test(rf) &&
-    /'opacity \.3s ease-in \.84s, filter \.3s ease-in \.84s'/.test(rf) &&
+    /'opacity \.26s ease-in \.78s, filter \.26s ease-in \.78s'/.test(rf) &&
     /function qtFold\(ui, node, isLast\)/.test(js) &&
     /if \(isLast\) setTimeout\(folderBlink, 820\);/.test(rf) &&
     /node\.style\.filter = 'blur\(3px\)'/.test(rf) &&
@@ -1965,7 +1966,7 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   // огонёк живёт ВНУТРИ трека (overflow:hidden), свечение остаётся СНАРУЖИ
   // справа, искра — один проход с замедлением в конце
   assert(/\.agent-switch-track\{overflow:hidden\}/.test(css) &&
-    /\.agent-switch\.ag-play \.agent-switch-track:not\(:has\(input:checked\)\) i\{[\s\S]*?agKnobRubber 1\.1s/.test(css) &&
+    /\.agent-switch\.ag-play \.agent-switch-track:not\(:has\(input:checked\)\) i\{[\s\S]*?agKnobRubber \.82s/.test(css) &&
     /sw\.classList\.remove\('ag-play'\);[\s\S]*?void sw\.offsetWidth;[\s\S]*?sw\.classList\.add\('ag-play'\);/.test(js) &&
     !/cooling/.test(js) &&
     !/:has\(input:checked\)\):hover i\{/.test(css),
@@ -1974,7 +1975,7 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   assert(spark && /background-repeat:no-repeat/.test(spark[1]) &&
     /rgba\(255,84,112,\.55\) 50%/.test(spark[1]),
     'the contour spark is a SINGLE pass (no-repeat), bright');
-  assert(/animation:agSparkRun 1\.2s linear both/.test(css) &&
+  assert(/animation:agSparkRun \.88s linear both/.test(css) &&
     /@keyframes agSparkRun\{[\s\S]*?100%\{background-position:-11% 0;opacity:0\}\}/.test(css) &&
     /92%\{background-position:-8% 0;opacity:1\}/.test(css) &&
     /40%\{background-position:40% 0\}/.test(css),
@@ -2023,8 +2024,9 @@ function testIterationXContracts() {
   // в названии, не ниже) — прицел по верху узла опускал его на полстроки
   const fold = extractFunction(js, 'qtFold');
   assert(/titleEl/.test(fold) && /labEl/.test(fold) &&
-    /const C0 = \(tRect\.top \+ tRect\.height \/ 2\) - base0 - labOff;/.test(fold) &&
-    /const need = titleC\(\) - labOff - base;/.test(fold),
+    /const labC = \(lRect0\.top \+ lRect0\.height \/ 2\) - base0;/.test(fold) &&
+    /const need = titleC\(\) - labC - baseTop;/.test(fold) &&
+    !/scale\(\.93\)/.test(fold),
     'X1: the flying tool aims its LABEL at the group TITLE line — dissolves in it, never below');
   // П.2: папки — внешний вертикальный margin тела убран (скачок 6px в первый
   // кадр открытия и в последний кадр закрытия), зазор живёт внутри
@@ -2078,7 +2080,7 @@ function testIterationYContracts() {
     'Y3: an answer saved in quiet mode restores in QUIET design, agent answers in AGENT design — never mixed');
   // П.2: подпись доживает до названия: поток складывается первым, фейд у самой посадки
   assert(/bodyEl\.style\.transition = 'height \.3s ease, opacity \.22s ease';/.test(fold) &&
-    /'opacity \.3s ease-in \.84s, filter \.3s ease-in \.84s'/.test(fold) &&
+    /'opacity \.26s ease-in \.78s, filter \.26s ease-in \.78s'/.test(fold) &&
     /\}, 1200\);/.test(fold),
     'Y2: the flying label survives until the group TITLE: stream collapses first, fade starts at arrival');
   // П.5: строка статуса возрождается сама — курсор не умирает между ходами
@@ -2094,6 +2096,41 @@ function testIterationYContracts() {
     /v\.setUint32\(24, rate, true\)/.test(wav) && /data:audio\/wav;base64,/.test(wav) &&
     /blobToWav16k\(blob\)/.test(extractFunction(js, 'serverASR')),
     'Y6: the browser itself converts the recording to 16kHz mono WAV — webm/opus is rejected by every ASR model and ffmpeg may be absent');
+}
+
+function testIterationZContracts() {
+  // ================= ИТЕРАЦИЯ Z (beta.30) — 8 пунктов =================
+  const sweep = extractFunction(js, 'qtSweep');
+  const fq = extractFunction(js, 'flushQt');
+  const sendFn = extractFunction(js, 'send');
+  // П.2/3: строка хода мыслей — НЕ инструмент: в папки не собирается
+  assert(/if \(nn\.classList\.contains\('qt-think'\)\) return;/.test(sweep) &&
+    /if \(n\.classList\.contains\('qt-think'\)\) return;/.test(fq),
+    'Z2/3: the thinking line never lands in a family folder — folders collect TOOLS only');
+  // П.5: страж строки состояния — «думаю…» возвращается само
+  assert(/const statusWatch = setInterval/.test(sendFn) &&
+    /busyMode\(ui, \['думаю…', 'готовлю ответ', 'ещё секунду'\], 1500\);/.test(sendFn) &&
+    /clearInterval\(statusWatch\);/.test(sendFn),
+    'Z5: a watchdog resurrects the status line — the caret can never stay gone');
+  // П.5: готовый ответ приезжает мягко
+  assert(/animation = 'freshIn \.32s ease both'/.test(extractFunction(js, 'appendFreshMessages')) &&
+    /@keyframes freshIn/.test(css),
+    'Z5: a finished background answer fades in softly instead of popping');
+  // П.6: план привязан к диалогу
+  assert(/dock\.dataset\.chatId = ui\.chatId \|\| S\.chatId \|\| '';/.test(js) &&
+    /d\.style\.display = \(d\.dataset\.chatId === id\) \? '' : 'none';/.test(extractFunction(js, 'openChat')),
+    'Z6: the plan dock belongs to its chat: hidden in others, restored on return');
+  // П.7: голосовой режим — окно, орб, распознавание, синтез, перебой
+  assert(/function openVoiceMode/.test(js) && /function closeVoiceMode/.test(js) &&
+    /function voiceListen/.test(js) && /function voiceTranscribe/.test(js) &&
+    /function voiceBargeLoop/.test(js) && /blobToWav16k\(blob\)/.test(extractFunction(js, 'voiceTranscribe')) &&
+    /SpeechSynthesisUtterance/.test(js) &&
+    /window\.speechSynthesis\.cancel\(\);/.test(extractFunction(js, 'voiceBargeLoop')) &&
+    /opts\.onDelta && ev\.type === 'delta'/.test(sendFn) &&
+    /id="voiceBtn"/.test(html) &&
+    /\.voice-veil\{position:fixed/.test(css) && /\.voice-veil\.speaking \.v-orb b\{/.test(css),
+    'Z7: full voice mode — overlay orb (listen/think/speak), VAD end-of-phrase, browser WAV, streaming TTS by sentences, barge-in');
+  // П.8: негативный промпт — в python-тестах
 }
 
 function testProactiveModesBudgetAndAbortContracts() {
@@ -2316,7 +2353,8 @@ function testProactiveModesBudgetAndAbortContracts() {
   testQuietToolsBoostAskStylesAndAgentTheme();
   testIterationXContracts();
   testIterationYContracts();
-  console.log('package28_frontend_runtime: 17 regression groups passed');
+  testIterationZContracts();
+  console.log('package28_frontend_runtime: 18 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
