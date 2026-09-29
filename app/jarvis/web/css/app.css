@@ -1149,7 +1149,9 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   white-space:pre-wrap;word-break:break-word;max-height:220px;
   overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
 .qt-detail::-webkit-scrollbar{display:none}
-.qt-folder:hover .qt-name,.qt-row:hover .qt-name{color:rgba(178,214,231,.9)}
+.qt-folder:hover .qt-name,.qt-row:hover .qt-name,.qt-think:hover .qt-name{color:rgba(178,214,231,.9)}
+/* AA: тихий ход мыслей — кликабельная строка: открытый поток не пропадает */
+.qt-think .qt-mark{transition:color .2s}
 /* серия долетела — имя ПОДМИГИВАЕТ ЯРКОСТЬЮ: без text-shadow (свечение
    обрезалось рамкой ellipsis и рисовало квадратный контур вокруг букв) и
    без задержки — яркость уже растёт с первого кадра и мягко спадает */
@@ -2224,6 +2226,31 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 @keyframes tilePop{0%{transform:scale(.94)}100%{transform:translateY(-1px)}}
 .ui-btn{color:rgb(var(--h));border-color:rgba(var(--h),.42);background:rgba(var(--h),.1)}
 .ui-btn:hover{background:rgba(var(--h),.2);box-shadow:0 0 14px rgba(var(--h),.3)}
+
+/* ---- AA: confirm — ВОПРОС ДА/НЕТ СНОСКОЙ ----
+   Не большая панель, а тихая строка-примечание: тонкая рамка, спокойный фон,
+   вопрос слева и ровно две кнопки — зелёная «Да» и красная «Нет». Клик по
+   кнопке в чистой панели и есть ответ, без «Отправить» и «Своего варианта». */
+.ui-row.ui-confirm{display:flex;align-items:center;justify-content:space-between;gap:14px;
+  flex-wrap:wrap;padding:9px 12px;border-radius:10px;
+  border:1px dashed rgba(0,200,240,.24);background:rgba(0,26,40,.28);
+  animation:uiRowIn .32s cubic-bezier(.22,.85,.3,1) both}
+.cn-q{flex:1 1 200px;font-size:12.5px;color:var(--tx2);line-height:1.45;
+  padding-left:4px;border-left:2px solid rgba(0,200,240,.35)}
+.cn-btns{display:flex;gap:8px;flex:0 0 auto}
+.cn-btn{min-width:64px;padding:7px 16px;border-radius:9px;cursor:pointer;
+  font:600 12.5px/1 var(--fm);letter-spacing:.02em;
+  transition:background .16s,box-shadow .16s,transform .12s}
+.cn-btn:active{transform:scale(.94)}
+.cn-yes{color:#9df0d2;border:1px solid rgba(63,191,149,.5);background:rgba(63,191,149,.12)}
+.cn-yes:hover{background:rgba(63,191,149,.24);border-color:var(--green);
+  box-shadow:0 0 12px rgba(63,191,149,.32)}
+.cn-no{color:#ffb3c1;border:1px solid rgba(221,85,102,.5);background:rgba(221,85,102,.12)}
+.cn-no:hover{background:rgba(221,85,102,.24);border-color:var(--red);
+  box-shadow:0 0 12px rgba(221,85,102,.32)}
+.cn-btn.sel{box-shadow:inset 0 0 0 1px currentColor}
+.cn-picked{font:600 12.5px/1 var(--fm);color:var(--tx2);padding:4px 2px}
+.ui-panel .ui-confirm{margin:0 0 10px}
 
 /* ---- счётчик (number): аналоговая крутилка кнопками ± ---- */
 .ui-step{display:flex;align-items:center;gap:10px}

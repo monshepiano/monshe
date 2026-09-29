@@ -992,12 +992,27 @@ class Handler(BaseHTTPRequestHandler):
                 # Прерванный пользователем ответ помечается: обрывок кода не должен
                 # прикидываться полноценным ответом в контексте следующего запроса
                 # (модель продолжала «дописывать» несуществующий ответ).
-                saved_ai = db.add_message(chat_id, "assistant", final_text,
-                               {"files": files, "tools": used_tools, "model": runner.model_used,
-                                "tier": selected_tier,
-                                "agent": bool(runner.agent_mode),
-                                "interrupted": bool(stop_event.is_set()),
-                                "thinking": "".join(thinking)[:20000], "trace": trace[:60]})
+                ai_meta = {"files": files, "tools": used_tools, "model": runner.model_used,
+                           "tier": selected_tier,
+                           "agent": bool(runner.agent_mode),
+                           "interrupted": bool(stop_event.is_set()),
+                           "thinking": "".join(thinking)[:20000], "trace": trace[:60]}
+                # AA: ОТВЕТ НА ИНТЕРАКТИВНУЮ ПАНЕЛЬ — ПРОДОЛЖЕНИЕ ТОГО ЖЕ ОТВЕТА.
+                # Раньше каждый клик по панели рождал новое сообщение ассистента:
+                # в живом сеансе фронт ещё склеивал карточки, но стоило уйти из
+                # диалога и вернуться — «один ответ» распадался на несколько.
+                saved_ai = None
+                continue_of = str(body.get("continue_of") or "")
+                if continue_of:
+                    target = db.get_message(continue_of)
+                    if target and target.get("chat_id") == chat_id:
+                        saved_ai = db.append_message(continue_of, final_text, ai_meta)
+                if not saved_ai:
+                    saved_ai = db.add_message(chat_id, "assistant", final_text, ai_meta)
+                # id сохранённого ответа нужен фронту ДО закрытия потока: панель
+                # в этом сообщении продолжит именно его (data-msg-id)
+                if alive:
+                    self._sse({"type": "ai_msg", "id": saved_ai.get("id")})
                 # ПОДСКАЗКИ ГОТОВЯТСЯ ЗАРАНЕЕ, ПОКА ПОЛЬЗОВАТЕЛЬ ЧИТАЕТ. Ответ уже
                 # закрыт, соединение вот-вот оборвётся: nano-запрос идёт фоном и
                 # кладёт готовые кнопки в meta["replies"]. Когда фронт через

@@ -3233,7 +3233,173 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.30", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.31", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+
+
+class IterationAATests(unittest.TestCase):
+    """AA (beta.31): тихая мысль открывается, курсор не слепнет, план уходит
+    с новым диалогом, ответ на панель продолжает ТОТ ЖЕ ответ (и в БД),
+    микрофон = режим разговора, причина мем-надписей на картинках, confirm."""
+
+    def test_aa1_quiet_think_opens_by_click(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("function qtToggleThink(row)", js)
+        toggle = js.split("function qtToggleThink(row)")[1].split("\nfunction ")[0]
+        self.assertIn("row._thinkOpen", toggle)
+        # живая строка и история — обе кликабельны, история гидрирует строки
+        live = js.split("case 'thinking': {")[1].split("case 'plan': {")[0]
+        self.assertIn("qtToggleThink(qn)", live)
+        restore = js.split("function restoreTrace")[1].split("\nfunction ")[0]
+        self.assertIn("qtToggleThink(row)", restore)
+        self.assertIn("qt-flowline", restore)
+        # сворачивание сбрасывает состояние клика
+        mini = js.split("function qtMiniaturize")[1].split("\nfunction ")[0]
+        self.assertIn("node._thinkOpen = false;", mini)
+
+    def test_aa2_cursor_watch_never_blind(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        send = js.split("async function send(opts)")[1].split("\nasync function ")[0]
+        # план больше не глушит стража; «текст есть» = «текст ПЕЧАТАЕТСЯ сейчас»
+        self.assertNotIn("if (ui.planGate || ui.planDock) return;", send)
+        self.assertIn("if (ui.doneReceived) return;", send)
+        self.assertIn("if (ui.mdEl && ui.mdEl.isConnected && ui.typer) return;", send)
+        self.assertIn("ui.statusEl._watchLine = true;", send)
+        # воскресшая строка уходит, когда печать возобновилась
+        self.assertIn("ui.statusEl._watchLine && ui.typer) dropStatus(ui);", js)
+        # tool_hint воскрешает строку сам (раньше молчал в пустоту)
+        self.assertNotIn("case 'tool_hint':\n      if (ui.statusEl)", js)
+        hint = js.split("case 'tool_hint':")[1].split("case 'tool_start'")[0]
+        self.assertIn("ensureStatus(ui);", hint)
+
+    def test_aa3_new_dialog_hides_plan(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        new_chat = js.split("function newChat()")[1].split("\nfunction ")[0]
+        self.assertIn("$$('.plan-dock').forEach((d) => { d.style.display = 'none'; });", new_chat)
+        self.assertIn("S.detached = S.chatId;", new_chat)
+
+    def test_aa4_panel_answer_continues_same_message(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        # фронт: панель знает msgId, send ищет ноду по нему, тело несёт continue_of
+        self.assertIn("const panelMsg = box.closest('.msg');", js)
+        self.assertIn("continueOf: panelMsgId", js)
+        self.assertIn("m.dataset && m.dataset.msgId === opts.continueOf", js)
+        self.assertIn("continue_of: opts.continueOf || ''", js)
+        self.assertIn("case 'ai_msg':", js)
+        # сервер: continue_of дописывает в ТО ЖЕ сообщение + id до закрытия потока
+        self.assertIn('continue_of = str(body.get("continue_of") or "")', srv)
+        self.assertIn("db.append_message(continue_of, final_text, ai_meta)", srv)
+        self.assertIn('{"type": "ai_msg", "id": saved_ai.get("id")}', srv)
+
+    def test_aa4_append_message_merges(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.object(db, "DATA_DIR", Path(td)), \
+                 mock.patch.object(db, "_DB_PATH", Path(td) / "t.db"):
+                conn = sqlite3.connect(db._DB_PATH)
+                conn.executescript(db.SCHEMA)
+                conn.commit(); conn.close()
+                db._CONN = None
+                with mock.patch.object(db, "_CONN", db._connect()):
+                    chat = db.create_chat("диалог")
+                    first = db.add_message(chat["id"], "assistant", "первая часть",
+                                           {"files": ["a.png"], "tools": ["web_search"]})
+                    merged = db.append_message(first["id"], "вторая часть",
+                                               {"files": ["b.png"], "tools": ["generate_image"]})
+                    self.assertIn("первая часть", merged["content"])
+                    self.assertIn("вторая часть", merged["content"])
+                    self.assertEqual(merged["meta"]["files"], ["a.png", "b.png"])
+                    self.assertEqual(merged["meta"]["tools"],
+                                     ["web_search", "generate_image"])
+                    # одни и те же сообщения — ничего лишнего не появилось
+                    msgs = db.get_messages(chat["id"])
+                    self.assertEqual(len([m for m in msgs if m["role"] == "assistant"]), 1)
+                    # продолжение с несуществующим id не падает и не теряет текст
+                    self.assertIsNone(db.append_message("m_missing", "хвост", {}))
+
+    def test_aa5_mic_button_is_voice_mode(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        # id="voiceBtn" ровно один — тумблер озвучки в шапке; дубль убивал клик
+        self.assertEqual(html.count('id="voiceBtn"'), 1)
+        self.assertIn('id="micBtn" data-tip="Голосовой режим"', html)
+        handler = js.split("$('#micBtn').addEventListener('click'")[1].split("\n});")[0]
+        self.assertIn("openVoiceMode()", handler)
+        self.assertIn("closeVoiceMode()", handler)
+        # диктовка ушла: мёртвых функций нет, WAV-конвертер жив для разговора
+        self.assertNotIn("function browserASR", js)
+        self.assertNotIn("async function serverASR", js)
+        self.assertNotIn("function micHint", js)
+        self.assertIn("async function blobToWav16k", js)
+        # кнопка подсвечивается на время разговора
+        self.assertIn("mb.classList.add('rec');", js)
+        self.assertIn("mb.classList.remove('rec');", js)
+        # обработчик режима разговора больше не вешается на тумблер шапки
+        self.assertNotIn("$('#voiceBtn').addEventListener('click', () => {", js)
+
+    def test_aa6_image_prompt_strips_address(self) -> None:
+        # КОРЕНЬ «Hello Jarvis» на картинке: слова промпта рисуются буквально.
+        # Приветствие и обращение вычищаются ДО улучшения и ПОСЛЕ него.
+        self.assertEqual(media.strip_address("Привет, Джарвис! Нарисуй котика"),
+                         "Нарисуй котика")
+        self.assertEqual(media.strip_address("Здравствуй, Джарвис. Котик, мягкий свет"),
+                         "Котик, мягкий свет")
+        self.assertNotIn("Джарвис", media.strip_address("hello jarvis нарисуй кота"))
+        code = Path("app/jarvis/tools/media.py").read_text(encoding="utf-8")
+        self.assertIn("def strip_address", code)
+        self.assertIn("cleaned = strip_address(text)", code)      # ответ nano тоже чистится
+        self.assertIn("return strip_address(prompt)", code)
+        # честный текст ошибки: модель не может выдумать «нужна оплата»
+        self.assertIn("Платный доступ НЕ нужен", code)
+
+    def test_aa6_system_prompt_image_rule(self) -> None:
+        with mock.patch.object(agent.db, "recall", return_value=[]), \
+             mock.patch.object(agent, "_now_str", return_value="сегодня"):
+            prompt = agent.build_system_prompt(agent_mode=False)
+        self.assertIn("7а. КАРТИНКИ", prompt)
+        self.assertIn("никогда не говори, что генерация «требует платного доступа»", prompt)
+        self.assertIn("рисует любое слово из промпта буквально", prompt)
+
+    def test_aa6_enhance_prompt_cleans_model_answer(self) -> None:
+        # nano-улучшатель может вписать обращение обратно — ответ тоже чистится
+        def cfg(key, default=None):
+            return True if key == "media.enhance_prompt" else default
+        with mock.patch.object(media.llm, "chat",
+                               return_value={"content": "Привет, Джарвис! Рыжий кот на подоконнике"}), \
+             mock.patch.object(media.CONFIG, "get", cfg):
+            refined = media._enhance_prompt("Нарисуй котика", 1024, 1024)
+        self.assertNotIn("Джарвис", refined)
+        self.assertNotIn("Привет", refined)
+        self.assertIn("кот", refined.lower())
+        # сбой nano — исходная просьба отдаётся очищенной, не теряется
+        with mock.patch.object(media.llm, "chat", side_effect=RuntimeError("нет сети")), \
+             mock.patch.object(media.CONFIG, "get", cfg):
+            fallback = media._enhance_prompt("Привет, Джарвис! Нарисуй котика", 1024, 1024)
+        self.assertEqual(fallback, "Нарисуй котика")
+
+    def test_aa7_confirm_ui(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        py = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        # парсер знает confirm, сломанная одиночная плитка становится confirm
+        self.assertIn("/^confirm\\s+(.+?)\\s*:*$/i", js)
+        self.assertIn("function confirmLabel(label)", js)
+        self.assertIn("t: 'confirm', label: confirmLabel(m[1])", js)
+        # рендер: сноска, зелёная Да, красная Нет, без «Отправить» в чистом виде
+        self.assertIn("const confirmOnly", js)
+        self.assertIn("cn-yes\">Да", js)
+        self.assertIn("cn-no\">Нет", js)
+        self.assertIn("if (x.t === 'confirm') return x.val != null;", js)
+        self.assertIn(".ui-row.ui-confirm{", css)
+        self.assertIn(".cn-yes{", css)
+        self.assertIn(".cn-no{", css)
+        # серверный реестр типов и промпт модели
+        self.assertIn("confirm|tiles|multi|rank", py)
+        with mock.patch.object(agent.db, "recall", return_value=[]), \
+             mock.patch.object(agent, "_now_str", return_value="сегодня"):
+            prompt = agent.build_system_prompt(agent_mode=True)
+        self.assertIn("confirm Подпись — вопрос да/нет", prompt)
+        self.assertIn("САМЫЙ ЧАСТЫЙ тип", prompt)
+        self.assertIn("confirm Сохранить в Excel?", prompt)
 
 
 class BareToolArgumentsTests(unittest.TestCase):

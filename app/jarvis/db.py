@@ -286,6 +286,47 @@ def edit_message(msg_id: str, new_content: str, chat_id: str = "") -> Optional[D
     return get_message(msg_id)
 
 
+def append_message(msg_id: str, content: str, meta: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
+    """Дописать продолжение в ТО ЖЕ сообщение (ответ на интерактивную панель).
+
+    Раньше каждый клик по панели рождал в БД новое сообщение ассистента: в
+    живом сеансе фронт ещё склеивал их в одну карточку, но после перезагрузки
+    «один ответ» распадался на несколько. Продолжение — это досказывание
+    ТОГО ЖЕ ответа: текст дописывается, файлы/инструменты/трасса приобщаются.
+    """
+    msg = get_message(msg_id)
+    if not msg:
+        return None
+    old_meta = msg.get("meta") or {}
+    add = meta or {}
+    old_content = str(msg.get("content") or "").rstrip()
+    new_content = (old_content + "\n\n" + str(content or "").lstrip()).strip()
+    merged = dict(old_meta)
+    for key in ("files", "tools", "trace"):
+        merged[key] = list(old_meta.get(key) or []) + list(add.get(key) or [])
+    if add.get("model"):
+        merged["model"] = add.get("model")
+    if add.get("thinking"):
+        merged["thinking"] = (str(old_meta.get("thinking") or "") + "\n"
+                              + str(add.get("thinking")))[:20000]
+    # правки хранят варианты текста: дописываем в активный вариант тоже,
+    # иначе переключение версии откатывало бы продолжение
+    versions = list(merged.get("versions") or [])
+    if versions:
+        cur = int(merged.get("version", len(versions) - 1))
+        cur = max(0, min(cur, len(versions) - 1))
+        versions[cur] = (str(versions[cur]).rstrip() + "\n\n"
+                         + str(content or "").lstrip()).strip()
+        merged["versions"] = versions
+    execute(
+        "UPDATE messages SET content=?, meta=? WHERE id=?",
+        (new_content, json.dumps(merged, ensure_ascii=False), msg_id),
+    )
+    execute("UPDATE chats SET updated_at=? WHERE id=?",
+            (now(), msg.get("chat_id") or ""))
+    return get_message(msg_id)
+
+
 def switch_message_version(msg_id: str, index: int) -> Optional[Dict[str, Any]]:
     """Показать другую версию сообщения вместе с её ответами (‹ 2/3 ›)."""
     msg = get_message(msg_id)

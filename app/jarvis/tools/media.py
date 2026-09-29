@@ -196,10 +196,30 @@ def _image_bytes(file_id: str, token: str) -> Tuple[bytes, str]:
     raise GigaChatError("GigaChat вернул не изображение (%s)" % (content_type or "unknown type"))
 
 
+# AA: СЛОВА ПРОМПТА ГЕНЕРАТОР РИСУЕТ БУКВАЛЬНО. «Привет, Джарвис, нарисуй
+# котика» превращалось в картинку с мем-подписью «Hello Jarvis»: приветствие
+# и обращение ехали в промпт, а модель изображений честно рисовала эти слова.
+# Убираем ОБРАЩЕНИЯ И ПРИВЕТСТВИЯ до улучшения и после него — nano-модель
+# может вернуть их обратно.
+_ADDRESS_NOISE = re.compile(
+    r"(?:^|\s)[прz3z]?р?(?:привет|приветствую|здравствуй|здравствуйте|"
+    r"добры(?:й|е)\s+(?:день|вечер|утро)|хай|hello|hi|hey)[!,.:\s]*"
+    r"|\b(?:джарвис|джарвиса|jarvis|jаrvis)\b[!,.:\s]*",
+    re.IGNORECASE,
+)
+
+
+def strip_address(text: str) -> str:
+    """Убрать из промпта картинки приветствия и обращения к ассистенту."""
+    cleaned = _ADDRESS_NOISE.sub(" ", str(text or ""))
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,.!-—")
+    return cleaned.strip()
+
+
 def _enhance_prompt(prompt: str, width: int, height: int) -> str:
     """Дешёвая модель уточняет сцену; при сбое исходная просьба не теряется."""
     if not CONFIG.get("media.enhance_prompt", True):
-        return prompt
+        return strip_address(prompt)
     ratio = "квадратный кадр"
     if width > height:
         ratio = "горизонтальный кадр"
@@ -208,16 +228,21 @@ def _enhance_prompt(prompt: str, width: int, height: int) -> str:
     instruction = (
         "Ты арт-директор. Перепиши запрос как один точный промпт для современной "
         "генерации изображения. Сохрани сюжет, добавь композицию, свет, фактуру и "
-        "стиль. Не добавляй надписи, логотипы и watermark. Формат: %s. Ответь "
+        "стиль. Это описание ТОЛЬКО видимой сцены: никаких обращений, приветствий, "
+        "имён («привет», «Джарвис», «пожалуйста») и просьб — генератор рисует "
+        "буквально любое слово из промпта как надпись на картинке. Не добавляй "
+        "надписи, логотипы и watermark. Формат: %s. Ответь "
         "только готовым промптом на русском, до 900 знаков.\n\nЗапрос: %s"
     ) % (ratio, prompt)
     try:
         response = llm.chat([{"role": "user", "content": instruction}], tier="nano",
                             max_tokens=450, temperature=0.45)
         text = str(response.get("content") or "").strip()
-        return text[:1400] if text else prompt
+        # nano-модель могла вписать обращение — вычищаем и её ответ
+        cleaned = strip_address(text)
+        return cleaned[:1400] if cleaned else strip_address(prompt)
     except Exception:
-        return prompt
+        return strip_address(prompt)
 
 
 def _image_format(image: bytes, content_type: str = "") -> str:
@@ -355,8 +380,14 @@ def _free_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
         last_error = "пустой ответ от " + model
         image = b""
     if not image:
+        # AA: текст ошибки — для модели. Прежняя формулировка позволяла LLM
+        # выдумать «генератор требует платного доступа»: бесплатная цепочка
+        # на минуту занята — это не тариф, скажи пользователю честно.
         return {"ok": False,
-                "error": "бесплатный генератор недоступен: " + (last_error or "пустой ответ")}
+                "error": "бесплатный генератор временно недоступен (%s). "
+                         "Платный доступ НЕ нужен: генерация бесплатна и "
+                         "работает без ключей — просто подождите минуту и "
+                         "вызовите инструмент снова." % (last_error or "пустой ответ")}
     name = "image_%d.jpg" % (int(time.time() * 1000) % 10 ** 8)
     target = sandbox.safe_path(name)
     tmp = target.with_suffix(target.suffix + ".tmp")

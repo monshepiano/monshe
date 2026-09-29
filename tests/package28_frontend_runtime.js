@@ -1829,7 +1829,7 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   const mount = extractFunction(js, 'mountUiPanels');
   assert(/const tilesOnly = items\.length > 0 && items\.every\(\(x\) => x\.t === 'tiles'\);/.test(mount) &&
     /if \(tilesOnly\) \{ setTimeout\(fire, 140\); return; \}/.test(mount) &&
-    /if \(askable && !tilesOnly\) \{/.test(mount) &&
+    /if \(askable && !tilesOnly && !confirmOnly\) \{/.test(mount) &&
     !/sendTimer/.test(mount),
     'panels with ONLY colored tiles send on click — every other format waits for the button');
   ['ask-s-stack', 'ask-s-cloud', 'ask-s-seg', 'ask-s-grid', 'ask-s-dial'].forEach((cls) => {
@@ -2091,10 +2091,11 @@ function testIterationYContracts() {
   assert(/\.agent-switch:not\(\[data-ag-hold\]\) \.agent-switch-track:not\(:has\(input:checked\)\):hover/.test(css),
     'Y4: the off-toggle glow stays silent while the cursor never left; plays again only on the NEXT hover');
   // П.6: запись превращается в WAV 16кГц прямо в браузере — ffmpeg больше не нужен
+  // (AA: диктовку сменил режим разговора — WAV теперь готовит voiceTranscribe)
   const wav = extractFunction(js, 'blobToWav16k');
   assert(/function blobToWav16k/.test(js) && /decodeAudioData/.test(wav) &&
     /v\.setUint32\(24, rate, true\)/.test(wav) && /data:audio\/wav;base64,/.test(wav) &&
-    /blobToWav16k\(blob\)/.test(extractFunction(js, 'serverASR')),
+    /blobToWav16k\(blob\)/.test(extractFunction(js, 'voiceTranscribe')),
     'Y6: the browser itself converts the recording to 16kHz mono WAV — webm/opus is rejected by every ASR model and ffmpeg may be absent');
 }
 
@@ -2184,7 +2185,7 @@ function testProactiveModesBudgetAndAbortContracts() {
     /@keyframes tipIn/.test(css) && /max-width:180px/.test(css) &&
     /white-space:normal/.test(css) &&
     /id="attachBtn" data-tip="Вложить файл"/.test(html) &&
-    /id="micBtn" data-tip="Голосовой ввод"/.test(html) &&
+    /id="micBtn" data-tip="Голосовой режим"/.test(html) &&
     /data-tip="AGENT — план и самостоятельная работа"/.test(html) &&
     /data-tip="Лимит ₽ на ответ"/.test(html),
   'tooltips wait ~1.5s, stay compact, mic and attach included');
@@ -2301,9 +2302,15 @@ function testProactiveModesBudgetAndAbortContracts() {
   assert(/if \(S\.budgetRub\) \{/.test(js) && /budgetBtn\.classList\.remove\('on'\)/.test(js),
     'the ruble button goes dark as soon as the answer finishes');
   // продолжение ответа после интерактивной панели: та же карточка, БЕЗ
-  // разделителя, кнопки действий — только на полностью законченном ответе
-  assert(js.includes("send({ silent: true, continue: true })") &&
+  // разделителя, кнопки действий — только на полностью законченном ответе.
+  // AA: продолжение переживает перерисовку ленты — панель знает msgId своего
+  // сообщения, а сервер дописывает текст в ТО ЖЕ сообщение, а не плодит новое
+  assert(js.includes("send({ silent: true, continue: true, continueOf: panelMsgId })") &&
     /S\.lastUi/.test(js) && /requestHost\.contains\(S\.lastUi\.node\.root\)/.test(js) &&
+    /const panelMsg = box\.closest\('\.msg'\);/.test(js) &&
+    /m\.dataset && m\.dataset\.msgId === opts\.continueOf/.test(js) &&
+    /continue_of: opts\.continueOf \|\| ''/.test(js) &&
+    /case 'ai_msg':/.test(js) &&
     /ui-panel:not\(\.ui-sent\)/.test(js) &&
     /if \(!pendingPanel\) addMsgActions/.test(js),
   'ui-panel answers continue the same message card instead of a new reply');

@@ -51,12 +51,6 @@ const S = {
   camLast: '',
   camPrevPix: null,
   editing: null,   // {id, node} — какое сообщение правим (новая версия, не новая реплика)
-  asr: null,
-  asrStop: null,
-  asrFallback: false,
-  asrTriedBrowser: false,
-  micToast: null,
-  micTimer: null,
   detached: null,
   detachTimer: null,
   sandbox: {},
@@ -953,11 +947,22 @@ function startRenameChat(item, c) {
 function newChat() {
   S.chatOpenRun += 1; // инвалидируем любой ещё летящий openChat()
   if (S.camNode || S.camStream) stopCam(); // чистим и активный, и ошибочный/pending-сеанс
+  // Уходим на новый диалог во время ответа: генерация НЕ обрывается — сервер
+  // допишет и сохранит её в переписку (как при переключении на другой чат)
+  if (S.streaming) {
+    S.detached = S.chatId;
+    setStreaming(false);
+  }
   S.sanctionNodes = {};
   S.chatId = null;
   S.fdir = '';
   $('#stream').innerHTML = '';
   $('#stream').appendChild(buildWelcome());
+  // AA: ПЛАН УХОДИТ ВМЕСТЕ С ДИАЛОГОМ. Панель привязана к своему диалогу
+  // (Z), но «новый диалог» её не прятал: пустой экран приветствия с чужим
+  // золотым планом наверху выглядел как баг. Прячем ВСЕ доки — свой вернётся
+  // при возвращении в диалог.
+  $$('.plan-dock').forEach((d) => { d.style.display = 'none'; });
   loadChats();
   showView('chat');
   $('#input').focus();
@@ -1750,14 +1755,33 @@ function restoreTrace(node, meta) {
       collapseToThumb(card, { cls: 'th-think', icon: '◇', title: 'Ход мыслей',
         sub: think.slice(0, 60), tag: 'свёрнут', instant: true });
     } else {
-      // Y: тихий ответ — тихая строка кухни, без агентской карточки
+      // Y: тихий ответ — тихая строка кухни, без агентской карточки.
+      // AA: строки мыслей hydrated внутрь и спрятаны — клик по строке
+      // раскрывает поток, как у живого ответа (раньше строка была мёртвой)
       const row = el('div', 'qt-node qt-think');
       row.innerHTML =
         '<div class="qt-head">' +
           '<span class="qt-ico">◇</span>' +
           '<span class="qt-name">Ход мыслей</span>' +
           '<span class="qt-mark">✓ ' + fmtSize(think.length) + '</span>' +
-        '</div>';
+        '</div>' +
+        '<div class="qt-body" style="display:none"><span class="qt-rail"></span>' +
+          '<div class="qt-flow"><div class="qt-flowin"></div></div></div>';
+      const inner = row.querySelector('.qt-flowin');
+      String(think).split(/\n+/).map((s) => s.trim()).filter(Boolean)
+        .forEach((para) => {
+          // длинную мысль режем по границам слов на строки потока — открытие
+          // показывает тот же «бегущий» вид, что и живой ответ
+          let rest = para;
+          while (rest.length > 96) {
+            const sp = rest.lastIndexOf(' ', 96);
+            const cut = sp > 40 ? sp : 96;
+            inner.appendChild(el('div', 'qt-flowline', esc(rest.slice(0, cut))));
+            rest = rest.slice(cut).replace(/^\s+/, '');
+          }
+          if (rest) inner.appendChild(el('div', 'qt-flowline', esc(rest)));
+        });
+      row.querySelector('.qt-head').addEventListener('click', () => qtToggleThink(row));
       node.body.appendChild(row);
     }
   }
@@ -2754,6 +2778,18 @@ function normUiLine(raw) {
    «tiles Что делать?» и панель без заголовка.
    Двоеточие — не то, на чём стоит держаться. Если варианты разделены «|», то
    первый кусок и есть метка, каким бы знаком он ни кончался. */
+/* AA: сломанная строка выбора превращается в вопрос да/нет — почистить
+   метку, чтобы она стала нормальным вопросом («Скачать? да» → «Скачать?»,
+   голое «Да» → «Подтвердить?»). */
+function confirmLabel(label) {
+  let q = String(label || '').replace(/\s*[?:!]+\s*$/, '').trim();
+  // NB: \b в JS не знает кириллицы — границу слова строим сами
+  q = q.replace(/[\s,.!:;?]+(?:да|нет)\s*$/i, '').trim();
+  if (/^(?:да|нет)$/i.test(q)) q = '';
+  q = q || 'Подтвердить';
+  return /[?…:]$/.test(q) ? q : q + '?';
+}
+
 function matchChoice(ln, type) {
   const head = new RegExp('^' + type + '\\s+(.+)$', 'i');
   const m = ln.match(head);
@@ -2780,7 +2816,7 @@ function matchChoice(ln, type) {
 /* Название типа, случайно оставшееся в начале строки. Нужно последнему
    рубежу: он делит строку по «|» вслепую и не должен принять слово «tiles»
    за часть первого варианта. */
-const UI_TYPE_WORD = /^(tiles|multi|rank|slider|number|rate|toggle|text|area|date|color|button)\s+/i;
+const UI_TYPE_WORD = /^(confirm|tiles|multi|rank|slider|number|rate|toggle|text|area|date|color|button)\s+/i;
 
 function parseUiSpec(src) {
   const items = [];
@@ -2808,8 +2844,20 @@ function parseUiSpec(src) {
     } else if ((m = ln.match(/^toggle\s+(.+?)(?:\s*=\s*(on|off|да|нет|true|false))?$/i))) {
       items.push({ t: 'toggle', label: m[1],
                    val: /^(on|да|true)$/i.test(m[2] || '') });
+    // confirm Подпись — вопрос да/нет: сноска с зелёной «Да» и красной «Нет».
+    // Самый частый вопрос интерфейса: когда хватает да/нет — всегда он.
+    } else if ((m = ln.match(/^confirm\s+(.+?)\s*:*$/i))) {
+      items.push({ t: 'confirm', label: m[1].trim(), val: null });
     } else if ((m = matchChoice(ln, 'tiles'))) {
-      items.push({ t: 'tiles', label: m[1], opts: m[2], val: null });
+      // AA: ОДНА ПЛИТКА — СЛОМАННЫЙ ВЫБОР. Модель, желая спросить да/нет,
+      // писала «tiles Да: нет» — и пользователь получал панель с названием
+      // «Да» и единственной кнопкой «нет». Такой выбор превращается в
+      // нормальный confirm: вопрос + две кнопки «Да»/«Нет».
+      if (!m[2] || m[2].length < 2) {
+        items.push({ t: 'confirm', label: confirmLabel(m[1]), val: null });
+      } else {
+        items.push({ t: 'tiles', label: m[1], opts: m[2], val: null });
+      }
     // text Метка [= подсказка] — свободный ответ, когда варианты не перечислить
     } else if ((m = ln.match(/^text\s+(.+?)(?:\s*=\s*(.*))?$/i))) {
       items.push({ t: 'text', label: m[1], hint: (m[2] || '').trim(), val: '' });
@@ -2854,6 +2902,9 @@ function parseUiSpec(src) {
       }
       const opts = rest.split('|').map((x) => x.trim()).filter(Boolean);
       if (opts.length > 1) items.push({ t: 'tiles', label: label || 'Выбери', opts, val: null });
+      // единственный вариант после черты — сломанное да/нет: превращаем
+      // в confirm, чтобы у человека всегда были обе кнопки
+      else if (opts.length === 1) items.push({ t: 'confirm', label: confirmLabel(label), val: null });
     }
   });
 
@@ -2913,11 +2964,20 @@ function mountUiPanels(root) {
     box.dataset.live = '1';
     box.innerHTML = '';
 
+    // AA: ПАНЕЛЬ ПРИНАДЛЕЖИТ СВОЕМУ СООБЩЕНИЮ. Ответ на неё — продолжение
+    // ТОГО ЖЕ ответа, и это должно работать даже после перерисовки ленты:
+    // живая нода умирает при переключении диалога, а msgId — нет.
+    const panelMsg = box.closest('.msg');
+    const panelMsgId = (panelMsg && panelMsg.dataset.msgId) || '';
+
     const HUES = ['c1', 'c2', 'c3', 'c4', 'c5'];
     // ЧИСТЫЕ ПЛИТКИ НЕ ЖДУТ КНОПКУ: один клик = выбор = отправка. Единственный
     // формат, где подтверждение лишено смысла — нечего докручивать, нечему
     // передумать: одно касание уже и есть весь ответ.
     const tilesOnly = items.length > 0 && items.every((x) => x.t === 'tiles');
+    // AA: ЧИСТЫЙ confirm — то же самое: клик по «Да»/«Нет» и есть весь ответ,
+    // никакой кнопки «Отправить» и «Своего варианта» — да/нет не пишут словами
+    const confirmOnly = items.length > 0 && items.every((x) => x.t === 'confirm');
     // ЛЮБАЯ панель отправляется ТОЛЬКО кнопкой «Отправить». Раньше чистые
     // плитки улетали по первому касанию (таймер на 900 мс), а тумблеры и
     // звёзды — сразу; передумать было нельзя, промах стоил отправки. Теперь
@@ -2929,6 +2989,7 @@ function mountUiPanels(root) {
 
     let ownVal = '';                       // «свой вариант» — вне списка items
     const summary = () => items.filter((x) => x.t !== 'button').map((x) => {
+      if (x.t === 'confirm') return x.label + ': ' + (x.val || '—');
       if (x.t === 'toggle') return x.label + ': ' + (x.val ? 'да' : 'нет');
       if (x.t === 'multi') return x.label + ': ' + (x.val.length ? x.val.join(', ') : '—');
       // порядок и есть ответ — нумеруем, иначе смысл расстановки теряется
@@ -2946,6 +3007,7 @@ function mountUiPanels(root) {
        является полноценной альтернативой всей форме. */
     const ready = () => items.every((x) => {
       if (x.t === 'tiles') return x.val != null;
+      if (x.t === 'confirm') return x.val != null;
       if (x.t === 'text' || x.t === 'area' || x.t === 'date') {
         return String(x.val || '').trim().length > 0;
       }
@@ -2966,7 +3028,7 @@ function mountUiPanels(root) {
       box.classList.add('ui-sent');
       $$('input,button,textarea', box).forEach((c) => { c.disabled = true; });
       $('#input').value = summary().join('\n'); autoGrow();
-      send({ silent: true, continue: true });
+      send({ silent: true, continue: true, continueOf: panelMsgId });
       sfx('send');
     };
 
@@ -2979,6 +3041,40 @@ function mountUiPanels(root) {
     };
 
     items.forEach((it, idx) => {
+      // AA: confirm — ВОПРОС ДА/НЕТ отдельной сноской: не большая панель,
+      // а тихая строка с зелёной «Да» и красной «Нет». В чистой панели клик
+      // сразу отправляет ответ; в смешанной — работает как выбор (ждёт
+      // общей кнопки «Отправить»).
+      if (it.t === 'confirm') {
+        const row = el('div', 'ui-row ui-confirm');
+        row.style.animationDelay = (idx * 55) + 'ms';
+        row.innerHTML =
+          '<div class="cn-q">' + esc(it.label) + '</div>' +
+          '<div class="cn-btns">' +
+            '<button class="cn-btn cn-yes">Да</button>' +
+            '<button class="cn-btn cn-no">Нет</button>' +
+          '</div>';
+        const btns = row.querySelector('.cn-btns');
+        row.querySelectorAll('.cn-btn').forEach((b) => {
+          b.addEventListener('click', () => {
+            if (box.dataset.sent === '1') return;
+            const val = b.classList.contains('cn-yes') ? 'Да' : 'Нет';
+            it.val = val;
+            sfx('select');
+            if (confirmOnly) {
+              btns.innerHTML = '<span class="cn-picked">✓ ' + esc(val) + '</span>';
+              setTimeout(fire, 120);
+            } else {
+              row.querySelectorAll('.cn-btn').forEach((x) => x.classList.remove('sel'));
+              b.classList.add('sel');
+              controlChanged();
+            }
+          });
+        });
+        box.appendChild(row);
+        return;
+      }
+
       const row = el('div', 'ui-row ui-' + it.t + ' ' + HUES[idx % HUES.length]);
       row.style.animationDelay = (idx * 55) + 'ms';
 
@@ -3166,27 +3262,27 @@ function mountUiPanels(root) {
         });
         row.appendChild(grid);
 
-      } else {
-        const b = el('button', 'ui-btn ' + HUES[idx % HUES.length], it.label);
-        b.addEventListener('click', () => {
-          if (box.dataset.sent === '1') return;
-          box.dataset.sent = '1';
-          box.classList.add('ui-sent');
-          $$('input,button,textarea', box).forEach((c) => { c.disabled = true; });
-          $('#input').value = it.label; autoGrow();
-          send({ silent: true, continue: true });
-          sfx('send');
-        });
-        row.appendChild(b);
-      }
+        } else {
+          const b = el('button', 'ui-btn ' + HUES[idx % HUES.length], it.label);
+          b.addEventListener('click', () => {
+            if (box.dataset.sent === '1') return;
+            box.dataset.sent = '1';
+            box.classList.add('ui-sent');
+            $$('input,button,textarea', box).forEach((c) => { c.disabled = true; });
+            $('#input').value = it.label; autoGrow();
+            send({ silent: true, continue: true, continueOf: panelMsgId });
+            sfx('send');
+          });
+          row.appendChild(b);
+        }
       box.appendChild(row);
     });
 
     // Свой вариант. Любой заранее собранный список конечен, а ответ человека —
     // нет: если ни одна плитка не подходит, панель не должна загонять в угол.
     // Поэтому в конце всегда есть строка, куда можно вписать своё.
-    // Панелям из одних кнопок-действий она не нужна — там нечего отвечать.
-    const askable = items.some((x) => x.t !== 'button');
+    // Панелям из одних кнопок-действий и чистым да/нет-сноскам она не нужна.
+    const askable = items.some((x) => x.t !== 'button') && !confirmOnly;
     // text/area уже И ЕСТЬ свободный «свой вариант»; второе одинаковое поле
     // только путало бы человека в deterministic fallback-вопросах.
     const hasFreeEntry = items.some((x) => x.t === 'text' || x.t === 'area');
@@ -3202,10 +3298,10 @@ function mountUiPanels(root) {
       box.appendChild(row);
     }
 
-    // Кнопка «Отправить» нужна везде, КРОМЕ чистых плиток: там клик сам
-    // является подтверждением. Выглядит и ведёт себя как кнопка отправки
-    // под полем ввода — та же стрелка, тот же смысл.
-    if (askable && !tilesOnly) {
+    // Кнопка «Отправить» нужна везде, КРОМЕ чистых плиток и чистых да/нет:
+    // там клик сам является подтверждением. Выглядит и ведёт себя как кнопка
+    // отправки под полем ввода — та же стрелка, тот же смысл.
+    if (askable && !tilesOnly && !confirmOnly) {
       go = el('button', 'ui-go', ICO.send + '<span>Отправить</span>');
       go.addEventListener('click', fire);
       // Плиткам кнопка не нужна: выбор уходит сам. Но как только человек начал
@@ -3613,7 +3709,19 @@ async function send(opts) {
   if (contUi) {
     // полностью единый ответ: та же карточка, никакого разделителя
     node = contUi.node;
-  } else {
+  } else if (opts.continueOf && requestHost && !requestIsolatedCam) {
+    // AA: ПАНЕЛЬ ОТВЕЧЕНА ПОСЛЕ ПЕРЕРИСОВКИ ЛЕНТЫ (возврат в диалог, фоновый
+    // ответ, перезагрузка) — живой ноды уже нет, но сообщение на месте.
+    // Продолжаем ИМЕННО его: тот же ответ дописывается ниже, а не рождается
+    // новая карточка «ответ на ответ».
+    const root = $$('.msg', requestHost)
+      .find((m) => m.dataset && m.dataset.msgId === opts.continueOf);
+    if (root && root.querySelector('.ai-content')) {
+      node = { root, body: root.querySelector('.ai-content'),
+               modelEl: root.querySelector('.ai-model') };
+    }
+  }
+  if (!node) {
     node = addAiMsg(null, requestHost);
   }
   const runId = ++S.streamRun;
@@ -3678,13 +3786,23 @@ async function send(opts) {
   // Z: СТРАЖ СТРОКИ СОСТОЯНИЯ. Каким бы путём ни пошёл ответ (план, мысли,
   // инструменты, гонки таймеров), на экране ВСЕГДА есть живая строка с
   // курсором. Пропала — через 1.6с она возвращается сама с «думаю…».
+  // AA: СТРАЖ БОЛЬШЕ НЕ СЛЕПНЕТ. Раньше он отключался на весь план
+  // (ui.planDock) и на весь остаток ответа после первого текста (mdEl):
+  // длинная генерация вызова инструмента или медленный инструмент без
+  // событий оставляли экран БЕЗ курсора до следующего хода — «снова
+  // пропал». Теперь план наверху — не замена строке в теле ответа, а
+  // «текст уже есть» значит «текст ПЕЧАТАЕТСЯ прямо сейчас»: допечатан
+  // и поток молчит — строка возвращается.
   const statusWatch = setInterval(() => {
     if (S.streamRun !== runId || !S.streaming) return;
-    if (ui.planGate || ui.planDock) return;          // план на экране — курсор не нужен
-    if (ui.mdEl && ui.mdEl.isConnected) return;      // печать ответа — курсор в тексте
+    if (ui.doneReceived) return;                     // ответ уже дописан — не воскресать
+    if (ui.mdEl && ui.mdEl.isConnected && ui.typer) return;   // печать идёт — курсор в тексте
     if (ui.statusEl && ui.statusEl.isConnected) return;
     ui.statusEl = ensureStatus(ui);
-    if (ui.statusEl) busyMode(ui, ['думаю…', 'готовлю ответ', 'ещё секунду'], 1500);
+    if (ui.statusEl) {
+      ui.statusEl._watchLine = true;
+      busyMode(ui, ['думаю…', 'готовлю ответ', 'ещё секунду'], 1500);
+    }
   }, 1600);
 
   const controller = new AbortController();
@@ -3712,6 +3830,7 @@ async function send(opts) {
         run_token: runToken,
         budget_rub: S.budgetRub || 0,
         edit_of: editing ? editing.id : '',
+        continue_of: opts.continueOf || '',
         agent_mode: requestAgentMode,
         computer_use: requestComputerUse,
         silent: !!opts.silent,
@@ -4166,6 +4285,7 @@ function qtResultLine(node, ev) {
 function qtMiniaturize(node) {
   if (!node || !node.isConnected || node.dataset.mini === '1' || node.dataset.folded === '1') return;
   node.dataset.mini = '1';
+  node._thinkOpen = false;   // AA: свернули — состояние клика тоже сбросили
   const body = node.querySelector('.qt-body');
   if (!body) return;
   const h = body.getBoundingClientRect().height;
@@ -4178,6 +4298,60 @@ function qtMiniaturize(node) {
   body.style.height = '0px';
   body.style.opacity = '0';
   setTimeout(() => { if (!node.dataset.folded) body.style.display = 'none'; }, 520);
+}
+
+/* AA: ТИХИЙ ХОД МЫСЛЕЙ ОТКРЫВАЕТСЯ КЛИКОМ. Когда пошёл текст ответа, поток
+   мыслей сворачивается в одну строку «Ход мыслей ✓» — и раньше это было
+   навсегда: у строки был курсор-указатель, но клик ничего не делал. Теперь
+   клик раскрывает поток обратно, повторный — закрывает. История ведёт себя
+   так же: строки мыслей hydrated в поток заранее и спрятаны. */
+function qtToggleThink(row) {
+  const body = row.querySelector('.qt-body');
+  if (!body) return;
+  if (row._thinkOpen) {
+    row._thinkOpen = false;
+    const h = body.getBoundingClientRect().height;
+    body.style.overflow = 'hidden';
+    body.style.transition = 'none';
+    body.style.height = Math.max(h, 0) + 'px';
+    void body.offsetHeight;
+    body.style.transition = 'height .44s cubic-bezier(.3,.6,.3,1), opacity .3s ease';
+    body.style.height = '0px';
+    body.style.opacity = '0';
+    setTimeout(() => {
+      if (!row._thinkOpen) {
+        body.style.display = 'none';
+        body.style.height = '';
+        body.style.opacity = '';
+        body.style.overflow = '';
+        body.style.transition = '';
+      }
+    }, 460);
+  } else {
+    row._thinkOpen = true;
+    body.style.display = '';
+    // высоту окну даёт сам поток: живой qtFeed уже вырастил его, история
+    // гидрируется заранее; страховка — на случай совсем пустого потока
+    const flow = row.querySelector('.qt-flow');
+    if (flow && !flow.style.height) {
+      const inner = flow.querySelector('.qt-flowin');
+      const fh = Math.min(inner ? inner.scrollHeight : 0, 88);
+      flow.style.height = Math.max(fh, 0) + 'px';
+      if (inner && inner.scrollHeight > 92) flow.classList.add('full');
+    }
+    const h = body.getBoundingClientRect().height;
+    body.style.overflow = 'hidden';
+    body.style.transition = 'none';
+    body.style.height = '0px';
+    body.style.opacity = '0';
+    void body.offsetHeight;
+    body.style.transition = 'height .44s cubic-bezier(.22,.8,.3,1), opacity .34s ease';
+    body.style.height = Math.max(h, 0) + 'px';
+    body.style.opacity = '1';
+    setTimeout(() => {
+      if (row._thinkOpen) body.style.cssText = '';
+    }, 470);
+  }
 }
 
 /* ЧЕРЕДА ЗАКОНЧИЛАСЬ: инструменты другого типа или текст ответа означают,
@@ -5624,6 +5798,15 @@ function handleEvent(ev, ui) {
       break;
     }
 
+    case 'ai_msg': {
+      // AA: id сохранённого ответа приезжает до закрытия потока — панель в
+      // этом сообщении продолжает ИМЕННО его, даже если ленту перерисовали
+      if (ui.node && ui.node.root && !ui.node.root.dataset.msgId) {
+        ui.node.root.dataset.msgId = ev.id;
+      }
+      break;
+    }
+
     case 'edited': {
       // сервер подтвердил: правка сохранена как ещё одна версия
       const target = $$('.msg-user', stream()).find((n) => n.dataset.msgId === ev.id);
@@ -5670,6 +5853,8 @@ function handleEvent(ev, ui) {
             '</div>' +
             '<div class="qt-body"><span class="qt-rail"></span><div class="qt-flow">' +
               '<div class="qt-flowin"></div></div></div>';
+          // AA: строку можно раскрыть обратно после сворачивания
+          qn.querySelector('.qt-head').addEventListener('click', () => qtToggleThink(qn));
           ui.thinkCard = qn;
           markBorn(qn);
           node.body.insertBefore(qn, ensureStatus(ui));
@@ -5757,9 +5942,11 @@ function handleEvent(ev, ui) {
     }
 
     case 'tool_hint':
-      if (ui.statusEl) {
-        busyMode(ui, [ev.label || 'Готовлю инструмент'].concat(groupQuips(ev.group)), 2300);
-      }
+      // AA: имя инструмента приезжает, когда строка состояния уже разобрана
+      // (после текста шага). Раньше подсказка молчала в пустоту и не могла
+      // вернуть строку — теперь она её воскрешает сама
+      ensureStatus(ui);
+      busyMode(ui, [ev.label || 'Готовлю инструмент'].concat(groupQuips(ev.group)), 2300);
       break;
 
     case 'tool_start': {
@@ -6202,6 +6389,9 @@ function handleEvent(ev, ui) {
         node.body.appendChild(ui.mdEl);
       }
       typeInto(ui, ev.text);
+      // AA: строку, воскресшую стражем во время сетевой паузы, убирает сам
+      // текст: каретка вернулась в печать, дублирующее «думаю…» не нужно
+      if (ui.statusEl && ui.statusEl._watchLine && ui.typer) dropStatus(ui);
       break;
     }
 
@@ -6329,122 +6519,6 @@ function renderAttachments() {
 }
 
 /* ============================ голос ============================ */
-/* ---------------------------------------------------------------- микрофон
-   Два пути: распознавание прямо в браузере (мгновенно, без интернета к нам)
-   и запись с отправкой на сервер. Браузерный путь основной — он работает
-   всегда; серверный включается, если браузер не умеет слушать сам. */
-
-function browserASR(btn) {
-  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Rec) return false;
-  if (S.asr) {
-    if (S.asrStop) S.asrStop(); else { try { S.asr.stop(); } catch (e) {} }
-    S.asr = null; S.asrStop = null;
-    return true;
-  }
-
-  const rec = new Rec();
-  rec.lang = 'ru-RU';
-  rec.continuous = true;
-  rec.interimResults = true;
-  S.asr = rec;
-
-  const input = $('#input');
-  const basis = input.value ? input.value.replace(/\s+$/, '') + ' ' : '';
-  let settled = '';
-
-  rec.onresult = (ev) => {
-    let live = '';
-    for (let k = ev.resultIndex; k < ev.results.length; k++) {
-      const chunk = ev.results[k][0].transcript;
-      if (ev.results[k].isFinal) settled += chunk + ' ';
-      else live += chunk;
-    }
-    input.value = (basis + settled + live).replace(/\s+/g, ' ').trimStart();
-    autoGrow();
-  };
-  // Браузер шлёт no-speech уже через пару секунд тишины, а Safari к тому же
-  // сам обрывает распознавание. Раньше это мгновенно превращалось в «не
-  // расслышал» и в остановку записи. Теперь молчание — не ошибка: слушаем
-  // дальше, пока пользователь сам не выключит микрофон.
-  let stopping = false;
-  let heard = false;
-  let netFails = 0;
-  rec.addEventListener('result', () => { heard = true; netFails = 0; });
-  rec.onerror = (ev) => {
-    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
-      stopping = true;
-      toast('Разреши доступ к микрофону в настройках браузера', 'error');
-    } else if (ev.error === 'audio-capture') {
-      stopping = true;
-      toast('Микрофон не найден', 'error');
-    } else if (ev.error === 'network') {
-      // Распознавание Chrome ходит на серверы Google. Из России они часто
-      // недоступны, и тогда микрофон «слушает», но не слышит ничего.
-      // Не крутим пустой цикл — молча уходим на запись с распознаванием
-      // на нашей стороне. Тихо, без уведомления: для человека это один
-      // непрерывный сеанс записи, а не два разных механизма.
-      netFails++;
-      if (netFails >= 2 && !heard) { stopping = true; S.asrFallback = true; }
-    }
-    /* no-speech, aborted — молча продолжаем слушать */
-  };
-  rec.onend = () => {
-    // сам оборвался, а пользователь не просил — поднимаем заново
-    if (!stopping) {
-      try { rec.start(); return; } catch (e) { /* поднять не вышло — выходим */ }
-    }
-    S.asr = null;
-    btn.classList.remove('rec');
-    input.value = input.value.trim();
-    autoGrow();
-    if (input.value) input.focus();
-    updateSendBtn();
-    if (S.asrFallback) {
-      S.asrFallback = false;
-      S.asrTriedBrowser = true;   // чтобы сервер не отправил нас обратно
-      serverASR(btn, true);   // запасной путь: пишем звук и распознаём у себя
-    }
-  };
-
-  S.asrStop = () => { stopping = true; try { rec.stop(); } catch (e) {} };
-  try { rec.start(); } catch (e) { S.asr = null; return false; }
-  btn.classList.add('rec');
-  beep(560, 0.1);
-  micHint('Слушаю… нажми ещё раз, чтобы закончить');
-  return true;
-}
-
-/* Подсказка микрофона — ОДНА на весь сеанс записи.
-   Раньше каждый внутренний переход (браузер → сервер → распознавание) сыпал
-   свой тост, и на экране вырастала лавина уведомлений об одном и том же
-   действии. Теперь это одна строка, которая просто меняет текст. */
-function micHint(text, kind) {
-  let t = S.micToast;
-  if (!t || !t.isConnected) {
-    t = el('div', 'toast info');
-    t.innerHTML = '<div class="ti">◆</div><div><div style="font-weight:600;margin-bottom:2px">Микрофон</div>' +
-      '<div class="mic-msg"></div></div>';
-    t.title = 'Кликни, чтобы убрать';
-    t.addEventListener('click', () => micHintOff());
-    $('#toasts').appendChild(t);
-    S.micToast = t;
-  }
-  clearTimeout(S.micTimer);
-  t.className = 'toast ' + (kind || 'info');
-  t.querySelector('.ti').textContent = kind === 'error' ? '✕' : (kind === 'success' ? '✓' : '◆');
-  t.querySelector('.mic-msg').textContent = text;
-  if (kind) S.micTimer = setTimeout(micHintOff, 3200);
-}
-function micHintOff() {
-  const t = S.micToast;
-  clearTimeout(S.micTimer);
-  S.micToast = null;
-  if (!t || !t.isConnected) return;
-  t.classList.add('out');
-  setTimeout(() => t.remove(), 300);
-}
-
 /* Y: ЗАПИСЬ → WAV 16 кГц МОНО ПРЯМО В БРАУЗЕРЕ. decodeAudioData понимает
    и webm/opus (Chrome), и mp4/aac (Safari); OfflineAudioContext сам
    приводит к 16 кГц; дальше — честный RIFF-заголовок и 16-бит PCM.
@@ -6489,71 +6563,13 @@ async function blobToWav16k(blob) {
   return 'data:audio/wav;base64,' + btoa(bin);
 }
 
-async function serverASR(btn, silentStart) {
-  if (S.recorder && S.recorder.state === 'recording') { S.recorder.stop(); return; }
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    S.recChunks = [];
-    // Safari пишет audio/mp4, Chrome — audio/webm. Раньше кодекс был
-    // захардкожен webm: на Safari блоб врал о своём формате, сервер
-    // сохранял mp4-байты как .wav, и микрофон «не работал».
-    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
-      .find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
-    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-    S.recorder = rec;
-    rec.ondataavailable = (e) => S.recChunks.push(e.data);
-    rec.onstop = async () => {
-      stream.getTracks().forEach((t) => t.stop());
-      S.recorder = null;
-      btn.classList.remove('rec');
-      const blob = new Blob(S.recChunks, { type: rec.mimeType || mime || 'audio/webm' });
-      // Y: ДЕКОДИРУЕМ В WAV ПРЯМО В БРАУЗЕРЕ — ГЛУБОКИЙ КОРЕНЬ «микрофон
-      // не работает». Chrome пишет webm/opus, Safari — mp4, а слуховые
-      // модели понимают только wav/mp3/flac: сырую webm-запись они
-      // отвергают ВСЕГДА, и вся цепочка падала на первом шаге. Конвертация
-      // на сервере требовала ffmpeg — его на машине может не быть вовсе.
-      // Теперь браузер сам превращает запись в чистый WAV 16 кГц моно.
-      micHint('Распознаю речь…');
-      let payload = '';
-      try {
-        payload = await blobToWav16k(blob);
-      } catch (e) {
-        // декодер не осилил — отдаём как есть, сервер попробует сам
-        payload = await new Promise((res) => {
-          const fr = new FileReader();
-          fr.onload = () => res(fr.result);
-          fr.readAsDataURL(blob);
-        });
-      }
-      const r = await api('/api/transcribe', { audio: payload, language: 'ru' });
-      // Ответ сервера окончательный: он больше не отправляет нас обратно в
-      // браузер. Один запрос — один результат, никакого пинг-понга.
-      if (r.ok && r.text) {
-        $('#input').value = ($('#input').value + ' ' + r.text).trim();
-        autoGrow(); $('#input').focus(); updateSendBtn();
-        micHintOff();
-        beep(760, 0.08);
-      } else {
-        micHint(r.error || 'Не удалось распознать', 'error');
-      }
-    };
-    rec.start();
-    btn.classList.add('rec');
-    if (!silentStart) beep(560, 0.1);
-    micHint('Говори… нажми ещё раз, чтобы остановить');
-  } catch (e) {
-    micHint('Нет доступа к микрофону', 'error');
-  }
-}
 
-$('#micBtn').addEventListener('click', function () {
-  // Повторное нажатие всегда ЗАКАНЧИВАЕТ сеанс, каким бы путём он ни шёл.
-  if (S.asr || (S.recorder && S.recorder.state === 'recording')) {
-    if (S.asr) browserASR(this); else serverASR(this);
-    return;
-  }
-  if (browserASR(this)) return;   // основной путь
-  serverASR(this);                // запасной
+/* AA: КНОПКА МИКРОФОНА — ЭТО РЕЖИМ РАЗГОВОРА. Отдельная кнопка рядом
+   была лишней (и из-за дубля id вообще не реагировала): диктовка в поле
+   уступила место живому диалогу — говоришь, Джарвис отвечает голосом,
+   разговор пишется в текущий диалог. */
+$('#micBtn').addEventListener('click', () => {
+  if (VOICE.open) closeVoiceMode(); else openVoiceMode();
 });
 
 /* ============================ ГОЛОСОВОЙ РЕЖИМ ============================
@@ -6617,6 +6633,8 @@ async function openVoiceMode() {
   voiceBuild();
   $('#voiceVeil').hidden = false;
   VOICE.open = true;
+  const mb = $('#micBtn');
+  if (mb) mb.classList.add('rec');      // кнопка микрофона «дышит», пока идёт разговор
   beep(760, 0.08);
   try {
     VOICE.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -6637,6 +6655,8 @@ function closeVoiceMode() {
   if (VOICE.ctx) { try { VOICE.ctx.close(); } catch (e) { /* уже закрыт */ } VOICE.ctx = null; VOICE.an = null; }
   try { window.speechSynthesis.cancel(); } catch (e) { /* синтеза нет */ }
   VOICE.chunks = []; VOICE.pending = ''; VOICE.barge = 0;
+  const mb = $('#micBtn');
+  if (mb) mb.classList.remove('rec');
   const veil = $('#voiceVeil');
   if (veil) veil.hidden = true;
   voiceSetPhase('idle');
@@ -6837,9 +6857,10 @@ function voiceAfterSpeak() {
   }, 450);
 }
 
-$('#voiceBtn').addEventListener('click', () => {
-  if (VOICE.open) closeVoiceMode(); else openVoiceMode();
-});
+/* AA: СТАРЫЙ ОБРАБОТЧИК УДАЛЁН. Из-за дубля id="voiceBtn" (тумблер голоса в
+   шапке И кнопка режима разговора) этот клик вешался на тумблер шапки:
+   кнопка в композере не реагировала, а тумблер вместо включения озвучки
+   открывал окно разговора. У режима разговора ровно одна кнопка — микрофон. */
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && VOICE.open) closeVoiceMode();
 });
