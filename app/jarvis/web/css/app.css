@@ -1139,7 +1139,15 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
    строка с потоком, никаких агентских карточек и рамок */
 .qt-think .qt-ico{font-size:12px;color:rgba(154,202,219,.72)}
 .qt-think .qt-name{color:rgba(154,202,219,.72)}
-.qt-think .qt-mark{color:rgba(154,202,219,.55)}
+.qt-think .qt-mark{color:rgba(154,202,219,.55);transition:color .2s}
+/* AB: КОРЕНЬ ПОДЛАГИВАНИЯ ПОСЛЕДНЕГО КАДРА — вертикальные поля тела
+   включались и выключались вместе с самой видимостью: свёрнутое тело
+   оставляло 6px пустоты, и в кадр, когда display наконец гасил элемент,
+   всё снизу прыгало вверх — тот же класс бага, что в папках (X).
+   Здесь полей нет ВООБЩЕ: зазор над потоком живёт ВНУТРИ сворачиваемого
+   тела и исчезает вместе с высотой, без единого скачка. */
+.qt-think .qt-body{margin:0 0 0 6px}
+.qt-think .qt-flow{margin-top:3px}
 .qt-row .qt-name{font-size:11px}
 /* текст инструмента: полоса от иконки, БЕЗ затемнений, скролл только вниз */
 .qt-detail-wrap{display:none;margin-left:6px}
@@ -1150,8 +1158,6 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
 .qt-detail::-webkit-scrollbar{display:none}
 .qt-folder:hover .qt-name,.qt-row:hover .qt-name,.qt-think:hover .qt-name{color:rgba(178,214,231,.9)}
-/* AA: тихий ход мыслей — кликабельная строка: открытый поток не пропадает */
-.qt-think .qt-mark{transition:color .2s}
 /* серия долетела — имя ПОДМИГИВАЕТ ЯРКОСТЬЮ: без text-shadow (свечение
    обрезалось рамкой ellipsis и рисовало квадратный контур вокруг букв) и
    без задержки — яркость уже растёт с первого кадра и мягко спадает */
@@ -1674,44 +1680,58 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 /* Z: ПЛАВНЫЙ ПРИЕЗД готового ответа в диалог, где он дописывался в фоне */
 @keyframes freshIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
-/* =================== ГОЛОСОВОЙ РЕЖИМ ===================
-   Отдельное окно разговора: орб Джарвиса дышит (слушает), пульсирует
-   (думает), золотой (говорит). Полоски — живой уровень микрофона. */
-.voice-veil{position:fixed;inset:0;z-index:920;display:flex;align-items:center;justify-content:center;
-  background:radial-gradient(1100px 640px at 50% 42%,rgba(8,20,32,.92),rgba(3,7,13,.98));
-  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
-.voice-veil[hidden]{display:none}
-.voice-stage{position:relative;display:flex;flex-direction:column;align-items:center;gap:22px;padding:30px;max-width:640px}
-.voice-close{position:absolute;top:-54px;right:-54px;width:38px;height:38px;border-radius:50%;
-  border:1px solid var(--line);background:rgba(10,22,34,.85);color:var(--tx2);font-size:14px;cursor:pointer;
-  transition:color .18s ease,border-color .18s ease}
-.voice-close:hover{color:#fff;border-color:var(--line2)}
-.v-orb{width:150px;height:150px;border-radius:50%;position:relative;display:grid;place-items:center}
-.v-orb b{width:64px;height:64px;border-radius:50%;font-weight:400;
+/* =================== ГОЛОСОВОЙ РЕЖИМ: ОБЛАСТЬ, КАК КАМЕРА ===================
+   AB: разговор — не окно на весь экран, а поле в ленте диалога. Во время
+   беседы НИКАКОГО текста: статус виден только по цвету и пульсу орба —
+   голубой дышит (слушает), золотой пульсирует (думает), зелёный частит
+   (говорит). Уровень голоса надувает орб через --vl. При живой камере
+   поле переезжает в её область ответов — единый интерфейс. */
+.voice-live{margin:2px 0}
+.voice-box{display:flex;align-items:center;gap:18px;padding:14px 16px;border-radius:14px;
+  border:1px solid rgba(0,200,240,.2);flex-wrap:wrap;
+  background:linear-gradient(180deg,rgba(0,40,60,.4),rgba(0,20,34,.4));
+  box-shadow:inset 0 0 24px rgba(0,200,240,.07)}
+.voice-box .v-orb{width:74px;height:74px;border-radius:50%;position:relative;display:grid;
+  place-items:center;flex:0 0 auto;transform:scale(calc(1 + var(--vl,0)*.28));
+  transition:transform .09s ease}
+.voice-box .v-orb b{width:34px;height:34px;border-radius:50%;font-weight:400;
   background:radial-gradient(circle at 35% 30%,#bff4ff,var(--cy2) 55%,var(--cy));
-  box-shadow:0 0 34px var(--cy),0 0 90px rgba(0,200,240,.35);
-  animation:vBreathe 2.6s ease-in-out infinite}
-.v-ring{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(0,200,240,.34);
+  box-shadow:0 0 22px var(--cy),0 0 60px rgba(0,200,240,.35);
+  animation:vBreathe 2.6s ease-in-out infinite;
+  transition:background .3s ease,box-shadow .3s ease}
+.voice-box .v-ring{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(0,200,240,.34);
   animation:vRipple 2.6s ease-out infinite}
-.v-ring.r2{animation-delay:1.3s}
+.voice-box .v-ring.r2{animation-delay:1.3s}
 @keyframes vRipple{0%{transform:scale(.62);opacity:.85}100%{transform:scale(1.25);opacity:0}}
 @keyframes vBreathe{0%,100%{transform:scale(1)}50%{transform:scale(.94)}}
-.voice-veil.thinking .v-orb b{animation:vThink .9s ease-in-out infinite}
-@keyframes vThink{0%,100%{transform:scale(1);box-shadow:0 0 30px var(--cy)}
-  50%{transform:scale(1.12);box-shadow:0 0 54px var(--cy)}}
-.voice-veil.speaking .v-orb b{
+.voice-box.thinking .v-orb b{
   background:radial-gradient(circle at 35% 30%,#ffe9b8,#f7c96b 55%,var(--gold));
-  box-shadow:0 0 40px rgba(217,164,65,.8),0 0 110px rgba(217,164,65,.3);
+  box-shadow:0 0 26px rgba(217,164,65,.75),0 0 70px rgba(217,164,65,.3);
+  animation:vThink .9s ease-in-out infinite}
+@keyframes vThink{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
+.voice-box.speaking .v-orb b{
+  background:radial-gradient(circle at 35% 30%,#d8ffe9,#7fe3bb 55%,var(--green));
+  box-shadow:0 0 30px rgba(63,191,149,.8),0 0 80px rgba(63,191,149,.3);
   animation:vThink .62s ease-in-out infinite}
-.voice-status{font-size:12.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--tx2);font-family:var(--fm)}
-.voice-veil.speaking .voice-status{color:#e9c884}
-.voice-heard{max-width:520px;min-height:22px;font-size:15px;color:var(--tx);text-align:center;line-height:1.5;
-  opacity:.92;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
-.voice-bars{display:flex;align-items:flex-end;gap:4px;height:40px}
-.voice-bars i{width:3px;height:4px;border-radius:2px;background:var(--cy);opacity:.75;
-  transition:height .09s ease}
-.voice-veil.speaking .voice-bars i{background:var(--gold)}
-.voice-hint{font-size:11px;color:var(--tx3);letter-spacing:.05em}
+.v-side{display:flex;align-items:center;gap:14px;margin-left:auto;flex:0 0 auto}
+.voice-stop{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);
+  background:rgba(10,22,34,.85);color:var(--tx2);font-size:13px;cursor:pointer;
+  transition:color .18s ease,border-color .18s ease}
+.voice-stop:hover{color:#fff;border-color:var(--line2)}
+/* при живой камере контекст один — тумблер камеры и так на месте */
+.cam-chat .voice-ctx{display:none}
+/* история прошлой беседы: только при открытии области, не во время разговора */
+.voice-transcript{width:100%;max-height:220px;overflow-y:auto;scrollbar-width:none;
+  border-top:1px dashed rgba(0,200,240,.18);padding-top:10px;display:flex;
+  flex-direction:column;gap:6px}
+.voice-transcript::-webkit-scrollbar{display:none}
+.voice-transcript[hidden]{display:none}
+.vt-line{font-size:12.5px;color:var(--tx2);line-height:1.5}
+.vt-line b{color:var(--tx3);font-weight:600;margin-right:8px;font-size:10.5px;
+  letter-spacing:.06em;text-transform:uppercase}
+.vt-line.vt-user b{color:var(--cy2)}
+/* голосовой ответ невидим всю беседу — проявится по её завершении */
+.voice-run{display:none!important}
 
 /* =================== МИНИАТЮРЫ ОТРАБОТАВШИХ БЛОКОВ ===================
    Камера после закрытия, уведомление после крестика, санкция после решения —

@@ -827,6 +827,9 @@ async function testCameraLifecycleOwnershipAndLateResults() {
   const ctx = loadFunctions(['camPart', 'startCam', 'stopCam',
     'adoptRunIntoCam', 'releaseRunFromCam'], {
     S, CAM_TICK: 2500, ICO: { cam: '' },
+    // AB: камера общается с голосовым режимом (единый интерфейс) — в песочнице
+    // теста разговора нет, поэтому старт/стоп камеры его просто не трогает
+    VOICE: { open: false },
     navigator: { mediaDevices: { async getUserMedia() { requests += 1; return nextMedia; } } },
     showView() {}, killWelcome() {}, buildCamCard() { throw new Error('unexpected rebuild'); },
     stream() { throw new Error('unexpected stream lookup'); },
@@ -904,7 +907,7 @@ async function testCameraLifecycleOwnershipAndLateResults() {
   assert.strictEqual(userNode.dataset.msgId, 'message-28');
 
   const sendSource = extractFunction(js, 'send');
-  assert(/const requestCamNode\s*=\s*camLive\(\)\s*\?\s*S\.camNode/.test(sendSource));
+  assert(/const requestCamNode\s*=\s*\(!voiceIsolated && camLive\(\)\)\s*\?\s*S\.camNode/.test(sendSource));
   assert(/const atts\s*=\s*S\.attachments\.slice\(\)/.test(sendSource));
   assert(sendSource.indexOf('const atts = S.attachments.slice()') < sendSource.indexOf('await camAttachFrame'),
     'request attachments must be captured before the camera upload yields');
@@ -2129,8 +2132,8 @@ function testIterationZContracts() {
     /window\.speechSynthesis\.cancel\(\);/.test(extractFunction(js, 'voiceBargeLoop')) &&
     /opts\.onDelta && ev\.type === 'delta'/.test(sendFn) &&
     /id="voiceBtn"/.test(html) &&
-    /\.voice-veil\{position:fixed/.test(css) && /\.voice-veil\.speaking \.v-orb b\{/.test(css),
-    'Z7: full voice mode — overlay orb (listen/think/speak), VAD end-of-phrase, browser WAV, streaming TTS by sentences, barge-in');
+    /\.voice-box\{display:flex/.test(css) && /\.voice-box\.speaking \.v-orb b\{/.test(css),
+    'Z7: full voice mode — orb (listen/think/speak), VAD end-of-phrase, browser WAV, streaming TTS by sentences, barge-in');
   // П.8: негативный промпт — в python-тестах
 }
 
@@ -2341,6 +2344,45 @@ function testProactiveModesBudgetAndAbortContracts() {
     'an aborted answer folds code blocks and collapses the thinking card');
 }
 
+function testIterationABContracts() {
+  // AB1: КОРЕНЬ подлагивания последнего кадра мысли — display-переключение
+  // гасило вертикальные поля. Теперь полей нет вовсе, тело не выключается.
+  const toggle = extractFunction(js, 'qtToggleThink');
+  assert(/\.qt-think \.qt-body\{margin:0 0 0 6px\}/.test(css) &&
+    /\.qt-think \.qt-flow\{margin-top:3px\}/.test(css) &&
+    !/display\s*=\s*'none'/.test(toggle) &&
+    !/display:none/.test(js.split('function restoreTrace')[1].split('\nfunction ')[0]),
+    'AB1: think body has no toggling vertical margins — no last-frame jump, ever');
+  // AB2: живой ответ переживает переключение диалога — реестр прогонов
+  const sendFn = extractFunction(js, 'send');
+  const openChatFn = extractFunction(js, 'openChat');
+  assert(/S\.liveRuns\[requestChatId\] = ui;/.test(sendFn) &&
+    /S\.liveRuns\[ev\.chat_id\] = ui;/.test(js) &&
+    /stream\.appendChild\(live\.node\.root\);/.test(openChatFn) &&
+    /if \(S\.followUi === live && !S\.streaming\) setStreaming\(true\);/.test(openChatFn) &&
+    /if \(S\.liveRuns\[k\] === ui\) delete S\.liveRuns\[k\];/.test(sendFn),
+    'AB2: a live run is registered per chat and re-attached on return — the answer keeps printing, Stop stays Stop');
+  // AB3: разговор — ОБЛАСТЬ, как камера: без полноэкранного окна и текста
+  assert(/function voiceMount\(forceOwn\)/.test(js) &&
+    /function buildVoiceCard\(\)/.test(js) &&
+    !/voice-veil/.test(css) &&
+    /\.voice-run\{display:none!important\}/.test(css) &&
+    /\.voice-box\.thinking \.v-orb b\{/.test(css) &&
+    /voiceIsolated = !!\(requestVoice && !VOICE\.ctxOn && !camLive\(\)\)/.test(sendFn) &&
+    /voice: requestVoice,/.test(sendFn) &&
+    /node\.root\.classList\.add\('voice-run'\);/.test(sendFn) &&
+    /if \(VOICE\.open\) closeVoiceMode\(\);/.test(extractFunction(js, 'newChat')) &&
+    /if \(VOICE\.open\) voiceMount\(true\);/.test(extractFunction(js, 'stopCam')) &&
+    /if \(VOICE\.open\) voiceMount\(\);/.test(extractFunction(js, 'startCam')) &&
+    /Контекст диалога/.test(js) && /voiceLoadTranscript/.test(js),
+    'AB3: voice is an inline area like the camera — orb-only status, context toggle, hidden text, unified cam UI');
+  // AB5: пара вариантов = та же сноска
+  const mount = extractFunction(js, 'mountUiPanels');
+  assert(/pair\.t = 'confirm'; pair\.val = null;/.test(mount) &&
+    /const labels = \(it\.opts && it\.opts\.length === 2\) \? it\.opts : \['Да', 'Нет'\];/.test(mount),
+    'AB5: any 2-option choice renders as the same yes/no footnote with two buttons');
+}
+
 (async () => {
   testLiveStatusHasNoSpinner();
   testTelegramDateHudAndTimeOnlyMeta();
@@ -2361,7 +2403,8 @@ function testProactiveModesBudgetAndAbortContracts() {
   testIterationXContracts();
   testIterationYContracts();
   testIterationZContracts();
-  console.log('package28_frontend_runtime: 18 regression groups passed');
+  testIterationABContracts();
+  console.log('package28_frontend_runtime: 19 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

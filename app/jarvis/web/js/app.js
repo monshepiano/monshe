@@ -946,6 +946,7 @@ function startRenameChat(item, c) {
 
 function newChat() {
   S.chatOpenRun += 1; // инвалидируем любой ещё летящий openChat()
+  if (VOICE.open) closeVoiceMode();
   if (S.camNode || S.camStream) stopCam(); // чистим и активный, и ошибочный/pending-сеанс
   // Уходим на новый диалог во время ответа: генерация НЕ обрывается — сервер
   // допишет и сохранит её в переписку (как при переключении на другой чат)
@@ -971,6 +972,7 @@ $('#newChatBtn').addEventListener('click', newChat);
 
 async function openChat(id) {
   const ticket = ++S.chatOpenRun;
+  if (VOICE.open) closeVoiceMode();
   if (S.camNode || S.camStream) stopCam();
   // Уходим из диалога во время ответа: генерацию НЕ обрываем — сервер доведёт
   // её до конца и сохранит в переписку. Просто отпускаем интерфейс.
@@ -992,11 +994,20 @@ async function openChat(id) {
   stream.classList.add('history-rendering');
   stream.innerHTML = '';
   renderMessages(stream, r.messages || []);
-  // ОТВЕТ ЕЩЁ ПИШЕТСЯ НА СЕРВЕРЕ (X): раньше в этот момент диалог выглядел
-  // ПУСТЫМ («ответ исчез»), а потом готовое сообщение вдруг возникало
-  // целиком — резко, с перерисовкой всей ленты. Теперь сразу стоит живая
-  // строка «отвечает…» с дышащим курсором, а готовый ответ доезжает мягко.
-  if (r.generating) appendLivePlaceholder();
+  // AB: ВЕРНУЛСЯ В ДИАЛОГ, ГДЕ ЕЩЁ ПИШЕТСЯ ОТВЕТ — не крошечная заглушка
+  // «отвечает…», а САМ живой ответ: узел прогона пережил перерисовку ленты
+  // и продолжает печататься на глазах, как никуда и не уходил. Прежнее
+  // поведение (заглушка → готовый текст резко появляется целиком) и было
+  // корнем «ответ пропадает при переключении диалога» — на десятый раз
+  // лечим не симптом, а сам механизм.
+  const live = (S.liveRuns || {})[id];
+  if (live && !live.doneReceived && live.node && live.node.root) {
+    stream.appendChild(live.node.root);
+    watchRunFollow(live);
+    if (S.followUi === live && !S.streaming) setStreaming(true);   // Stop снова Stop
+  } else if (r.generating) {
+    appendLivePlaceholder();
+  }
   pinToBottom(stream);
   stream.classList.remove('history-rendering');
   // Z: ПЛАН ПРИВЯЗАН К ДИАЛОГУ: панель чужого диалога прячется, своего —
@@ -1765,7 +1776,7 @@ function restoreTrace(node, meta) {
           '<span class="qt-name">Ход мыслей</span>' +
           '<span class="qt-mark">✓ ' + fmtSize(think.length) + '</span>' +
         '</div>' +
-        '<div class="qt-body" style="display:none"><span class="qt-rail"></span>' +
+        '<div class="qt-body" style="height:0;opacity:0;overflow:hidden"><span class="qt-rail"></span>' +
           '<div class="qt-flow"><div class="qt-flowin"></div></div></div>';
       const inner = row.querySelector('.qt-flowin');
       String(think).split(/\n+/).map((s) => s.trim()).filter(Boolean)
@@ -2971,6 +2982,12 @@ function mountUiPanels(root) {
     const panelMsgId = (panelMsg && panelMsg.dataset.msgId) || '';
 
     const HUES = ['c1', 'c2', 'c3', 'c4', 'c5'];
+    // AB: ЛЮБОЙ ВЫБОР РОВНО ИЗ ДВУХ ВАРИАНТОВ — ТА ЖЕ СНОСКА ДА/НЕТ:
+    // маленькая строка и две кнопки (первая зелёная, вторая красная), клик
+    // и есть ответ. Пара больше не растягивается в большую панель с плитками.
+    const pair = (items.length === 1 && items[0].t === 'tiles' &&
+                  (items[0].opts || []).length === 2) ? items[0] : null;
+    if (pair) { pair.t = 'confirm'; pair.val = null; }
     // ЧИСТЫЕ ПЛИТКИ НЕ ЖДУТ КНОПКУ: один клик = выбор = отправка. Единственный
     // формат, где подтверждение лишено смысла — нечего докручивать, нечему
     // передумать: одно касание уже и есть весь ответ.
@@ -3048,17 +3065,19 @@ function mountUiPanels(root) {
       if (it.t === 'confirm') {
         const row = el('div', 'ui-row ui-confirm');
         row.style.animationDelay = (idx * 55) + 'ms';
+        // подписи — сами варианты; у настоящего да/нет это «Да» и «Нет»
+        const labels = (it.opts && it.opts.length === 2) ? it.opts : ['Да', 'Нет'];
         row.innerHTML =
           '<div class="cn-q">' + esc(it.label) + '</div>' +
           '<div class="cn-btns">' +
-            '<button class="cn-btn cn-yes">Да</button>' +
-            '<button class="cn-btn cn-no">Нет</button>' +
+            '<button class="cn-btn cn-yes">' + esc(labels[0]) + '</button>' +
+            '<button class="cn-btn cn-no">' + esc(labels[1]) + '</button>' +
           '</div>';
         const btns = row.querySelector('.cn-btns');
         row.querySelectorAll('.cn-btn').forEach((b) => {
           b.addEventListener('click', () => {
             if (box.dataset.sent === '1') return;
-            const val = b.classList.contains('cn-yes') ? 'Да' : 'Нет';
+            const val = b.textContent.trim();
             it.val = val;
             sfx('select');
             if (confirmOnly) {
@@ -3641,11 +3660,19 @@ async function send(opts) {
   // укажет на НОВУЮ карточку, и поздний ответ старого сеанса способен записать
   // ей чужой chat_id. Каждый запрос навсегда привязан к DOM/context поколения,
   // в котором был отправлен; новый сеанс получает только свои новые сообщения.
-  const requestCamNode = camLive() ? S.camNode : null;
-  const requestHost = (requestCamNode && requestCamNode.querySelector('.cam-chat')) || stream();
+  // AB: РАЗГОВОР. Контекст включён — беседа пишется в текущий диалог (или в
+  // разговор камеры, если она жива: единый интерфейс). Выключен — в
+  // изолированный служебный диалог, невидимый в списке (как у камеры).
+  const requestVoice = !!opts.voice;
+  const voiceIsolated = !!(requestVoice && !VOICE.ctxOn && !camLive());
+  const requestCamNode = (!voiceIsolated && camLive()) ? S.camNode : null;
+  const requestHost = voiceIsolated
+    ? ((S.voiceBox && S.voiceBox.querySelector('.voice-transcript')) || stream())
+    : ((requestCamNode && requestCamNode.querySelector('.cam-chat')) || stream());
   const requestIsolatedCam = !!(requestCamNode && !S.camLink);
-  const requestChatId = requestIsolatedCam ? (S.camChatId || '') : (S.chatId || '');
-  const requestKind = requestIsolatedCam ? 'cam' : '';
+  const requestChatId = voiceIsolated ? (VOICE.chatId || '')
+    : requestIsolatedCam ? (S.camChatId || '') : (S.chatId || '');
+  const requestKind = voiceIsolated ? 'voice' : (requestIsolatedCam ? 'cam' : '');
   // Режимы принадлежат запросу: смена switch во время загрузки кадра не
   // меняет уже начатую задачу задним числом.
   const requestAgentMode = !!S.agentMode;
@@ -3724,6 +3751,12 @@ async function send(opts) {
   if (!node) {
     node = addAiMsg(null, requestHost);
   }
+  // AB: ГОЛОСОВОЙ ОТВЕТ НЕВИДИМ ВСЮ БЕСЕДУ — мы слышим друг друга, текста
+  // на экране нет. Проявится, когда разговор будет завершён вручную.
+  if (requestVoice && node && node.root) {
+    node.root.classList.add('voice-run');
+    VOICE.nodes.push(node.root);
+  }
   const runId = ++S.streamRun;
   // Уникальный токен прогона: по нему сервер гасит РАБОТУ при Stop
   // (инструменты, санкции, computer-use), а не только SSE-соединение.
@@ -3741,6 +3774,7 @@ async function send(opts) {
     cameraNode: requestCamNode,
     chatId: requestChatId,
     isolatedCamera: requestIsolatedCam,
+    voiceIsolated: voiceIsolated,
     statusEl: null,
     thinkCard: null,
     planCard: null,
@@ -3777,6 +3811,15 @@ async function send(opts) {
   };
   S.followUi = ui;
   watchRunFollow(ui);
+  // AB: РЕЕСТР ЖИВЫХ ПРОГОНОВ. Уходя из диалога, пользователь НЕ отменяет
+  // ответ — узел продолжает печататься в отцеплённом DOM. Раньше при
+  // возврате лента перерисовывалась с нуля и живой ответ терялся (оставалась
+  // заглушка). Теперь прогон зарегистрирован по диалогу: openChat вернёт
+  // его узел на экран, и печать пойдёт как никуда и не уходила.
+  if (!requestIsolatedCam && !voiceIsolated) {
+    S.liveRuns = S.liveRuns || {};
+    if (requestChatId) S.liveRuns[requestChatId] = ui;
+  }
   // Сетевой SSE может закрыться раньше, чем локальный typer покажет последний
   // символ. finally ждёт именно эту границу, а не состояние сокета.
   ui.visualDonePromise = new Promise((resolve) => { ui.resolveVisualDone = resolve; });
@@ -3831,6 +3874,7 @@ async function send(opts) {
         budget_rub: S.budgetRub || 0,
         edit_of: editing ? editing.id : '',
         continue_of: opts.continueOf || '',
+        voice: requestVoice,
         agent_mode: requestAgentMode,
         computer_use: requestComputerUse,
         silent: !!opts.silent,
@@ -3913,6 +3957,13 @@ async function send(opts) {
     }
   } finally {
     clearInterval(statusWatch);
+    // AB: прогон завершён — убираем из реестра живых, чтобы возврат в диалог
+    // больше не пытался прикрепить дохлый узел
+    if (S.liveRuns) {
+      Object.keys(S.liveRuns).forEach((k) => {
+        if (S.liveRuns[k] === ui) delete S.liveRuns[k];
+      });
+    }
     // SSE часто успевается закрыться, пока вступительный план ещё летит. Ждём gate,
     // иначе fallback-finish сам начал бы ответ раньше завершения перелёта.
     await waitForPlanGate(ui);
@@ -4304,32 +4355,27 @@ function qtMiniaturize(node) {
    мыслей сворачивается в одну строку «Ход мыслей ✓» — и раньше это было
    навсегда: у строки был курсор-указатель, но клик ничего не делал. Теперь
    клик раскрывает поток обратно, повторный — закрывает. История ведёт себя
-   так же: строки мыслей hydrated в поток заранее и спрятаны. */
+   так же: строки мыслей hydrated в поток заранее и спрятаны.
+   AB: КОРЕНЬ ПОДЛАГИВАНИЯ ПОСЛЕДНЕГО КАДРА — display-переключение.
+   Прежний код в конце анимации гасил элемент целиком, и вместе с ним
+   исчезали вертикальные поля: всё снизу прыгало на 6px в один кадр —
+   тот же класс бага, что в папках (X). Теперь тело НИКОГДА не выключается
+   display-ом: закрытое состояние — это просто height:0 (+overflow hidden),
+   геометрия вокруг не меняется ни в одном кадре. */
 function qtToggleThink(row) {
   const body = row.querySelector('.qt-body');
   if (!body) return;
   if (row._thinkOpen) {
     row._thinkOpen = false;
     const h = body.getBoundingClientRect().height;
-    body.style.overflow = 'hidden';
     body.style.transition = 'none';
     body.style.height = Math.max(h, 0) + 'px';
     void body.offsetHeight;
     body.style.transition = 'height .44s cubic-bezier(.3,.6,.3,1), opacity .3s ease';
     body.style.height = '0px';
     body.style.opacity = '0';
-    setTimeout(() => {
-      if (!row._thinkOpen) {
-        body.style.display = 'none';
-        body.style.height = '';
-        body.style.opacity = '';
-        body.style.overflow = '';
-        body.style.transition = '';
-      }
-    }, 460);
   } else {
     row._thinkOpen = true;
-    body.style.display = '';
     // высоту окну даёт сам поток: живой qtFeed уже вырастил его, история
     // гидрируется заранее; страховка — на случай совсем пустого потока
     const flow = row.querySelector('.qt-flow');
@@ -4339,17 +4385,18 @@ function qtToggleThink(row) {
       flow.style.height = Math.max(fh, 0) + 'px';
       if (inner && inner.scrollHeight > 92) flow.classList.add('full');
     }
-    const h = body.getBoundingClientRect().height;
-    body.style.overflow = 'hidden';
     body.style.transition = 'none';
+    body.style.height = 'auto';
+    const h = body.getBoundingClientRect().height;
     body.style.height = '0px';
     body.style.opacity = '0';
     void body.offsetHeight;
     body.style.transition = 'height .44s cubic-bezier(.22,.8,.3,1), opacity .34s ease';
     body.style.height = Math.max(h, 0) + 'px';
     body.style.opacity = '1';
+    // вернулись к естественной высоте: поздние мысли смогут дописываться
     setTimeout(() => {
-      if (row._thinkOpen) body.style.cssText = '';
+      if (row._thinkOpen && body.style.height !== '0px') body.style.height = 'auto';
     }, 470);
   }
 }
@@ -5770,8 +5817,14 @@ function handleEvent(ev, ui) {
       // камеры не имеет права присвоить свой id уже повторно открытой карточке.
       if (ui.isolatedCamera) {
         if (ui.cameraNode && ui.cameraNode === S.camNode) S.camChatId = ev.chat_id;
+      } else if (ui.voiceIsolated) {
+        // AB: изолированный разговор — свой служебный диалог, С.chatId не трогаем
+        VOICE.chatId = ev.chat_id;
+        try { localStorage.setItem('jarvisVoiceChat', ev.chat_id); } catch (e) {}
       } else {
         S.chatId = ev.chat_id;
+        // AB: прогон только что узнал свой диалог — регистрируем для возврата
+        if (S.liveRuns) S.liveRuns[ev.chat_id] = ui;
         // НОВЫЙ ДИАЛОГ: имя придумывается фоном, параллельно ответу. Пока
         // его нет — в списке живое «…» вместо казённого «Новый диалог».
         loadChats().then(() => {
@@ -6573,16 +6626,26 @@ $('#micBtn').addEventListener('click', () => {
 });
 
 /* ============================ ГОЛОСОВОЙ РЕЖИМ ============================
-   Отдельное окно, как камера: говоришь с Джарвисом голосом — он отвечает
-   голосом (системный синтез речи macOS). Разговор пишется в текущий диалог
-   как обычная переписка. Схема: слушаю → тишина 1.4с = конец фразы →
-   распознаю → думаю → говорю ПРЕДЛОЖЕНИЯМИ, не дожидаясь конца генерации
-   → снова слушаю. Пока Джарвис говорит, микрофон живёт: услышал человека —
-   замолкает и слушает (перебой, как в GPT). */
+   AB: РАЗГОВОР — ОБЛАСТЬ, КАК КАМЕРА, а не окно на весь экран. Кнопка
+   микрофона открывает карточку в ленте: орб (статус — ТОЛЬКО цвет и пульс),
+   тумблер «Контекст диалога» и кнопка завершения. Во время разговора
+   НИКАКОГО текста — мы просто слышим друг друга. Живая камера и разговор
+   сливаются в ОДИН интерфейс: поле разговора переезжает в область ответов
+   камеры. Разговор — классическое общение: инструментов, панелей, планов
+   и режимов нет В ПРИНЦИПЕ (это решает сервер). Перебой — задача №1:
+   пока Джарвис говорит, микрофон слушает человека.
+   Схема: слушаю → тишина 1.4с = конец фразы → распознаю → думаю → говорю
+   ПРЕДЛОЖЕНИЯМИ, не дожидаясь конца генерации → снова слушаю. */
 const VOICE = { open: false, phase: 'idle', rec: null, chunks: [], stream: null,
                 ctx: null, an: null, raf: 0, heard: false, lastVoice: 0,
-                startedAt: 0, pending: '', barge: 0 };
+                startedAt: 0, pending: '', barge: 0, ctxOn: true, chatId: '', nodes: [] };
 let VOICE_RU = null;
+
+/* Контекст диалога: включён — беседа пишется в текущий диалог; выключен —
+   в изолированный служебный разговор (как у камеры, вне списка диалогов). */
+function voiceCtxOn() {
+  try { return localStorage.getItem('jarvisVoiceCtx') !== '0'; } catch (e) { return true; }
+}
 
 function voiceRu() {
   if (VOICE_RU) return VOICE_RU;
@@ -6596,32 +6659,87 @@ if (window.speechSynthesis) {
   window.speechSynthesis.onvoiceschanged = () => { VOICE_RU = null; };
 }
 
+/* Статус — ТОЛЬКО ЦВЕТ И ПУЛЬС ОРБА: голубой дышит — слушает, золотой
+   пульсирует — думает, зелёный частит — говорит. Никакого текста. */
 function voiceSetPhase(p) {
   VOICE.phase = p;
-  const veil = $('#voiceVeil');
-  if (veil) veil.className = 'voice-veil ' + p;
-  const st = $('#voiceStatus');
-  if (st) st.textContent = p === 'listening' ? 'Слушаю…' :
-    p === 'thinking' ? 'Думаю…' : p === 'speaking' ? 'Говорю…' : '';
+  if (S.voiceBox) S.voiceBox.className = 'voice-box ' + (p === 'idle' ? 'listening' : p);
 }
 
-function voiceBuild() {
-  if ($('#voiceVeil')) return;
-  const veil = el('div', 'voice-veil listening');
-  veil.id = 'voiceVeil';
-  veil.hidden = true;
-  veil.innerHTML =
-    '<div class="voice-stage">' +
-      '<button class="voice-close" aria-label="Закрыть">✕</button>' +
-      '<div class="v-orb"><i class="v-ring r1"></i><i class="v-ring r2"></i><b></b></div>' +
-      '<div class="voice-status" id="voiceStatus">Слушаю…</div>' +
-      '<div class="voice-heard" id="voiceHeard"></div>' +
-      '<div class="voice-bars" id="voiceBars">' +
-        Array.from({ length: 14 }, () => '<i></i>').join('') + '</div>' +
-      '<div class="voice-hint">Говори обычным голосом · Esc — выйти</div>' +
-    '</div>';
-  document.body.appendChild(veil);
-  veil.querySelector('.voice-close').addEventListener('click', closeVoiceMode);
+function buildVoiceCard() {
+  const card = el('div', 'msg msg-ai voice-msg');
+  card.innerHTML =
+    '<div class="ai-avatar"><div class="reactor sm" style="width:34px;height:34px">' +
+    '<div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div></div>' +
+    '<div class="ai-body"><div class="ai-name">JARVIS<span class="ai-model"> · разговор</span></div>' +
+    '<div class="ai-content"><div class="voice-live"></div></div></div>';
+  return card;
+}
+
+function voiceField() {
+  const f = el('div', 'voice-box listening');
+  f.innerHTML =
+    '<div class="v-orb"><i class="v-ring r1"></i><i class="v-ring r2"></i><b></b></div>' +
+    '<div class="v-side">' +
+      '<label class="cam-link voice-ctx"><input type="checkbox"><i></i>' +
+        '<span>Контекст диалога</span></label>' +
+      '<button class="voice-stop" aria-label="Завершить разговор" title="Завершить разговор">✕</button>' +
+    '</div>' +
+    '<div class="voice-transcript" hidden></div>';
+  return f;
+}
+
+/* ПОЛЕ РАЗГОВОРА ЖИВЁТ в своей карточке, а при включённой камере — в её
+   области ответов: один интерфейс, одна сцена. Камера выключилась —
+   поле возвращается в собственную карточку. */
+function voiceMount(forceOwn) {
+  let host = null;
+  const camChat = (!forceOwn && camLive() && S.camNode)
+    ? S.camNode.querySelector('.cam-chat') : null;
+  if (camChat) {
+    host = camChat;          // единый интерфейс камеры и разговора
+  } else {
+    if (!S.voiceNode || !S.voiceNode.isConnected) {
+      S.voiceNode = buildVoiceCard();
+      stream().appendChild(S.voiceNode);
+    }
+    host = S.voiceNode.querySelector('.voice-live');
+  }
+  if (!S.voiceBox || !S.voiceBox.isConnected) {
+    S.voiceBox = voiceField();
+    S.voiceBox.querySelector('.voice-stop').addEventListener('click', closeVoiceMode);
+    const ctx = S.voiceBox.querySelector('.voice-ctx input');
+    ctx.checked = VOICE.ctxOn;
+    ctx.addEventListener('change', () => {
+      VOICE.ctxOn = ctx.checked;
+      try { localStorage.setItem('jarvisVoiceCtx', VOICE.ctxOn ? '1' : '0'); } catch (e) {}
+      blip(VOICE.ctxOn);
+    });
+  }
+  host.appendChild(S.voiceBox);
+  voiceSetPhase(VOICE.phase === 'idle' ? 'listening' : VOICE.phase);
+  scrollDown(true);
+}
+
+/* История ПРОШЛОЙ беседы — текстом, и только при отключённом контексте
+   (при включённом она и так в ленте диалога ниже). Показываем при открытии
+   области; с первой же новой фразы прячем — во время разговора ни строчки. */
+async function voiceLoadTranscript() {
+  const box = S.voiceBox && S.voiceBox.querySelector('.voice-transcript');
+  if (!box) return;
+  box.hidden = false;
+  box.innerHTML = '';
+  if (VOICE.ctxOn || !VOICE.chatId) return;
+  try {
+    const r = await api('/api/messages?chat_id=' + encodeURIComponent(VOICE.chatId));
+    if (!VOICE.open) return;
+    const msgs = (r.messages || []).slice(-40);
+    if (!msgs.length) return;
+    box.innerHTML = msgs.map((m) =>
+      '<div class="vt-line' + (m.role === 'user' ? ' vt-user' : '') + '">' +
+      '<b>' + (m.role === 'user' ? 'Ты' : 'JARVIS') + '</b>' +
+      esc(String(m.content || '').slice(0, 600)) + '</div>').join('');
+  } catch (e) { /* истории нет — молча */ }
 }
 
 async function openVoiceMode() {
@@ -6630,12 +6748,18 @@ async function openVoiceMode() {
     toast('Браузер не даёт доступ к микрофону', 'error');
     return;
   }
-  voiceBuild();
-  $('#voiceVeil').hidden = false;
   VOICE.open = true;
+  VOICE.nodes = [];
+  VOICE.ctxOn = voiceCtxOn();
+  VOICE.chatId = '';
+  try { VOICE.chatId = localStorage.getItem('jarvisVoiceChat') || ''; } catch (e) {}
+  beep(760, 0.08);
+  showView('chat');
+  killWelcome();
+  voiceMount();
+  voiceLoadTranscript();
   const mb = $('#micBtn');
   if (mb) mb.classList.add('rec');      // кнопка микрофона «дышит», пока идёт разговор
-  beep(760, 0.08);
   try {
     VOICE.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
@@ -6657,13 +6781,22 @@ function closeVoiceMode() {
   VOICE.chunks = []; VOICE.pending = ''; VOICE.barge = 0;
   const mb = $('#micBtn');
   if (mb) mb.classList.remove('rec');
-  const veil = $('#voiceVeil');
-  if (veil) veil.hidden = true;
   voiceSetPhase('idle');
+  // РАЗГОВОР ОКОНЧЕН — текст беседы возвращается на экран: спрятанные при
+  // разговоре ответы проявляются в ленте; изолированную историю можно
+  // перечитать, открыв область разговора снова
+  VOICE.nodes.forEach((n) => { if (n && n.classList) n.classList.remove('voice-run'); });
+  VOICE.nodes = [];
+  const card = S.voiceNode;
+  S.voiceBox = null;
+  S.voiceNode = null;
+  if (card && card.isConnected) {
+    collapseToThumb(card, { cls: 'th-cam', icon: '🎤', title: 'Разговор', tag: 'завершён' });
+  }
 }
 
-/* СЛУШАЮ. Запись идёт кусками; уровень звука кормит полоски и решает,
-   когда фраза закончилась (слова были + 1.4с тишины). */
+/* СЛУШАЮ. Запись идёт кусками; уровень звука кормит орб (чуть громче —
+   чуть больше) и решает, когда фраза закончилась (слова + 1.4с тишины). */
 function voiceListen() {
   if (!VOICE.open || !VOICE.stream) return;
   VOICE.chunks = [];
@@ -6687,7 +6820,6 @@ function voiceListen() {
     src.connect(VOICE.an);
   }
   voiceSetPhase('listening');
-  $('#voiceHeard').textContent = '';
   const buf = new Uint8Array(VOICE.an.fftSize);
   const tick = () => {
     if (!VOICE.open || VOICE.phase !== 'listening') return;
@@ -6695,7 +6827,8 @@ function voiceListen() {
     let sum = 0;
     for (let i = 0; i < buf.length; i++) { const d = (buf[i] - 128) / 128; sum += d * d; }
     const level = Math.sqrt(sum / buf.length);
-    voiceBars(level);
+    // живой уровень кормит сам орб — он дышит громче вместе с голосом
+    if (S.voiceBox) S.voiceBox.style.setProperty('--vl', Math.min(1, level * 4).toFixed(3));
     const now = performance.now();
     if (level > 0.055) { VOICE.heard = true; VOICE.lastVoice = now; }
     if (VOICE.heard && now - VOICE.lastVoice > 1400) { voiceStopRec(); return; }
@@ -6703,14 +6836,6 @@ function voiceListen() {
     VOICE.raf = requestAnimationFrame(tick);
   };
   VOICE.raf = requestAnimationFrame(tick);
-}
-
-function voiceBars(level) {
-  $$('#voiceBars i').forEach((b, i) => {
-    const wobble = Math.sin(performance.now() / 90 + i * 1.7) * 0.5 + 0.5;
-    const h = 4 + Math.min(1, level * 6.5) * wobble * 34;
-    b.style.height = h.toFixed(1) + 'px';
-  });
 }
 
 function voiceStopRec() {
@@ -6725,7 +6850,6 @@ function voiceStopRec() {
 async function voiceTranscribe() {
   if (!VOICE.open) return;
   voiceSetPhase('thinking');
-  $('#voiceStatus').textContent = 'Распознаю…';
   const blob = new Blob(VOICE.chunks, { type: (VOICE.rec && VOICE.rec.mimeType) || 'audio/webm' });
   VOICE.rec = null;
   if (!blob.size || blob.size < 1200) { voiceRetry(); return; }
@@ -6742,28 +6866,30 @@ async function voiceTranscribe() {
   const r = await api('/api/transcribe', { audio: payload, language: 'ru' });
   if (!VOICE.open) return;
   if (r.ok && r.text && r.text.trim()) {
-    const text = r.text.trim();
-    $('#voiceHeard').textContent = text;
-    voiceAsk(text);
+    voiceAsk(r.text.trim());
   } else {
     voiceRetry();
   }
 }
 
+/* Не расслышал — никаких надписей: орб просто возвращается к слушанию. */
 function voiceRetry() {
   if (!VOICE.open) return;
-  $('#voiceStatus').textContent = 'Не расслышал — говори ещё';
   setTimeout(() => { if (VOICE.open && VOICE.phase === 'thinking') voiceListen(); }, 900);
 }
 
-/* Спрашиваю Джарвиса: обычный send() пишет обмен в открытый диалог,
-   а поток ответа идёт нам — говорим предложениями по мере генерации. */
+/* Спрашиваю Джарвиса: разговор — КЛАССИЧЕСКОЕ ОБЩЕНИЕ (голосом), ответы
+   прячутся до конца беседы, а поток идёт нам — говорим предложениями
+   по мере генерации. */
 async function voiceAsk(text) {
   voiceSetPhase('thinking');
+  // пошла новая беседа — текст прошлой прячем: только голос
+  const tr = S.voiceBox && S.voiceBox.querySelector('.voice-transcript');
+  if (tr) tr.hidden = true;
   VOICE.pending = '';
   try {
     await send({
-      text,
+      text, voice: true, silent: true,
       onDelta: (chunk) => { if (chunk) voiceFeed(chunk); },
       onDone: (content) => {
         if (!content) voiceAfterSpeak();
@@ -6816,8 +6942,8 @@ function voiceSpeak(text) {
   } catch (e) { voiceAfterSpeak(); }
 }
 
-/* ПЕРЕБОЙ: пока Джарвис говорит, микрофон слушает. Услышал человека
-   (~250мс речи) — замолкает и начинает слушать фразу. */
+/* ПЕРЕБОЙ — ЗАДАЧА №1: пока Джарвис говорит, микрофон слушает. Услышал
+   человека (~250мс речи) — замолкает и начинает слушать фразу. */
 function voiceBargeLoop() {
   if (!VOICE.open || VOICE.phase !== 'speaking') return;
   let level = 0;
@@ -6827,7 +6953,7 @@ function voiceBargeLoop() {
     let sum = 0;
     for (let i = 0; i < buf.length; i++) { const d = (buf[i] - 128) / 128; sum += d * d; }
     level = Math.sqrt(sum / buf.length);
-    voiceBars(level * 1.2);
+    if (S.voiceBox) S.voiceBox.style.setProperty('--vl', Math.min(1, level * 4).toFixed(3));
   }
   if (level > 0.09) {
     VOICE.barge += 1;
@@ -6857,10 +6983,7 @@ function voiceAfterSpeak() {
   }, 450);
 }
 
-/* AA: СТАРЫЙ ОБРАБОТЧИК УДАЛЁН. Из-за дубля id="voiceBtn" (тумблер голоса в
-   шапке И кнопка режима разговора) этот клик вешался на тумблер шапки:
-   кнопка в композере не реагировала, а тумблер вместо включения озвучки
-   открывал окно разговора. У режима разговора ровно одна кнопка — микрофон. */
+/* AA: у режима разговора ровно одна кнопка — микрофон в композере. */
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && VOICE.open) closeVoiceMode();
 });
@@ -6948,6 +7071,9 @@ async function startCam() {
     addFoldButton(S.camNode, { cls: 'th-cam', icon: ICO.cam, title: 'Камера', tag: 'свёрнута' });
     scrollDown(true);
   }
+  // AB: ЕДИНЫЙ ИНТЕРФЕЙС — при живом разговоре его поле переезжает
+  // в область ответов камеры: одна сцена, один разговор
+  if (VOICE.open) voiceMount();
   // Идёт ответ — он продолжится В камере, а не позади её карточки
   if (S.streaming && S.followUi) adoptRunIntoCam();
 
@@ -7003,6 +7129,9 @@ async function startCam() {
 function stopCam() {
   // Отменяет и уже работающую трансляцию, и ещё не завершившийся getUserMedia.
   ++S.camRun;
+  // AB: разговор переживает выключение камеры — поле уезжает обратно
+  // в собственную карточку прежде, чем камера свернётся
+  if (VOICE.open) voiceMount(true);
   if (S.camTimer) { clearInterval(S.camTimer); S.camTimer = null; }
   if (S.camStream) { S.camStream.getTracks().forEach((t) => t.stop()); S.camStream = null; }
   // Ответы камеры живут В её карточке: свернулись вместе с ней, развернул —

@@ -632,6 +632,11 @@ class Handler(BaseHTTPRequestHandler):
         text = (body.get("text") or "").strip()
         agent_mode = bool(body.get("agent_mode"))
         computer_use = bool(body.get("computer_use"))
+        # AB: ГОЛОСОВОЙ РАЗГОВОР — КЛАССИЧЕСКОЕ ОБЩЕНИЕ: режимы не участвуют
+        voice_mode = bool(body.get("voice"))
+        if voice_mode:
+            agent_mode = False
+            computer_use = False
         attachments: List[Dict[str, Any]] = body.get("attachments") or []
         foreground_span = telemetry.Span(
             "foreground", agent_mode=agent_mode, computer_use=computer_use,
@@ -642,6 +647,9 @@ class Handler(BaseHTTPRequestHandler):
             # но в списке диалогов ему не место — помечаем видом 'cam'.
             if body.get("kind") == "cam":
                 chat_id = db.create_chat("Камера", kind="cam")["id"]
+            elif body.get("kind") == "voice":
+                # изолированная беседа разговора: контекст есть, списка нет
+                chat_id = db.create_chat("Разговор", kind="voice")["id"]
             else:
                 chat_id = db.create_chat("Новый диалог")["id"]
 
@@ -701,7 +709,10 @@ class Handler(BaseHTTPRequestHandler):
         # защита от дублей: такая же задача из этого чата, уже стоящая в очереди
         if decision["background"] and auto.has_similar_pending(text, chat_id):
             decision = {"background": False, "schedule": "", "reason": ""}
-        server_scheduled = bool(decision["background"] and not computer_use and not attachments)
+        # AB: в разговоре доступно ТОЛЬКО общение — фоновые задачи не уводят
+        # беседу в AUTO: просьба озвучивается ответом, а не улетает молча
+        server_scheduled = bool(decision["background"] and not computer_use
+                                and not attachments and not voice_mode)
         if server_scheduled:
             task_title = orchestrator.make_task_title(text)
             task = auto.create_background_task(title=task_title, prompt=text,
@@ -765,9 +776,11 @@ class Handler(BaseHTTPRequestHandler):
             user_message = {"role": "user", "content": text_for_model}
 
         runner = agent.Agent(chat_id=chat_id, agent_mode=agent_mode, computer_use=computer_use,
-                             cancel_check=lambda: False)
+                             voice_mode=voice_mode, cancel_check=lambda: False)
         messages = [{"role": "system", "content": agent.build_system_prompt(
             agent_mode, computer_use, vision_direct=runner._vision_direct)}]
+        if voice_mode:
+            messages.append({"role": "system", "content": agent.VOICE_MODE_NOTE})
         messages.extend(history)
         # Один короткий nearby-контракт ставится перед КАЖДЫМ актуальным user
         # turn. Раньше напоминание было только рядом с изображением, поэтому
@@ -813,7 +826,7 @@ class Handler(BaseHTTPRequestHandler):
         alive_box = [True]
         # НАЗВАНИЕ НОВОГО ДИАЛОГА — ФОНОМ, ПАРАЛЛЕЛЬНО ОТВЕТУ: rename больше
         # не зависит от того, чем закончится поток (Stop/обрыв не мешают)
-        if post_title and body.get("kind") != "cam":
+        if post_title and body.get("kind") not in ("cam", "voice"):
             def _notify_title(title: str, _box=alive_box) -> None:
                 if _box[0]:
                     self._sse({"type": "chat_title", "chat_id": chat_id,
@@ -848,8 +861,8 @@ class Handler(BaseHTTPRequestHandler):
         # («нажми…», «напиши игру…», «как я выгляжу…»). Слабая модель молчит —
         # локальный триггер предлагает режим мгновенно, пользователь решает,
         # и прогон сразу стартует в правильном режиме.
-        mode_hint = agent.suggest_mode(text, agent_mode=agent_mode,
-                                       computer_use=computer_use)
+        mode_hint = (None if voice_mode else agent.suggest_mode(
+            text, agent_mode=agent_mode, computer_use=computer_use))
         if mode_hint:
             labels = {"agent": "AGENT", "computer": "Компьютер",
                       "camera": "Камера", "budget": "Лимит ₽"}
@@ -885,7 +898,7 @@ class Handler(BaseHTTPRequestHandler):
                 messages[0] = {"role": "system", "content": agent.build_system_prompt(
                     agent_mode, computer_use, vision_direct=runner._vision_direct)}
                 runner = agent.Agent(chat_id=chat_id, agent_mode=agent_mode,
-                                     computer_use=computer_use,
+                                     computer_use=computer_use, voice_mode=False,
                                      cancel_check=_run_cancelled)
                 runner.budget_rub = budget_rub
             else:

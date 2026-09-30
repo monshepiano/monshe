@@ -370,6 +370,19 @@ VISION_UI_CONTRACT = """\n\nДОПОЛНЕНИЕ ДЛЯ ИЗОБРАЖЕНИЯ:
 явно задан, ui-блок не нужен — сразу выполняй просьбу."""
 
 
+# AB: ГОЛОСОВОЙ РАЗГОВОР — ЕДИНСТВЕННАЯ инструкция, которую добавляет сервер
+# к каждому голосовому прогону: пользователь слышит ответ синтезатором речи.
+VOICE_MODE_NOTE = (
+    "[Система] Сейчас идёт ГОЛОСОВОЙ РАЗГОВОР: пользователь слышит твой ответ "
+    "синтезатором речи, экраном не пользуется. Отвечай короткими разговорными "
+    "фразами (1-3 предложения), живым устным языком: без markdown, списков, "
+    "таблиц, блоков кода и эмодзи, без инструментов и интерактивных панелей — "
+    "только классическое общение. Если для просьбы нужна настоящая работа "
+    "инструментами — коротко скажи об этом и предложи продолжить текстом "
+    "в обычном чате."
+)
+
+
 def turn_ui_contract(has_image: bool = False) -> str:
     """Единственный nearby-контракт актуального user turn."""
     return PROACTIVE_UI_CONTRACT + (VISION_UI_CONTRACT if has_image else "")
@@ -689,7 +702,9 @@ ui. Если вариантов нет, но ответ человека всё 
    «Нет»; САМЫЙ ЧАСТЫЙ тип: когда ответу хватает да/нет — всегда он, а не tiles
    и не текстовый вопрос. Подпись — сам вопрос («Скачивать фото?», «Продолжаем?»);
    варианты «Да» и «Нет» интерфейс ставит сам, перечислять их нельзя;
-   tiles Подпись: A | B | C — выбор ОДНОГО варианта;
+   tiles Подпись: A | B | C — выбор ОДНОГО варианта; РОВНО ДВА варианта — тоже
+   сноска: интерфейс сам покажет пару двумя кнопками (первая зелёная, вторая
+   красная), не большой панелью;
    multi Подпись: A | B | C — выбор НЕСКОЛЬКИХ сразу;
    rank Подпись: A | B | C — расставить по важности (ответ — порядок);
    slider Подпись мин..макс [step шаг] [unit ед] = начальное — плавная величина;
@@ -1696,12 +1711,14 @@ class Agent:
 
     def __init__(self, chat_id: str = "", task_id: str = "", agent_mode: bool = False,
                  computer_use: bool = False, approvals_auto: bool = False,
-                 visible_plan: bool = True,
+                 visible_plan: bool = True, voice_mode: bool = False,
                  cancel_check: Optional[Callable[[], bool]] = None) -> None:
         self.chat_id = chat_id
         self.task_id = task_id
         self.agent_mode = agent_mode
         self.computer_use = computer_use
+        # AB: ГОЛОСОВОЙ РАЗГОВОР — классическое общение без всего визуального
+        self.voice_mode = voice_mode
         self.approvals_auto = approvals_auto
         # AUTO исполняется без чата: semantic planner там был невидим, но всё
         # равно создавал отдельный облачный запрос перед каждым заданием.
@@ -2083,6 +2100,13 @@ class Agent:
         if not route.get("offer_tools", True):
             # оркестратор отдал реплику дешёвой модели именно потому, что
             # инструменты тут не нужны — не суём их ей в руки
+            available = []
+        if self.voice_mode:
+            # AB: РАЗГОВОР ГОЛОСОМ — КЛАССИЧЕСКОЕ ОБЩЕНИЕ: инструменты, планы,
+            # интерактивные панели и режимы недоступны В ПРИНЦИПЕ. Мы просто
+            # слышим друг друга — ничего визуального появиться не может, и
+            # будущие баги «агент вызвал интерактивчик во время разговора»
+            # отсекаются здесь, физически.
             available = []
         # Не доверяем одному лишь списку schemas: некоторые модели способны
         # напечатать/галлюцинировать вызов функции, которой в нём нет. Перед
@@ -2530,7 +2554,7 @@ class Agent:
             # возвращаем модель к автономной работе. Повторное нарушение
             # завершается честной ошибкой, но никогда новой конфликтующей панелью.
             repeats_preflight = bool(
-                self.agent_mode and preflight_resolved and
+                self.agent_mode and preflight_resolved and not self.voice_mode and
                 (has_interactive_ui(text_piece) or needs_reply_ui(text_piece, user_text))
             )
             if repeats_preflight:
@@ -2563,7 +2587,7 @@ class Agent:
             # текстовый вопрос дополняется рабочим ui-fence детерминированно.
             # В AGENT это также немедленно завершает run: нельзя продолжать план,
             # сделав вид, будто вопрос уже получил ответ.
-            if not social_only and needs_reply_ui(text_piece, user_text):
+            if not social_only and not self.voice_mode and needs_reply_ui(text_piece, user_text):
                 if defer_plan_decision:
                     abandon_unstarted_plan()
                     gate_open = False

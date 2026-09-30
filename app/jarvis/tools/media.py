@@ -350,35 +350,55 @@ def _free_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
     Cloud.ru Foundation Models картинки не генерирует вообще (в каталоге
     только LLM/embedding/rerank/audio/OCR), а GigaChat требует отдельного
     ключа. Этот маршрут — последний в цепочке: генерация работает из коробки.
+    AB: КОРЕНЬ «ПОСЛЕ ОДНОЙ ГЕНЕРАЦИИ КАПУТ» — анонимный лимит генератора:
+    второй запрос следом ловит 429/медленный ответ, а цепочка ждала по 180с
+    на модель без единого повтора — до 9 минут тишины, и «навсегда капут».
+    Теперь: короткий таймаут, referrer для щадящего лимита, и на 429/5xx —
+    пауза и ПОВТОР той же модели, прежде чем ехать к следующей.
     """
     seed = int(time.time() * 1000) % 10 ** 8
     remembered = _FREE_IMAGE_STATE.get("model") or ""
     order = ((remembered,) + tuple(m for m in _FREE_IMAGE_MODELS if m != remembered)
              if remembered in _FREE_IMAGE_MODELS else _FREE_IMAGE_MODELS)
+    negative = ("text, watermark, logo, signature, blurry, "
+                "low quality, deformed, extra fingers, bad anatomy")
     image = b""
     used = ""
     last_error = ""
     for model in order:
-        # Z: НЕГАТИВНЫЙ ПРОМПТ — убирает типичный мусор бесплатных генераторов
-        # (текст на картинке, водяные знаки, мыло, кривые руки)
-        url = ("https://image.pollinations.ai/prompt/%s?width=%d&height=%d"
-               "&nologo=true&seed=%d&model=%s&negative_prompt=%s"
-               % (urllib.parse.quote(prompt)[:900], width, height, seed, model,
-                  urllib.parse.quote("text, watermark, logo, signature, blurry, "
-                                     "low quality, deformed, extra fingers, bad anatomy")))
-        req = urllib.request.Request(url, headers={"User-Agent": _UA})
-        try:
-            with urllib.request.urlopen(req, timeout=180, context=_CTX) as resp:
-                image = resp.read()
-        except Exception as exc:
-            last_error = str(exc)[:160]
-            continue
-        if image and len(image) >= 1200:
-            used = model
-            _FREE_IMAGE_STATE["model"] = model
+        for attempt in (1, 2):
+            # Z: НЕГАТИВНЫЙ ПРОМПТ — убирает типичный мусор бесплатных генераторов
+            # (текст на картинке, водяные знаки, мыло, кривые руки)
+            url = ("https://image.pollinations.ai/prompt/%s?width=%d&height=%d"
+                   "&nologo=true&seed=%d&model=%s&negative_prompt=%s&referrer=jarvis"
+                   % (urllib.parse.quote(prompt)[:900], width, height, seed, model,
+                      urllib.parse.quote(negative)))
+            req = urllib.request.Request(url, headers={"User-Agent": _UA})
+            try:
+                with urllib.request.urlopen(req, timeout=75, context=_CTX) as resp:
+                    image = resp.read()
+            except urllib.error.HTTPError as exc:
+                last_error = "HTTP %s от %s" % (exc.code, model)
+                # лимит/поломка сервиса — одна повторная попытка с паузой
+                if exc.code in (429, 500, 502, 503, 504) and attempt == 1:
+                    time.sleep(4)
+                    continue
+                break
+            except Exception as exc:
+                last_error = "%s: %s" % (model, str(exc)[:120])
+                if attempt == 1:
+                    time.sleep(2)
+                    continue
+                break
+            if image and len(image) >= 1200:
+                used = model
+                _FREE_IMAGE_STATE["model"] = model
+                break
+            last_error = "пустой ответ от " + model
+            image = b""
             break
-        last_error = "пустой ответ от " + model
-        image = b""
+        if image:
+            break
     if not image:
         # AA: текст ошибки — для модели. Прежняя формулировка позволяла LLM
         # выдумать «генератор требует платного доступа»: бесплатная цепочка
@@ -386,8 +406,9 @@ def _free_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
         return {"ok": False,
                 "error": "бесплатный генератор временно недоступен (%s). "
                          "Платный доступ НЕ нужен: генерация бесплатна и "
-                         "работает без ключей — просто подождите минуту и "
-                         "вызовите инструмент снова." % (last_error or "пустой ответ")}
+                         "работает без ключей — лимит на минуту исчерпан, "
+                         "подождите 30–60 секунд и вызовите инструмент снова."
+                         % (last_error or "пустой ответ")}
     name = "image_%d.jpg" % (int(time.time() * 1000) % 10 ** 8)
     target = sandbox.safe_path(name)
     tmp = target.with_suffix(target.suffix + ".tmp")

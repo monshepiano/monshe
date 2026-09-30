@@ -3220,8 +3220,9 @@ class IterationZTests(unittest.TestCase):
                        "opts.onDelta && ev.type === 'delta'"):
             self.assertIn(marker, js)
         self.assertIn('id="voiceBtn"', html)
-        self.assertIn(".voice-veil{position:fixed", css)
-        self.assertIn(".voice-veil.speaking .v-orb b{", css)
+        # AB: разговор стал областью в ленте (как камера), не окном
+        self.assertIn(".voice-box{display:flex", css)
+        self.assertIn(".voice-box.speaking .v-orb b{", css)
         # голосовой режим переиспользует браузерный WAV — тот же корень п.6(Y)
         vt = js.split("async function voiceTranscribe")[1].split("\nfunction ")[0]
         self.assertIn("blobToWav16k", vt)
@@ -3233,7 +3234,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.31", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.32", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3386,8 +3387,10 @@ class IterationAATests(unittest.TestCase):
         self.assertIn("t: 'confirm', label: confirmLabel(m[1])", js)
         # рендер: сноска, зелёная Да, красная Нет, без «Отправить» в чистом виде
         self.assertIn("const confirmOnly", js)
-        self.assertIn("cn-yes\">Да", js)
-        self.assertIn("cn-no\">Нет", js)
+        # AB: подписи кнопок — сами варианты (у да/нет это «Да»/«Нет»)
+        self.assertIn("? it.opts : ['Да', 'Нет'];", js)
+        self.assertIn("cn-btn cn-yes", js)
+        self.assertIn("cn-btn cn-no", js)
         self.assertIn("if (x.t === 'confirm') return x.val != null;", js)
         self.assertIn(".ui-row.ui-confirm{", css)
         self.assertIn(".cn-yes{", css)
@@ -3400,6 +3403,98 @@ class IterationAATests(unittest.TestCase):
         self.assertIn("confirm Подпись — вопрос да/нет", prompt)
         self.assertIn("САМЫЙ ЧАСТЫЙ тип", prompt)
         self.assertIn("confirm Сохранить в Excel?", prompt)
+
+
+class IterationABTests(unittest.TestCase):
+    """AB (beta.32): мысли без прыжка в последнем кадре, живой ответ
+    переживает переключение диалога, разговор — область как камера,
+    картинки переживают анонимный лимит, пара вариантов = сноска да/нет."""
+
+    def test_ab1_think_no_last_frame_jump(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # КОРЕНЬ: вертикальные поля тела включались/выключались вместе с
+        # видимостью — прыжок на 6px в последнем кадре (тот же класс, что X)
+        self.assertIn(".qt-think .qt-body{margin:0 0 0 6px}", css)
+        self.assertIn(".qt-think .qt-flow{margin-top:3px}", css)
+        toggle = js.split("function qtToggleThink(row)")[1].split("\nfunction ")[0]
+        self.assertNotIn("display", toggle)          # тело НИКОГДА не выключается
+        restore = js.split("function restoreTrace")[1].split("\nfunction ")[0]
+        self.assertIn('style="height:0;opacity:0;overflow:hidden"', restore)
+
+    def test_ab2_live_run_survives_chat_switch(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        send = js.split("async function send(opts)")[1].split("\nasync function ")[0]
+        open_chat = js.split("async function openChat")[1].split("\nasync function ")[0]
+        # реестр живых прогонов по диалогу
+        self.assertIn("S.liveRuns[requestChatId] = ui;", send)
+        self.assertIn("S.liveRuns[ev.chat_id] = ui;", js)
+        self.assertIn("if (S.liveRuns[k] === ui) delete S.liveRuns[k];", send)
+        # возврат в диалог прикрепляет САМ живой ответ и возвращает Stop
+        self.assertIn("stream.appendChild(live.node.root);", open_chat)
+        self.assertIn("if (S.followUi === live && !S.streaming) setStreaming(true);", open_chat)
+
+    def test_ab3_voice_is_inline_area(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        py = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        # область, а не окно на весь экран; статуса-текста нет вообще
+        self.assertNotIn("voice-veil", css)
+        self.assertIn("function voiceMount(forceOwn)", js)
+        self.assertIn("function buildVoiceCard()", js)
+        self.assertIn(".voice-box{display:flex", css)
+        self.assertIn(".voice-run{display:none!important}", css)
+        self.assertNotIn("voiceStatus", js)
+        # изолированная беседа — служебный диалог вне списка
+        send = js.split("async function send(opts)")[1].split("\nasync function ")[0]
+        self.assertIn("const voiceIsolated = !!(requestVoice", send)
+        self.assertIn("voice: requestVoice,", send)
+        self.assertIn("node.root.classList.add('voice-run');", send)
+        self.assertIn('VOICE.chatId = ev.chat_id;', js)
+        self.assertIn('db.create_chat("Разговор", kind="voice")', srv)
+        # разговор = классическое общение: инструменты и панели отключены
+        # физически, на сервере
+        self.assertIn('voice_mode = bool(body.get("voice"))', srv)
+        self.assertIn("voice_mode=voice_mode, cancel_check=lambda: False", srv)
+        self.assertIn("VOICE_MODE_NOTE", py)
+        self.assertIn("self.voice_mode", py)
+        self.assertIn("available = []", py)
+        self.assertIn("not self.voice_mode and needs_reply_ui", py)
+        # камера + разговор = один интерфейс; переключение диалога завершает беседу
+        self.assertIn("if (VOICE.open) voiceMount();", js)
+        self.assertIn("if (VOICE.open) voiceMount(true);", js)
+        self.assertIn("if (VOICE.open) closeVoiceMode();", js)
+        self.assertIn("voiceLoadTranscript", js)
+        self.assertIn("Контекст диалога", js)
+
+    def test_ab3_voice_mode_note_and_no_tools(self) -> None:
+        with mock.patch.object(agent.db, "recall", return_value=[]), \
+             mock.patch.object(agent, "_now_str", return_value="сегодня"):
+            pass
+        # нота голосового режима существует и говорит про устную речь
+        self.assertIn("ГОЛОСОВОЙ РАЗГОВОР", agent.VOICE_MODE_NOTE)
+        self.assertIn("без markdown", agent.VOICE_MODE_NOTE)
+
+    def test_ab4_free_image_survives_rate_limit(self) -> None:
+        code = Path("app/jarvis/tools/media.py").read_text(encoding="utf-8")
+        # корень «после одной генерации капут»: анонимный лимит + 180с таймауты
+        self.assertIn("timeout=75", code)
+        self.assertIn("&referrer=jarvis", code)
+        self.assertIn("time.sleep(4)", code)               # пауза перед повтором
+        self.assertIn("urllib.error.HTTPError", code)      # 429 ловится отдельно
+        self.assertIn("лимит на минуту исчерпан", code)
+
+    def test_ab5_any_two_options_render_as_footnote(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        mount = js.split("function mountUiPanels")[1].split("\nfunction ")[0]
+        self.assertIn("pair.t = 'confirm'; pair.val = null;", mount)
+        self.assertIn("const labels = (it.opts && it.opts.length === 2) ? it.opts : ['Да', 'Нет'];", mount)
+        # модель тоже знает: пара = сноска
+        with mock.patch.object(agent.db, "recall", return_value=[]), \
+             mock.patch.object(agent, "_now_str", return_value="сегодня"):
+            prompt = agent.build_system_prompt(agent_mode=False)
+        self.assertIn("РОВНО ДВА варианта — тоже", prompt)
 
 
 class BareToolArgumentsTests(unittest.TestCase):
