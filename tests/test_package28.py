@@ -3203,7 +3203,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("qt-think", sweep)
         self.assertIn("qt-think", fq)
         # П.4: тумблер быстрее
-        self.assertIn("agKnobRubber .82s", css)
+        self.assertIn("agKnobRubber 1.9s", css)
         # П.5: страж курсора + мягкий приезд
         send = js.split("async function send(opts)")[1].split("\nasync function ")[0]
         self.assertIn("const statusWatch = setInterval", send)
@@ -3236,7 +3236,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.41", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.42", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3645,12 +3645,14 @@ class IterationADTests(unittest.TestCase):
 
     def test_ad9_agent_dot_slower(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("transition:transform 2.6s cubic-bezier(.24,.72,.26,1),background .85s ease,", css)
-        # AJ: размер тумблера ВОЗВРАЩЁН (42×28, круглёшок 20px),
-        # уменьшено только ДВИЖЕНИЕ — ход 12px вместо 16
+        self.assertIn("transition:transform 3.2s cubic-bezier(.25,.65,.25,1),background .85s ease,", css)
+        # AK: размер прежний, движение ещё меньше — ход 10px, симметричные
+        # отступы (left 5px), наведение замедлено до 1.9с
         self.assertIn(".agent-switch-track{box-sizing:border-box;width:42px;height:28px", css)
-        self.assertIn("width:20px;height:20px;left:3px;top:3px", css)
-        self.assertIn(".agent-switch-track input:checked + i{transform:translateX(12px);", css)
+        self.assertIn("width:20px;height:20px;left:5px;top:3px", css)
+        self.assertIn(".agent-switch-track input:checked + i{transform:translateX(10px);", css)
+        self.assertIn("animation:agKnobRubber 1.9s cubic-bezier(.25,.6,.25,1) both", css)
+        self.assertIn("animation:agEmberRun 1.9s cubic-bezier(.25,.5,.3,1) both", css)
 
 
 class IterationAETests(unittest.TestCase):
@@ -3797,9 +3799,13 @@ class IterationAGTests(unittest.TestCase):
         self.assertIn("border-color:transparent", dock)
         self.assertIn("background:rgba(15,27,44,.38)", dock)
         self.assertIn("padding:10px 0;", dock)
-        # ничего не выпирает: квадратные пункты 40px, симметричные зазоры,
-        # активная полоска-свечение в доке скрыта
-        self.assertIn(".app.collapsed .nav-item{gap:0;padding:10px 11px;margin:2px 6px;transform:none;", dock)
+        # AK: КОРЕНЬ ВЫПИРАНИЯ вылечен — .nav сужается до стекла,
+        # пункты width:auto (были шире дока на width:100% сайдбара)
+        self.assertIn(".app.collapsed .nav{margin:0 8px}", dock)
+        self.assertIn(".app.collapsed .nav-item{gap:0;width:auto;padding:10px 11px;margin:2px 6px;transform:none;", dock)
+        # анимация медленнее и плавнее: .8s
+        self.assertIn("cubic-bezier(.5,.35,.15,1)", dock)
+        self.assertIn("transition:width .8s", dock)
         self.assertIn(".app.collapsed .nav-item.active::before{display:none}", dock)
         self.assertIn(".app.collapsed .nav-item:hover{transform:none;background:rgba(0,212,255,.09)}", dock)
         self.assertIn(".app.collapsed .nav-label{opacity:0;max-width:0;", dock)
@@ -3811,16 +3817,18 @@ class IterationAGTests(unittest.TestCase):
         self.assertIn("app.classList.toggle('side-folding', collapsing);", js)
         self.assertNotIn("SIDE_FADE", js)
         self.assertNotIn("SIDE_MORPH", js)
-        # направления различаются ТОЛЬКО кривой
-        self.assertIn("cubic-bezier(.4,.55,.25,1)", dock)
-        self.assertIn("cubic-bezier(.25,.7,.3,1)", css)
+        # направления различаются ТОЛЬКО кривой (AK: .8s, глубже S-образные)
+        self.assertIn("cubic-bezier(.5,.35,.15,1)", dock)
+        self.assertIn("cubic-bezier(.22,.68,.18,1)", css)
         # AJ: по умолчанию Джарвис открывается с доком
         self.assertIn("(pref === 'collapsed' || pref === null)", js)
         self.assertIn("function dockY(on)", js)
         self.assertIn("--dock-y", js)
         self.assertIn('<div class="dock">', html)
-        # AJ: стрелка строго по центру кнопки
+        # AK: стрелка — SVG-шеврон, математически по центру в обоих режимах
         self.assertIn(".collapse-btn{width:26px;height:26px;font-size:16px;display:grid;place-items:center;", css)
+        self.assertIn('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"', html)
+        self.assertNotIn(">‹</button>", html)
 
 
 class IterationAJTests(unittest.TestCase):
@@ -3836,15 +3844,59 @@ class IterationAJTests(unittest.TestCase):
         self.assertIn('class="sigil-shape"', js)
         self.assertIn('class="sigil-sweep"', js)
         self.assertIn('class="sigil-wave"', js)
-        # морфинг: три формы, одинаковая структура из 6 кубических сегментов
-        self.assertIn("dur=\"26s\"", js)
-        for d in js.split('values="')[1].split('"')[0].split(';'):
+        # AK: 10 причудливых форм по 8 сегментов, быстрые превращения 9с,
+        # переходы то плавные, то рывком (чередование сплайнов)
+        self.assertIn('dur="9s"', js)
+        shape_vals = js.split('class="sigil-shape"')[1].split('values="')[1].split('"')[0]
+        self.assertEqual(len(shape_vals.split(';')), 11)   # 10 форм + замыкание
+        for d in shape_vals.split(';'):
+            self.assertEqual(d.count('C'), 8)
+            self.assertTrue(d.startswith('M17.0 5.5'))
+        self.assertIn('.85 0 .15 1', js)   # резкий рывок среди сплайнов
+        # линия: вибрация волнами и резкими пиками (SMIL d), 7 состояний
+        wave_vals = js.split('class="sigil-wave"')[1].split('values="')[1].split('"')[0]
+        self.assertEqual(len(wave_vals.split(';')), 7)
+        for d in wave_vals.split(';'):
             self.assertEqual(d.count('C'), 6)
-        # покой: медленный морф + редкий блик; печать: росчерк дышит
+        # покой: редкий блик; печать: линия проявлена (d-анимация в SMIL)
         self.assertIn("animation:sigilSweep 12s ease-in-out infinite", css)
-        self.assertIn("animation:sigilBreathe 2.6s ease-in-out infinite", css)
-        self.assertIn(".msg-ai:has(.typing) .sigil-wave{opacity:.92", css)
+        self.assertNotIn("sigilBreathe", css)
+        self.assertIn(".msg-ai:has(.typing) .sigil-wave{opacity:.95}", css)
         self.assertIn(".msg-ai:has(.typing) .sigil-shape{opacity:0}", css)
+        # ярче и футуристичнее
+        self.assertIn("stroke:var(--cy2)", css)
+        self.assertIn("drop-shadow(0 0 5px rgba(95,230,255,.45))", css)
+
+
+class IterationAKTests(unittest.TestCase):
+    """AK (beta.42): reasoning по-русски, геометрия дока, стрелка-SVG."""
+
+    def test_ak_reasoning_lang_injection(self) -> None:
+        from jarvis import agent as ag
+        # вставка только в отправку, история не мутируется
+        convo = [{"role": "user", "content": "привет"}]
+        sent = ag._with_reasoning_lang(convo)
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(sent[0]["role"], "system")
+        self.assertIn("русском", sent[0]["content"])
+        self.assertEqual(convo, [{"role": "user", "content": "привет"}])
+        # перед ПОСЛЕДНИМ сообщением (user или tool — без разницы)
+        convo3 = [{"role": "user", "content": "a"},
+                  {"role": "assistant", "content": "b"},
+                  {"role": "tool", "content": "c"}]
+        sent3 = ag._with_reasoning_lang(convo3)
+        self.assertEqual([m["role"] for m in sent3],
+                         ["user", "assistant", "system", "tool"])
+        # рядом уже стоит служебная system — языковая нота ПЕРЕД ней,
+        # порядок служебных нот не ломается
+        convo4 = [{"role": "user", "content": "a"},
+                  {"role": "system", "content": "UI"},
+                  {"role": "user", "content": "b"}]
+        sent4 = ag._with_reasoning_lang(convo4)
+        self.assertEqual([m["content"] for m in sent4],
+                         ["a", ag._REASONING_RU["content"], "UI", "b"])
+        # пустой диалог не трогаем
+        self.assertEqual(ag._with_reasoning_lang([]), [])
 
 
 class BareToolArgumentsTests(unittest.TestCase):

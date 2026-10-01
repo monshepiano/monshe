@@ -1604,6 +1604,27 @@ def local_answer_from_results(convo: List[Dict[str, Any]]) -> str:
             "\n\n(Модель дважды пыталась ответить сырым JSON — пересказ собрал локально.)")
 
 
+# AK: ЯЗЫК РАССУЖДЕНИЙ. Директивы в начале системного промпта reasoner-
+# моделям (Qwen3 и др.) недостаточно: они думают на английском, игнорируя
+# систему. Работающий приём — system-напоминание ВПЛОТНУЮ к последнему
+# сообщению (язык ближайшего контекста задаёт язык reasoning). Вставляется
+# ТОЛЬКО в отправку — история диалога остаётся чистой.
+_REASONING_RU = {"role": "system",
+                 "content": "Внутренние рассуждения (reasoning) веди строго "
+                            "на русском языке — это требование пользователя."}
+
+
+def _with_reasoning_lang(convo: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not convo:
+        return convo
+    # если перед последним сообщением уже стоит служебная system-нота
+    # (контракт интерфейса) — языковая нота встаёт ПЕРЕД ней, не после:
+    # две системы подряд перед запросом, порядок служебных нот сохранён
+    if len(convo) >= 2 and convo[-2].get("role") == "system":
+        return convo[:-2] + [_REASONING_RU, convo[-2], convo[-1]]
+    return convo[:-1] + [_REASONING_RU, convo[-1]]
+
+
 def _compact_convo(convo: List[Dict[str, Any]]) -> None:
     """Сжать старые результаты инструментов в контексте прогона.
 
@@ -2308,7 +2329,7 @@ class Agent:
             defer_plan_decision = bool((plan_pending and not plan_announced) or intro_hold)
 
             for event in llm.chat_stream(
-                    convo, tier=tier, tools=available,
+                    _with_reasoning_lang(convo), tier=tier, tools=available,
                     operation="auto_model" if self.task_id else "foreground_model",
                     should_stop=self.cancel_check):
                 if self._cancelled():

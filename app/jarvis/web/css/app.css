@@ -126,7 +126,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 /* ---------- каркас ---------- */
 .app{position:relative;z-index:1;display:grid;grid-template-columns:262px 1fr;height:100vh;min-height:0;
   opacity:0;transform:scale(.985);
-  transition:opacity .6s ease,transform .6s ease,grid-template-columns .55s cubic-bezier(.25,.7,.3,1)}
+  transition:opacity .6s ease,transform .6s ease,grid-template-columns .8s cubic-bezier(.22,.68,.18,1)}
 .app.ready{opacity:1;transform:none}
 /* AH: свёрнутое меню = колонка исчезает ВООБЩЕ: контент занимает всю
    ширину (верхняя рамка — до конца налево), а меню живёт отдельным
@@ -142,8 +142,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   display:flex;flex-direction:column;gap:12px;padding:16px 12px;min-height:0;overflow:hidden;
   background:rgba(6,12,21,.88);border-right:1px solid var(--line);backdrop-filter:blur(18px);
   /* кривая разворачивания: плавный выезд с мягким замедлением */
-  transition:width .55s cubic-bezier(.25,.7,.3,1),padding .55s cubic-bezier(.25,.7,.3,1),
-    gap .55s ease,background-color .5s ease,border-color .5s ease,backdrop-filter .5s ease}
+  transition:width .8s cubic-bezier(.22,.68,.18,1),padding .8s cubic-bezier(.22,.68,.18,1),
+    gap .8s ease,background-color .6s ease,border-color .6s ease,backdrop-filter .6s ease}
 @media (min-width:901px){
 /* ---- свёрнутый режим: панель превращается в плавающий DOCK ----
    AH: стеклянная пилюля у левого края, как Dock на маке. Контент занимает
@@ -155,8 +155,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .app.collapsed .sidebar{width:68px;padding:10px 0;gap:0;overflow:visible;pointer-events:none;
   background:rgba(6,12,21,0);border-right-color:transparent;backdrop-filter:blur(0px);
   /* кривая сворачивания: лёгкий разгон, мягкое прилежание */
-  transition:width .55s cubic-bezier(.4,.55,.25,1),padding .55s cubic-bezier(.4,.55,.25,1),
-    gap .55s ease,background-color .5s ease,border-color .5s ease,backdrop-filter .5s ease}
+  transition:width .8s cubic-bezier(.5,.35,.15,1),padding .8s cubic-bezier(.5,.35,.15,1),
+    gap .8s ease,background-color .6s ease,border-color .6s ease,backdrop-filter .6s ease}
 /* сам док: ВЫПУКЛОЕ матовое стекло — без резкой рамки, форму держат
    светлая верхняя кромка, тёмный низ и мягкая тень-парение (AI).
    AJ: чуть прозрачнее, чуть крупнее; отступы симметричны — зазоры между
@@ -169,24 +169,29 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
     inset 0 1px 0 rgba(255,255,255,.08),inset 0 -1px 0 rgba(0,0,0,.28);
   /* кривая СВОРАЧИВАНИЯ (в док): активна, пока класс стоит; разворачивание
      идёт базовой кривой дока — рисунок один, кривые зеркальны */
-  transition:transform .55s cubic-bezier(.4,.55,.25,1),margin .55s cubic-bezier(.4,.55,.25,1),
-    padding .55s ease,border-radius .5s ease,background-color .45s ease,border-color .45s ease,
-    box-shadow .45s ease,backdrop-filter .45s ease,-webkit-backdrop-filter .45s ease}
+  transition:transform .8s cubic-bezier(.5,.35,.15,1),margin .8s cubic-bezier(.5,.35,.15,1),
+    padding .8s ease,border-radius .6s ease,background-color .6s ease,border-color .6s ease,
+    box-shadow .6s ease,backdrop-filter .6s ease,-webkit-backdrop-filter .6s ease}
 /* рабочее пространство: контент получает воздух слева, чтобы не ехать
    под док; верхняя рамка остаётся на всю ширину до края */
 .app.collapsed .main .view{padding-left:76px;
-  transition:padding-left .55s cubic-bezier(.4,.55,.25,1)}
+  transition:padding-left .8s cubic-bezier(.5,.35,.15,1)}
 /* бренд, кнопка разворачивания и черта — внутри дока, столбиком */
 .app.collapsed .brand{flex-direction:column;align-items:center;gap:8px;padding:2px 0 10px;
   margin:0 6px;border-bottom:1px solid rgba(0,212,255,.1)}
 .app.collapsed .brand-text{display:none}
 .app.collapsed .collapse-btn{transform:rotate(180deg)}
+/* AK: КОРЕНЬ ВЫПИРАНИЯ — .nav в доке не сужался: пункты (width:100% от
+   сайдбара 68px + маргины) были ШИРЕ стекла 52px, и фон hover/active
+   вылезал справа за край дока. Теперь .nav сужается до стекла, пункты
+   width:auto — ровно внутри, подсветка нигде не выходит */
+.app.collapsed .nav{margin:0 8px}
 /* подписи плавно сворачиваются в ноль; иконка (слот 18px) остаётся ровно
    по центру пункта — подсветка нигде не выпирает из дока */
 .app.collapsed .nav-label{opacity:0;max-width:0;
-  transition:max-width .55s cubic-bezier(.4,.55,.25,1)}
-.app.collapsed .nav-item{gap:0;padding:10px 11px;margin:2px 6px;transform:none;
-  transition:padding .55s cubic-bezier(.4,.55,.25,1),gap .55s cubic-bezier(.4,.55,.25,1),
+  transition:max-width .8s cubic-bezier(.5,.35,.15,1)}
+.app.collapsed .nav-item{gap:0;width:auto;padding:10px 11px;margin:2px 6px;transform:none;
+  transition:padding .8s cubic-bezier(.5,.35,.15,1),gap .8s cubic-bezier(.5,.35,.15,1),
     background .22s ease,color .22s ease,opacity .22s ease}
 .app.collapsed .nav-item:hover{transform:none;background:rgba(0,212,255,.09)}
 /* AJ: активная полоска несла СВЕЧЕНИЕ за пределы дока — в доке активность
@@ -213,9 +218,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .dock{display:flex;flex-direction:column;gap:12px;border:1px solid transparent;border-radius:0;
   background:transparent;backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px);
   transform:translateY(var(--dock-y,0px));
-  transition:transform .55s cubic-bezier(.25,.7,.3,1),margin .55s cubic-bezier(.25,.7,.3,1),
-    padding .55s ease,border-radius .5s ease,background-color .45s ease,border-color .45s ease,
-    box-shadow .45s ease,backdrop-filter .45s ease,-webkit-backdrop-filter .45s ease}
+  transition:transform .8s cubic-bezier(.22,.68,.18,1),margin .8s cubic-bezier(.22,.68,.18,1),
+    padding .8s ease,border-radius .6s ease,background-color .6s ease,border-color .6s ease,
+    box-shadow .6s ease,backdrop-filter .6s ease,-webkit-backdrop-filter .6s ease}
 .brand{display:flex;align-items:center;gap:10px;padding:4px 6px 12px;border-bottom:1px solid var(--line)}
 .brand-text{flex:1;min-width:0}
 .brand-name{font-size:17px;font-weight:600;letter-spacing:4px;color:#eaf9ff;text-shadow:0 0 18px rgba(0,212,255,.5)}
@@ -226,7 +231,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .nav{display:flex;flex-direction:column;gap:3px}
 .nav-item{display:flex;align-items:center;gap:11px;padding:10px 12px;border:0;border-radius:11px;
   background:transparent;color:var(--tx2);font-size:13.5px;cursor:pointer;position:relative;
-  transition:padding .55s cubic-bezier(.25,.7,.3,1),gap .55s cubic-bezier(.25,.7,.3,1),
+  transition:padding .8s cubic-bezier(.22,.68,.18,1),gap .8s cubic-bezier(.22,.68,.18,1),
     background .22s ease,color .22s ease,transform .22s ease,opacity .22s ease;text-align:left;width:100%}
 .nav-item:hover{background:rgba(0,212,255,.07);color:var(--tx);transform:translateX(2px)}
 .nav-item.active{background:linear-gradient(90deg,rgba(0,212,255,.18),rgba(0,212,255,.03));color:#fff}
@@ -235,7 +240,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .nav-ico{width:18px;text-align:center;font-size:14px;color:var(--cy);transition:opacity .25s ease,color .22s ease}
 /* подпись пункта умеет плавно сворачываться в ноль (док) и обратно */
 .nav-label{min-width:0;max-width:170px;overflow:hidden;white-space:nowrap;
-  transition:opacity .34s ease,max-width .55s cubic-bezier(.25,.7,.3,1)}
+  transition:opacity .34s ease,max-width .8s cubic-bezier(.22,.68,.18,1)}
 .nav-ico svg{display:block;width:15px;height:15px;margin:0 auto}
 /* у каждого раздела свой оттенок — так меню читается быстрее */
 .nav-item[data-view="chat"]   .nav-ico{color:var(--cy)}
@@ -456,7 +461,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 
 /* ---------- views ---------- */
 .view{display:none;flex:1;min-height:0;flex-direction:column;animation:viewIn .4s cubic-bezier(.2,.8,.3,1);
-  transition:padding-left .55s cubic-bezier(.25,.7,.3,1)}
+  transition:padding-left .8s cubic-bezier(.22,.68,.18,1)}
 .view.active{display:flex}
 @keyframes viewIn{from{opacity:0;transform:translateY(12px)}}
 .panel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:22px 26px 14px}
@@ -547,8 +552,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    живой росчерк-волна, едва заметно дышащий. Никакого пульса и ядер. */
 .ai-sigil{width:34px;height:34px;display:grid;place-items:center}
 .ai-sigil svg{width:34px;height:34px;display:block;overflow:visible}
-.sigil-shape{fill:none;stroke:var(--cy);stroke-width:1.5;opacity:.78;
-  transition:opacity .7s ease}
+.sigil-shape{fill:none;stroke:var(--cy2);stroke-width:1.6;opacity:.92;
+  filter:drop-shadow(0 0 5px rgba(95,230,255,.45));
+  transition:opacity .5s ease}
 .sigil-sweep{fill:none;stroke:#eafcff;stroke-width:1.5;stroke-linecap:round;
   stroke-dasharray:13 87;opacity:0;transition:opacity .7s ease;
   animation:sigilSweep 12s ease-in-out infinite}
@@ -557,14 +563,14 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   5%{opacity:.7}
   24%{stroke-dashoffset:0;opacity:0}
   100%{stroke-dashoffset:0;opacity:0}}
-.sigil-wave{fill:none;stroke:var(--cy);stroke-width:1.6;stroke-linecap:round;
-  opacity:0;transition:opacity .7s ease}
+.sigil-wave{fill:none;stroke:var(--cy2);stroke-width:1.7;stroke-linecap:round;
+  filter:drop-shadow(0 0 5px rgba(95,230,255,.45));
+  opacity:0;transition:opacity .5s ease}
 .msg-ai:has(.typing) .sigil-shape{opacity:0}
 .msg-ai:has(.typing) .sigil-sweep{animation:none;opacity:0}
-.msg-ai:has(.typing) .sigil-wave{opacity:.92;animation:sigilBreathe 2.6s ease-in-out infinite}
-@keyframes sigilBreathe{
-  0%,100%{transform:translateY(0);opacity:.68}
-  50%{transform:translateY(1.4px);opacity:1}}
+/* AK: линия вибрирует сама (SMIL d-анимация: волны и резкие пики бегут
+   слева направо) — CSS лишь проявляет её */
+.msg-ai:has(.typing) .sigil-wave{opacity:.95}
 /* блик и морф тихнут в неактивных (камера закрыта) ответах */
 .ui-inert .ai-sigil{opacity:.55;filter:saturate(.7)}
 .ai-body{flex:1;min-width:0}
@@ -1160,11 +1166,12 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   border:1px solid var(--line);background:transparent;position:relative;
   box-shadow:inset 0 1px 5px rgba(0,0,0,.42);transition:.85s ease}
 .agent-switch-track input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
-.agent-switch-track i{position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;
+.agent-switch-track i{position:absolute;width:20px;height:20px;left:5px;top:3px;border-radius:50%;
   background:var(--tx3);
-  /* AI/AJ: размер прежний, ДВИЖЕНИЕ меньше (12px вместо 16) и медленно —
-     редкое дорогое скольжение круглешка, а не щелчок переключателя */
-  transition:transform 2.6s cubic-bezier(.24,.72,.26,1),background .85s ease,
+  /* AK: движение ЕЩЁ меньше и медленнее — ход 10px с симметричными
+     отступами (5px с обоих краёв в крайних положениях), 3.2с —
+     одинаковая скорость включения и выключения */
+  transition:transform 3.2s cubic-bezier(.25,.65,.25,1),background .85s ease,
     box-shadow .85s ease,color .85s ease;
   /* буква A живёт НА круглешке: тумблер подписан собой, без соседных слов */
   font-style:normal;font-weight:800;font-size:11px;line-height:20px;text-align:center;
@@ -1173,7 +1180,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch-track:hover{border-color:var(--line2)}
 .agent-switch:has(input:checked){color:#f2c3cd}
 .agent-switch-track:has(input:checked){background:rgba(74,13,24,.5);border-color:rgba(212,94,116,.85)}
-.agent-switch-track input:checked + i{transform:translateX(12px);
+.agent-switch-track input:checked + i{transform:translateX(10px);
   /* ВКЛЮЧЁННЫЙ круглёшок — ЯРКОЕ бордо, буква А контрастно ТЁМНАЯ */
   background:linear-gradient(180deg,#d4526c,#a83248);
   box-shadow:0 0 13px rgba(190,60,84,.7),0 0 26px rgba(143,39,57,.5);
@@ -1360,7 +1367,8 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   100%{transform:translateX(0);background:#8d4d5e;color:#1d060b}}
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)) i{
   /* цвета едут внутри agKnobRubber: статичной подмены больше нет */
-  animation:agKnobRubber .82s cubic-bezier(.3,.7,.3,1) both}   /* Z: быстрее на четверть */
+  /* AK: наведение — медленно и плавно, как вкл/выкл */
+  animation:agKnobRubber 1.9s cubic-bezier(.25,.6,.25,1) both}
 /* огонёк: ЕЩЁ КРУПНЕЕ, сильно размыт, светится в стороны — движется бодро
    и тормозит ТОЛЬКО В КОНЦЕ, у правого края трека (слепая зона за круглёшком):
    сам он обрезан рамкой, снаружи живёт лишь его свечение. Пока курсор
@@ -1372,7 +1380,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
     а не фейерверк; замирает у правого края, чуть видный ВНУТРИ трека */
   background:radial-gradient(circle,rgba(255,150,168,.7),rgba(255,86,112,.38) 48%,transparent 78%);
   filter:blur(7px);
-  animation:agEmberRun .72s cubic-bezier(.3,.5,.35,1) both}
+  animation:agEmberRun 1.9s cubic-bezier(.25,.5,.3,1) both}
 @keyframes agEmberRun{
   0%{opacity:0;transform:translateX(0)}
   12%{opacity:.85;transform:translateX(4px)}
@@ -1382,7 +1390,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 /* свечение огонька: ЩЕДРЕЕ в стороны, СНАРУЖИ справа — box-shadow самого
    трека обрезкой не_clip-ится и живёт у правого края всё наведение */
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)){
-  animation:agRestGlow .4s ease .5s both}
+  animation:agRestGlow 1.2s ease .7s both}
 @keyframes agRestGlow{to{box-shadow:inset 0 1px 5px rgba(0,0,0,.42),
   inset 14px 0 26px -8px rgba(255,86,112,.4)}}
 /* искра по контуру: один проход (no-repeat!), в конце замедляется и тает */
@@ -1391,7 +1399,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   pointer-events:none;
   background:linear-gradient(100deg,transparent 37%,rgba(255,84,112,.55) 50%,transparent 63%);
   background-size:250% 100%;background-repeat:no-repeat;
-  animation:agSparkRun .88s linear both;
+  animation:agSparkRun 1.8s cubic-bezier(.3,.4,.3,1) both;
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude}
 @keyframes agSparkRun{
