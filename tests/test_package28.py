@@ -3236,7 +3236,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.38", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.39", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3583,7 +3583,9 @@ class IterationADTests(unittest.TestCase):
         fold = js.split("function qtFold(ui, node, isLast)")[1].split("\nfunction ")[0]
         # AG: затемнение — В САМОМ WAAPI-полёте (неуничтожимо CSS-гонками)
         self.assertIn("const flyKeys = (target) => [", fold)
-        self.assertIn("{ opacity: 1, filter: 'blur(1px) brightness(.66)', offset: .6 },", fold)
+        # AI: поздний крутой спад — свой easing у промежуточного кадра
+        self.assertIn("{ opacity: 1, filter: 'blur(.5px) brightness(.94)', offset: .55,", fold)
+        self.assertIn("easing: 'cubic-bezier(.62,.04,.6,.55)'", fold)
         self.assertIn("filter: 'blur(4px) brightness(.08)'", fold)
         self.assertIn("flight.effect.setKeyframes(flyKeys(aim));", fold)
 
@@ -3643,7 +3645,10 @@ class IterationADTests(unittest.TestCase):
 
     def test_ad9_agent_dot_slower(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("transition:transform 1.9s cubic-bezier(.22,.85,.25,1),background .85s ease,", css)
+        self.assertIn("transition:transform 2.6s cubic-bezier(.24,.72,.26,1),background .85s ease,", css)
+        # AI: амплитуда меньше — компактный трек и короткий ход круглешка
+        self.assertIn(".agent-switch-track{box-sizing:border-box;width:36px;height:24px", css)
+        self.assertIn(".agent-switch-track input:checked + i{transform:translateX(12px);", css)
 
 
 class IterationAETests(unittest.TestCase):
@@ -3764,7 +3769,8 @@ class IterationAGTests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         fold = js.split("function qtFold(ui, node, isLast)")[1].split("\nfunction ")[0]
         self.assertIn("const flyKeys = (target) => [", fold)
-        self.assertIn("offset: .6", fold)
+        self.assertIn("offset: .55", fold)
+        self.assertIn("easing: 'cubic-bezier(.62,.04,.6,.55)'", fold)
         self.assertIn("flight.effect.setKeyframes(flyKeys(aim));", fold)
         # CSS-гонка с задержками убрана: остаётся только высота
         self.assertNotIn("opacity .5s ease-in .5s", fold)
@@ -3781,18 +3787,23 @@ class IterationAGTests(unittest.TestCase):
         self.assertIn(".app.collapsed{grid-template-columns:0px 1fr}", css)
         self.assertIn(".main{grid-column:2}", css)
         dock = css.split("/* ---- свёрнутый режим: панель превращается в плавающий DOCK")[1].split("/* подпись иконки")[0]
+        # AI: КОРЕНЬ ширины — сайдбар сужается сам (62px), док 46px
+        self.assertIn(".app.collapsed .sidebar{width:62px;", dock)
         self.assertIn(".app.collapsed .dock{pointer-events:auto", dock)
-        self.assertIn("backdrop-filter:blur(16px)", dock)
-        self.assertIn("border-radius:17px", dock)
-        self.assertIn("background:rgba(10,20,34,.42)", dock)
-        # ничего не выпирает: пункты с отступом, без масштаба
-        self.assertIn(".app.collapsed .nav-item{gap:0;padding:9px 11px;margin:1px 5px}", dock)
+        self.assertIn("backdrop-filter:blur(18px) saturate(1.2)", dock)
+        self.assertIn("border-radius:20px", dock)
+        self.assertIn("border-color:transparent", dock)
+        self.assertIn("background:rgba(15,27,44,.46)", dock)
+        # ничего не выпирает: квадратные пункты 38px с отступом, без масштаба
+        self.assertIn(".app.collapsed .nav-item{gap:0;padding:9px 10px;margin:1px 4px}", dock)
         self.assertIn(".app.collapsed .nav-item:hover{transform:none;background:rgba(0,212,255,.09)}", dock)
         self.assertIn(".app.collapsed .nav-label{opacity:0;max-width:0}", dock)
         # контент не едет под док
-        self.assertIn(".app.collapsed .main .view{padding-left:58px}", dock)
-        # двухфазная хореография панель <-> док
+        self.assertIn(".app.collapsed .main .view{padding-left:70px}", dock)
+        # зеркальная хореография: один темп в обе стороны
         self.assertIn(".side-folding .chats-block,.side-folding .side-foot{opacity:0;transform:translateX(-14px)}", css)
+        self.assertIn("const SIDE_FADE = 220;", js)
+        self.assertIn("const SIDE_MORPH = 550;", js)
         self.assertIn("function dockY(on)", js)
         self.assertIn("--dock-y", js)
         self.assertIn('<div class="dock">', html)

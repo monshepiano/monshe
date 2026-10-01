@@ -531,6 +531,12 @@ function pulseNav(view, strong) {
    порядке, тем же темпом. */
 function isNarrow() { return window.matchMedia('(max-width:900px)').matches; }
 let sideT = 0;
+/* ЕДИНЫЙ ТЕМП ПРЕВРАЩЕНИЯ: обе стороны абсолютно зеркальны и одной
+   длительности — сворачивание = гашение(220) + превращение(550),
+   разворачивание = превращение(550) + возврат(220). Как у всех
+   парных анимаций Джарвиса: тот же рисунок, только наоборот. */
+const SIDE_FADE = 220;
+const SIDE_MORPH = 550;
 /* док держит своё смещение в --dock-y: transform плавно увозит пилюлю
    в центр высоты и так же плавно возвращает (offsetTop не зависит от
    transform — стрелки-клики не сбивают прицел) */
@@ -558,12 +564,14 @@ function toggleSidebar() {
     sideT = setTimeout(() => {
       app.classList.add('collapsed');
       dockY(true);
-      sideT = setTimeout(() => app.classList.remove('side-folding'), 650);
-    }, 230);
+      sideT = setTimeout(() => app.classList.remove('side-folding'), SIDE_MORPH);
+    }, SIDE_FADE);
   } else {
+    // зеркально: сначала превращение в панель…
     app.classList.remove('collapsed');
     dockY(false);
-    sideT = setTimeout(() => app.classList.remove('side-folding'), 460);
+    // …затем диалоги и статистика возвращаются тем же темпом
+    sideT = setTimeout(() => app.classList.remove('side-folding'), SIDE_MORPH);
   }
   try {
     localStorage.setItem('jarvis.sidebar', collapsing ? 'collapsed' : 'open');
@@ -4717,7 +4725,14 @@ function qtFold(ui, node, isLast) {
   let aim = titleC() - labC - base0;
   const flyKeys = (target) => [
     { transform: 'translateY(0px)', opacity: 1, filter: 'blur(0px) brightness(1)' },
-    { opacity: 1, filter: 'blur(1px) brightness(.66)', offset: .6 },
+    // AI: ЧИТАЕМАЯ ДО САМОГО ПОДЛЁТА. У промежуточного кадра СвОЙ easing —
+    // медленный старт и крутой финиш: весь спад яркости умещается в
+    // последние ~25% пути. Раньше спад растягивался на весь хвост полёта
+    // с быстрым началом — строка терялась ещё в воздухе и выглядела как
+    // «летит мимо» группы. Теперь она полная почти весь путь и ныряет
+    // под название уже чёрным силуэтом — в последние мгновения.
+    { opacity: 1, filter: 'blur(.5px) brightness(.94)', offset: .55,
+      easing: 'cubic-bezier(.62,.04,.6,.55)' },
     { transform: 'translateY(' + target + 'px)', opacity: 0,
       filter: 'blur(4px) brightness(.08)' }];
   const flight = node.animate(

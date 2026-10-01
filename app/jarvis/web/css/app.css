@@ -126,7 +126,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 /* ---------- каркас ---------- */
 .app{position:relative;z-index:1;display:grid;grid-template-columns:262px 1fr;height:100vh;min-height:0;
   opacity:0;transform:scale(.985);
-  transition:opacity .6s ease,transform .6s ease,grid-template-columns .62s cubic-bezier(.32,.72,.24,1)}
+  transition:opacity .6s ease,transform .6s ease,grid-template-columns .55s cubic-bezier(.32,.72,.24,1)}
 .app.ready{opacity:1;transform:none}
 /* AH: свёрнутое меню = колонка исчезает ВООБЩЕ: контент занимает всю
    ширину (верхняя рамка — до конца налево), а меню живёт отдельным
@@ -141,8 +141,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sidebar{position:fixed;top:0;bottom:0;left:0;width:262px;z-index:60;
   display:flex;flex-direction:column;gap:12px;padding:16px 12px;min-height:0;overflow:hidden;
   background:rgba(6,12,21,.88);border-right:1px solid var(--line);backdrop-filter:blur(18px);
-  transition:width .62s cubic-bezier(.32,.72,.24,1),padding .62s cubic-bezier(.32,.72,.24,1),
-    gap .62s ease,background-color .5s ease,border-color .5s ease,backdrop-filter .5s ease}
+  transition:width .55s cubic-bezier(.32,.72,.24,1),padding .55s cubic-bezier(.32,.72,.24,1),
+    gap .55s ease,background-color .5s ease,border-color .5s ease,backdrop-filter .5s ease}
 @media (min-width:901px){
 /* ---- свёрнутый режим: панель превращается в плавающий DOCK ----
    AH: стеклянная пилюля у левого края, как Dock на маке. Контент занимает
@@ -151,26 +151,28 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    Превращение двухфазное (см. toggleSidebar): сначала гаснут диалоги и
    статистика, затем панель morph'ится — фон тает в прозрачность, подписи
    плавно сворачиваются в ноль, иконки столбиком собираются в стекло. */
-.app.collapsed .sidebar{padding:10px 0;gap:0;overflow:visible;pointer-events:none;
+.app.collapsed .sidebar{width:62px;padding:10px 0;gap:0;overflow:visible;pointer-events:none;
   background:rgba(6,12,21,0);border-right-color:transparent;backdrop-filter:blur(0px)}
-/* сам док: матовое стекло, парит над контентом, кликается только он */
-.app.collapsed .dock{pointer-events:auto;margin:0 9px;padding:10px 0 7px;
-  border:1px solid rgba(0,212,255,.14);border-radius:17px;
-  background:rgba(10,20,34,.42);
-  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
-  box-shadow:0 12px 34px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.05)}
+/* сам док: ВЫПУКЛОЕ матовое стекло — без резкой рамки, форму держат
+   светлая верхняя кромка, тёмный низ и мягкая тень-парение (AI) */
+.app.collapsed .dock{pointer-events:auto;margin:0 8px;padding:10px 0 7px;
+  border-color:transparent;border-radius:20px;
+  background:rgba(15,27,44,.46);
+  backdrop-filter:blur(18px) saturate(1.2);-webkit-backdrop-filter:blur(18px) saturate(1.2);
+  box-shadow:0 16px 38px rgba(0,0,0,.5),0 3px 10px rgba(0,0,0,.28),
+    inset 0 1px 0 rgba(255,255,255,.08),inset 0 -1px 0 rgba(0,0,0,.28)}
 /* рабочее пространство: контент получает воздух слева, чтобы не ехать
    под док; верхняя рамка остаётся на всю ширину до края */
-.app.collapsed .main .view{padding-left:58px}
+.app.collapsed .main .view{padding-left:70px}
 /* бренд, кнопка разворачивания и черта — внутри дока, столбиком */
 .app.collapsed .brand{flex-direction:column;align-items:center;gap:8px;padding:2px 0 10px;
-  margin:0 7px;border-bottom:1px solid var(--line)}
+  margin:0 5px;border-bottom:1px solid rgba(0,212,255,.1)}
 .app.collapsed .brand-text{display:none}
 .app.collapsed .collapse-btn{transform:rotate(180deg)}
 /* подписи плавно сворачиваются в ноль; иконка (слот 18px) остаётся ровно
    по центру пункта — подсветка нигде не выпирает из дока */
 .app.collapsed .nav-label{opacity:0;max-width:0}
-.app.collapsed .nav-item{gap:0;padding:9px 11px;margin:1px 5px}
+.app.collapsed .nav-item{gap:0;padding:9px 10px;margin:1px 4px}
 .app.collapsed .nav-item:hover{transform:none;background:rgba(0,212,255,.09)}
 .app.collapsed .nav-ico{opacity:.55;font-size:16px}
 .app.collapsed .nav-item:hover .nav-ico{opacity:1}
@@ -193,8 +195,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .dock{display:flex;flex-direction:column;gap:12px;border:1px solid transparent;border-radius:0;
   background:transparent;backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px);
   transform:translateY(var(--dock-y,0px));
-  transition:transform .62s cubic-bezier(.32,.72,.24,1),margin .62s cubic-bezier(.32,.72,.24,1),
-    padding .62s ease,border-radius .5s ease,background-color .45s ease,border-color .45s ease,
+  transition:transform .55s cubic-bezier(.32,.72,.24,1),margin .55s cubic-bezier(.32,.72,.24,1),
+    padding .55s ease,border-radius .5s ease,background-color .45s ease,border-color .45s ease,
     box-shadow .45s ease,backdrop-filter .45s ease,-webkit-backdrop-filter .45s ease}
 .brand{display:flex;align-items:center;gap:10px;padding:4px 6px 12px;border-bottom:1px solid var(--line)}
 .brand-text{flex:1;min-width:0}
@@ -435,7 +437,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 
 /* ---------- views ---------- */
 .view{display:none;flex:1;min-height:0;flex-direction:column;animation:viewIn .4s cubic-bezier(.2,.8,.3,1);
-  transition:padding-left .62s cubic-bezier(.32,.72,.24,1)}
+  transition:padding-left .55s cubic-bezier(.32,.72,.24,1)}
 .view.active{display:flex}
 @keyframes viewIn{from{opacity:0;transform:translateY(12px)}}
 .panel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:22px 26px 14px}
@@ -1108,22 +1110,24 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   font:11.5px/1 var(--f);letter-spacing:0;cursor:default;position:relative;
   transition:color .22s;flex:0 0 auto}
 /* Именно внутренний label-track кликабелен; AGENT рядом — обычная подпись. */
-.agent-switch-track{box-sizing:border-box;width:42px;height:28px;border-radius:15px;cursor:pointer;
+.agent-switch-track{box-sizing:border-box;width:36px;height:24px;border-radius:12px;cursor:pointer;
   border:1px solid var(--line);background:transparent;position:relative;
   box-shadow:inset 0 1px 5px rgba(0,0,0,.42);transition:.85s ease}
 .agent-switch-track input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
-.agent-switch-track i{position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;
+.agent-switch-track i{position:absolute;width:18px;height:18px;left:3px;top:3px;border-radius:50%;
   background:var(--tx3);
-  transition:transform 1.9s cubic-bezier(.22,.85,.25,1),background .85s ease,
+  /* AI: ход короче (12px вместо 16) и ещё медленнее — редкое дорогое
+     скольжение маленького круглешка, а не щелчок переключателя */
+  transition:transform 2.6s cubic-bezier(.24,.72,.26,1),background .85s ease,
     box-shadow .85s ease,color .85s ease;
   /* буква A живёт НА круглешке: тумблер подписан собой, без соседних слов */
-  font-style:normal;font-weight:800;font-size:11px;line-height:20px;text-align:center;
+  font-style:normal;font-weight:800;font-size:10px;line-height:18px;text-align:center;
   color:var(--panel2);font-family:inherit;user-select:none}
 .agent-switch:hover{color:var(--tx2)}
 .agent-switch-track:hover{border-color:var(--line2)}
 .agent-switch:has(input:checked){color:#f2c3cd}
 .agent-switch-track:has(input:checked){background:rgba(74,13,24,.5);border-color:rgba(212,94,116,.85)}
-.agent-switch-track input:checked + i{transform:translateX(16px);
+.agent-switch-track input:checked + i{transform:translateX(12px);
   /* ВКЛЮЧЁННЫЙ круглёшок — ЯРКОЕ бордо, буква А контрастно ТЁМНАЯ */
   background:linear-gradient(180deg,#d4526c,#a83248);
   box-shadow:0 0 13px rgba(190,60,84,.7),0 0 26px rgba(143,39,57,.5);

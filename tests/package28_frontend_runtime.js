@@ -1146,10 +1146,10 @@ function testRussianImageAndHudFollowupContract() {
   assert(!/<button[^>]+id="tgAgent"/.test(html));
   assert(/\.toggle\s*\{[^}]*height:28px[^}]*padding:0 12px/s.test(css));
   assert(/\.agent-switch\s*\{[^}]*height:28px[^}]*display:flex[^}]*border:0[^}]*background:transparent/s.test(css) &&
-    /\.agent-switch-track\s*\{[^}]*width:42px[^}]*height:28px/s.test(css) &&
-    /\.agent-switch-track input:checked \+ i\{[^}]*translateX\(16px\)/s.test(css) &&
+    /\.agent-switch-track\s*\{[^}]*width:36px[^}]*height:24px/s.test(css) &&
+    /\.agent-switch-track input:checked \+ i\{[^}]*translateX\(12px\)/s.test(css) &&
     /\.send-btn\s*\{[^}]*width:42px[^}]*height:38px/s.test(css),
-    'AGENT track is narrower (42px, 16px travel) and Send matches its width');
+    'AGENT track is compact (36px, 12px travel); Send keeps its width');
   assert(/#tgAgent'\)\.addEventListener\('change'[\s\S]*S\.agentMode\s*=\s*this\.checked[\s\S]*tip-dismissed/.test(js));
   assert(/\$\$\('\.agent-switch'\)\.forEach\(\(sw\) => sw\.addEventListener\('mouseleave'[\s\S]*tip-dismissed/.test(js));
   const tipRule = css.match(/\.agent-switch\[data-tip\]:not\(\.tip-dismissed\):hover::after\s*\{([^}]*)\}/s);
@@ -1522,7 +1522,7 @@ function testThinkingGradientContract() {
   const agentTrack = css.match(/\.agent-switch-track\s*\{([^}]*)\}/s);
   assert(agentSwitch && /border:0/.test(agentSwitch[1]) && /background:transparent/.test(agentSwitch[1]),
     'AGENT remains a real switch without an outer capsule');
-  assert(agentTrack && /width:42px/.test(agentTrack[1]) && /height:28px/.test(agentTrack[1]) &&
+  assert(agentTrack && /width:36px/.test(agentTrack[1]) && /height:24px/.test(agentTrack[1]) &&
     /border:1px solid var\(--line\)/.test(agentTrack[1]) && /background:transparent/.test(agentTrack[1]),
     'the off AGENT track matches the neutral neighbouring controls at 28px high');
   // включённый AGENT — БОРДО и горит ЯРЧЕ с пульсацией («я активен!»)
@@ -2356,7 +2356,8 @@ function testIterationADContracts() {
   // AD2: инструмент тонет в темноте под группой
   const fold = extractFunction(js, 'qtFold');
   assert(/const flyKeys = \(target\) => \[/.test(fold) &&
-    /offset: \.6/.test(fold) &&
+    /offset: \.55/.test(fold) &&
+    /easing: 'cubic-bezier\(\.62,\.04,\.6,\.55\)'/.test(fold) &&
     /blur\(4px\) brightness\(\.08\)/.test(fold) &&
     /setKeyframes\(flyKeys\(aim\)\)/.test(fold),
     'AD2: dimming lives INSIDE the WAAPI flight keyframes — cannot be lost');
@@ -2392,8 +2393,8 @@ function testIterationADContracts() {
     /title="Звук"/.test(html) && !/Голос Джарвиса: озвучивать/.test(html),
     'AD8: the corner button is the master sound switch (UI sounds + spoken replies)');
   // AD9: кружок AGENT чуть медленнее
-  assert(/transition:transform 1\.9s cubic-bezier\(\.22,\.85,\.25,1\)/.test(css),
-    'AD9: agent toggle dot travels a touch slower again');
+  assert(/transition:transform 2\.6s cubic-bezier\(\.24,\.72,\.26,1\)/.test(css),
+    'AD9: agent toggle dot — rare expensive glide, 2.6s, small 12px travel');
 }
 
 function testIterationAHContracts() {
@@ -2412,14 +2413,18 @@ function testIterationAHContracts() {
     'AH: content spans full width when collapsed; topbar reaches the left edge');
   const dock = css.split('/* ---- свёрнутый режим: панель превращается в плавающий DOCK')[1].split('/* подпись иконки')[0];
   assert(/\.app\.collapsed \.dock\{pointer-events:auto/.test(dock) &&
-    /backdrop-filter:blur\(16px\)/.test(dock) &&
-    /background:rgba\(10,20,34,\.42\)/.test(dock) &&
-    /\.app\.collapsed \.nav-item\{gap:0;padding:9px 11px;margin:1px 5px\}/.test(dock) &&
+    /width:62px/.test(dock) &&
+    /backdrop-filter:blur\(18px\) saturate\(1\.2\)/.test(dock) &&
+    /border-radius:20px/.test(dock) &&
+    /background:rgba\(15,27,44,\.46\)/.test(dock) &&
+    /\.app\.collapsed \.nav-item\{gap:0;padding:9px 10px;margin:1px 4px\}/.test(dock) &&
+    /padding-left:70px/.test(dock) &&
     !/transform:scale/.test(dock),
     'AH: dock is matte glass, nothing protrudes beyond the pill');
   assert(/--dock-y/.test(js) && /function dockY\(on\)/.test(js) &&
-    /side-folding/.test(js) && /side-folding/.test(css),
-    'AH: two-phase collapse choreography with a centered dock');
+    /side-folding/.test(js) && /side-folding/.test(css) &&
+    /const SIDE_FADE = 220;/.test(js) && /const SIDE_MORPH = 550;/.test(js),
+    'AH: two-phase mirrored choreography — same tempo both ways, centered dock');
 }
 
 function testIterationAFContracts() {
