@@ -1146,7 +1146,7 @@ function testRussianImageAndHudFollowupContract() {
   assert(!/<button[^>]+id="tgAgent"/.test(html));
   assert(/\.toggle\s*\{[^}]*height:28px[^}]*padding:0 12px/s.test(css));
   assert(/\.agent-switch\s*\{[^}]*height:28px[^}]*display:flex[^}]*border:0[^}]*background:transparent/s.test(css) &&
-    /\.agent-switch-track\s*\{[^}]*width:36px[^}]*height:24px/s.test(css) &&
+    /\.agent-switch-track\s*\{[^}]*width:42px[^}]*height:28px/s.test(css) &&
     /\.agent-switch-track input:checked \+ i\{[^}]*translateX\(12px\)/s.test(css) &&
     /\.send-btn\s*\{[^}]*width:42px[^}]*height:38px/s.test(css),
     'AGENT track is compact (36px, 12px travel); Send keeps its width');
@@ -1522,7 +1522,7 @@ function testThinkingGradientContract() {
   const agentTrack = css.match(/\.agent-switch-track\s*\{([^}]*)\}/s);
   assert(agentSwitch && /border:0/.test(agentSwitch[1]) && /background:transparent/.test(agentSwitch[1]),
     'AGENT remains a real switch without an outer capsule');
-  assert(agentTrack && /width:36px/.test(agentTrack[1]) && /height:24px/.test(agentTrack[1]) &&
+  assert(agentTrack && /width:42px/.test(agentTrack[1]) && /height:28px/.test(agentTrack[1]) &&
     /border:1px solid var\(--line\)/.test(agentTrack[1]) && /background:transparent/.test(agentTrack[1]),
     'the off AGENT track matches the neutral neighbouring controls at 28px high');
   // включённый AGENT — БОРДО и горит ЯРЧЕ с пульсацией («я активен!»)
@@ -2393,8 +2393,9 @@ function testIterationADContracts() {
     /title="Звук"/.test(html) && !/Голос Джарвиса: озвучивать/.test(html),
     'AD8: the corner button is the master sound switch (UI sounds + spoken replies)');
   // AD9: кружок AGENT чуть медленнее
-  assert(/transition:transform 2\.6s cubic-bezier\(\.24,\.72,\.26,1\)/.test(css),
-    'AD9: agent toggle dot — rare expensive glide, 2.6s, small 12px travel');
+  assert(/transition:transform 2\.6s cubic-bezier\(\.24,\.72,\.26,1\)/.test(css) &&
+    /\.agent-switch-track input:checked \+ i\{transform:translateX\(12px\)/.test(css),
+    'AD9: agent toggle — full-size 42x28 track, 12px travel, 2.6s glide');
 }
 
 function testIterationAHContracts() {
@@ -2413,18 +2414,23 @@ function testIterationAHContracts() {
     'AH: content spans full width when collapsed; topbar reaches the left edge');
   const dock = css.split('/* ---- свёрнутый режим: панель превращается в плавающий DOCK')[1].split('/* подпись иконки')[0];
   assert(/\.app\.collapsed \.dock\{pointer-events:auto/.test(dock) &&
-    /width:62px/.test(dock) &&
+    /width:68px/.test(dock) &&
     /backdrop-filter:blur\(18px\) saturate\(1\.2\)/.test(dock) &&
     /border-radius:20px/.test(dock) &&
-    /background:rgba\(15,27,44,\.46\)/.test(dock) &&
-    /\.app\.collapsed \.nav-item\{gap:0;padding:9px 10px;margin:1px 4px\}/.test(dock) &&
-    /padding-left:70px/.test(dock) &&
+    /background:rgba\(15,27,44,\.38\)/.test(dock) &&
+    /\.app\.collapsed \.nav-item\{gap:0;padding:10px 11px;margin:2px 6px;transform:none;/.test(dock) &&
+    /\.app\.collapsed \.nav-item\.active::before\{display:none\}/.test(dock) &&
+    /padding-left:76px/.test(dock) &&
     !/transform:scale/.test(dock),
     'AH: dock is matte glass, nothing protrudes beyond the pill');
   assert(/--dock-y/.test(js) && /function dockY\(on\)/.test(js) &&
     /side-folding/.test(js) && /side-folding/.test(css) &&
-    /const SIDE_FADE = 220;/.test(js) && /const SIDE_MORPH = 550;/.test(js),
-    'AH: two-phase mirrored choreography — same tempo both ways, centered dock');
+    /app\.classList\.toggle\('collapsed', collapsing\);/.test(js) &&
+    /app\.classList\.toggle\('side-folding', collapsing\);/.test(js) &&
+    !/SIDE_FADE/.test(js) && !/SIDE_MORPH/.test(js) &&
+    /cubic-bezier\(\.4,\.55,\.25,1\)/.test(dock) &&
+    /\(pref === 'collapsed' \|\| pref === null\)/.test(js),
+    'AJ: simultaneous mirrored choreography, default opens with dock');
 }
 
 function testIterationAFContracts() {

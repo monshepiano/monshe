@@ -3236,7 +3236,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.39", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.40", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3646,8 +3646,10 @@ class IterationADTests(unittest.TestCase):
     def test_ad9_agent_dot_slower(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         self.assertIn("transition:transform 2.6s cubic-bezier(.24,.72,.26,1),background .85s ease,", css)
-        # AI: амплитуда меньше — компактный трек и короткий ход круглешка
-        self.assertIn(".agent-switch-track{box-sizing:border-box;width:36px;height:24px", css)
+        # AJ: размер тумблера ВОЗВРАЩЁН (42×28, круглёшок 20px),
+        # уменьшено только ДВИЖЕНИЕ — ход 12px вместо 16
+        self.assertIn(".agent-switch-track{box-sizing:border-box;width:42px;height:28px", css)
+        self.assertIn("width:20px;height:20px;left:3px;top:3px", css)
         self.assertIn(".agent-switch-track input:checked + i{transform:translateX(12px);", css)
 
 
@@ -3787,26 +3789,38 @@ class IterationAGTests(unittest.TestCase):
         self.assertIn(".app.collapsed{grid-template-columns:0px 1fr}", css)
         self.assertIn(".main{grid-column:2}", css)
         dock = css.split("/* ---- свёрнутый режим: панель превращается в плавающий DOCK")[1].split("/* подпись иконки")[0]
-        # AI: КОРЕНЬ ширины — сайдбар сужается сам (62px), док 46px
-        self.assertIn(".app.collapsed .sidebar{width:62px;", dock)
+        # AJ: сайдбар 68px, док 52px — чуток крупнее и прозрачнее
+        self.assertIn(".app.collapsed .sidebar{width:68px;", dock)
         self.assertIn(".app.collapsed .dock{pointer-events:auto", dock)
         self.assertIn("backdrop-filter:blur(18px) saturate(1.2)", dock)
         self.assertIn("border-radius:20px", dock)
         self.assertIn("border-color:transparent", dock)
-        self.assertIn("background:rgba(15,27,44,.46)", dock)
-        # ничего не выпирает: квадратные пункты 38px с отступом, без масштаба
-        self.assertIn(".app.collapsed .nav-item{gap:0;padding:9px 10px;margin:1px 4px}", dock)
+        self.assertIn("background:rgba(15,27,44,.38)", dock)
+        self.assertIn("padding:10px 0;", dock)
+        # ничего не выпирает: квадратные пункты 40px, симметричные зазоры,
+        # активная полоска-свечение в доке скрыта
+        self.assertIn(".app.collapsed .nav-item{gap:0;padding:10px 11px;margin:2px 6px;transform:none;", dock)
+        self.assertIn(".app.collapsed .nav-item.active::before{display:none}", dock)
         self.assertIn(".app.collapsed .nav-item:hover{transform:none;background:rgba(0,212,255,.09)}", dock)
-        self.assertIn(".app.collapsed .nav-label{opacity:0;max-width:0}", dock)
+        self.assertIn(".app.collapsed .nav-label{opacity:0;max-width:0;", dock)
         # контент не едет под док
-        self.assertIn(".app.collapsed .main .view{padding-left:70px}", dock)
-        # зеркальная хореография: один темп в обе стороны
+        self.assertIn(".app.collapsed .main .view{padding-left:76px", dock)
+        # AJ: ОДНОВРЕМЕННАЯ анимация — никаких фаз и таймеров
         self.assertIn(".side-folding .chats-block,.side-folding .side-foot{opacity:0;transform:translateX(-14px)}", css)
-        self.assertIn("const SIDE_FADE = 220;", js)
-        self.assertIn("const SIDE_MORPH = 550;", js)
+        self.assertIn("app.classList.toggle('collapsed', collapsing);", js)
+        self.assertIn("app.classList.toggle('side-folding', collapsing);", js)
+        self.assertNotIn("SIDE_FADE", js)
+        self.assertNotIn("SIDE_MORPH", js)
+        # направления различаются ТОЛЬКО кривой
+        self.assertIn("cubic-bezier(.4,.55,.25,1)", dock)
+        self.assertIn("cubic-bezier(.25,.7,.3,1)", css)
+        # AJ: по умолчанию Джарвис открывается с доком
+        self.assertIn("(pref === 'collapsed' || pref === null)", js)
         self.assertIn("function dockY(on)", js)
         self.assertIn("--dock-y", js)
         self.assertIn('<div class="dock">', html)
+        # AJ: стрелка строго по центру кнопки
+        self.assertIn(".collapse-btn{width:26px;height:26px;font-size:16px;display:grid;place-items:center;", css)
 
 
 class BareToolArgumentsTests(unittest.TestCase):

@@ -530,13 +530,10 @@ function pulseNav(view, strong) {
    ширину, док парит по центру высоты). Разворачивание — в обратном
    порядке, тем же темпом. */
 function isNarrow() { return window.matchMedia('(max-width:900px)').matches; }
-let sideT = 0;
-/* ЕДИНЫЙ ТЕМП ПРЕВРАЩЕНИЯ: обе стороны абсолютно зеркальны и одной
-   длительности — сворачивание = гашение(220) + превращение(550),
-   разворачивание = превращение(550) + возврат(220). Как у всех
-   парных анимаций Джарвиса: тот же рисунок, только наоборот. */
-const SIDE_FADE = 220;
-const SIDE_MORPH = 550;
+/* ЕДИНЫЙ РИСУНОК ПРЕВРАЩЕНИЯ: всё происходит ОДНОВРЕМЕННО — диалоги
+   уезжают вбок ровно в тот же такт, что панель превращается в док (и
+   наоборот). Никаких фаз и таймеров: одинаковая длительность .55s,
+   направления различаются ТОЛЬКО кривой плавности (CSS). */
 /* док держит своё смещение в --dock-y: transform плавно увозит пилюлю
    в центр высоты и так же плавно возвращает (offsetTop не зависит от
    transform — стрелки-клики не сбивают прицел) */
@@ -554,32 +551,21 @@ function toggleSidebar() {
   const app = $('#app');
   if (isNarrow()) { app.classList.toggle('nav-open'); return; }
   app.classList.remove('nav-open');
-  clearTimeout(sideT);
-  // намерение фиксируем СРАЗУ: сам класс появится во второй фазе
   const collapsing = !app.classList.contains('collapsed');
-  if (collapsing) {
-    // фаза 1: лишнее (диалоги, статистика) мягко гаснет…
-    app.classList.add('side-folding');
-    // фаза 2: …панель превращается в док и уплывает в центр высоты
-    sideT = setTimeout(() => {
-      app.classList.add('collapsed');
-      dockY(true);
-      sideT = setTimeout(() => app.classList.remove('side-folding'), SIDE_MORPH);
-    }, SIDE_FADE);
-  } else {
-    // зеркально: сначала превращение в панель…
-    app.classList.remove('collapsed');
-    dockY(false);
-    // …затем диалоги и статистика возвращаются тем же темпом
-    sideT = setTimeout(() => app.classList.remove('side-folding'), SIDE_MORPH);
-  }
+  app.classList.toggle('collapsed', collapsing);
+  // диалоги уезжают/возвращаются РАЗОМ с превращением — один такт
+  app.classList.toggle('side-folding', collapsing);
+  dockY(collapsing);
   try {
     localStorage.setItem('jarvis.sidebar', collapsing ? 'collapsed' : 'open');
   } catch (e) {}
 }
 $('#collapseBtn').addEventListener('click', toggleSidebar);
 try {
-  if (localStorage.getItem('jarvis.sidebar') === 'collapsed' && !isNarrow()) {
+  // AJ: ПО УМОЛЧАНИЮ ДЖАРВИС ОТКРЫВАЕТСЯ С ДОКОМ — панель свёрнута,
+  // пока пользователь впервые не развернёт её сам
+  const pref = localStorage.getItem('jarvis.sidebar');
+  if ((pref === 'collapsed' || pref === null) && !isNarrow()) {
     $('#app').classList.add('collapsed');
     // восстановление БЕЗ анимации: пилюля сразу в центре высоты
     const dock = document.querySelector('.dock');
