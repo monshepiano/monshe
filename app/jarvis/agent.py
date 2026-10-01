@@ -1612,17 +1612,42 @@ def local_answer_from_results(convo: List[Dict[str, Any]]) -> str:
 _REASONING_RU = {"role": "system",
                  "content": "Внутренние рассуждения (reasoning) веди строго "
                             "на русском языке — это требование пользователя."}
+_REASONING_HINT = "\n\n(Внутренние рассуждения пиши по-русски.)"
 
 
 def _with_reasoning_lang(convo: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Двойное давление на язык reasoning (перед отправкой модели):
+
+    1. system-нота вплотную к последнему сообщению;
+    2. приписка в скобках в КОНЦЕ последнего user-сообщения — для
+       reasoner-моделей язык ближайшего текста задаёт язык мышления
+       сильнее любой системы. Приписка только в копии для отправки:
+       сохранённая история диалога остаётся чистой.
+    """
     if not convo:
         return convo
-    # если перед последним сообщением уже стоит служебная system-нота
-    # (контракт интерфейса) — языковая нота встаёт ПЕРЕД ней, не после:
-    # две системы подряд перед запросом, порядок служебных нот сохранён
-    if len(convo) >= 2 and convo[-2].get("role") == "system":
-        return convo[:-2] + [_REASONING_RU, convo[-2], convo[-1]]
-    return convo[:-1] + [_REASONING_RU, convo[-1]]
+    out = list(convo)
+    # приписка к последнему user-сообщению (если оно последнее)
+    if out[-1].get("role") == "user" and isinstance(out[-1].get("content"), str):
+        last = dict(out[-1])
+        last["content"] = last["content"] + _REASONING_HINT
+        out[-1] = last
+    # system-нота перед последним сообщением
+    if len(out) >= 2 and out[-2].get("role") == "system":
+        return out[:-2] + [_REASONING_RU, out[-2], out[-1]]
+    return out[:-1] + [_REASONING_RU, out[-1]]
+
+
+def _reasoning_ru_visible(text: str) -> bool:
+    """Показывать ли порцию хода мыслей. Если модель всё равно думает
+    по-английски (латиница > 60% букв) — порция в ленту НЕ идёт:
+    пользователь просил мысли на языке запроса, и английских кусков
+    он видеть не должен. Ответ модели ниже — по-русски, как всегда."""
+    letters = [ch for ch in str(text or "") if ch.isalpha()]
+    if not letters:
+        return True
+    latin = sum(1 for ch in letters if "a" <= ch <= "z" or "A" <= ch <= "Z")
+    return latin / len(letters) <= 0.6
 
 
 def _compact_convo(convo: List[Dict[str, Any]]) -> None:
@@ -2343,6 +2368,9 @@ class Agent:
                     # служебная фраза не заслуживает отдельной карточки.
                     if self.show_thinking or self.quiet_thinking:
                         piece = str(event.get("text") or "")
+                        # английские обломки мышления в ленту не идут
+                        if piece and not _reasoning_ru_visible(piece):
+                            piece = ""
                         if thinking_visible:
                             if piece:
                                 out = {"type": "thinking", "text": piece}
