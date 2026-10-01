@@ -1608,11 +1608,23 @@ function addUserMsg(text, atts, info, hostOverride) {
   return m;
 }
 
+/* AJ: СИГИЛ ОТВЕТА. Прежний анимированный реактор дублировал боковое ядро.
+   Теперь слева от имени — тонкая фигура-абстракция: в покое она медленно
+   морфится (круг → шестиугольник → ромб), по контуру изредка пробегает
+   блик; пока ответ печатается (.typing), фигура растворяется в живой
+   росчерк-волну, который едва заметно дышит. Переключение — чистый CSS
+   по :has(.typing), без JS-состояний. */
+const SIGIL_SVG =
+    '<div class="ai-sigil" aria-hidden="true"><svg viewBox="0 0 34 34">' +
+    '<path class="sigil-shape" d="M17.0 5.5 C21.1 5.5,22.9 11.2,27.0 11.2 C29.0 14.8,24.9 19.2,27.0 22.8 C24.9 26.3,19.1 24.9,17.0 28.5 C12.9 28.5,11.1 22.8,7.0 22.8 C5.0 19.2,9.1 14.8,7.0 11.2 C9.1 7.7,14.9 9.1,17.0 5.5Z"><animate attributeName="d" dur="26s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.34;0.67;1" keySplines="0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1" values="M17.0 5.5 C21.1 5.5,22.9 11.2,27.0 11.2 C29.0 14.8,24.9 19.2,27.0 22.8 C24.9 26.3,19.1 24.9,17.0 28.5 C12.9 28.5,11.1 22.8,7.0 22.8 C5.0 19.2,9.1 14.8,7.0 11.2 C9.1 7.7,14.9 9.1,17.0 5.5Z;M17.0 5.5 C18.1 5.5,25.9 11.2,27.0 11.2 C27.5 12.2,26.4 21.8,27.0 22.8 C26.4 23.7,17.6 27.5,17.0 28.5 C15.9 28.5,8.1 22.8,7.0 22.8 C6.5 21.8,7.6 12.2,7.0 11.2 C7.6 10.3,16.4 6.5,17.0 5.5Z;M17.0 5.5 C18.0 5.2,21.7 11.6,22.8 11.2 C23.5 12.0,27.7 16.2,28.5 17.0 C28.2 18.0,17.3 27.5,17.0 28.5 C16.0 28.8,12.3 22.4,11.2 22.8 C10.5 22.0,6.3 17.8,5.5 17.0 C5.8 16.0,16.7 6.5,17.0 5.5Z;M17.0 5.5 C21.1 5.5,22.9 11.2,27.0 11.2 C29.0 14.8,24.9 19.2,27.0 22.8 C24.9 26.3,19.1 24.9,17.0 28.5 C12.9 28.5,11.1 22.8,7.0 22.8 C5.0 19.2,9.1 14.8,7.0 11.2 C9.1 7.7,14.9 9.1,17.0 5.5Z"/></path>' +
+    '<path class="sigil-sweep" pathLength="100" d="M17.0 5.5 C21.1 5.5,22.9 11.2,27.0 11.2 C29.0 14.8,24.9 19.2,27.0 22.8 C24.9 26.3,19.1 24.9,17.0 28.5 C12.9 28.5,11.1 22.8,7.0 22.8 C5.0 19.2,9.1 14.8,7.0 11.2 C9.1 7.7,14.9 9.1,17.0 5.5Z"><animate attributeName="d" dur="26s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.34;0.67;1" keySplines="0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1" values="M17.0 5.5 C21.1 5.5,22.9 11.2,27.0 11.2 C29.0 14.8,24.9 19.2,27.0 22.8 C24.9 26.3,19.1 24.9,17.0 28.5 C12.9 28.5,11.1 22.8,7.0 22.8 C5.0 19.2,9.1 14.8,7.0 11.2 C9.1 7.7,14.9 9.1,17.0 5.5Z;M17.0 5.5 C18.1 5.5,25.9 11.2,27.0 11.2 C27.5 12.2,26.4 21.8,27.0 22.8 C26.4 23.7,17.6 27.5,17.0 28.5 C15.9 28.5,8.1 22.8,7.0 22.8 C6.5 21.8,7.6 12.2,7.0 11.2 C7.6 10.3,16.4 6.5,17.0 5.5Z;M17.0 5.5 C18.0 5.2,21.7 11.6,22.8 11.2 C23.5 12.0,27.7 16.2,28.5 17.0 C28.2 18.0,17.3 27.5,17.0 28.5 C16.0 28.8,12.3 22.4,11.2 22.8 C10.5 22.0,6.3 17.8,5.5 17.0 C5.8 16.0,16.7 6.5,17.0 5.5Z;M17.0 5.5 C21.1 5.5,22.9 11.2,27.0 11.2 C29.0 14.8,24.9 19.2,27.0 22.8 C24.9 26.3,19.1 24.9,17.0 28.5 C12.9 28.5,11.1 22.8,7.0 22.8 C5.0 19.2,9.1 14.8,7.0 11.2 C9.1 7.7,14.9 9.1,17.0 5.5Z"/></path>' +
+    '<path class="sigil-wave" d="M5 20.5 C10 6.5,15.5 27.5,21 14.5 C25 8,29.5 10.5,29 17.5"/>' +
+    '</svg></div>';
+
 function addAiMsg(ts, hostOverride) {
   const m = el('div', 'msg msg-ai');
   m.innerHTML =
-    '<div class="ai-avatar"><div class="reactor sm" style="width:34px;height:34px">' +
-    '<div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div></div>' +
+    '<div class="ai-avatar">' + SIGIL_SVG + '</div>' +
     '<div class="ai-body"><div class="ai-name">JARVIS<span class="ai-model"></span></div>' +
     '<div class="ai-content"></div></div>';
   stampTime(m, ts);
@@ -2164,8 +2176,7 @@ function collapseToThumb(node, opts) {
   if (asMsg) {
     holder = el('div', 'msg msg-ai thumb-msg');
     holder.innerHTML =
-      '<div class="ai-avatar"><div class="reactor sm" style="width:34px;height:34px">' +
-      '<div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div></div>' +
+      '<div class="ai-avatar">' + SIGIL_SVG + '</div>' +
       '<div class="ai-body"></div>';
     holder.querySelector('.ai-body').appendChild(thumb);
   }
@@ -6865,8 +6876,7 @@ function voiceSetPhase(p) {
 function buildVoiceCard() {
   const card = el('div', 'msg msg-ai voice-msg');
   card.innerHTML =
-    '<div class="ai-avatar"><div class="reactor sm" style="width:34px;height:34px">' +
-    '<div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div></div>' +
+    '<div class="ai-avatar">' + SIGIL_SVG + '</div>' +
     '<div class="ai-body"><div class="ai-name">JARVIS<span class="ai-model"> · разговор</span></div>' +
     '<div class="ai-content"><div class="voice-live"></div></div></div>';
   return card;
@@ -7232,8 +7242,7 @@ function applySilentTools(list) {
 function buildCamCard() {
   const card = el('div', 'msg msg-ai cam-msg');
   card.innerHTML =
-    '<div class="ai-avatar"><div class="reactor sm" style="width:34px;height:34px">' +
-    '<div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div></div>' +
+    '<div class="ai-avatar">' + SIGIL_SVG + '</div>' +
     '<div class="ai-body"><div class="ai-name">JARVIS<span class="ai-model"> · зрение</span></div>' +
     '<div class="ai-content">' +
       '<div class="cam-live">' +

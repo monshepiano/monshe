@@ -2398,6 +2398,18 @@ function testIterationADContracts() {
     'AD9: agent toggle — full-size 42x28 track, 12px travel, 2.6s glide');
 }
 
+function testIterationAJContracts() {
+  // AJ: сигил вместо второго реактора у ответов
+  assert(!/class="reactor sm" style="width:34px;height:34px"/.test(js) &&
+    /const SIGIL_SVG =/.test(js) &&
+    /class="ai-sigil"/.test(js) && /class="sigil-wave"/.test(js),
+    'AJ: answer avatar is a sigil (morphing figure + living stroke), not a reactor');
+  assert(/animation:sigilSweep 12s ease-in-out infinite/.test(css) &&
+    /animation:sigilBreathe 2\.6s ease-in-out infinite/.test(css) &&
+    /\.msg-ai:has\(\.typing\) \.sigil-wave\{opacity:\.92/.test(css),
+    'AJ: figure breathes with a rare glint; typing swaps it for a living stroke');
+}
+
 function testIterationAHContracts() {
   // AG2: каждый звонок — новый разговор; голосовые не в песочнице
   assert(!/jarvisVoiceChat/.test(js) &&
@@ -2561,7 +2573,8 @@ function testIterationABContracts() {
   testIterationAEContracts();
   testIterationAFContracts();
   testIterationAHContracts();
-  console.log('package28_frontend_runtime: 24 regression groups passed');
+  testIterationAJContracts();
+  console.log('package28_frontend_runtime: 25 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

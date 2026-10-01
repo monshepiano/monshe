@@ -540,6 +540,33 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   white-space:pre-wrap;word-break:break-word}
 .msg-ai{display:flex;gap:13px}
 .ai-avatar{flex-shrink:0;width:34px;height:34px;position:relative}
+/* AJ: СИГИЛ ОТВЕТА — фигура-абстракция вместо второго реактора.
+   В покое: тонкий контур ОЧЕНЬ медленно морфится (круг→шестиугольник→
+   ромб, 26с цикл) и изредка (раз в ~12с) по контуру пробегает блик.
+   Во время печати ответа (:has(.typing)) фигура тает, а её место занимает
+   живой росчерк-волна, едва заметно дышащий. Никакого пульса и ядер. */
+.ai-sigil{width:34px;height:34px;display:grid;place-items:center}
+.ai-sigil svg{width:34px;height:34px;display:block;overflow:visible}
+.sigil-shape{fill:none;stroke:var(--cy);stroke-width:1.5;opacity:.78;
+  transition:opacity .7s ease}
+.sigil-sweep{fill:none;stroke:#eafcff;stroke-width:1.5;stroke-linecap:round;
+  stroke-dasharray:13 87;opacity:0;transition:opacity .7s ease;
+  animation:sigilSweep 12s ease-in-out infinite}
+@keyframes sigilSweep{
+  0%{stroke-dashoffset:100;opacity:0}
+  5%{opacity:.7}
+  24%{stroke-dashoffset:0;opacity:0}
+  100%{stroke-dashoffset:0;opacity:0}}
+.sigil-wave{fill:none;stroke:var(--cy);stroke-width:1.6;stroke-linecap:round;
+  opacity:0;transition:opacity .7s ease}
+.msg-ai:has(.typing) .sigil-shape{opacity:0}
+.msg-ai:has(.typing) .sigil-sweep{animation:none;opacity:0}
+.msg-ai:has(.typing) .sigil-wave{opacity:.92;animation:sigilBreathe 2.6s ease-in-out infinite}
+@keyframes sigilBreathe{
+  0%,100%{transform:translateY(0);opacity:.68}
+  50%{transform:translateY(1.4px);opacity:1}}
+/* блик и морф тихнут в неактивных (камера закрыта) ответах */
+.ui-inert .ai-sigil{opacity:.55;filter:saturate(.7)}
 .ai-body{flex:1;min-width:0}
 .ai-name{font-size:10.5px;letter-spacing:2.2px;color:var(--cy);text-transform:uppercase;margin-bottom:7px;
   display:flex;align-items:center;gap:8px}

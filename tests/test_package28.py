@@ -3236,7 +3236,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.40", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.41", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3821,6 +3821,30 @@ class IterationAGTests(unittest.TestCase):
         self.assertIn('<div class="dock">', html)
         # AJ: стрелка строго по центру кнопки
         self.assertIn(".collapse-btn{width:26px;height:26px;font-size:16px;display:grid;place-items:center;", css)
+
+
+class IterationAJTests(unittest.TestCase):
+    """AJ (beta.41): сигил ответа — морфинг-фигура + живой росчерк."""
+
+    def test_aj_sigil_replaces_reactor(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # реактор больше не рендерится у ответов (сигил вместо него)
+        self.assertNotIn('<div class="reactor sm" style="width:34px;height:34px">', js)
+        self.assertIn("const SIGIL_SVG =", js)
+        self.assertIn('class="ai-sigil"', js)
+        self.assertIn('class="sigil-shape"', js)
+        self.assertIn('class="sigil-sweep"', js)
+        self.assertIn('class="sigil-wave"', js)
+        # морфинг: три формы, одинаковая структура из 6 кубических сегментов
+        self.assertIn("dur=\"26s\"", js)
+        for d in js.split('values="')[1].split('"')[0].split(';'):
+            self.assertEqual(d.count('C'), 6)
+        # покой: медленный морф + редкий блик; печать: росчерк дышит
+        self.assertIn("animation:sigilSweep 12s ease-in-out infinite", css)
+        self.assertIn("animation:sigilBreathe 2.6s ease-in-out infinite", css)
+        self.assertIn(".msg-ai:has(.typing) .sigil-wave{opacity:.92", css)
+        self.assertIn(".msg-ai:has(.typing) .sigil-shape{opacity:0}", css)
 
 
 class BareToolArgumentsTests(unittest.TestCase):
