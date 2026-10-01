@@ -3236,7 +3236,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.37", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.38", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3583,7 +3583,7 @@ class IterationADTests(unittest.TestCase):
         fold = js.split("function qtFold(ui, node, isLast)")[1].split("\nfunction ")[0]
         # AG: затемнение — В САМОМ WAAPI-полёте (неуничтожимо CSS-гонками)
         self.assertIn("const flyKeys = (target) => [", fold)
-        self.assertIn("{ opacity: 1, filter: 'blur(1.5px) brightness(.5)', offset: .45 },", fold)
+        self.assertIn("{ opacity: 1, filter: 'blur(1px) brightness(.66)', offset: .6 },", fold)
         self.assertIn("filter: 'blur(4px) brightness(.08)'", fold)
         self.assertIn("flight.effect.setKeyframes(flyKeys(aim));", fold)
 
@@ -3643,7 +3643,7 @@ class IterationADTests(unittest.TestCase):
 
     def test_ad9_agent_dot_slower(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("transition:transform 1.1s cubic-bezier(.23,.86,.24,1)", css)
+        self.assertIn("transition:transform 1.9s cubic-bezier(.22,.85,.25,1),background .85s ease,", css)
 
 
 class IterationAETests(unittest.TestCase):
@@ -3654,9 +3654,11 @@ class IterationAETests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         self.assertIn('.nav-item[data-view="scenarios"] .nav-ico{color:#a84a5b}', css)
         self.assertIn('.nav-item[data-view="scenarios"].active::before{background:#a84a5b', css)
-        # AG: заголовок страницы — блёклый, ближе к белому (как у других вкладок)
-        self.assertIn('.view-scenarios h2{color:#e9ccd3}', css)
-        self.assertIn('.view-scenarios .panel-head h2{color:#e9ccd3}', css)
+        # AH: заголовок страницы — блёклый, как у остальных вкладок;
+        # СТАРОЕ правило-победитель var(--red) удалено
+        self.assertIn('.view-scenarios h2{color:#f5ccd3}', css)
+        self.assertIn('.view-scenarios .panel-head h2{color:#f5ccd3}', css)
+        self.assertNotIn('.view-scenarios .panel-head h2{color:var(--red)}', css)
 
     def test_ae2_live_uploads_leave_no_files(self) -> None:
         srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
@@ -3699,7 +3701,7 @@ class IterationAFTests(unittest.TestCase):
     def test_af1_scenarios_red(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         self.assertIn('.nav-item[data-view="scenarios"] .nav-ico{color:#a84a5b}', css)
-        self.assertIn('.view-scenarios .panel-head h2{color:#e9ccd3}', css)
+        self.assertIn('.view-scenarios .panel-head h2{color:#f5ccd3}', css)
 
     def test_af2_small_talk_gets_light_prompt(self) -> None:
         # «как дела» —.social реплика: ЛЁГКИЙ промпт без песочницы/инструментов
@@ -3736,13 +3738,14 @@ class IterationAFTests(unittest.TestCase):
 
 
 class IterationAGTests(unittest.TestCase):
-    """AG (beta.37): док-меню, тьма в самом полёте, чистые голосовые,
+    """AG/AH (beta.38): док-меню, тьма в самом полёте, чистые голосовые,
     свежий звонок, понятные ошибки зрения, дороже тумблер."""
 
     def test_ag1_scenarios_muted(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         self.assertIn('.nav-item[data-view="scenarios"] .nav-ico{color:#a84a5b}', css)
-        self.assertIn('.view-scenarios .panel-head h2{color:#e9ccd3}', css)
+        self.assertIn('.view-scenarios .panel-head h2{color:#f5ccd3}', css)
+        self.assertNotIn('.view-scenarios .panel-head h2{color:var(--red)}', css)
 
     def test_ag2_voice_files_never_touch_workspace(self) -> None:
         code = Path("app/jarvis/tools/media.py").read_text(encoding="utf-8")
@@ -3761,7 +3764,7 @@ class IterationAGTests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         fold = js.split("function qtFold(ui, node, isLast)")[1].split("\nfunction ")[0]
         self.assertIn("const flyKeys = (target) => [", fold)
-        self.assertIn("offset: .45", fold)
+        self.assertIn("offset: .6", fold)
         self.assertIn("flight.effect.setKeyframes(flyKeys(aim));", fold)
         # CSS-гонка с задержками убрана: остаётся только высота
         self.assertNotIn("opacity .5s ease-in .5s", fold)
@@ -3772,12 +3775,27 @@ class IterationAGTests(unittest.TestCase):
 
     def test_ag6_collapsed_dock(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        dock = css.split("/* ---- узкий режим: БОКОВОЙ DOCK")[1].split("/* подпись иконки")[0]
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        # AH: контент на всю ширину, верхняя рамка — до конца налево
+        self.assertIn(".app.collapsed{grid-template-columns:0px 1fr}", css)
+        self.assertIn(".main{grid-column:2}", css)
+        dock = css.split("/* ---- свёрнутый режим: панель превращается в плавающий DOCK")[1].split("/* подпись иконки")[0]
+        self.assertIn(".app.collapsed .dock{pointer-events:auto", dock)
         self.assertIn("backdrop-filter:blur(16px)", dock)
-        self.assertIn("border-radius:18px", dock)
-        self.assertIn("justify-content:center", dock)
-        self.assertIn(".app.collapsed .nav-item:hover{background:rgba(0,212,255,.09);transform:scale(1.08)}", css)
-        self.assertIn(".app.collapsed .nav-ico{width:auto;font-size:16px;opacity:.55", css)
+        self.assertIn("border-radius:17px", dock)
+        self.assertIn("background:rgba(10,20,34,.42)", dock)
+        # ничего не выпирает: пункты с отступом, без масштаба
+        self.assertIn(".app.collapsed .nav-item{gap:0;padding:9px 11px;margin:1px 5px}", dock)
+        self.assertIn(".app.collapsed .nav-item:hover{transform:none;background:rgba(0,212,255,.09)}", dock)
+        self.assertIn(".app.collapsed .nav-label{opacity:0;max-width:0}", dock)
+        # контент не едет под док
+        self.assertIn(".app.collapsed .main .view{padding-left:58px}", dock)
+        # двухфазная хореография панель <-> док
+        self.assertIn(".side-folding .chats-block,.side-folding .side-foot{opacity:0;transform:translateX(-14px)}", css)
+        self.assertIn("function dockY(on)", js)
+        self.assertIn("--dock-y", js)
+        self.assertIn('<div class="dock">', html)
 
 
 class BareToolArgumentsTests(unittest.TestCase):

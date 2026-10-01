@@ -524,22 +524,68 @@ function pulseNav(view, strong) {
   setTimeout(() => item.classList.remove('save-glint', 'save-glint-strong'), 1050);
 }
 /* сворачивание бокового меню.
-   На узком экране меню выезжает поверх (nav-open),
-   на широком — схлопывается колонка сетки (collapsed). */
+   На узком экране меню выезжает поверх (nav-open). На широком панель
+   ПРЕВРАЩАЕТСЯ В ДОК — двухфазно: сначала гаснут диалоги и статистика,
+   затем панель morph'ится в стеклянную пилюлю (контент занимает всю
+   ширину, док парит по центру высоты). Разворачивание — в обратном
+   порядке, тем же темпом. */
 function isNarrow() { return window.matchMedia('(max-width:900px)').matches; }
+let sideT = 0;
+/* док держит своё смещение в --dock-y: transform плавно увозит пилюлю
+   в центр высоты и так же плавно возвращает (offsetTop не зависит от
+   transform — стрелки-клики не сбивают прицел) */
+function dockY(on) {
+  const dock = document.querySelector('.dock');
+  if (!dock) return;
+  if (on) {
+    const dy = Math.max(0, (window.innerHeight - dock.offsetHeight) / 2 - dock.offsetTop);
+    dock.style.setProperty('--dock-y', dy + 'px');
+  } else {
+    dock.style.setProperty('--dock-y', '0px');
+  }
+}
 function toggleSidebar() {
   const app = $('#app');
   if (isNarrow()) { app.classList.toggle('nav-open'); return; }
   app.classList.remove('nav-open');
-  const collapsed = app.classList.toggle('collapsed');
-  try { localStorage.setItem('jarvis.sidebar', collapsed ? 'collapsed' : 'open'); } catch (e) {}
+  clearTimeout(sideT);
+  // намерение фиксируем СРАЗУ: сам класс появится во второй фазе
+  const collapsing = !app.classList.contains('collapsed');
+  if (collapsing) {
+    // фаза 1: лишнее (диалоги, статистика) мягко гаснет…
+    app.classList.add('side-folding');
+    // фаза 2: …панель превращается в док и уплывает в центр высоты
+    sideT = setTimeout(() => {
+      app.classList.add('collapsed');
+      dockY(true);
+      sideT = setTimeout(() => app.classList.remove('side-folding'), 650);
+    }, 230);
+  } else {
+    app.classList.remove('collapsed');
+    dockY(false);
+    sideT = setTimeout(() => app.classList.remove('side-folding'), 460);
+  }
+  try {
+    localStorage.setItem('jarvis.sidebar', collapsing ? 'collapsed' : 'open');
+  } catch (e) {}
 }
 $('#collapseBtn').addEventListener('click', toggleSidebar);
 try {
   if (localStorage.getItem('jarvis.sidebar') === 'collapsed' && !isNarrow()) {
     $('#app').classList.add('collapsed');
+    // восстановление БЕЗ анимации: пилюля сразу в центре высоты
+    const dock = document.querySelector('.dock');
+    if (dock) {
+      dock.style.transition = 'none';
+      dockY(true);
+      void dock.offsetHeight;
+      dock.style.transition = '';
+    }
   }
 } catch (e) {}
+window.addEventListener('resize', () => {
+  if ($('#app').classList.contains('collapsed') && !isNarrow()) dockY(true);
+});
 
 /* Правой панели больше нет: уведомления, санкции и камера живут прямо в чате
    (см. разделы «камера в диалоге» и «санкции / уведомления в диалоге» ниже). */
@@ -4671,7 +4717,7 @@ function qtFold(ui, node, isLast) {
   let aim = titleC() - labC - base0;
   const flyKeys = (target) => [
     { transform: 'translateY(0px)', opacity: 1, filter: 'blur(0px) brightness(1)' },
-    { opacity: 1, filter: 'blur(1.5px) brightness(.5)', offset: .45 },
+    { opacity: 1, filter: 'blur(1px) brightness(.66)', offset: .6 },
     { transform: 'translateY(' + target + 'px)', opacity: 0,
       filter: 'blur(4px) brightness(.08)' }];
   const flight = node.animate(

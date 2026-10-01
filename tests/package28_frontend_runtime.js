@@ -2356,7 +2356,7 @@ function testIterationADContracts() {
   // AD2: инструмент тонет в темноте под группой
   const fold = extractFunction(js, 'qtFold');
   assert(/const flyKeys = \(target\) => \[/.test(fold) &&
-    /offset: \.45/.test(fold) &&
+    /offset: \.6/.test(fold) &&
     /blur\(4px\) brightness\(\.08\)/.test(fold) &&
     /setKeyframes\(flyKeys\(aim\)\)/.test(fold),
     'AD2: dimming lives INSIDE the WAAPI flight keyframes — cannot be lost');
@@ -2392,11 +2392,11 @@ function testIterationADContracts() {
     /title="Звук"/.test(html) && !/Голос Джарвиса: озвучивать/.test(html),
     'AD8: the corner button is the master sound switch (UI sounds + spoken replies)');
   // AD9: кружок AGENT чуть медленнее
-  assert(/transition:transform 1\.1s cubic-bezier\(\.23,\.86,\.24,1\)/.test(css),
+  assert(/transition:transform 1\.9s cubic-bezier\(\.22,\.85,\.25,1\)/.test(css),
     'AD9: agent toggle dot travels a touch slower again');
 }
 
-function testIterationAGContracts() {
+function testIterationAHContracts() {
   // AG2: каждый звонок — новый разговор; голосовые не в песочнице
   assert(!/jarvisVoiceChat/.test(js) &&
     !/voiceLoadTranscript\(\);/.test(extractFunction(js, 'openVoiceMode')),
@@ -2406,12 +2406,20 @@ function testIterationAGContracts() {
   assert(/const flyKeys = \(target\) => \[/.test(foldFn) &&
     /setKeyframes\(flyKeys\(aim\)\)/.test(foldFn),
     'AG3: dimming keys travel inside the flight, homing keeps them');
-  // AG6: свёрнутое меню — боковой док
-  const dock = css.split('/* ---- узкий режим: БОКОВОЙ DOCK')[1].split('/* подпись иконки')[0];
-  assert(/backdrop-filter:blur\(16px\)/.test(dock) &&
-    /border-radius:18px/.test(dock) &&
-    /transform:scale\(1\.08\)/.test(css),
-    'AG6: collapsed sidebar is a translucent Mac-style dock');
+  // AH: свёрнутое меню — плавающий док, контент на всю ширину
+  assert(/\.app\.collapsed\{grid-template-columns:0px 1fr\}/.test(css) &&
+    /\.main\{grid-column:2\}/.test(css),
+    'AH: content spans full width when collapsed; topbar reaches the left edge');
+  const dock = css.split('/* ---- свёрнутый режим: панель превращается в плавающий DOCK')[1].split('/* подпись иконки')[0];
+  assert(/\.app\.collapsed \.dock\{pointer-events:auto/.test(dock) &&
+    /backdrop-filter:blur\(16px\)/.test(dock) &&
+    /background:rgba\(10,20,34,\.42\)/.test(dock) &&
+    /\.app\.collapsed \.nav-item\{gap:0;padding:9px 11px;margin:1px 5px\}/.test(dock) &&
+    !/transform:scale/.test(dock),
+    'AH: dock is matte glass, nothing protrudes beyond the pill');
+  assert(/--dock-y/.test(js) && /function dockY\(on\)/.test(js) &&
+    /side-folding/.test(js) && /side-folding/.test(css),
+    'AH: two-phase collapse choreography with a centered dock');
 }
 
 function testIterationAFContracts() {
@@ -2427,8 +2435,9 @@ function testIterationAFContracts() {
 function testIterationAEContracts() {
   // AE1: сценам — красноватый в общей палитре
   assert(/\.nav-item\[data-view="scenarios"\] \.nav-ico\{color:#a84a5b\}/.test(css) &&
-    /\.view-scenarios \.panel-head h2\{color:#e9ccd3\}/.test(css),
-    'AE1: scenarios tab is muted dark red; the page title is pale, near-white');
+    /\.view-scenarios \.panel-head h2\{color:#f5ccd3\}/.test(css) &&
+    !/\.view-scenarios \.panel-head h2\{color:var\(--red\)\}/.test(css),
+    'AE1: scenarios tab is muted dark red; the page title is pale like other tabs');
   // AE2: живые вложения не становятся файлами
   assert(/transient: true,/.test(extractFunction(js, 'camAttachFrame')),
     'AE2: camera frames upload as transient — never stored as dialog files');
@@ -2540,7 +2549,7 @@ function testIterationABContracts() {
   testIterationADContracts();
   testIterationAEContracts();
   testIterationAFContracts();
-  testIterationAGContracts();
+  testIterationAHContracts();
   console.log('package28_frontend_runtime: 24 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
