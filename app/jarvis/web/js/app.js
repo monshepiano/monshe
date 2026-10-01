@@ -265,7 +265,9 @@ function audioCtx() {
   } catch (e) { return null; }
 }
 
-function soundOn() { return !(!S.config.ui || S.config.ui.sound === false); }
+/* AF: по умолчанию звук ЕСТЬ: нет настройки — считается включённым.
+   Прежняя формула считала «нет секции ui» выключенным звуком. */
+function soundOn() { const ui = S.config && S.config.ui; return !(ui && ui.sound === false); }
 
 /* Одна нота: основной тон + октава + квинта, мягкая атака, длинный хвост.
    gain здесь ощутимо выше прежнего (было 0.05) — звук должен быть сочным. */
@@ -761,6 +763,7 @@ async function refreshState() {
   if (!st.ok) { setChip('#chipConn', 'err', 'нет связи'); return; }
   setChip('#chipConn', 'ok', 'связь');
   S.config = st.config || {};
+  syncSoundBtn();   // AF: конфиг приехал — кнопка звука показывает правду
   applySilentTools(st.silent_tools);
   S.tasks = st.tasks || [];
   S.autoPaused = !!st.auto_paused;
@@ -3906,6 +3909,7 @@ async function send(opts) {
         continue_of: opts.continueOf || '',
         voice: requestVoice,
         voice_context: (requestVoice && VOICE.ctxOn && S.chatId) || '',
+        camera_on: camLive(),
         agent_mode: requestAgentMode,
         computer_use: requestComputerUse,
         silent: !!opts.silent,
@@ -4629,13 +4633,13 @@ function qtFold(ui, node, isLast) {
   // Z: ВЫСОТА СХЛОПЫВАЕТСЯ ПОЗДНО И БЫСТРО. Раньше она резала подпись с
   // самого начала полёта — текст обрезался на полпути и «таял ниже
   // названия». Теперь подпись целиком доживает до самой папки.
-  // AE: ИНСТРУМЕНТ ЗАЛЕТАЕТ УЖЕ В ПОЛНУЮ ТЬМУ. Тайминг прежний — меняется
-  // ПРОЦЕНТ затемнения: к моменту посадки под группу строка почти чёрная
-  // (brightness .12) и растворена — с названием группы больше не сливается.
+  // AF: ЗАТЕМНЕНИЕ С САМОЙ СЕРЕДИНЫ ПОЛЁТА, к посадке — почти ПОЛНАЯ ТЬМА:
+  // старт .5с (ещё в воздухе), весь остаток пути строка гаснет и к моменту
+  // входа под группу чёрная (brightness .08) — с названием не сливается.
   node.style.transition =
     'height .42s cubic-bezier(.4,.6,.3,1) .58s, ' +
-    'opacity .26s ease-in .78s, filter .26s ease-in .78s';
-  node.style.filter = 'blur(4px) brightness(.12)';
+    'opacity .5s ease-in .5s, filter .5s ease-in .5s';
+  node.style.filter = 'blur(4px) brightness(.08)';
   node.style.opacity = '0';
   node.style.height = '0px';
   const t0 = performance.now();

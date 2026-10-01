@@ -126,32 +126,28 @@ def _start_bg_title(chat_id: str, text: str, notify=None) -> None:
 
 
 def _purge_chat_leftovers() -> None:
-    """AE: РАЗОВАЯ ЧИСТКА СТАРОГО МУСОРА. Живые кадры камеры и голосовые
-    записи раньше становились файлами диалога (camera_*.jpg, *.webm, *.wav) —
-    теперь загрузка таких вложений транзиентна и на диск не пишется. Здесь
-    убираем только то, что успело накопиться за прошлые версии: корень
-    каждой песочницы, только эти шаблоны, ничего больше не трогаем."""
+    """AE/AF: РАЗОВАЯ ЧИСТКА СЛУЖЕБНОГО МУСОРА прошлых версий. Живые кадры
+    камеры и голосовые записи раньше становились файлами (camera_*.jpg,
+    *.webm, *.wav) — теперь загрузка транзиентна и на диск не пишется. Здесь
+    убираем накопленное: РЕКУРСИВНО по всему workspace (песочницы диалогов И
+    общий каталог, включая подпапки), по служебным шаблонам имён и аудио.
+    Файлы человека не трогаем."""
     try:
-        chats_dir = sandbox.WORKSPACE / "chats"
-        if not chats_dir.is_dir():
-            return
+        prefixes = ("camera_", "frame_", "snapshot_", "screenshot_",
+                    "dictation_", "voice_", "audio_")
+        audio_exts = (".wav", ".webm", ".mp3", ".ogg", ".m4a", ".aac")
         removed = 0
-        for chat_path in chats_dir.iterdir():
-            if not chat_path.is_dir():
-                continue
-            for f in chat_path.iterdir():
-                if not f.is_file():
-                    continue
-                low = f.name.lower()
-                if (low.startswith("camera_") or
-                        low.endswith((".wav", ".webm", ".mp3", ".ogg", ".m4a", ".aac"))):
+        for dirpath, _dirs, files in os.walk(sandbox.WORKSPACE):
+            for fname in files:
+                low = fname.lower()
+                if low.startswith(prefixes) or low.endswith(audio_exts):
                     try:
-                        f.unlink()
+                        (Path(dirpath) / fname).unlink()
                         removed += 1
                     except OSError:
                         pass
         if removed:
-            print("чистка файлов диалогов: удалено живых вложений — %d" % removed, flush=True)
+            print("чистка файлов: удалено служебных вложений — %d" % removed, flush=True)
     except Exception:
         pass   # чистка никогда не должна мешать запуску
 
@@ -616,7 +612,8 @@ class Handler(BaseHTTPRequestHandler):
         # (фото, документы) хранятся как раньше.
         lower = name.lower()
         transient = bool(body.get("transient")) or \
-            lower.startswith("camera_") or \
+            lower.startswith(("camera_", "frame_", "snapshot_", "screenshot_",
+                              "dictation_", "voice_", "audio_")) or \
             lower.endswith((".wav", ".webm", ".mp3", ".ogg", ".m4a", ".aac"))
         kind = "image" if lower.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")) else "file"
         if transient:
@@ -820,8 +817,13 @@ class Handler(BaseHTTPRequestHandler):
 
         runner = agent.Agent(chat_id=chat_id, agent_mode=agent_mode, computer_use=computer_use,
                              voice_mode=voice_mode, cancel_check=lambda: False)
+        # AF: болтовня («как дела», «привет») — ЛЁГКИЙ промпт без песочницы
+        # и инструментов: рабочий промпт провоцировал дешёвую модель на
+        # доклады «песочница чиста» в ответ на простую реплику
+        light_prompt = orchestrator.is_social_only(text)
         messages = [{"role": "system", "content": agent.build_system_prompt(
-            agent_mode, computer_use, vision_direct=runner._vision_direct)}]
+            agent_mode, computer_use, vision_direct=runner._vision_direct,
+            light=light_prompt)}]
         if voice_mode:
             messages.append({"role": "system", "content": agent.VOICE_MODE_NOTE})
             # AC: «Контекст диалога» — модель ВИДИТ историю выбранного диалога,
@@ -920,6 +922,11 @@ class Handler(BaseHTTPRequestHandler):
         # и прогон сразу стартует в правильном режиме.
         mode_hint = (None if voice_mode else agent.suggest_mode(
             text, agent_mode=agent_mode, computer_use=computer_use))
+        # AF: КАМЕРА УЖЕ ВКЛЮЧЕНА — не предлагать включить её снова.
+        # Предложение режима уместно только выключенному режиму (AGENT и
+        # «Компьютер» уже проверяются в suggest_mode своими флагами).
+        if mode_hint and mode_hint.get("mode") == "camera" and body.get("camera_on"):
+            mode_hint = None
         if mode_hint:
             labels = {"agent": "AGENT", "computer": "Компьютер",
                       "camera": "Камера", "budget": "Лимит ₽"}

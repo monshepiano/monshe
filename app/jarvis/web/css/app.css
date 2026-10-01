@@ -180,13 +180,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .nav-item[data-view="files"]  .nav-ico{color:var(--lime)}
 .nav-item[data-view="memory"] .nav-ico{color:var(--violet)}
 .nav-item[data-view="settings"] .nav-ico{color:var(--amber)}
-/* AE: СЦЕНАРИИ — чуть красноватый (тёплый терракот между coral и amber
-   палитры), не выпадает из строки вкладок; активная вкладка и заголовок
-   страницы — в том же тоне */
-.nav-item[data-view="scenarios"] .nav-ico{color:#d4836d}
-.nav-item[data-view="scenarios"].active{background:linear-gradient(90deg,rgba(212,131,109,.18),rgba(212,131,109,.03))}
-.nav-item[data-view="scenarios"].active::before{background:#d4836d;box-shadow:0 0 12px rgba(212,131,109,.8)}
-.view-scenarios h2{color:#d4836d}
+/* AF: СЦЕНАРИИ — КРАСНЫЙ из палитры (--red), не оранжевый: иконка вкладки,
+   её активное состояние и заголовок страницы — один цвет */
+.nav-item[data-view="scenarios"] .nav-ico{color:var(--red)}
+.nav-item[data-view="scenarios"].active{background:linear-gradient(90deg,rgba(221,85,102,.18),rgba(221,85,102,.03))}
+.nav-item[data-view="scenarios"].active::before{background:var(--red);box-shadow:0 0 12px rgba(221,85,102,.8)}
+.view-scenarios h2{color:var(--red)}
+.view-scenarios .panel-head h2{color:var(--red)}
 .nav-item:hover .nav-ico{filter:drop-shadow(0 0 7px currentColor)}
 .nav-item[data-view="auto"].active{background:linear-gradient(90deg,rgba(47,156,146,.18),transparent)}
 .nav-item[data-view="auto"].active::before{background:var(--teal);box-shadow:0 0 12px var(--teal)}
@@ -396,7 +396,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .panel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:22px 26px 14px}
 .panel-head h2{margin:0;font-size:20px;font-weight:600;letter-spacing:.4px}
 .view-auto .panel-head h2{color:#a9f5ea}
-.view-scenarios .panel-head h2{color:#9df0dc}
+.view-scenarios .panel-head h2{color:var(--red)}
 /* общий контейнер контента вкладки: те же поля, что у сетки задач AUTO */
 .view-pad{flex:1 1 auto;min-height:0;overflow-y:auto;padding:6px 26px 26px}
 .view-files .panel-head h2{color:#dcf5a8}
@@ -1070,7 +1070,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch-track input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .agent-switch-track i{position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;
   background:var(--tx3);
-  transition:transform .82s cubic-bezier(.25,.75,.3,1),background .3s,box-shadow .3s;
+  transition:transform .95s cubic-bezier(.25,.75,.3,1),background .3s,box-shadow .3s;
   /* буква A живёт НА круглешке: тумблер подписан собой, без соседних слов */
   font-style:normal;font-weight:800;font-size:11px;line-height:20px;text-align:center;
   color:var(--panel2);font-family:inherit;user-select:none}
@@ -1542,6 +1542,10 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .cam-msg.offline .cam-video{display:none}
 .cam-msg.offline .cam-note{color:var(--tx3)}
 .cam-msg.offline .cam-hud span:last-child{color:var(--tx3)}
+/* AF: диалог читается, но чуть приглушён; живое описание кадра сверху —
+   особенно затемнено: это прошлое, а не текущее состояние */
+.cam-msg.offline .cam-chat{opacity:.85}
+.cam-msg.offline .cam-feed{opacity:.4}
 .cam-chat{display:flex;flex-direction:column;flex:1 1 0;min-height:0;
   overflow-y:auto;overscroll-behavior:contain;padding-right:4px;
   border-top:1px solid var(--line);padding-top:8px}

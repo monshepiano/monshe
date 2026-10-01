@@ -3153,8 +3153,8 @@ class IterationXTests(unittest.TestCase):
         self.assertIn("const agentAnswer = !!meta.agent;", js)
         # вальс: фейд у посадки, тело складывается первым, подпись доживает
         # AD: затемнение инструмента стартует в середине полёта, к посадке — тьма
-        self.assertIn("opacity .26s ease-in .78s", js)
-        self.assertIn("blur(4px) brightness(.12)", js)
+        self.assertIn("opacity .5s ease-in .5s", js)
+        self.assertIn("blur(4px) brightness(.08)", js)
         self.assertIn("height .42s cubic-bezier(.4,.6,.3,1) .58s", js)
         self.assertIn("height .3s ease, opacity .22s ease", js)
         self.assertNotIn("scale(.93)", js.split("function qtFold")[1].split("\nfunction ")[0])
@@ -3236,7 +3236,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.35", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.36", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3581,8 +3581,8 @@ class IterationADTests(unittest.TestCase):
     def test_ad2_tools_sink_into_darkness(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         fold = js.split("function qtFold(ui, node, isLast)")[1].split("\nfunction ")[0]
-        self.assertIn("opacity .26s ease-in .78s", fold)
-        self.assertIn("blur(4px) brightness(.12)", fold)
+        self.assertIn("opacity .5s ease-in .5s", fold)
+        self.assertIn("blur(4px) brightness(.08)", fold)
 
     def test_ad3_hover_single_tool(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -3613,8 +3613,11 @@ class IterationADTests(unittest.TestCase):
         self.assertIn("if (node.classList.contains('voice-msg') && !VOICE.open) node.classList.add('offline');", js)
         self.assertIn(".cam-msg.offline .cam-col-left,.voice-msg.offline .v-side{opacity:.5;pointer-events:none}", css)
         self.assertIn(".cam-msg.offline .cam-video{display:none}", css)
-        # AE: вся карточка (и диалог в ней) больше не затемняется
+        # AE: вся карточка не затемняется; AF: диалог ЧУТЬ приглушён,
+        # живое описание кадра сверху — особенно
         self.assertNotIn(".cam-msg.offline,.voice-msg.offline{opacity", css)
+        self.assertIn(".cam-msg.offline .cam-chat{opacity:.85}", css)
+        self.assertIn(".cam-msg.offline .cam-feed{opacity:.4}", css)
 
     def test_ad7_scenarios_icon(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
@@ -3637,7 +3640,7 @@ class IterationADTests(unittest.TestCase):
 
     def test_ad9_agent_dot_slower(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("transition:transform .82s cubic-bezier(.25,.75,.3,1)", css)
+        self.assertIn("transition:transform .95s cubic-bezier(.25,.75,.3,1)", css)
 
 
 class IterationAETests(unittest.TestCase):
@@ -3646,23 +3649,25 @@ class IterationAETests(unittest.TestCase):
 
     def test_ae1_scenarios_terrakota(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('.nav-item[data-view="scenarios"] .nav-ico{color:#d4836d}', css)
+        self.assertIn('.nav-item[data-view="scenarios"] .nav-ico{color:var(--red)}', css)
         self.assertIn('.nav-item[data-view="scenarios"].active{', css)
-        self.assertIn('.nav-item[data-view="scenarios"].active::before{background:#d4836d', css)
-        self.assertIn('.view-scenarios h2{color:#d4836d}', css)
+        self.assertIn('.nav-item[data-view="scenarios"].active::before{background:var(--red)', css)
+        self.assertIn('.view-scenarios h2{color:var(--red)}', css)
+        self.assertIn('.view-scenarios .panel-head h2{color:var(--red)}', css)
 
     def test_ae2_live_uploads_leave_no_files(self) -> None:
         srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         # кадры камеры и аудио разговора — транзиентные: на диск не пишутся
         self.assertIn('transient = bool(body.get("transient")) or', srv)
-        self.assertIn('lower.startswith("camera_")', srv)
+        self.assertIn('lower.startswith(("camera_", "frame_", "snapshot_",', srv)
         self.assertIn('lower.endswith((".wav", ".webm", ".mp3", ".ogg", ".m4a", ".aac"))', srv)
         self.assertIn('"transient": True}', srv)
         self.assertIn("transient: true,   // AE: живой кадр — не файл диалога", js)
-        # разовая чистка старого мусора: только camera_*/аудио, чужое не трогаем
+        # AF: чистка РЕКУРСИВНА по всему workspace (диалоги + общий каталог)
         self.assertIn("def _purge_chat_leftovers()", srv)
-        self.assertIn('low.startswith("camera_")', srv)
+        self.assertIn("os.walk(sandbox.WORKSPACE)", srv)
+        self.assertIn('prefixes = ("camera_", "frame_", "snapshot_",', srv)
 
     def test_ae3_no_css_ellipsis_in_think_lines(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -3681,6 +3686,50 @@ class IterationAETests(unittest.TestCase):
         self.assertIn(".voice-btn.tick svg{animation:vsndTick", css)
         setfn = js.split("function setSound(on)")[1].split("\nfunction ")[0]
         self.assertIn("sb.classList.add('tick');", setfn)
+
+
+class IterationAFTests(unittest.TestCase):
+    """AF (beta.36): красный сценариев, чистая болтовня без «песочница чиста»,
+    тьма группы с середины полёта, включённые режимы не предлагаются,
+    кнопка звука включена по умолчанию."""
+
+    def test_af1_scenarios_red(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn('.nav-item[data-view="scenarios"] .nav-ico{color:var(--red)}', css)
+        self.assertIn('.view-scenarios .panel-head h2{color:var(--red)}', css)
+
+    def test_af2_small_talk_gets_light_prompt(self) -> None:
+        # «как дела» —.social реплика: ЛЁГКИЙ промпт без песочницы/инструментов
+        self.assertTrue(orchestrator.is_social_only("как дела"))
+        with mock.patch.object(agent.db, "recall", return_value=[]), \
+             mock.patch.object(agent, "_now_str", return_value="сегодня"):
+            light = agent.build_system_prompt(light=True)
+            full = agent.build_system_prompt()
+        self.assertNotIn("песочниц", light.lower())
+        self.assertNotIn("инструмент", light.lower())
+        self.assertIn("песочниц", full.lower())          # рабочий промпт не пострадал
+        self.assertLess(len(light), len(full) // 10)
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertIn("light_prompt = orchestrator.is_social_only(text)", srv)
+        self.assertIn("light=light_prompt", srv)
+
+    def test_af2_purge_recursive_everywhere(self) -> None:
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertIn("os.walk(sandbox.WORKSPACE)", srv)
+        self.assertIn('"dictation_", "voice_", "audio_"', srv)
+
+    def test_af5_no_mode_offer_when_active(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertIn("camera_on: camLive(),", js)
+        self.assertIn('mode_hint.get("mode") == "camera" and body.get("camera_on")', srv)
+
+    def test_af6_sound_on_by_default(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # нет настройки = звук есть (прежде «нет секции ui» считалось выключенным)
+        self.assertIn("return !(ui && ui.sound === false);", js)
+        # конфиг приехал — кнопка пересинхронизировалась
+        self.assertIn("S.config = st.config || {};\n  syncSoundBtn();", js)
 
 
 class BareToolArgumentsTests(unittest.TestCase):

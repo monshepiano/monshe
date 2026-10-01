@@ -1755,10 +1755,10 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     !/scale\(\.93\)/.test(rf) &&
     /getComputedTiming\(\)\.progress/.test(rf) &&
     /easing: 'cubic-bezier\(\.2,\.5,\.2,1\)', fill: 'forwards'/.test(rf) &&
-    /'opacity \.26s ease-in \.78s, filter \.26s ease-in \.78s'/.test(rf) &&
+    /'opacity \.5s ease-in \.5s, filter \.5s ease-in \.5s'/.test(rf) &&
     /function qtFold\(ui, node, isLast\)/.test(js) &&
     /if \(isLast\) setTimeout\(folderBlink, 820\);/.test(rf) &&
-    /node\.style\.filter = 'blur\(4px\) brightness\(\.12\)'/.test(rf) &&
+    /node\.style\.filter = 'blur\(4px\) brightness\(\.08\)'/.test(rf) &&
     /folder\._pend = \(folder\._pend \|\| 0\) \+ 1;/.test(extractFunction(js, 'qtFold')) &&
     /folder\.classList\.add\('blink'\)/.test(extractFunction(js, 'qtFold')) &&
     /\.qt-folder\.blink \.qt-name\{animation:qtBlink \.5s ease-out both\}/.test(css) &&
@@ -2084,7 +2084,7 @@ function testIterationYContracts() {
   // П.2: подпись доживает до названия: поток складывается первым, фейд в конце
   // AD: затемнение теперь стартует в середине полёта — инструмент тонет в темноте
   assert(/bodyEl\.style\.transition = 'height \.3s ease, opacity \.22s ease';/.test(fold) &&
-    /'opacity \.26s ease-in \.78s, filter \.26s ease-in \.78s'/.test(fold) &&
+    /'opacity \.5s ease-in \.5s, filter \.5s ease-in \.5s'/.test(fold) &&
     /\}, 1200\);/.test(fold),
     'Y2: the flying label survives until the group TITLE: stream collapses first, dimming sinks it');
   // П.5: строка статуса возрождается сама — курсор не умирает между ходами
@@ -2355,9 +2355,9 @@ function testIterationADContracts() {
     'AD1: a finished sentence is the preferred line boundary');
   // AD2: инструмент тонет в темноте под группой
   const fold = extractFunction(js, 'qtFold');
-  assert(/opacity \.26s ease-in \.78s/.test(fold) &&
-    /blur\(4px\) brightness\(\.12\)/.test(fold),
-    'AD2: tools sink into near-total darkness at the group (same timing)');
+  assert(/opacity \.5s ease-in \.5s/.test(fold) &&
+    /blur\(4px\) brightness\(\.08\)/.test(fold),
+    'AD2: tools dim from mid-flight and land in near-total darkness');
   // AD3: ховер — только сам инструмент
   assert(/\.qt-head:hover \.qt-name,\.qt-row:hover \.qt-name/.test(css) &&
     !/\.qt-folder:hover \.qt-name/.test(css) &&
@@ -2376,8 +2376,10 @@ function testIterationADContracts() {
   // AD6: тёмная неактивная развёрнутая камера/разговор
   assert(/node\.classList\.contains\('cam-msg'\) && !S\.camStream\) node\.classList\.add\('offline'\);/.test(js) &&
     /\.cam-msg\.offline \.cam-col-left,\.voice-msg\.offline \.v-side\{opacity:\.5;pointer-events:none\}/.test(css) &&
-    !/\.cam-msg\.offline,\.voice-msg\.offline\{opacity/.test(css),
-    'AD6: a re-expanded finished card is only hinted inert; its dialog stays fully readable');
+    !/\.cam-msg\.offline,\.voice-msg\.offline\{opacity/.test(css) &&
+    /\.cam-msg\.offline \.cam-chat\{opacity:\.85\}/.test(css) &&
+    /\.cam-msg\.offline \.cam-feed\{opacity:\.4\}/.test(css),
+    'AD6: a finished card is hinted inert; dialog slightly dimmed, live scene feed dimmed hard');
   // AD7: иконка сценариев — в общем стиле, без смайлика в заголовке
   assert(!/⚡️/.test(html) && /<h2>Сценарии<\/h2>/.test(html) &&
     /data-view="scenarios"/.test(html) && /\.nav-ico svg\{display:block/.test(css),
@@ -2388,16 +2390,26 @@ function testIterationADContracts() {
     /title="Звук"/.test(html) && !/Голос Джарвиса: озвучивать/.test(html),
     'AD8: the corner button is the master sound switch (UI sounds + spoken replies)');
   // AD9: кружок AGENT чуть медленнее
-  assert(/transition:transform \.82s cubic-bezier\(\.25,\.75,\.3,1\)/.test(css),
+  assert(/transition:transform \.95s cubic-bezier\(\.25,\.75,\.3,1\)/.test(css),
     'AD9: agent toggle dot travels a touch slower again');
+}
+
+function testIterationAFContracts() {
+  // AF5: включённая камера не предлагается повторно
+  assert(/camera_on: camLive\(\),/.test(extractFunction(js, 'send')),
+    'AF5: the client reports camera state so an active mode is never re-offered');
+  // AF6: звук по умолчанию ВКЛЮЧЁН; кнопка пересинхронизируется с конфигом
+  assert(/function soundOn\(\) \{ const ui = S\.config && S\.config\.ui; return !\(ui && ui\.sound === false\); \}/.test(js) &&
+    /S\.config = st\.config \|\| \{\};\n  syncSoundBtn\(\);/.test(js),
+    'AF6: sound defaults ON (missing setting = on) and the button re-syncs when config arrives');
 }
 
 function testIterationAEContracts() {
   // AE1: сценам — красноватый в общей палитре
-  assert(/\.nav-item\[data-view="scenarios"\] \.nav-ico\{color:#d4836d\}/.test(css) &&
-    /\.nav-item\[data-view="scenarios"\]\.active::before\{background:#d4836d/.test(css) &&
-    /\.view-scenarios h2\{color:#d4836d\}/.test(css),
-    'AE1: scenarios tab, its active state and the page title share a soft terracotta');
+  assert(/\.nav-item\[data-view="scenarios"\] \.nav-ico\{color:var\(--red\)\}/.test(css) &&
+    /\.nav-item\[data-view="scenarios"\]\.active::before\{background:var\(--red\)/.test(css) &&
+    /\.view-scenarios \.panel-head h2\{color:var\(--red\)\}/.test(css),
+    'AE1: scenarios tab, its active state and the page title share the palette red');
   // AE2: живые вложения не становятся файлами
   assert(/transient: true,/.test(extractFunction(js, 'camAttachFrame')),
     'AE2: camera frames upload as transient — never stored as dialog files');
@@ -2508,7 +2520,8 @@ function testIterationABContracts() {
   testIterationACContracts();
   testIterationADContracts();
   testIterationAEContracts();
-  console.log('package28_frontend_runtime: 22 regression groups passed');
+  testIterationAFContracts();
+  console.log('package28_frontend_runtime: 23 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
