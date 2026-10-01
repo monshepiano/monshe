@@ -499,13 +499,11 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 @media (max-width:900px){.suggestions{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:560px){.suggestions{grid-template-columns:1fr}}
 .sugg{padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);
-  cursor:pointer;text-align:left;transition:.25s;font-size:12.5px;color:var(--tx2);animation:popIn .45s both;
-  /* AL: все плитки ОДИНАКОВЫЕ по высоте, длинный текст не рвётся посреди
-     слова — аккуратно схлопывается в троеточие */
-  display:flex;flex-direction:column;gap:4px;overflow:hidden}
-.sugg b{display:block;color:var(--cy);font-size:12px;margin-bottom:0;font-weight:600;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sugg-p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  cursor:pointer;text-align:left;transition:.25s;font-size:12.5px;color:var(--tx2);animation:popIn .45s both}
+/* AM: прежний свободный вид (текст целиком, высокие прямыеугольные плитки),
+   но все ОДИНАКОВЫЕ: строки сетки равны самой высокой (grid-auto-rows:1fr
+   в .suggestions) — ничего не обрывается и не сплющивается */
+.sugg b{display:block;color:var(--cy);font-size:12px;margin-bottom:4px;font-weight:600}
 .sugg:hover{border-color:var(--line2);background:rgba(0,212,255,.1);transform:translateY(-3px);
   box-shadow:0 10px 26px rgba(0,150,220,.16);color:#fff}
 /* карточки-подсказки чередуют оттенки */
@@ -558,16 +556,17 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    живой росчерк-волна, едва заметно дышащий. Никакого пульса и ядер. */
 .ai-sigil{width:34px;height:34px;display:grid;place-items:center}
 .ai-sigil svg{width:34px;height:34px;display:block;overflow:visible}
-.sigil-shape{fill:none;stroke:var(--cy2);stroke-width:1.6;opacity:.92;
-  filter:drop-shadow(0 0 5px rgba(95,230,255,.45));
-  transition:opacity .5s ease}
-/* AL: смена фигуры при событии (инструмент открылся/закрылся) — фигура
-    на мгновение становится ЗОЛОТОЙ, как границы поля ввода при живом
-    ответе, и светится */
-.ai-sigil.kick .sigil-shape{animation:sigilKickFlash .5s ease-out}
-@keyframes sigilKickFlash{
-  0%{stroke:var(--gold);filter:drop-shadow(0 0 9px rgba(217,164,65,.85))}
-  100%{stroke:var(--cy2);filter:drop-shadow(0 0 5px rgba(95,230,255,.45))}}
+.sigil-shape{fill:none;stroke:currentColor;stroke-width:1.6;opacity:.92;color:var(--cy2);
+  /* AM: фигура ПУЛЬСИРУЕТ светом, как ядро; цвет живёт в currentColor —
+     и контур, и свечение перекрашиваются одним свойством */
+  animation:sigilPulse 2.6s ease-in-out infinite;transition:color .45s ease}
+@keyframes sigilPulse{
+  0%,100%{filter:drop-shadow(0 0 4px currentColor)}
+  50%{filter:drop-shadow(0 0 11px currentColor)}}
+/* AM: когда ответ начинает печататься — фигура становится ЖЁЛТОЙ,
+    цвет курсора мыслей (#fff0a6 → золотое свечение); допечатала —
+    замирает и плавно возвращается синей */
+.msg-ai:has(.typing) .sigil-shape{color:#fff0a6}
 .sigil-sweep{fill:none;stroke:#eafcff;stroke-width:1.5;stroke-linecap:round;
   stroke-dasharray:13 87;opacity:0;transition:opacity .7s ease;
   animation:sigilSweep 12s ease-in-out infinite}
@@ -576,14 +575,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   5%{opacity:.7}
   24%{stroke-dashoffset:0;opacity:0}
   100%{stroke-dashoffset:0;opacity:0}}
-.sigil-wave{fill:none;stroke:var(--cy2);stroke-width:1.7;stroke-linecap:round;
-  filter:drop-shadow(0 0 5px rgba(95,230,255,.45));
-  opacity:0;transition:opacity .5s ease}
-.msg-ai:has(.typing) .sigil-shape{opacity:0}
-.msg-ai:has(.typing) .sigil-sweep{animation:none;opacity:0}
-/* AK: линия вибрирует сама (SMIL d-анимация: волны и резкие пики бегут
-   слева направо) — CSS лишь проявляет её */
-.msg-ai:has(.typing) .sigil-wave{opacity:.95}
+.msg-ai:has(.typing) .sigil-sweep{opacity:0}
 /* блик и морф тихнут в неактивных (камера закрыта) ответах */
 .ui-inert .ai-sigil{opacity:.55;filter:saturate(.7)}
 .ai-body{flex:1;min-width:0}
@@ -1181,10 +1173,9 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch-track input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .agent-switch-track i{position:absolute;width:20px;height:20px;left:5px;top:3px;border-radius:50%;
   background:var(--tx3);
-  /* AL: 1.3с — не выделяется среди остальных кнопок; включение и
-     выключение ОДНОЙ скорости (одна кривая на оба направления) */
-  transition:transform 1.3s cubic-bezier(.3,.6,.3,1),background .6s ease,
-    box-shadow .6s ease,color .6s ease;
+  /* AM: вкл/выкл — 0.45с, плавно и ОДИНАКОВО в обе стороны */
+  transition:transform .45s cubic-bezier(.3,.6,.3,1),background .45s ease,
+    box-shadow .45s ease,color .45s ease;
   /* буква A живёт НА круглешке: тумблер подписан собой, без соседных слов */
   font-style:normal;font-weight:800;font-size:11px;line-height:20px;text-align:center;
   color:var(--panel2);font-family:inherit;user-select:none}
@@ -1379,7 +1370,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   100%{transform:translateX(0);background:#8d4d5e;color:#1d060b}}
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)) i{
   /* цвета едут внутри agKnobRubber: статичной подмены больше нет */
-  animation:agKnobRubber 1.5s cubic-bezier(.3,.55,.3,1) both}
+  animation:agKnobRubber .8s cubic-bezier(.3,.7,.3,1) both}
 /* огонёк: ЕЩЁ КРУПНЕЕ, сильно размыт, светится в стороны — движется бодро
    и тормозит ТОЛЬКО В КОНЦЕ, у правого края трека (слепая зона за круглёшком):
    сам он обрезан рамкой, снаружи живёт лишь его свечение. Пока курсор
@@ -1391,7 +1382,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
     а не фейерверк; замирает у правого края, чуть видный ВНУТРИ трека */
   background:radial-gradient(circle,rgba(255,150,168,.7),rgba(255,86,112,.38) 48%,transparent 78%);
   filter:blur(7px);
-  animation:agEmberRun 1.5s cubic-bezier(.3,.5,.3,1) both}
+  animation:agEmberRun .72s cubic-bezier(.3,.5,.35,1) both}
 @keyframes agEmberRun{
   0%{opacity:0;transform:translateX(0)}
   12%{opacity:.85;transform:translateX(4px)}
@@ -1401,7 +1392,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 /* свечение огонька: ЩЕДРЕЕ в стороны, СНАРУЖИ справа — box-shadow самого
    трека обрезкой не_clip-ится и живёт у правого края всё наведение */
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)){
-  animation:agRestGlow 1s ease .5s both}
+  animation:agRestGlow .4s ease .5s both}
 @keyframes agRestGlow{to{box-shadow:inset 0 1px 5px rgba(0,0,0,.42),
   inset 14px 0 26px -8px rgba(255,86,112,.4)}}
 /* искра по контуру: один проход (no-repeat!), в конце замедляется и тает */
@@ -1410,7 +1401,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   pointer-events:none;
   background:linear-gradient(100deg,transparent 37%,rgba(255,84,112,.55) 50%,transparent 63%);
   background-size:250% 100%;background-repeat:no-repeat;
-  animation:agSparkRun 1.4s cubic-bezier(.3,.4,.3,1) both;
+  animation:agSparkRun .88s linear both;
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude}
 @keyframes agSparkRun{

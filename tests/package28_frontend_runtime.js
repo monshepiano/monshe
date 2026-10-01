@@ -1583,7 +1583,7 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   // возвращается, как под действием резинки; насыщенный огонёк уходит
   // за правый край (остаётся свечение справа), по контуру бежит ЯВНАЯ
   // искра насыщенного красного, в конце замедляется и гаснет.
-  assert(/animation:agKnobRubber 1.5s cubic-bezier\(\.3,\.55,\.3,1\) both/.test(css) &&
+  assert(/animation:agKnobRubber \.8s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
     /15%\{background:#a03c50;color:#1d060b\}/.test(css) &&
     /@keyframes agKnobRubber\{[\s\S]*?44%\{transform:translateX\(6px\);background:#c4475e;color:#1d060b\}/.test(css) &&
     /52%\{transform:translateX\(6px\)/.test(css) &&
@@ -1592,7 +1592,7 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
     /@keyframes agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:#8d4d5e;color:#1d060b\}\}/.test(css) &&
     !/agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:var\(--tx3\)\}\}/.test(css),
     'the knob is ITS OLD GREY self, painting DARK bordo on the way right and unpainting on the way back, synced to the motion');
-  assert(/animation:agEmberRun 1.5s cubic-bezier\(\.3,\.5,\.3,1\) both/.test(css) &&
+  assert(/animation:agEmberRun \.72s cubic-bezier\(\.3,\.5,\.35,1\) both/.test(css) &&
     /rgba\(255,150,168,\.7\),rgba\(255,86,112,\.38\) 48%/.test(css) &&
     /@keyframes agEmberRun\{[\s\S]*?40%\{transform:translateX\(14px\)\}[\s\S]*?70%\{transform:translateX\(21px\)\}[\s\S]*?100%\{opacity:\.85;transform:translateX\(26px\)\}\}/.test(css) &&
     /filter:blur\(7px\)/.test(css) &&
@@ -1600,9 +1600,9 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
     /\.agent-switch-track\{overflow:hidden\}/.test(css),
     'the ember is DIMMED to the background: bigger, blurrier, freezes at the right edge INSIDE the track');
   assert(/@keyframes agRestGlow\{to\{box-shadow:inset 0 1px 5px rgba\(0,0,0,\.42\),[\s\S]*?inset 14px 0 26px -8px rgba\(255,86,112,\.4\)\}\}/.test(css) &&
-    /animation:agRestGlow 1s ease \.5s both/.test(css),
+    /animation:agRestGlow \.4s ease \.5s both/.test(css),
     'the ember glow is GENEROUS and stays outside at the right edge');
-  assert(/animation:agSparkRun 1.4s cubic-bezier\(\.3,\.4,\.3,1\) both/.test(css) &&
+  assert(/animation:agSparkRun \.88s linear both/.test(css) &&
     /rgba\(255,84,112,\.55\) 50%/.test(css) &&
     /background-repeat:no-repeat/.test(css) &&
     /@keyframes agSparkRun\{[\s\S]*?0%\{background-position:135% 0;opacity:0\}[\s\S]*?100%\{background-position:-11% 0;opacity:0\}\}/.test(css) &&
@@ -1970,7 +1970,7 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   // огонёк живёт ВНУТРИ трека (overflow:hidden), свечение остаётся СНАРУЖИ
   // справа, искра — один проход с замедлением в конце
   assert(/\.agent-switch-track\{overflow:hidden\}/.test(css) &&
-    /\.agent-switch\.ag-play \.agent-switch-track:not\(:has\(input:checked\)\) i\{[\s\S]*?agKnobRubber 1\.5s/.test(css) &&
+    /\.agent-switch\.ag-play \.agent-switch-track:not\(:has\(input:checked\)\) i\{[\s\S]*?agKnobRubber \.8s/.test(css) &&
     /sw\.classList\.remove\('ag-play'\);[\s\S]*?void sw\.offsetWidth;[\s\S]*?sw\.classList\.add\('ag-play'\);/.test(js) &&
     !/cooling/.test(js) &&
     !/:has\(input:checked\)\):hover i\{/.test(css),
@@ -1979,7 +1979,7 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   assert(spark && /background-repeat:no-repeat/.test(spark[1]) &&
     /rgba\(255,84,112,\.55\) 50%/.test(spark[1]),
     'the contour spark is a SINGLE pass (no-repeat), bright');
-  assert(/animation:agSparkRun 1.4s cubic-bezier\(\.3,\.4,\.3,1\) both/.test(css) &&
+  assert(/animation:agSparkRun \.88s linear both/.test(css) &&
     /@keyframes agSparkRun\{[\s\S]*?100%\{background-position:-11% 0;opacity:0\}\}/.test(css) &&
     /92%\{background-position:-8% 0;opacity:1\}/.test(css) &&
     /40%\{background-position:40% 0\}/.test(css),
@@ -2394,10 +2394,10 @@ function testIterationADContracts() {
     /title="Звук"/.test(html) && !/Голос Джарвиса: озвучивать/.test(html),
     'AD8: the corner button is the master sound switch (UI sounds + spoken replies)');
   // AD9: кружок AGENT чуть медленнее
-  assert(/transition:transform 1.3s cubic-bezier\(\.3,\.6,\.3,1\)/.test(css) &&
+  assert(/transition:transform \.45s cubic-bezier\(\.3,\.6,\.3,1\)/.test(css) &&
     /\.agent-switch-track input:checked \+ i\{transform:translateX\(10px\)/.test(css) &&
     /left:5px;top:3px/.test(css) &&
-    /animation:agKnobRubber 1.5s/.test(css),
+    /animation:agKnobRubber .8s/.test(css),
     'AD9: agent toggle — 10px travel, 1.3s glide both ways, hover 1.5s');
 }
 
@@ -2405,21 +2405,18 @@ function testIterationAJContracts() {
   // AJ/AK: сигил вместо второго реактора у ответов
   assert(!/class="reactor sm" style="width:34px;height:34px"/.test(js) &&
     /const SIGIL_SVG =/.test(js) &&
-    /class="ai-sigil"/.test(js) && /class="sigil-wave"/.test(js),
-    'AJ: answer avatar is a sigil (morphing figure + living stroke), not a reactor');
+    /class="ai-sigil"/.test(js),
+    'AJ: answer avatar is a sigil (morphing figure), not a reactor');
   // AK: 10 форм по 8 сегментов, превращения быстрее (9с), то плавно то рывком
   const shapeVals = js.split('class="sigil-shape"')[1].split('values="')[1].split('"')[0];
   assert(shapeVals.split(';').length === 11 &&
     shapeVals.split(';').every((d) => (d.match(/C/g) || []).length === 8) &&
     /\.85 0 \.15 1/.test(js),
     'AK: ten exotic forms morph faster, alternating smooth and snappy');
-  const waveVals = js.split('class="sigil-wave"')[1].split('values="')[1].split('"')[0];
-  assert(waveVals.split(';').length === 7 &&
-    /animation:sigilSweep 12s ease-in-out infinite/.test(css) &&
-    !/sigilBreathe/.test(css) &&
-    /\.msg-ai:has\(\.typing\) \.sigil-wave\{opacity:\.95/.test(css) &&
-    /stroke:var\(--cy2\)/.test(css),
-    'AK: typing unwinds the figure into a vibrating wave (peaks run left to right)');
+  assert(/animation:sigilSweep 12s ease-in-out infinite/.test(css) &&
+    !/sigilBreathe/.test(css) && !/sigil-wave/.test(js) &&
+    /stroke:currentColor/.test(css),
+    'AM: figure stays a figure; pulse and rare glint remain');
 }
 
 function testIterationAKContracts() {

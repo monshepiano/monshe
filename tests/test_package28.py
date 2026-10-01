@@ -3203,7 +3203,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("qt-think", sweep)
         self.assertIn("qt-think", fq)
         # П.4: тумблер быстрее
-        self.assertIn("agKnobRubber 1.5s", css)
+        self.assertIn("agKnobRubber .8s", css)
         # П.5: страж курсора + мягкий приезд
         send = js.split("async function send(opts)")[1].split("\nasync function ")[0]
         self.assertIn("const statusWatch = setInterval", send)
@@ -3236,7 +3236,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.43", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.44", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3645,15 +3645,15 @@ class IterationADTests(unittest.TestCase):
 
     def test_ad9_agent_dot_slower(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("transition:transform 1.3s cubic-bezier(.3,.6,.3,1),background .6s ease,", css)
+        self.assertIn("transition:transform .45s cubic-bezier(.3,.6,.3,1),background .45s ease,", css)
         # AK: размер прежний, движение ещё меньше — ход 10px, симметричные
         # отступы (left 5px), наведение замедлено до 1.9с
         self.assertIn(".agent-switch-track{box-sizing:border-box;width:42px;height:28px", css)
         self.assertIn("width:20px;height:20px;left:5px;top:3px", css)
         self.assertIn(".agent-switch-track input:checked + i{transform:translateX(10px);", css)
-        self.assertIn("animation:agKnobRubber 1.5s cubic-bezier(.3,.55,.3,1) both", css)
-        self.assertIn("animation:agEmberRun 1.5s cubic-bezier(.3,.5,.3,1) both", css)
-        self.assertIn("animation:agSparkRun 1.4s cubic-bezier(.3,.4,.3,1) both", css)
+        self.assertIn("animation:agKnobRubber .8s cubic-bezier(.3,.7,.3,1) both", css)
+        self.assertIn("animation:agEmberRun .72s cubic-bezier(.3,.5,.35,1) both", css)
+        self.assertIn("animation:agSparkRun .88s linear both", css)
 
 
 class IterationAETests(unittest.TestCase):
@@ -3846,37 +3846,33 @@ class IterationAJTests(unittest.TestCase):
         self.assertIn('class="ai-sigil"', js)
         self.assertIn('class="sigil-shape"', js)
         self.assertIn('class="sigil-sweep"', js)
-        self.assertIn('class="sigil-wave"', js)
         # AK: 10 причудливых форм по 8 сегментов, быстрые превращения 9с,
         # переходы то плавные, то рывком (чередование сплайнов)
-        self.assertIn('dur="24s"', js)
+        self.assertIn('dur="9s"', js)
         shape_vals = js.split('class="sigil-shape"')[1].split('values="')[1].split('"')[0]
         self.assertEqual(len(shape_vals.split(';')), 11)   # 10 форм + замыкание
         for d in shape_vals.split(';'):
             self.assertEqual(d.count('C'), 8)
             self.assertTrue(d.startswith('M17.0 5.5'))
         self.assertIn('.85 0 .15 1', js)   # резкий рывок среди сплайнов
-        # линия: вибрация волнами и резкими пиками (SMIL d), 7 состояний
-        wave_vals = js.split('class="sigil-wave"')[1].split('values="')[1].split('"')[0]
-        self.assertEqual(len(wave_vals.split(';')), 7)
-        for d in wave_vals.split(';'):
-            self.assertEqual(d.count('C'), 6)
-        # AL: медленный морф + БЫСТРЫЙ всплеск форм при событиях инструмента
+        # AM: свой темп (9с) + ускорение при событиях (kick 0.9с)
         self.assertIn('class="sigil-kick"', js)
         self.assertIn('dur="0.9s"', js)
         self.assertIn("function sigilKick()", js)
         self.assertIn("q.beginElement()", js)
         self.assertIn("sigilKick();", js)
-        self.assertIn(".ai-sigil.kick .sigil-shape{animation:sigilKickFlash .5s ease-out}", css)
-        self.assertIn("stroke:var(--gold);filter:drop-shadow(0 0 9px rgba(217,164,65,.85))", css)
-        # покой: редкий блик; печать: линия проявлена (d-анимация в SMIL)
+        # пульс светом, как ядро; цвет в currentColor
+        self.assertIn("animation:sigilPulse 2.6s ease-in-out infinite", css)
+        self.assertIn("stroke:currentColor", css)
+        # печать: жёлтая как курсор, потом снова синяя
+        self.assertIn(".msg-ai:has(.typing) .sigil-shape{color:#fff0a6}", css)
+        self.assertIn("color:var(--cy2)", css)
+        self.assertNotIn(".msg-ai:has(.typing) .sigil-shape{opacity:0}", css)
+        # волны больше нет — фигура остаётся фигурой
+        self.assertNotIn("sigil-wave", js)
+        self.assertNotIn("sigil-wave", css)
+        # редкий блик остаётся
         self.assertIn("animation:sigilSweep 12s ease-in-out infinite", css)
-        self.assertNotIn("sigilBreathe", css)
-        self.assertIn(".msg-ai:has(.typing) .sigil-wave{opacity:.95}", css)
-        self.assertIn(".msg-ai:has(.typing) .sigil-shape{opacity:0}", css)
-        # ярче и футуристичнее
-        self.assertIn("stroke:var(--cy2)", css)
-        self.assertIn("drop-shadow(0 0 5px rgba(95,230,255,.45))", css)
 
 
 class IterationAKTests(unittest.TestCase):
@@ -3885,11 +3881,13 @@ class IterationAKTests(unittest.TestCase):
     def test_al_suggestion_tiles(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # одинаковая высота + троеточие вместо обрыва посреди слова
+        # AM: прежние высокие прямоугольные плитки с ПОЛНЫМ текстом,
+        # но все одинаковые: строки сетки равны самой высокой
         self.assertIn("grid-auto-rows:1fr", css)
-        self.assertIn("-webkit-line-clamp:2", css)
-        self.assertIn("text-overflow:ellipsis", css)
-        self.assertIn('<span class="sugg-p">', js)
+        self.assertIn(".sugg b{display:block;color:var(--cy);font-size:12px;margin-bottom:4px", css)
+        sugg_block = css.split(".sugg{")[1].split(".sugg:hover")[0]
+        self.assertNotIn("line-clamp", sugg_block)
+        self.assertNotIn("sugg-p", css)
 
     def test_ak_reasoning_lang_injection(self) -> None:
         from jarvis import agent as ag
