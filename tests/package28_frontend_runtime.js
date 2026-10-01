@@ -907,7 +907,7 @@ async function testCameraLifecycleOwnershipAndLateResults() {
   assert.strictEqual(userNode.dataset.msgId, 'message-28');
 
   const sendSource = extractFunction(js, 'send');
-  assert(/const requestCamNode\s*=\s*\(!voiceIsolated && camLive\(\)\)\s*\?\s*S\.camNode/.test(sendSource));
+  assert(/const requestCamNode\s*=\s*\(!requestVoice && camLive\(\)\)\s*\?\s*S\.camNode/.test(sendSource));
   assert(/const atts\s*=\s*S\.attachments\.slice\(\)/.test(sendSource));
   assert(sendSource.indexOf('const atts = S.attachments.slice()') < sendSource.indexOf('await camAttachFrame'),
     'request attachments must be captured before the camera upload yields');
@@ -2070,7 +2070,7 @@ function testIterationYContracts() {
   const ev = extractFunction(js, 'handleEvent');
   const fold = extractFunction(js, 'qtFold');
   // П.1: ход мыслей — тихому режиму СВОЙ дизайн (кухня), не агентская карточка
-  assert(/qt-node qt-think/.test(ev) && /qtFeed\(flow, ev\.text\)/.test(ev) &&
+  assert(/qt-node qt-think/.test(ev) && /qtThinkFeed\(flow, ev\.text\)/.test(ev) &&
     /\.qt-think \.qt-ico\{font-size:12px/.test(css) &&
     /qtMiniaturize\(ui\.thinkCard\);/.test(js),
     'Y1: quiet mode renders thinking in KITCHEN design (gray stream line), never an agent card');
@@ -2344,6 +2344,39 @@ function testProactiveModesBudgetAndAbortContracts() {
     'an aborted answer folds code blocks and collapses the thinking card');
 }
 
+function testIterationACContracts() {
+  // AC1: мысль — непрерывный текст (не слово-на-строку) и открытие без display
+  const mini = extractFunction(js, 'qtMiniaturize');
+  assert(/function qtThinkFeed\(flow, text\)/.test(js) &&
+    /qtThinkFeed\(flow, ev\.text\)/.test(js) &&
+    !/\.style\.display/.test(mini) &&
+    /body\.style\.height = '0px';/.test(mini) &&
+    /body\.style\.opacity = '0';/.test(mini),
+    'AC1: think stream flows as continuous text; collapsed body is height:0, never display:none');
+  // AC2: корень стопки курсоров — isConnected в отцепленном DOM
+  const ensure = extractFunction(js, 'ensureStatus');
+  const openChatFn = extractFunction(js, 'openChat');
+  const watchDet = extractFunction(js, 'watchDetached');
+  assert(/ui\.node\.body\.contains\(ui\.statusEl\)/.test(ensure) &&
+    !/ui\.statusEl\.isConnected/.test(ensure) &&
+    /sbody\.contains\(ui\.mdEl\)/.test(extractFunction(js, 'send')) &&
+    /\(S\.liveRuns \|\| \{\}\)\[id\]\) return;/.test(watchDet) &&
+    /if \(!liveAttached && \(r\.generating \|\| S\.detached === id\)\) watchDetached\(id\);/.test(openChatFn),
+    'AC2: status existence = child of run body (works detached); poller yields to a live run');
+  // AC4: голос — эхо-подавление, устойчивый перебой, всегда изолирован
+  const openVoice = extractFunction(js, 'openVoiceMode');
+  const closeVoice = extractFunction(js, 'closeVoiceMode');
+  const barge = extractFunction(js, 'voiceBargeLoop');
+  assert(/echoCancellation: true, noiseSuppression: true, autoGainControl: true/.test(openVoice) &&
+    /level > 0\.16/.test(barge) && /VOICE\.barge >= 7/.test(barge) &&
+    /localStorage\.getItem\('jarvisVoiceCtx'\) === '1'/.test(js) &&
+    /S\.voiceBox\.remove\(\); S\.voiceBox = null;/.test(closeVoice) &&
+    /voice_context: \(requestVoice && VOICE\.ctxOn && S\.chatId\) \|\| '',/.test(extractFunction(js, 'send')) &&
+    /voiceRenderTranscript\(tb\);/.test(closeVoice) &&
+    /flex-direction:column/.test(css),
+    'AC4: echo cancellation + sturdier barge; ctx off by default; voice always isolated; the field really leaves');
+}
+
 function testIterationABContracts() {
   // AB1: КОРЕНЬ подлагивания последнего кадра мысли — display-переключение
   // гасило вертикальные поля. Теперь полей нет вовсе, тело не выключается.
@@ -2368,7 +2401,7 @@ function testIterationABContracts() {
     !/voice-veil/.test(css) &&
     /\.voice-run\{display:none!important\}/.test(css) &&
     /\.voice-box\.thinking \.v-orb b\{/.test(css) &&
-    /voiceIsolated = !!\(requestVoice && !VOICE\.ctxOn && !camLive\(\)\)/.test(sendFn) &&
+    /voiceIsolated = requestVoice;/.test(sendFn) &&
     /voice: requestVoice,/.test(sendFn) &&
     /node\.root\.classList\.add\('voice-run'\);/.test(sendFn) &&
     /if \(VOICE\.open\) closeVoiceMode\(\);/.test(extractFunction(js, 'newChat')) &&
@@ -2404,7 +2437,8 @@ function testIterationABContracts() {
   testIterationYContracts();
   testIterationZContracts();
   testIterationABContracts();
-  console.log('package28_frontend_runtime: 19 regression groups passed');
+  testIterationACContracts();
+  console.log('package28_frontend_runtime: 20 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

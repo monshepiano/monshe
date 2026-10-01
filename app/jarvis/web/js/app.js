@@ -1001,7 +1001,8 @@ async function openChat(id) {
   // корнем «ответ пропадает при переключении диалога» — на десятый раз
   // лечим не симптом, а сам механизм.
   const live = (S.liveRuns || {})[id];
-  if (live && !live.doneReceived && live.node && live.node.root) {
+  const liveAttached = !!(live && !live.doneReceived && live.node && live.node.root);
+  if (liveAttached) {
     stream.appendChild(live.node.root);
     watchRunFollow(live);
     if (S.followUi === live && !S.streaming) setStreaming(true);   // Stop снова Stop
@@ -1017,8 +1018,9 @@ async function openChat(id) {
   });
   loadChats();
   // диалог, который дописывался в фоне (или открыт во время генерации):
-  // тихо перечитываем, пока не появится ответ
-  if (r.generating || S.detached === id) watchDetached(id);
+  // тихо перечитываем, пока не появится ответ. Живой прогон уже на экране —
+  // ему опрос не нужен (AC).
+  if (!liveAttached && (r.generating || S.detached === id)) watchDetached(id);
 }
 
 /* Отрисовка переписки в заданный контейнер. Вынесена из openChat, потому что
@@ -1092,6 +1094,9 @@ function watchDetached(id) {
   let tries = 0;
   const tick = async () => {
     if (S.chatId !== id) return;
+    // AC: живой прогон этого диалога ещё на экране — SSE сам дорисует ответ;
+    // опрос добавил бы СОХРАНЁННУЮ копию поверх печатающейся (дубль ответа)
+    if ((S.liveRuns || {})[id]) return;
     const r = await api('/api/messages?chat_id=' + encodeURIComponent(id));
     if (S.chatId !== id) return;
     const msgs = r.messages || [];
@@ -3660,19 +3665,21 @@ async function send(opts) {
   // укажет на НОВУЮ карточку, и поздний ответ старого сеанса способен записать
   // ей чужой chat_id. Каждый запрос навсегда привязан к DOM/context поколения,
   // в котором был отправлен; новый сеанс получает только свои новые сообщения.
-  // AB: РАЗГОВОР. Контекст включён — беседа пишется в текущий диалог (или в
-  // разговор камеры, если она жива: единый интерфейс). Выключен — в
-  // изолированный служебный диалог, невидимый в списке (как у камеры).
+  // AC: РАЗГОВОР ВСЕГДА ЖИВЁТ В СВОЁМ ДИАЛОГЕ (kind='voice', вне списка):
+  // после закрытия вкладки беседа не остаётся ни в основном диалоге, ни
+  // где-либо ещё — перечитать её можно, снова открыв вкладку. Тумблер
+  // «Контекст диалога» теперь ТОЛЬКО показывает модели историю текущего
+  // диалога (voice_context), не меняя место хранения.
   const requestVoice = !!opts.voice;
-  const voiceIsolated = !!(requestVoice && !VOICE.ctxOn && !camLive());
-  const requestCamNode = (!voiceIsolated && camLive()) ? S.camNode : null;
-  const requestHost = voiceIsolated
+  const voiceIsolated = requestVoice;
+  const requestCamNode = (!requestVoice && camLive()) ? S.camNode : null;
+  const requestHost = requestVoice
     ? ((S.voiceBox && S.voiceBox.querySelector('.voice-transcript')) || stream())
     : ((requestCamNode && requestCamNode.querySelector('.cam-chat')) || stream());
   const requestIsolatedCam = !!(requestCamNode && !S.camLink);
-  const requestChatId = voiceIsolated ? (VOICE.chatId || '')
+  const requestChatId = requestVoice ? (VOICE.chatId || '')
     : requestIsolatedCam ? (S.camChatId || '') : (S.chatId || '');
-  const requestKind = voiceIsolated ? 'voice' : (requestIsolatedCam ? 'cam' : '');
+  const requestKind = requestVoice ? 'voice' : (requestIsolatedCam ? 'cam' : '');
   // Режимы принадлежат запросу: смена switch во время загрузки кадра не
   // меняет уже начатую задачу задним числом.
   const requestAgentMode = !!S.agentMode;
@@ -3839,8 +3846,12 @@ async function send(opts) {
   const statusWatch = setInterval(() => {
     if (S.streamRun !== runId || !S.streaming) return;
     if (ui.doneReceived) return;                     // ответ уже дописан — не воскресать
-    if (ui.mdEl && ui.mdEl.isConnected && ui.typer) return;   // печать идёт — курсор в тексте
-    if (ui.statusEl && ui.statusEl.isConnected) return;
+    const sbody = ui.node && ui.node.body;
+    if (!sbody) return;
+    // AC: принадлежность телу ответа, а не isConnected — узел может быть
+    // честно отцеплен от экрана, пока пользователь смотрит другой диалог
+    if (ui.mdEl && ui.typer && sbody.contains(ui.mdEl)) return;   // печать идёт — курсор в тексте
+    if (ui.statusEl && sbody.contains(ui.statusEl)) return;
     ui.statusEl = ensureStatus(ui);
     if (ui.statusEl) {
       ui.statusEl._watchLine = true;
@@ -3875,6 +3886,7 @@ async function send(opts) {
         edit_of: editing ? editing.id : '',
         continue_of: opts.continueOf || '',
         voice: requestVoice,
+        voice_context: (requestVoice && VOICE.ctxOn && S.chatId) || '',
         agent_mode: requestAgentMode,
         computer_use: requestComputerUse,
         silent: !!opts.silent,
@@ -4209,11 +4221,68 @@ function qtDetail(args, result) {
    текста ответа её разбирали (delta → dropStatus), и поздний tool_start
    падал на statusEl.parentNode — «Cannot read properties of null». */
 function ensureStatus(ui) {
-  if (ui && ui.statusEl && ui.statusEl.isConnected) return ui.statusEl;
+  // AC: КОРЕНЬ «МНОЖЕСТВО ДУМАЮЩИХ КУРСОРОВ». Проверка была по isConnected —
+  // а пока узел ответа живёт в отцепленном DOM (пользователь в другом
+  // диалоге), isConnected ЛОЖНО и для живой строки: каждый статусный вызов
+  // прилетавшего события создавал НОВУЮ «думаю…» строку, старые оставались
+  // детьми узла. Вернулся — стопка курсоров. Существование = быть ребёнком
+  // тела ответа, подключён узел к экрану или нет.
+  if (ui && ui.statusEl && ui.node && ui.node.body &&
+      ui.node.body.contains(ui.statusEl)) return ui.statusEl;
   if (!ui || !ui.node || !ui.node.body) return null;
   ui.statusEl = el('div', 'thinking-line');
   ui.node.body.appendChild(ui.statusEl);
   return ui.statusEl;
+}
+
+/* AC: ПОТОК МЫСЛЕЙ — НЕПРЕРЫВНЫЙ ТЕКСТ. Прежний путь кормил каждый delta
+   отдельной строкой потока: рассуждающие модели шлют мысль мелкими кусками,
+   и живой ответ выглядел «слово — перенос — слово». Теперь куски копятся в
+   буфер и укладываются строками по границам слов (как в истории): мысль
+   читается связным текстом, «бегущий» вид потока сохраняется. */
+function qtThinkFeed(flow, text) {
+  const inner = flow.querySelector('.qt-flowin');
+  if (!inner) return;
+  flow._buf = (flow._buf || '') + String(text || '');
+  const born = (line) => setTimeout(() => line.classList.remove('qt-wait'), 230);
+  for (;;) {
+    const rest = flow._buf;
+    if (rest.length <= 96 && rest.indexOf('\n') < 0) break;
+    let cut = rest.indexOf('\n');
+    if (cut < 0 || cut > 96) {
+      const sp = rest.lastIndexOf(' ', 96);
+      cut = sp > 40 ? sp : 96;
+    }
+    let line = inner.lastElementChild;
+    if (!line || line._sealed) {
+      line = el('div', 'qt-flowline qt-wait', '');
+      inner.appendChild(line);
+      born(line);
+    }
+    line.textContent = rest.slice(0, cut).trim();
+    line._sealed = true;
+    flow._buf = rest.slice(cut + 1).replace(/^\s+/, '');
+  }
+  if (flow._buf) {
+    let live = inner.lastElementChild;
+    if (!live || live._sealed) {
+      live = el('div', 'qt-flowline qt-wait', '');
+      inner.appendChild(live);
+      born(live);
+    }
+    live.textContent = flow._buf;
+  }
+  if (!flow.classList.contains('full')) {
+    const h = Math.min(inner.scrollHeight, 88);
+    if (h > (flow._h || 0)) { flow._h = h; flow.style.height = h + 'px'; }
+    if (inner.scrollHeight > 92) {
+      flow.classList.add('full');
+      flow._h = 88;
+      flow.style.height = '88px';
+      glideFlow(flow, inner);
+    }
+  }
+  if (flow._ui) scrollSoon(flow._ui);
 }
 
 function qtFeed(flow, text) {
@@ -4339,16 +4408,22 @@ function qtMiniaturize(node) {
   node._thinkOpen = false;   // AA: свернули — состояние клика тоже сбросили
   const body = node.querySelector('.qt-body');
   if (!body) return;
-  const h = body.getBoundingClientRect().height;
-  if (h <= 0) { body.style.display = 'none'; return; }
+  // AC: НИКАКОГО display:none. Прежний финальный кадр гасил элемент целиком —
+  // и qtToggleThink при повторном открытии читал высоту 0 («мысль не
+  // открывается»), а в момент гашения геометрия прыгала. Закрытое состояние —
+  // всегда просто height:0 + opacity:0, тело остаётся в потоке.
   body.style.overflow = 'hidden';
-  body.style.transition = 'none';
-  body.style.height = h + 'px';
-  void body.offsetHeight;
-  body.style.transition = 'height .5s cubic-bezier(.25,.6,.3,1), opacity .36s ease';
+  const h = body.getBoundingClientRect().height;
+  if (h > 0) {
+    body.style.transition = 'none';
+    body.style.height = h + 'px';
+    void body.offsetHeight;
+    body.style.transition = 'height .5s cubic-bezier(.25,.6,.3,1), opacity .36s ease';
+  } else {
+    body.style.transition = 'none';
+  }
   body.style.height = '0px';
   body.style.opacity = '0';
-  setTimeout(() => { if (!node.dataset.folded) body.style.display = 'none'; }, 520);
 }
 
 /* AA: ТИХИЙ ХОД МЫСЛЕЙ ОТКРЫВАЕТСЯ КЛИКОМ. Когда пошёл текст ответа, поток
@@ -5913,7 +5988,7 @@ function handleEvent(ev, ui) {
           node.body.insertBefore(qn, ensureStatus(ui));
         }
         const flow = ui.thinkCard.querySelector('.qt-flow');
-        if (flow && ev.text) qtFeed(flow, ev.text);
+        if (flow && ev.text) qtThinkFeed(flow, ev.text);
         scrollDown();
         break;
       }
@@ -6643,8 +6718,10 @@ let VOICE_RU = null;
 
 /* Контекст диалога: включён — беседа пишется в текущий диалог; выключен —
    в изолированный служебный разговор (как у камеры, вне списка диалогов). */
+/* AC: по умолчанию контекст ВЫКЛЮЧЕН — разговор не подхватывает переписку
+   диалога сам; включается вручную и выбор запоминается. */
 function voiceCtxOn() {
-  try { return localStorage.getItem('jarvisVoiceCtx') !== '0'; } catch (e) { return true; }
+  try { return localStorage.getItem('jarvisVoiceCtx') === '1'; } catch (e) { return false; }
 }
 
 function voiceRu() {
@@ -6721,25 +6798,29 @@ function voiceMount(forceOwn) {
   scrollDown(true);
 }
 
-/* История ПРОШЛОЙ беседы — текстом, и только при отключённом контексте
-   (при включённом она и так в ленте диалога ниже). Показываем при открытии
-   области; с первой же новой фразы прячем — во время разговора ни строчки. */
-async function voiceLoadTranscript() {
-  const box = S.voiceBox && S.voiceBox.querySelector('.voice-transcript');
-  if (!box) return;
+/* AC: ИСТОРИЯ БЕСЕДЫ — текстом. Разговор всегда живёт в своём диалоге,
+   поэтому транскрипт доступен и в открытой вкладке, и в свёрнутой карточке
+   (тёмная миниатюра — клик, полистать диалог, как у камеры). Во время самой
+   беседы текста нет: с первой новой фразы транскрипт прячется. */
+async function voiceRenderTranscript(box) {
+  if (!box || !VOICE.chatId) return;
   box.hidden = false;
   box.innerHTML = '';
-  if (VOICE.ctxOn || !VOICE.chatId) return;
   try {
     const r = await api('/api/messages?chat_id=' + encodeURIComponent(VOICE.chatId));
-    if (!VOICE.open) return;
+    if (!r.ok) return;
     const msgs = (r.messages || []).slice(-40);
-    if (!msgs.length) return;
+    if (!msgs.length) { box.hidden = true; return; }
     box.innerHTML = msgs.map((m) =>
       '<div class="vt-line' + (m.role === 'user' ? ' vt-user' : '') + '">' +
       '<b>' + (m.role === 'user' ? 'Ты' : 'JARVIS') + '</b>' +
       esc(String(m.content || '').slice(0, 600)) + '</div>').join('');
   } catch (e) { /* истории нет — молча */ }
+}
+
+function voiceLoadTranscript() {
+  const box = S.voiceBox && S.voiceBox.querySelector('.voice-transcript');
+  if (box) voiceRenderTranscript(box);
 }
 
 async function openVoiceMode() {
@@ -6761,7 +6842,13 @@ async function openVoiceMode() {
   const mb = $('#micBtn');
   if (mb) mb.classList.add('rec');      // кнопка микрофона «дышит», пока идёт разговор
   try {
-    VOICE.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // AC: КОРЕНЬ «недоговаривает и прерывается» — ЭХО. Голос Джарвиса из
+    // колонок попадал в микрофон, детектор перебоя слышал «человека» и
+    // обрывал синтез на полуслове. Просим у браузера честную обработку:
+    // echoCancellation убирает собственный вывод, noiseSuppression — фон.
+    VOICE.stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
   } catch (e) {
     closeVoiceMode();
     toast('Нет доступа к микрофону', 'error');
@@ -6787,11 +6874,22 @@ function closeVoiceMode() {
   // перечитать, открыв область разговора снова
   VOICE.nodes.forEach((n) => { if (n && n.classList) n.classList.remove('voice-run'); });
   VOICE.nodes = [];
+  // AC: КОРЕНЬ «микрофон не уходит» — поле жило в камере, а closeVoiceMode
+  // обнулял только ссылки: элемент оставался в DOM. Удаляем САМ ЭЛЕМЕНТ,
+  // где бы он ни был смонтирован (своя карточка или область камеры).
+  if (S.voiceBox) { S.voiceBox.remove(); S.voiceBox = null; }
   const card = S.voiceNode;
-  S.voiceBox = null;
   S.voiceNode = null;
   if (card && card.isConnected) {
+    // тёмная неактивная миниатюра, как у камеры: клик разворачивает карточку,
+    // и в ней можно полистать беседу текстом
     collapseToThumb(card, { cls: 'th-cam', icon: '🎤', title: 'Разговор', tag: 'завершён' });
+    const host = card.querySelector('.voice-live');
+    if (host) {
+      const tb = el('div', 'voice-transcript');
+      host.appendChild(tb);
+      voiceRenderTranscript(tb);
+    }
   }
 }
 
@@ -6955,9 +7053,12 @@ function voiceBargeLoop() {
     level = Math.sqrt(sum / buf.length);
     if (S.voiceBox) S.voiceBox.style.setProperty('--vl', Math.min(1, level * 4).toFixed(3));
   }
-  if (level > 0.09) {
+  // AC: порог поднят и требует УСТОЙЧИВЫЙ звук (~110мс): колоночное эхо
+  // после echoCancellation — тихое и короткое, живой голос у микрофона —
+  // громкий и продолжительный. Перебий остаётся мгновенным для человека.
+  if (level > 0.16) {
     VOICE.barge += 1;
-    if (VOICE.barge >= 5) {
+    if (VOICE.barge >= 7) {
       VOICE.barge = 0;
       try { window.speechSynthesis.cancel(); } catch (e) { /* синтеза нет */ }
       voiceListen();
@@ -6980,7 +7081,7 @@ function voiceAfterSpeak() {
     if (!VOICE.open || S.streaming) return;
     if (window.speechSynthesis && window.speechSynthesis.speaking) return;
     if (VOICE.phase !== 'listening') voiceListen();
-  }, 450);
+  }, 550);
 }
 
 /* AA: у режима разговора ровно одна кнопка — микрофон в композере. */

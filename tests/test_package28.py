@@ -3234,7 +3234,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.32", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.33", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3263,7 +3263,8 @@ class IterationAATests(unittest.TestCase):
         # план больше не глушит стража; «текст есть» = «текст ПЕЧАТАЕТСЯ сейчас»
         self.assertNotIn("if (ui.planGate || ui.planDock) return;", send)
         self.assertIn("if (ui.doneReceived) return;", send)
-        self.assertIn("if (ui.mdEl && ui.mdEl.isConnected && ui.typer) return;", send)
+        # AC: принадлежность телу ответа — работает и в отцепленном DOM
+        self.assertIn("if (ui.mdEl && ui.typer && sbody.contains(ui.mdEl)) return;", send)
         self.assertIn("ui.statusEl._watchLine = true;", send)
         # воскресшая строка уходит, когда печать возобновилась
         self.assertIn("ui.statusEl._watchLine && ui.typer) dropStatus(ui);", js)
@@ -3448,7 +3449,7 @@ class IterationABTests(unittest.TestCase):
         self.assertNotIn("voiceStatus", js)
         # изолированная беседа — служебный диалог вне списка
         send = js.split("async function send(opts)")[1].split("\nasync function ")[0]
-        self.assertIn("const voiceIsolated = !!(requestVoice", send)
+        self.assertIn("const voiceIsolated = requestVoice;", send)
         self.assertIn("voice: requestVoice,", send)
         self.assertIn("node.root.classList.add('voice-run');", send)
         self.assertIn('VOICE.chatId = ev.chat_id;', js)
@@ -3495,6 +3496,70 @@ class IterationABTests(unittest.TestCase):
              mock.patch.object(agent, "_now_str", return_value="сегодня"):
             prompt = agent.build_system_prompt(agent_mode=False)
         self.assertIn("РОВНО ДВА варианта — тоже", prompt)
+
+
+class IterationACTests(unittest.TestCase):
+    """AC (beta.33): мысль льётся подряд и всегда открывается; стопка курсоров
+    после перезахода убита в корне; инструкция-клик не рождает панель;
+    разговор без эха и всегда изолирован; картинки — качество."""
+
+    def test_ac1_think_flows_and_always_opens(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("function qtThinkFeed(flow, text)", js)
+        self.assertIn("qtThinkFeed(flow, ev.text)", js)
+        self.assertNotIn("qtFeed(flow, ev.text)", js)
+        mini = js.split("function qtMiniaturize(node)")[1].split("\nfunction ")[0]
+        self.assertNotIn(".style.display", mini)   # тело никогда не гасится целиком
+
+    def test_ac2_no_cursor_pile_after_reentry(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        ensure = js.split("function ensureStatus(ui)")[1].split("\nfunction ")[0]
+        # КОРЕНЬ: isConnected ложно для живой строки в отцепленном узле —
+        # каждый статусный вызов добавлял новую «думаю…»
+        self.assertIn("ui.node.body.contains(ui.statusEl)", ensure)
+        self.assertNotIn("ui.statusEl.isConnected", ensure)
+        watch = js.split("const statusWatch = setInterval")[1].split("\n")[0:14]
+        self.assertIn("sbody.contains(ui.mdEl)", js)
+        det = js.split("function watchDetached(id)")[1].split("\nfunction ")[0]
+        self.assertIn("(S.liveRuns || {})[id]) return;", det)
+
+    def test_ac3_click_instruction_is_not_a_panel(self) -> None:
+        # «Кликни на фигуру, чтобы выбрать её» — указание к нарисованному
+        # объекту, не вопрос: панели с таким названием быть не может
+        self.assertFalse(agent.needs_reply_ui(
+            "Вот фигуры.\n- Кликни на фигуру, чтобы выбрать её (подсветка жёлтым)"))
+        self.assertTrue(agent.needs_reply_ui("Какой формат предпочитаете?"))
+        self.assertTrue(agent.needs_reply_ui("Выбери стиль:\n- Минимализм\n- Барокко"))
+
+    def test_ac4_voice_no_echo_and_always_isolated(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        # эхо-подавление — корень «недоговаривает и прерывается»
+        self.assertIn("echoCancellation: true, noiseSuppression: true", js)
+        self.assertIn("level > 0.16", js)
+        self.assertIn("VOICE.barge >= 7", js)
+        # контекст по умолчанию ВЫКЛЮЧЕН
+        self.assertIn("localStorage.getItem('jarvisVoiceCtx') === '1'", js)
+        # кружок — вверху, остальное внизу
+        self.assertIn("flex-direction:column", css)
+        self.assertIn(".voice-box .v-orb{width:88px", css)
+        # поле реально уходит из любого места, карточка — тёмная миниатюра
+        close = js.split("function closeVoiceMode()")[1].split("\nfunction ")[0]
+        self.assertIn("S.voiceBox.remove(); S.voiceBox = null;", close)
+        self.assertIn("voiceRenderTranscript(tb);", close)
+        # разговор ВСЕГДА в своём диалоге; контекст — отдельным полем
+        send = js.split("async function send(opts)")[1].split("\nasync function ")[0]
+        self.assertIn("const voiceIsolated = requestVoice;", send)
+        self.assertIn("voice_context: (requestVoice && VOICE.ctxOn && S.chatId) || '',", send)
+        self.assertIn('body.get("voice_context") or ""', srv)
+        self.assertIn("db.get_messages(ctx_chat, limit=16)", srv)
+
+    def test_ac5_image_quality_levers(self) -> None:
+        code = Path("app/jarvis/tools/media.py").read_text(encoding="utf-8")
+        self.assertIn("high quality, highly detailed, sharp focus, natural proportions", code)
+        self.assertIn("mutated hands, extra limbs, disfigured face", code)
+        self.assertIn("анатомически верные", code)
 
 
 class BareToolArgumentsTests(unittest.TestCase):

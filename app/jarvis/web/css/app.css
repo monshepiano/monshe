@@ -1687,14 +1687,16 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
    (говорит). Уровень голоса надувает орб через --vl. При живой камере
    поле переезжает в её область ответов — единый интерфейс. */
 .voice-live{margin:2px 0}
-.voice-box{display:flex;align-items:center;gap:18px;padding:14px 16px;border-radius:14px;
-  border:1px solid rgba(0,200,240,.2);flex-wrap:wrap;
+/* AC: КРУЖОК — ВВЕРХУ, остальной дизайн внизу: орб по центру, под ним
+   тумблер контекста и завершение, ещё ниже — история беседы. */
+.voice-box{display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 16px 14px;
+  border-radius:14px;border:1px solid rgba(0,200,240,.2);
   background:linear-gradient(180deg,rgba(0,40,60,.4),rgba(0,20,34,.4));
   box-shadow:inset 0 0 24px rgba(0,200,240,.07)}
-.voice-box .v-orb{width:74px;height:74px;border-radius:50%;position:relative;display:grid;
+.voice-box .v-orb{width:88px;height:88px;border-radius:50%;position:relative;display:grid;
   place-items:center;flex:0 0 auto;transform:scale(calc(1 + var(--vl,0)*.28));
   transition:transform .09s ease}
-.voice-box .v-orb b{width:34px;height:34px;border-radius:50%;font-weight:400;
+.voice-box .v-orb b{width:40px;height:40px;border-radius:50%;font-weight:400;
   background:radial-gradient(circle at 35% 30%,#bff4ff,var(--cy2) 55%,var(--cy));
   box-shadow:0 0 22px var(--cy),0 0 60px rgba(0,200,240,.35);
   animation:vBreathe 2.6s ease-in-out infinite;
@@ -1713,7 +1715,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   background:radial-gradient(circle at 35% 30%,#d8ffe9,#7fe3bb 55%,var(--green));
   box-shadow:0 0 30px rgba(63,191,149,.8),0 0 80px rgba(63,191,149,.3);
   animation:vThink .62s ease-in-out infinite}
-.v-side{display:flex;align-items:center;gap:14px;margin-left:auto;flex:0 0 auto}
+.v-side{display:flex;align-items:center;gap:14px;flex:0 0 auto}
 .voice-stop{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);
   background:rgba(10,22,34,.85);color:var(--tx2);font-size:13px;cursor:pointer;
   transition:color .18s ease,border-color .18s ease}

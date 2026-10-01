@@ -433,6 +433,15 @@ _UI_CONTROL = re.compile(
     r"^\s*(?:confirm|tiles|multi|rank|slider|number|rate|toggle|date|color|button)\s+\S",
     re.IGNORECASE | re.MULTILINE,
 )
+# AC: ИНСТРУКЦИЯ К ЭКРАНУ, А НЕ ВОПРОС К ЧЕЛОВЕКУ. «Кликни на фигуру, чтобы
+# выбрать её (подсветка жёлтым)» — модель описывает, как тыкать в НАРИСОВАННЫЙ
+# ею объект. Прежняя эвристика видела «выбрать» и делала из этой строки
+# интерактивную панель со странным названием. Такая строка не ждёт реплики.
+_UI_INSTRUCTION = re.compile(
+    r"\b(?:кликни\w*|кликнет\w*|щёлкни\w*|нажми\w*|нажмите\w*|тапни\w*|"
+    r"свайпни\w*|перетащи\w*|зажми\w*|наведи\w*|drag|click|tap)\b",
+    re.IGNORECASE)
+
 _REPLY_REQUEST = re.compile(
     r"\b(?:уточни(?:те)?|выбери(?:те)?|выбрать|выбира(?:й|ешь|ете)|"
     r"подскажи(?:те)?|ответь(?:те)?|напиши(?:те)?|укажи(?:те)?|"
@@ -522,6 +531,8 @@ def needs_reply_ui(text: str, user_text: str = "") -> bool:
     is_option = lambda line: bool(_OPTION_LINE.match(line))
     for index, line in enumerate(tail):
         clean = re.sub(r"[*_`]", "", line).strip()
+        if _UI_INSTRUCTION.search(clean):
+            continue   # указание, как тыкать в нарисованный объект — не вопрос
         direct_question = (clean.rstrip().endswith("?") and not is_option(line)
                            and not _OPTIONAL_FOLLOWUP.search(clean))
         direct_request = bool(_REPLY_REQUEST.search(clean)) and not is_option(line)

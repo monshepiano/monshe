@@ -781,6 +781,20 @@ class Handler(BaseHTTPRequestHandler):
             agent_mode, computer_use, vision_direct=runner._vision_direct)}]
         if voice_mode:
             messages.append({"role": "system", "content": agent.VOICE_MODE_NOTE})
+            # AC: «Контекст диалога» — модель ВИДИТ историю выбранного диалога,
+            # но беседа разговора по-прежнему пишется в свой изолированный
+            # диалог: основной чат остаётся чистым и после закрытия вкладки.
+            ctx_chat = str(body.get("voice_context") or "")
+            if ctx_chat and ctx_chat != chat_id:
+                try:
+                    ctx_rows = _hist_rows(db.get_messages(ctx_chat, limit=16))
+                    if ctx_rows:
+                        messages.append({"role": "system", "content":
+                            "[Система] Контекст текущего диалога пользователя "
+                            "(для понимания отсылок, НЕ для ответа списком):"})
+                        messages.extend(ctx_rows)
+                except Exception:
+                    pass   # чужой/пустой диалог — разговор просто без контекста
         messages.extend(history)
         # Один короткий nearby-контракт ставится перед КАЖДЫМ актуальным user
         # turn. Раньше напоминание было только рядом с изображением, поэтому

@@ -227,12 +227,15 @@ def _enhance_prompt(prompt: str, width: int, height: int) -> str:
         ratio = "вертикальный кадр"
     instruction = (
         "Ты арт-директор. Перепиши запрос как один точный промпт для современной "
-        "генерации изображения. Сохрани сюжет, добавь композицию, свет, фактуру и "
-        "стиль. Это описание ТОЛЬКО видимой сцены: никаких обращений, приветствий, "
-        "имён («привет», «Джарвис», «пожалуйста») и просьб — генератор рисует "
-        "буквально любое слово из промпта как надпись на картинке. Не добавляй "
-        "надписи, логотипы и watermark. Формат: %s. Ответь "
-        "только готовым промптом на русском, до 900 знаков.\n\nЗапрос: %s"
+        "фотографичной генерации изображения. Сохрани сюжет; опиши ОДНУ цельную "
+        "сцену: главный объект и его действие, окружение, время суток, направление "
+        "и характер света, фактуру материалов, ракурс камеры и настроение. Тела, "
+        "лица и пропорции — естественные и анатомически верные. Это описание "
+        "ТОЛЬКО видимой сцены: никаких обращений, приветствий, имён («привет», "
+        "«Джарвис», «пожалуйста») и просьб — генератор рисует буквально любое "
+        "слово из промпта как надпись на картинке. Не добавляй надписи, логотипы "
+        "и watermark. Формат: %s. Ответь только готовым промптом на русском, "
+        "до 900 знаков.\n\nЗапрос: %s"
     ) % (ratio, prompt)
     try:
         response = llm.chat([{"role": "user", "content": instruction}], tier="nano",
@@ -361,7 +364,13 @@ def _free_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
     order = ((remembered,) + tuple(m for m in _FREE_IMAGE_MODELS if m != remembered)
              if remembered in _FREE_IMAGE_MODELS else _FREE_IMAGE_MODELS)
     negative = ("text, watermark, logo, signature, blurry, "
-                "low quality, deformed, extra fingers, bad anatomy")
+                "low quality, deformed, extra fingers, bad anatomy, "
+                "mutated hands, extra limbs, disfigured face")
+    # AC: детерминированный качество-хвост — понятен любой модели генератора,
+    # не зависит от того, сработал ли nano-улучшатель
+    full_prompt = (str(prompt or "").strip() +
+                   ", high quality, highly detailed, sharp focus, natural proportions, "
+                   "no text")[:1100]
     image = b""
     used = ""
     last_error = ""
@@ -371,7 +380,7 @@ def _free_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
             # (текст на картинке, водяные знаки, мыло, кривые руки)
             url = ("https://image.pollinations.ai/prompt/%s?width=%d&height=%d"
                    "&nologo=true&seed=%d&model=%s&negative_prompt=%s&referrer=jarvis"
-                   % (urllib.parse.quote(prompt)[:900], width, height, seed, model,
+                   % (urllib.parse.quote(full_prompt)[:1400], width, height, seed, model,
                       urllib.parse.quote(negative)))
             req = urllib.request.Request(url, headers={"User-Agent": _UA})
             try:
