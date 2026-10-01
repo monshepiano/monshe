@@ -125,6 +125,37 @@ def _start_bg_title(chat_id: str, text: str, notify=None) -> None:
     threading.Thread(target=_work, daemon=True).start()
 
 
+def _purge_chat_leftovers() -> None:
+    """AE: РАЗОВАЯ ЧИСТКА СТАРОГО МУСОРА. Живые кадры камеры и голосовые
+    записи раньше становились файлами диалога (camera_*.jpg, *.webm, *.wav) —
+    теперь загрузка таких вложений транзиентна и на диск не пишется. Здесь
+    убираем только то, что успело накопиться за прошлые версии: корень
+    каждой песочницы, только эти шаблоны, ничего больше не трогаем."""
+    try:
+        chats_dir = sandbox.WORKSPACE / "chats"
+        if not chats_dir.is_dir():
+            return
+        removed = 0
+        for chat_path in chats_dir.iterdir():
+            if not chat_path.is_dir():
+                continue
+            for f in chat_path.iterdir():
+                if not f.is_file():
+                    continue
+                low = f.name.lower()
+                if (low.startswith("camera_") or
+                        low.endswith((".wav", ".webm", ".mp3", ".ogg", ".m4a", ".aac"))):
+                    try:
+                        f.unlink()
+                        removed += 1
+                    except OSError:
+                        pass
+        if removed:
+            print("чистка файлов диалогов: удалено живых вложений — %d" % removed, flush=True)
+    except Exception:
+        pass   # чистка никогда не должна мешать запуску
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "JARVIS/" + VERSION
@@ -578,9 +609,21 @@ class Handler(BaseHTTPRequestHandler):
         if len(raw) > MAX_UPLOAD_BYTES:
             return {"ok": False, "error": "файл больше 25 МБ"}
         chat_id = body.get("chat_id") or ""
+        # AE: ЖИВЫЕ ВЛОЖЕНИЯ НЕ СТАНОВЯТСЯ ФАЙЛАМИ ДИАЛОГА. Кадры камеры и
+        # голосовые записи — служебный груз одного запроса: содержимое уходит
+        # модели сразу, в песочнице чата от разговора не остаётся мусора
+        # (фото «camera_*.jpg», аудио диктовки). Настоящие вложения человека
+        # (фото, документы) хранятся как раньше.
+        lower = name.lower()
+        transient = bool(body.get("transient")) or \
+            lower.startswith("camera_") or \
+            lower.endswith((".wav", ".webm", ".mp3", ".ogg", ".m4a", ".aac"))
+        kind = "image" if lower.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")) else "file"
+        if transient:
+            return {"ok": True, "name": name, "size": len(raw), "kind": kind,
+                    "preview": "", "transient": True}
         dest = sandbox.root(chat_id) / name
         dest.write_bytes(raw)
-        kind = "image" if name.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")) else "file"
         preview = ""
         if kind == "file" and name.lower().endswith((".txt", ".md", ".csv", ".json", ".py", ".js", ".html")):
             try:
@@ -1114,6 +1157,8 @@ def find_port(preferred: int, host: str) -> int:
 
 
 def run() -> None:
+    # старые кадры камеры/голосовые из файлов диалогов — убрать один раз
+    threading.Thread(target=_purge_chat_leftovers, name="jarvis-purge", daemon=True).start()
     host = CONFIG.get("server.host", "127.0.0.1")
     port = find_port(int(CONFIG.get("server.port", 8765)), host)
     auto.start()

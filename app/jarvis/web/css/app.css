@@ -180,6 +180,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .nav-item[data-view="files"]  .nav-ico{color:var(--lime)}
 .nav-item[data-view="memory"] .nav-ico{color:var(--violet)}
 .nav-item[data-view="settings"] .nav-ico{color:var(--amber)}
+/* AE: СЦЕНАРИИ — чуть красноватый (тёплый терракот между coral и amber
+   палитры), не выпадает из строки вкладок; активная вкладка и заголовок
+   страницы — в том же тоне */
+.nav-item[data-view="scenarios"] .nav-ico{color:#d4836d}
+.nav-item[data-view="scenarios"].active{background:linear-gradient(90deg,rgba(212,131,109,.18),rgba(212,131,109,.03))}
+.nav-item[data-view="scenarios"].active::before{background:#d4836d;box-shadow:0 0 12px rgba(212,131,109,.8)}
+.view-scenarios h2{color:#d4836d}
 .nav-item:hover .nav-ico{filter:drop-shadow(0 0 7px currentColor)}
 .nav-item[data-view="auto"].active{background:linear-gradient(90deg,rgba(47,156,146,.18),transparent)}
 .nav-item[data-view="auto"].active::before{background:var(--teal);box-shadow:0 0 12px var(--teal)}
@@ -1063,7 +1070,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch-track input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .agent-switch-track i{position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;
   background:var(--tx3);
-  transition:transform .68s cubic-bezier(.25,.75,.3,1),background .3s,box-shadow .3s;
+  transition:transform .82s cubic-bezier(.25,.75,.3,1),background .3s,box-shadow .3s;
   /* буква A живёт НА круглешке: тумблер подписан собой, без соседних слов */
   font-style:normal;font-weight:800;font-size:11px;line-height:20px;text-align:center;
   color:var(--panel2);font-family:inherit;user-select:none}
@@ -1125,8 +1132,11 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .qt-flow.full{
   -webkit-mask-image:linear-gradient(180deg,transparent,#000 22%,#000 82%,transparent);
   mask-image:linear-gradient(180deg,transparent,#000 22%,#000 82%,transparent)}
-.qt-flowline{font-size:11px;color:rgba(154,202,219,.66);white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;
+/* AE: КОРЕНЬ «ТРОЕТОЧИЯ В КОНЦЕ СТРОКИ» — CSS text-overflow:ellipsis сам
+   дорисовывал «…» каждой строке шире окна потока. Строки переносятся: текст
+   мысли виден целиком. */
+.qt-flowline{font-size:11px;color:rgba(154,202,219,.66);white-space:normal;
+  overflow:visible;word-break:break-word;
   animation:qtRise .6s cubic-bezier(.2,.75,.3,1) both}
 /* строка ждёт, пока полоса удлинится: qtFeed отпускает её через 230мс */
 .qt-flowline.qt-wait{opacity:0;animation:none}
@@ -1169,8 +1179,9 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
    подсветки имени от наведения на ВСЮ папку срабатывало и от детей (:hover
    касается и предков) — вся группа «загоралась». Теперь имя группы светится
    только от наведения на саму голову группы. */
+/* AE: подсвечивается только НАЗВАНИЕ (строки и головы одинаково),
+   никакой подсветки ОБЛАСТИ инструмента */
 .qt-head:hover .qt-name,.qt-row:hover .qt-name,.qt-think:hover .qt-name{color:rgba(178,214,231,.9)}
-.qt-rows .qt-row:hover{background:rgba(0,212,255,.05);border-radius:7px}
 /* серия долетела — имя ПОДМИГИВАЕТ ЯРКОСТЬЮ: без text-shadow (свечение
    обрезалось рамкой ellipsis и рисовало квадратный контур вокруг букв) и
    без задержки — яркость уже растёт с первого кадра и мягко спадает */
@@ -1524,10 +1535,10 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .cam-x p{margin:0}
 /* Диалог во время работы камеры живёт в правой колонке под комментарием:
    прокручивается только он, видео и «что вижу» остаются на месте. */
-/* AD: СВЁРНУТАЯ КАМЕРА/РАЗГОВОР РАЗВЁРНУТЫ СНОВА — тёмные и неактивные:
-   сеанс завершён, кнопки мертвы; доступен только прокрут диалога */
-.cam-msg.offline,.voice-msg.offline{opacity:.72;filter:brightness(.72) saturate(.75)}
-.cam-msg.offline .cam-col-left,.voice-msg.offline .v-side{opacity:.3;pointer-events:none}
+/* AE: НЕАКТИВНАЯ КАМЕРА/РАЗГОВОР — лишь заметно, что сеанс завершён:
+   контролы слева приглушены и мертвы, видео скрыто; ДИАЛОГ читается
+   полностью, без затемнения всей карточки */
+.cam-msg.offline .cam-col-left,.voice-msg.offline .v-side{opacity:.5;pointer-events:none}
 .cam-msg.offline .cam-video{display:none}
 .cam-msg.offline .cam-note{color:var(--tx3)}
 .cam-msg.offline .cam-hud span:last-child{color:var(--tx3)}
@@ -1930,15 +1941,17 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 
 /* --- кнопка голоса справа сверху --- */
 .top-acts{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+/* AE: ИКОНКА ЗВУКА — спокойная линейная SVG: включённая НЕ пульсирует,
+   выключенная однотонная (без красного), живой отклик — только короткая
+   вспышка в момент переключения (.tick) */
 .voice-btn svg{width:19px;height:19px}
 .voice-btn .mute{opacity:0;transition:.2s}
 .voice-btn.off{color:var(--tx3);border-color:var(--line)}
 .voice-btn.off .w1,.voice-btn.off .w2{opacity:0}
-.voice-btn.off .mute{opacity:1;color:var(--red)}
+.voice-btn.off .mute{opacity:1}
 .voice-btn.on{color:var(--cy);border-color:var(--line2);background:rgba(0,212,255,.14)}
-.voice-btn.on .w1{animation:vwave 1.6s ease-in-out infinite}
-.voice-btn.on .w2{animation:vwave 1.6s ease-in-out .25s infinite}
-.voice-btn.speaking{box-shadow:0 0 0 0 rgba(0,212,255,.4);animation:vpulse 1.3s ease-out infinite}
+.voice-btn.tick svg{animation:vsndTick .32s ease-out}
+@keyframes vsndTick{0%{transform:scale(1)}35%{transform:scale(1.18)}100%{transform:scale(1)}}
 @keyframes vwave{0%,100%{opacity:.35}50%{opacity:1}}
 @keyframes vpulse{to{box-shadow:0 0 0 12px rgba(0,212,255,0)}}
 

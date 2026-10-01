@@ -4629,14 +4629,13 @@ function qtFold(ui, node, isLast) {
   // Z: ВЫСОТА СХЛОПЫВАЕТСЯ ПОЗДНО И БЫСТРО. Раньше она резала подпись с
   // самого начала полёта — текст обрезался на полпути и «таял ниже
   // названия». Теперь подпись целиком доживает до самой папки.
-  // AD: В КОНЦЕ ТРАЕКТОРИИ ИНСТРУМЕНТ УХОДИТ В ТЕМНОТУ. Прежний фейд
-  // включался в самом конце (.78с) — подпись долетала до названия группы
-  // читаемой и СЛИВАЛАСЬ с ним. Затемнение стартует в середине полёта
-  // и к посадке почти гасит строку: инструмент тонет «под» группой.
+  // AE: ИНСТРУМЕНТ ЗАЛЕТАЕТ УЖЕ В ПОЛНУЮ ТЬМУ. Тайминг прежний — меняется
+  // ПРОЦЕНТ затемнения: к моменту посадки под группу строка почти чёрная
+  // (brightness .12) и растворена — с названием группы больше не сливается.
   node.style.transition =
     'height .42s cubic-bezier(.4,.6,.3,1) .58s, ' +
-    'opacity .44s ease-in .5s, filter .44s ease-in .5s';
-  node.style.filter = 'blur(4px) brightness(.45)';
+    'opacity .26s ease-in .78s, filter .26s ease-in .78s';
+  node.style.filter = 'blur(4px) brightness(.12)';
   node.style.opacity = '0';
   node.style.height = '0px';
   const t0 = performance.now();
@@ -5658,6 +5657,14 @@ function setSound(on) {
   S.config.ui = S.config.ui || {};
   S.config.ui.sound = on;
   syncSoundBtn();
+  // AE: живой отклик — короткая вспышка иконки, никаких постоянных пульсаций
+  const sb = $('#voiceBtn');
+  if (sb) {
+    sb.classList.remove('tick');
+    void sb.offsetWidth;
+    sb.classList.add('tick');
+    setTimeout(() => sb.classList.remove('tick'), 380);
+  }
   if (!on) {
     try { speechSynthesis.cancel(); } catch (e) { /* синтеза нет */ }
     toast('Звук выключен — полная тишина', 'info', 'Звук');
@@ -7457,6 +7464,7 @@ async function camAttachFrame(chatId, signal) {
   if (!data) return null;
   const r = await api('/api/upload', {
     name: 'camera_' + Date.now() + '.jpg', data, chat_id: chatId || '',
+    transient: true,   // AE: живой кадр — не файл диалога
   }, signal ? { signal } : null);
   if (!r.ok || (signal && signal.aborted)) return null;
   r.data = data;
