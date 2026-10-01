@@ -3152,7 +3152,9 @@ class IterationXTests(unittest.TestCase):
         self.assertIn("function renderAgentTraceGroups", js)
         self.assertIn("const agentAnswer = !!meta.agent;", js)
         # вальс: фейд у посадки, тело складывается первым, подпись доживает
-        self.assertIn("opacity .26s ease-in .78s", js)
+        # AD: затемнение инструмента стартует в середине полёта, к посадке — тьма
+        self.assertIn("opacity .44s ease-in .5s", js)
+        self.assertIn("blur(4px) brightness(.45)", js)
         self.assertIn("height .42s cubic-bezier(.4,.6,.3,1) .58s", js)
         self.assertIn("height .3s ease, opacity .22s ease", js)
         self.assertNotIn("scale(.93)", js.split("function qtFold")[1].split("\nfunction ")[0])
@@ -3175,7 +3177,7 @@ class IterationXTests(unittest.TestCase):
         self.assertIn("gate-hold", js)
         self.assertIn("function appendLivePlaceholder", js)
         self.assertIn("function appendFreshMessages", js)
-        self.assertIn("renderMessageInto(host, m)", js)
+        self.assertIn("renderMessageInto(host, m, m.role === 'assistant' && m.id === lastAiId)", js)
         self.assertIn("shell.dataset.agHold = '1'", js)
         self.assertIn(".qt-folder.open .qt-kids{display:flex}", css)
         self.assertNotIn(".qt-folder.open .qt-kids{display:flex;margin:2px 0 4px}", css)
@@ -3234,7 +3236,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.33", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.34", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3560,6 +3562,79 @@ class IterationACTests(unittest.TestCase):
         self.assertIn("high quality, highly detailed, sharp focus, natural proportions", code)
         self.assertIn("mutated hands, extra limbs, disfigured face", code)
         self.assertIn("анатомически верные", code)
+
+
+class IterationADTests(unittest.TestCase):
+    """AD (beta.34): мысли по предложениям, затемнение в группу, ховер одного
+    инструмента, ответ всегда внизу, плавная кромка ленты, тёмная камера,
+    иконка сценариев, кнопка «Звук», медленный кружок AGENT."""
+
+    def test_ad1_think_sentences(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        feed = js.split("function qtThinkFeed(flow, text)")[1].split("\nfunction ")[0]
+        # склейка «web_search.Need» получает пробел после точки
+        self.assertIn(r"replace(/([.!\u2026!?])(?=[A-Z\u0410-\u042f\u0401])/g, '$1 ')", js)
+        # законченное предложение — граница строки потока
+        self.assertIn("const c = rest[i];", feed)
+        self.assertIn("if (se > 20) cut = se;", feed)
+
+    def test_ad2_tools_sink_into_darkness(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        fold = js.split("function qtFold(ui, node, isLast)")[1].split("\nfunction ")[0]
+        self.assertIn("opacity .44s ease-in .5s", fold)
+        self.assertIn("blur(4px) brightness(.45)", fold)
+
+    def test_ad3_hover_single_tool(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn(".qt-head:hover .qt-name,.qt-row:hover .qt-name", css)
+        self.assertNotIn(".qt-folder:hover .qt-name", css)
+        self.assertIn(".qt-rows .qt-row:hover{background:rgba(0,212,255,.05)", css)
+
+    def test_ad4_answer_always_at_bottom(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        send = js.split("async function send(opts)")[1].split("\nasync function ")[0]
+        self.assertIn("allMsgs[allMsgs.length - 1] === root", send)
+        # панели истории законсервированы, активна только последняя
+        self.assertIn("mountUiPanels(node.body, { inert: !activePanel });", js)
+        self.assertIn("let lastAiId = '';", js)
+        self.assertIn("if (inert) box.classList.add('ui-inert');", js)
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn(".ui-panel.ui-inert{pointer-events:none;opacity:.5", css)
+
+    def test_ad5_stream_bottom_fade(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn("mask-image:linear-gradient(180deg,#000 0,#000 calc(100% - 30px),transparent)", css)
+
+    def test_ad6_offline_cam_and_voice_cards(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn("if (node.classList.contains('cam-msg') && !S.camStream) node.classList.add('offline');", js)
+        self.assertIn("if (node.classList.contains('voice-msg') && !VOICE.open) node.classList.add('offline');", js)
+        self.assertIn(".cam-msg.offline .cam-col-left,.voice-msg.offline .v-side{opacity:.3;pointer-events:none}", css)
+        self.assertIn(".cam-msg.offline .cam-video{display:none}", css)
+
+    def test_ad7_scenarios_icon(self) -> None:
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertNotIn("⚡️", html)
+        self.assertIn("<h2>Сценарии</h2>", html)
+        self.assertIn('data-view="scenarios"', html)
+        self.assertIn(".nav-ico svg{display:block", css)
+
+    def test_ad8_corner_button_is_master_sound(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        self.assertIn("function setSound(on)", js)
+        self.assertIn("function syncSoundBtn()", js)
+        self.assertIn("setSound(!soundOn())", js)
+        self.assertIn("if (!soundOn() || !voiceOn() || !text) return;", js)
+        self.assertIn("ui: { sound: on }", js)
+        self.assertIn('title="Звук"', html)
+        self.assertNotIn("Голос Джарвиса: озвучивать", html)
+
+    def test_ad9_agent_dot_slower(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn("transition:transform .68s cubic-bezier(.25,.75,.3,1)", css)
 
 
 class BareToolArgumentsTests(unittest.TestCase):

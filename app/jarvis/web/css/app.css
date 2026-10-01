@@ -173,6 +173,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .nav-item.active::before{content:"";position:absolute;left:0;top:18%;bottom:18%;width:2.5px;border-radius:3px;
   background:var(--cy);box-shadow:0 0 12px var(--cy)}
 .nav-ico{width:18px;text-align:center;font-size:14px;color:var(--cy);transition:.22s}
+.nav-ico svg{display:block;width:15px;height:15px;margin:0 auto}
 /* у каждого раздела свой оттенок — так меню читается быстрее */
 .nav-item[data-view="chat"]   .nav-ico{color:var(--cy)}
 .nav-item[data-view="auto"]   .nav-ico{color:var(--teal)}
@@ -400,6 +401,10 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 /* Снизу отступ такой же, как сверху: последняя карточка (обычно уведомление)
    больше не липнет к полю ввода, лента выглядит симметрично. */
 .stream{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  /* AD: ПЛАВНЫЙ ПЕРЕХОД у нижней кромки: сообщения растворяются, уходя
+     за область подсказок, — резкой границы среза больше нет */
+  -webkit-mask-image:linear-gradient(180deg,#000 0,#000 calc(100% - 30px),transparent);
+  mask-image:linear-gradient(180deg,#000 0,#000 calc(100% - 30px),transparent);
   padding:24px 26px 24px;scroll-behavior:smooth}
 /* История и догрузившиеся изображения используют pinToBottom(): его запись
    scrollTop не должна наследовать глобальную плавную прокрутку. */
@@ -831,6 +836,9 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   100%{box-shadow:inset 0 0 0 0 rgba(0,200,240,0)}}
 
 /* ---------- варианты ответа над полем ввода ---------- */
+/* AD: панель интерактива из ПРОШЛОГО ответа — законсервирована: вопрос
+   виден как часть истории, но кнопки мертвы (отвечать можно только в последний) */
+.ui-panel.ui-inert{pointer-events:none;opacity:.5;filter:saturate(.75)}
 .reply-bar{display:flex;flex-wrap:wrap;gap:8px;max-width:900px;margin:0 auto 10px;
   justify-content:flex-end}
 /* без этого display:flex перебивает атрибут hidden и пустая полоса
@@ -1055,7 +1063,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch-track input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .agent-switch-track i{position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;
   background:var(--tx3);
-  transition:transform .5s cubic-bezier(.2,.75,.3,1),background .3s,box-shadow .3s;
+  transition:transform .68s cubic-bezier(.25,.75,.3,1),background .3s,box-shadow .3s;
   /* буква A живёт НА круглешке: тумблер подписан собой, без соседних слов */
   font-style:normal;font-weight:800;font-size:11px;line-height:20px;text-align:center;
   color:var(--panel2);font-family:inherit;user-select:none}
@@ -1157,7 +1165,12 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   white-space:pre-wrap;word-break:break-word;max-height:220px;
   overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
 .qt-detail::-webkit-scrollbar{display:none}
-.qt-folder:hover .qt-name,.qt-row:hover .qt-name,.qt-think:hover .qt-name{color:rgba(178,214,231,.9)}
+/* AD: ХОВЕР ИНСТРУМЕНТА В ГРУППЕ ПОДСВЕЧИВАЕТ ТОЛЬКО ЕГО. Прежнее правило
+   подсветки имени от наведения на ВСЮ папку срабатывало и от детей (:hover
+   касается и предков) — вся группа «загоралась». Теперь имя группы светится
+   только от наведения на саму голову группы. */
+.qt-head:hover .qt-name,.qt-row:hover .qt-name,.qt-think:hover .qt-name{color:rgba(178,214,231,.9)}
+.qt-rows .qt-row:hover{background:rgba(0,212,255,.05);border-radius:7px}
 /* серия долетела — имя ПОДМИГИВАЕТ ЯРКОСТЬЮ: без text-shadow (свечение
    обрезалось рамкой ellipsis и рисовало квадратный контур вокруг букв) и
    без задержки — яркость уже растёт с первого кадра и мягко спадает */
@@ -1511,6 +1524,13 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .cam-x p{margin:0}
 /* Диалог во время работы камеры живёт в правой колонке под комментарием:
    прокручивается только он, видео и «что вижу» остаются на месте. */
+/* AD: СВЁРНУТАЯ КАМЕРА/РАЗГОВОР РАЗВЁРНУТЫ СНОВА — тёмные и неактивные:
+   сеанс завершён, кнопки мертвы; доступен только прокрут диалога */
+.cam-msg.offline,.voice-msg.offline{opacity:.72;filter:brightness(.72) saturate(.75)}
+.cam-msg.offline .cam-col-left,.voice-msg.offline .v-side{opacity:.3;pointer-events:none}
+.cam-msg.offline .cam-video{display:none}
+.cam-msg.offline .cam-note{color:var(--tx3)}
+.cam-msg.offline .cam-hud span:last-child{color:var(--tx3)}
 .cam-chat{display:flex;flex-direction:column;flex:1 1 0;min-height:0;
   overflow-y:auto;overscroll-behavior:contain;padding-right:4px;
   border-top:1px solid var(--line);padding-top:8px}

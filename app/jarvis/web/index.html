@@ -58,7 +58,9 @@
       </button>
       <button class="nav-item" data-view="scenarios" data-name="Сценарии">
         <i class="nav-outline" aria-hidden="true"></i>
-        <span class="nav-ico">⚡️</span><span class="nav-label">Сценарии</span>
+        <span class="nav-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13 2.8L5.8 13.4h4.9l-1 7.8 7.5-10.8h-4.8z"/></svg></span><span class="nav-label">Сценарии</span>
       </button>
       <button class="nav-item" data-view="files" data-name="Файлы">
         <i class="nav-outline" aria-hidden="true"></i>
@@ -113,14 +115,14 @@
           </svg>
           <i class="bell-dot" id="bellDot" hidden></i>
         </button>
-        <button class="icon-btn voice-btn" id="voiceBtn" title="Голос Джарвиса: озвучивать ответы"
-                aria-label="Голос Джарвиса">
+        <button class="icon-btn voice-btn" id="voiceBtn" title="Звук"
+                aria-label="Звук: все сигналы интерфейса и чтение ответов">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
                stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/>
-            <path class="w1" d="M15.7 8.8a4.6 4.6 0 0 1 0 6.4"/>
-            <path class="w2" d="M18.4 6.1a8 8 0 0 1 0 11.8"/>
-            <path class="mute" d="M16 9.5l5 5M21 9.5l-5 5"/>
+            <path d="M4 9.8v4.4h3.2L12 18.4V5.6L7.2 9.8z"/>
+            <path class="w1" d="M15.4 9.4a4.5 4.5 0 0 1 0 5.2"/>
+            <path class="w2" d="M18 6.6a8.2 8.2 0 0 1 0 10.8"/>
+            <path class="mute" d="M15.8 9.8l4.8 4.8M20.6 9.8l-4.8 4.8"/>
           </svg>
         </button>
       </div>
@@ -253,7 +255,7 @@
     <section class="view view-scenarios" id="view-scenarios">
       <div class="panel-head">
         <div>
-          <h2>⚡️ Сценарии</h2>
+          <h2>Сценарии</h2>
           <p class="muted">Готовые последовательности: один клик — и Джарвис выполнит шаги
             в новом диалоге, один за другим. Как «Команды» на iPhone.</p>
         </div>

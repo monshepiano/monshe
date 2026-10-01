@@ -1026,7 +1026,7 @@ async function openChat(id) {
 /* Отрисовка переписки в заданный контейнер. Вынесена из openChat, потому что
    тот же список нужно уметь перерисовать ВНУТРИ карточки камеры — иначе
    переключение версии выбрасывало разговор в основную ленту. */
-function renderMessageInto(host, m) {
+function renderMessageInto(host, m, activePanel) {
   if (m.role === 'user') {
     const mt = m.meta || {};
     // выбор, отправленный панелью ```ui, в ленте не показываем — ни сейчас,
@@ -1050,7 +1050,9 @@ function renderMessageInto(host, m) {
     restoreTrace(node, meta);
     node.body.appendChild(el('div', 'md', MD.render(m.content)));
     foldCodeBlocks(node.body);
-    mountUiPanels(node.body);
+    // AD: панели прошлого законсервированы; кликабельна только панель
+    // ПОСЛЕДНЕГО ответа — старый интерактивчик больше не принимает ответы
+    mountUiPanels(node.body, { inert: !activePanel });
     (meta.files || []).forEach((f) => attachFileChip(node.body, f));
     addMsgActions(node, m.content);
   }
@@ -1059,7 +1061,13 @@ function renderMessageInto(host, m) {
 function renderMessages(host, messages) {
   const prevHost = S.forceHost;
   S.forceHost = host;
-  (messages || []).forEach((m) => renderMessageInto(host, m));
+  // AD: активная панель — только у ПОСЛЕДНЕГО ответа Джарвиса
+  const msgs = messages || [];
+  let lastAiId = '';
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'assistant') { lastAiId = msgs[i].id; break; }
+  }
+  msgs.forEach((m) => renderMessageInto(host, m, m.role === 'assistant' && m.id === lastAiId));
   S.forceHost = prevHost;
   // Варианты продолжения принадлежат последнему ответу Джарвиса. Возвращаясь
   // в диалог, пользователь должен видеть их снова — иначе они выглядели бы
@@ -1133,7 +1141,8 @@ function appendFreshMessages(msgs) {
   const before = host.children.length;
   const prevHost = S.forceHost;
   S.forceHost = host;
-  fresh.forEach((m) => renderMessageInto(host, m));
+  // свежие сообщения — самые последние в ленте, их панели активны
+  fresh.forEach((m) => renderMessageInto(host, m, m.role === 'assistant'));
   S.forceHost = prevHost;
   // Z: ПЛАВНЫЙ ПРИЕЗД — готовый ответ доезжает мягким проявлением,
   // а не «резко появляется» после пустого экрана
@@ -2169,6 +2178,10 @@ function collapseToThumb(node, opts) {
   thumb.addEventListener('click', () => {
     node.style.display = '';
     node.dataset.collapsed = '0';
+    // AD: СВЁРНУТАЯ КАМЕРА/РАЗГОВОР РАЗВОРАЧИВАЮТСЯ ТЁМНЫМИ И НЕАКТИВНЫМИ:
+    // сеанс давно завершён — кнопки мертвы, полистать диалог можно (как у камеры)
+    if (node.classList.contains('cam-msg') && !S.camStream) node.classList.add('offline');
+    if (node.classList.contains('voice-msg') && !VOICE.open) node.classList.add('offline');
     // ПРИЧИНА «текст не появляется»: карточку сворачивали в миниатюру, когда её
     // тело было закрыто (max-height:0). Разворачивая миниатюру, мы возвращали
     // карточку как есть — с закрытым телом, — и пользователь видел один
@@ -2970,14 +2983,16 @@ function stripMirroredChoiceList(box, items) {
   }
 }
 
-function mountUiPanels(root) {
+function mountUiPanels(root, opts) {
   if (!root) return;
+  const inert = !!(opts && opts.inert);
   $$('.ui-panel', root).forEach((box) => {
     if (box.dataset.live === '1') return;
     const items = parseUiSpec(box.dataset.ui || '');
     if (!items.length || !hasMeaningfulUiItems(items)) { box.remove(); return; }
     stripMirroredChoiceList(box, items);
     box.dataset.live = '1';
+    if (inert) box.classList.add('ui-inert');   // AD: законсервированная панель истории
     box.innerHTML = '';
 
     // AA: ПАНЕЛЬ ПРИНАДЛЕЖИТ СВОЕМУ СООБЩЕНИЮ. Ответ на неё — продолжение
@@ -3750,7 +3765,11 @@ async function send(opts) {
     // новая карточка «ответ на ответ».
     const root = $$('.msg', requestHost)
       .find((m) => m.dataset && m.dataset.msgId === opts.continueOf);
-    if (root && root.querySelector('.ai-content')) {
+    // AD: НОВЫЙ ОТВЕТ ВСЕГДА ВНИЗУ. Продолжать можно ТОЛЬКО последнее
+    // сообщение ленты: клик по старой панели (выше поздних ответов) раньше
+    // дописывал СТАРОЕ сообщение — ответ рождался над свежими репликами.
+    const allMsgs = $$('.msg', requestHost);
+    if (root && root.querySelector('.ai-content') && allMsgs[allMsgs.length - 1] === root) {
       node = { root, body: root.querySelector('.ai-content'),
                modelEl: root.querySelector('.ai-model') };
     }
@@ -4244,14 +4263,32 @@ function qtThinkFeed(flow, text) {
   const inner = flow.querySelector('.qt-flowin');
   if (!inner) return;
   flow._buf = (flow._buf || '') + String(text || '');
+  // AD: модель шлёт мысль кусками и СКЛЕИВАЕТ предложения без пробела
+  // («web_search.Need news») — читалось как недописанный текст. Ставим
+  // пробел после точки/вопроса, если дальше идёт заглавная буква.
+  flow._buf = flow._buf.replace(/([.!\u2026!?])(?=[A-Z\u0410-\u042f\u0401])/g, '$1 ');
   const born = (line) => setTimeout(() => line.classList.remove('qt-wait'), 230);
   for (;;) {
     const rest = flow._buf;
     if (rest.length <= 96 && rest.indexOf('\n') < 0) break;
     let cut = rest.indexOf('\n');
     if (cut < 0 || cut > 96) {
-      const sp = rest.lastIndexOf(' ', 96);
-      cut = sp > 40 ? sp : 96;
+      // AD: ЗАВЕРШЁННОЕ ПРЕДЛОЖЕНИЕ — лучшая граница строки: мысль
+      // читается по предложениям, а не произвольными кусками по 96 знаков
+      let se = -1;
+      const upto = Math.min(96, rest.length - 1);
+      for (let i = 0; i <= upto; i++) {
+        const c = rest[i];
+        if (c === '.' || c === '!' || c === '?' || c === '\u2026') {
+          const nx = rest[i + 1];
+          if (nx === undefined || nx === ' ' || nx === '\n') se = i + 1;
+        }
+      }
+      if (se > 20) cut = se;
+      else {
+        const sp = rest.lastIndexOf(' ', 96);
+        cut = sp > 40 ? sp : 96;
+      }
     }
     let line = inner.lastElementChild;
     if (!line || line._sealed) {
@@ -4592,10 +4629,14 @@ function qtFold(ui, node, isLast) {
   // Z: ВЫСОТА СХЛОПЫВАЕТСЯ ПОЗДНО И БЫСТРО. Раньше она резала подпись с
   // самого начала полёта — текст обрезался на полпути и «таял ниже
   // названия». Теперь подпись целиком доживает до самой папки.
+  // AD: В КОНЦЕ ТРАЕКТОРИИ ИНСТРУМЕНТ УХОДИТ В ТЕМНОТУ. Прежний фейд
+  // включался в самом конце (.78с) — подпись долетала до названия группы
+  // читаемой и СЛИВАЛАСЬ с ним. Затемнение стартует в середине полёта
+  // и к посадке почти гасит строку: инструмент тонет «под» группой.
   node.style.transition =
     'height .42s cubic-bezier(.4,.6,.3,1) .58s, ' +
-    'opacity .26s ease-in .78s, filter .26s ease-in .78s';
-  node.style.filter = 'blur(3px)';
+    'opacity .44s ease-in .5s, filter .44s ease-in .5s';
+  node.style.filter = 'blur(4px) brightness(.45)';
   node.style.opacity = '0';
   node.style.height = '0px';
   const t0 = performance.now();
@@ -5592,28 +5633,44 @@ function voiceOn() { return localStorage.getItem('jarvisVoice') === '1'; }
    настройках зовут её — иначе два источника истины разъезжаются. */
 function setVoice(on) {
   localStorage.setItem('jarvisVoice', on ? '1' : '0');
-  syncVoiceBtn();
   if (on) {
-    toast('Голос включён — буду озвучивать ответы', 'success', 'Голос');
-    speakReply('Голос включён, сэр. Я на связи.');
+    toast('Озвучивание ответов включено', 'success', 'Голос');
   } else {
     try { speechSynthesis.cancel(); } catch (e) {}
-    toast('Голос выключен', 'info', 'Голос');
+    toast('Озвучивание ответов выключено', 'info', 'Голос');
   }
   api('/api/config/update', { patch: { ui: { voice_reply: on } } });
 }
 
-function syncVoiceBtn() {
+/* AD: КНОПКА В УГЛУ — «ЗВУК», ВЕСЬ ЗВУК. Прежняя «говорилка» гасила только
+   озвучку ответов; теперь одна кнопка выключает ВСЁ: сигналы интерфейса
+   (beep/blip/sfx уже слушают soundOn) и чтение ответов вслух. */
+function syncSoundBtn() {
   const b = $('#voiceBtn');
   if (!b) return;
-  const on = voiceOn();
+  const on = soundOn();
   b.classList.toggle('on', on);
   b.classList.toggle('off', !on);
-  b.title = on ? 'Голос включён — я озвучиваю ответы' : 'Голос выключен';
+  b.title = on ? 'Звук включён' : 'Звук выключен — полная тишина';
+}
+
+function setSound(on) {
+  S.config.ui = S.config.ui || {};
+  S.config.ui.sound = on;
+  syncSoundBtn();
+  if (!on) {
+    try { speechSynthesis.cancel(); } catch (e) { /* синтеза нет */ }
+    toast('Звук выключен — полная тишина', 'info', 'Звук');
+  } else {
+    blip(true);
+    toast('Звук включён', 'info', 'Звук');
+  }
+  api('/api/config/update', { patch: { ui: { sound: on } } });
 }
 
 function speakReply(text) {
-  if (!voiceOn() || !text) return;
+  // чтение вслух — тоже звук: главная кнопка «Звук» глушит и его
+  if (!soundOn() || !voiceOn() || !text) return;
   try {
     const clean = String(text)
       .replace(/```[\s\S]*?```/g, ' ... код ... ')
@@ -5638,7 +5695,8 @@ function speakReply(text) {
 }
 
 if ($('#voiceBtn')) {
-  $('#voiceBtn').addEventListener('click', () => setVoice(!voiceOn()));
+  $('#voiceBtn').addEventListener('click', () => setSound(!soundOn()));
+  syncSoundBtn();
 }
 
 /* колокольчик в углу: открыть/закрыть центр уведомлений */
@@ -9386,7 +9444,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 (async function init() {
-  syncVoiceBtn();
+  syncSoundBtn();
   setupScrollDate($('#stream'), $('#scrollDate'));
   $('#stream').appendChild(buildWelcome());
   // состояние и список диалогов тянем параллельно, а не гуськом.
