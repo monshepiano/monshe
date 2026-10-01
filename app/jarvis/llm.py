@@ -565,7 +565,16 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
                     resp = _request(url, conf["api_key"], payload,
                                     timeout=max(0.1, remaining))
                 with resp:
-                    body = json.loads(resp.read().decode("utf-8"))
+                    raw_body = resp.read().decode("utf-8")
+                try:
+                    body = json.loads(raw_body)
+                except ValueError:
+                    # AG: 200 с ПУСТЫМ телом — раньше наружу летел сырой
+                    # «Expecting value: line 1 column 1 (char 0)». Это отказ
+                    # МОДЕЛИ, а не поломка: понятные слова + повтор/следующая
+                    last_error = LLMError("пустой ответ от модели %s" % model)
+                    span.retried()
+                    continue
                 span.first_token()
                 usage = body.get("usage") or {}
                 pt = int(usage.get("prompt_tokens") or 0)

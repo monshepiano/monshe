@@ -136,28 +136,45 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   background:linear-gradient(180deg,rgba(7,14,25,.9),rgba(5,10,18,.86));
   border-right:1px solid var(--line);backdrop-filter:blur(18px);
   transition:margin-left .35s cubic-bezier(.4,0,.2,1),opacity .25s ease}
-/* ---- узкий режим сайдбара (только иконки) ---- */
+/* ---- узкий режим: БОКОВОЙ DOCK, как на маке ----
+   AG: свёрнутое меню — не обрезанная колонка, а полупрозрачная плавающая
+   панель-док: матовое стекло, иконки по центру, еле заметная в покое и
+   оживающая при наведении. Не отвлекает от диалога, но мягко напоминает,
+   что функции рядом. */
 /* overflow:visible + z-index — иначе всплывающие подписи обрежутся краем полосы */
-.app.collapsed .sidebar{padding:16px 8px;gap:10px;overflow:visible;z-index:70}
-.app.collapsed .brand{flex-direction:column;gap:8px;padding:4px 0 12px}
+.app.collapsed .sidebar{padding:10px 0;gap:6px;overflow:visible;z-index:70;
+  background:transparent;border-right:0;backdrop-filter:none;-webkit-backdrop-filter:none}
+.app.collapsed .brand{flex-direction:column;gap:8px;padding:2px 0 4px}
 .app.collapsed .brand-text{display:none}
-.app.collapsed .collapse-btn{transform:rotate(180deg)}
-.app.collapsed .nav-item{justify-content:center;padding:11px 0;gap:0}
+.app.collapsed .collapse-btn{transform:rotate(180deg);margin:0 auto}
+/* сам док: матовое стекло, парит отдельно от фона */
+.app.collapsed .nav{flex:1;justify-content:center;margin:0 9px;padding:10px 0;
+  background:rgba(9,18,30,.5);border:1px solid rgba(0,212,255,.13);border-radius:18px;
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  box-shadow:0 10px 30px rgba(0,0,0,.38),inset 0 1px 0 rgba(255,255,255,.045);
+  transition:background .25s ease,border-color .25s ease}
+.app.collapsed .nav:hover{background:rgba(12,24,40,.62);border-color:rgba(0,212,255,.22)}
+.app.collapsed .nav-item{justify-content:center;padding:10px 0;gap:0;margin:1px 7px;
+  border-radius:12px;transition:background .2s ease,transform .22s cubic-bezier(.2,.8,.3,1)}
 .app.collapsed .nav-label{display:none}
-.app.collapsed .nav-ico{width:auto;font-size:17px}
-.app.collapsed .nav-item .badge{position:absolute;top:3px;right:6px;margin:0;min-width:16px;height:16px;
+/* иконки в покое полупризрачные — док «спит»; наведение мягко будит */
+.app.collapsed .nav-ico{width:auto;font-size:16px;opacity:.55;transition:opacity .2s ease}
+.app.collapsed .nav-item:hover{background:rgba(0,212,255,.09);transform:scale(1.08)}
+.app.collapsed .nav-item:hover .nav-ico{opacity:1}
+.app.collapsed .nav-item.active .nav-ico{opacity:.92}
+.app.collapsed .nav-item .badge{position:absolute;top:3px;right:2px;margin:0;min-width:16px;height:16px;
   padding:0 4px;font-size:9px}
 .app.collapsed .chats-block,
 .app.collapsed .side-foot .stat-row{display:none}
-.app.collapsed .side-foot{margin-top:auto;border-top:0;padding:6px 0 2px}
-.app.collapsed .power{margin:0 2px}
-/* подпись иконки при наведении в узком режиме */
-.app.collapsed .nav-item::after{content:attr(data-name);position:absolute;left:calc(100% + 10px);
+.app.collapsed .side-foot{margin-top:0;border-top:0;padding:2px 0 6px}
+.app.collapsed .power{margin:0 auto;opacity:.6}
+.app.collapsed .power:hover{opacity:1}
+/* подпись иконки при наведении — вылетает из дока */
+.app.collapsed .nav-item::after{content:attr(data-name);position:absolute;left:calc(100% + 14px);
   padding:6px 10px;border-radius:9px;background:rgba(8,16,28,.96);border:1px solid var(--line2);
   color:var(--tx);font-size:12px;white-space:nowrap;opacity:0;pointer-events:none;transform:translateX(-6px);
   transition:.18s;z-index:80;box-shadow:var(--shadow)}
 .app.collapsed .nav-item:hover::after{opacity:1;transform:none}
-.app.collapsed .nav-item:hover{transform:none}
 .brand{display:flex;align-items:center;gap:10px;padding:4px 6px 12px;border-bottom:1px solid var(--line)}
 .brand-text{flex:1;min-width:0}
 .brand-name{font-size:17px;font-weight:600;letter-spacing:4px;color:#eaf9ff;text-shadow:0 0 18px rgba(0,212,255,.5)}
@@ -180,13 +197,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .nav-item[data-view="files"]  .nav-ico{color:var(--lime)}
 .nav-item[data-view="memory"] .nav-ico{color:var(--violet)}
 .nav-item[data-view="settings"] .nav-ico{color:var(--amber)}
-/* AF: СЦЕНАРИИ — КРАСНЫЙ из палитры (--red), не оранжевый: иконка вкладки,
-   её активное состояние и заголовок страницы — один цвет */
-.nav-item[data-view="scenarios"] .nav-ico{color:var(--red)}
-.nav-item[data-view="scenarios"].active{background:linear-gradient(90deg,rgba(221,85,102,.18),rgba(221,85,102,.03))}
-.nav-item[data-view="scenarios"].active::before{background:var(--red);box-shadow:0 0 12px rgba(221,85,102,.8)}
-.view-scenarios h2{color:var(--red)}
-.view-scenarios .panel-head h2{color:var(--red)}
+/* AG: СЦЕНАРИИ — ТЁМНЫЙ приглушённый красный (незаметный, но свой), а
+   заголовок страницы — блёклый, ближе к белому, как у остальных вкладок */
+.nav-item[data-view="scenarios"] .nav-ico{color:#a84a5b}
+.nav-item[data-view="scenarios"].active{background:linear-gradient(90deg,rgba(168,74,91,.16),rgba(168,74,91,.03))}
+.nav-item[data-view="scenarios"].active::before{background:#a84a5b;box-shadow:0 0 10px rgba(168,74,91,.6)}
+.view-scenarios h2{color:#e9ccd3}
+.view-scenarios .panel-head h2{color:#e9ccd3}
 .nav-item:hover .nav-ico{filter:drop-shadow(0 0 7px currentColor)}
 .nav-item[data-view="auto"].active{background:linear-gradient(90deg,rgba(47,156,146,.18),transparent)}
 .nav-item[data-view="auto"].active::before{background:var(--teal);box-shadow:0 0 12px var(--teal)}
@@ -1070,7 +1087,7 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .agent-switch-track input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .agent-switch-track i{position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;
   background:var(--tx3);
-  transition:transform .95s cubic-bezier(.25,.75,.3,1),background .3s,box-shadow .3s;
+  transition:transform 1.1s cubic-bezier(.23,.86,.24,1),background .3s,box-shadow .3s;
   /* буква A живёт НА круглешке: тумблер подписан собой, без соседних слов */
   font-style:normal;font-weight:800;font-size:11px;line-height:20px;text-align:center;
   color:var(--panel2);font-family:inherit;user-select:none}

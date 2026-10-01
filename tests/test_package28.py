@@ -3153,8 +3153,8 @@ class IterationXTests(unittest.TestCase):
         self.assertIn("const agentAnswer = !!meta.agent;", js)
         # вальс: фейд у посадки, тело складывается первым, подпись доживает
         # AD: затемнение инструмента стартует в середине полёта, к посадке — тьма
-        self.assertIn("opacity .5s ease-in .5s", js)
-        self.assertIn("blur(4px) brightness(.08)", js)
+        self.assertIn("const flyKeys = (target) => [", js)
+        self.assertIn("filter: 'blur(4px) brightness(.08)'", js)
         self.assertIn("height .42s cubic-bezier(.4,.6,.3,1) .58s", js)
         self.assertIn("height .3s ease, opacity .22s ease", js)
         self.assertNotIn("scale(.93)", js.split("function qtFold")[1].split("\nfunction ")[0])
@@ -3236,7 +3236,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.36", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.37", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3581,8 +3581,11 @@ class IterationADTests(unittest.TestCase):
     def test_ad2_tools_sink_into_darkness(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         fold = js.split("function qtFold(ui, node, isLast)")[1].split("\nfunction ")[0]
-        self.assertIn("opacity .5s ease-in .5s", fold)
-        self.assertIn("blur(4px) brightness(.08)", fold)
+        # AG: затемнение — В САМОМ WAAPI-полёте (неуничтожимо CSS-гонками)
+        self.assertIn("const flyKeys = (target) => [", fold)
+        self.assertIn("{ opacity: 1, filter: 'blur(1.5px) brightness(.5)', offset: .45 },", fold)
+        self.assertIn("filter: 'blur(4px) brightness(.08)'", fold)
+        self.assertIn("flight.effect.setKeyframes(flyKeys(aim));", fold)
 
     def test_ad3_hover_single_tool(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -3640,7 +3643,7 @@ class IterationADTests(unittest.TestCase):
 
     def test_ad9_agent_dot_slower(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("transition:transform .95s cubic-bezier(.25,.75,.3,1)", css)
+        self.assertIn("transition:transform 1.1s cubic-bezier(.23,.86,.24,1)", css)
 
 
 class IterationAETests(unittest.TestCase):
@@ -3649,11 +3652,11 @@ class IterationAETests(unittest.TestCase):
 
     def test_ae1_scenarios_terrakota(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('.nav-item[data-view="scenarios"] .nav-ico{color:var(--red)}', css)
-        self.assertIn('.nav-item[data-view="scenarios"].active{', css)
-        self.assertIn('.nav-item[data-view="scenarios"].active::before{background:var(--red)', css)
-        self.assertIn('.view-scenarios h2{color:var(--red)}', css)
-        self.assertIn('.view-scenarios .panel-head h2{color:var(--red)}', css)
+        self.assertIn('.nav-item[data-view="scenarios"] .nav-ico{color:#a84a5b}', css)
+        self.assertIn('.nav-item[data-view="scenarios"].active::before{background:#a84a5b', css)
+        # AG: заголовок страницы — блёклый, ближе к белому (как у других вкладок)
+        self.assertIn('.view-scenarios h2{color:#e9ccd3}', css)
+        self.assertIn('.view-scenarios .panel-head h2{color:#e9ccd3}', css)
 
     def test_ae2_live_uploads_leave_no_files(self) -> None:
         srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
@@ -3695,8 +3698,8 @@ class IterationAFTests(unittest.TestCase):
 
     def test_af1_scenarios_red(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('.nav-item[data-view="scenarios"] .nav-ico{color:var(--red)}', css)
-        self.assertIn('.view-scenarios .panel-head h2{color:var(--red)}', css)
+        self.assertIn('.nav-item[data-view="scenarios"] .nav-ico{color:#a84a5b}', css)
+        self.assertIn('.view-scenarios .panel-head h2{color:#e9ccd3}', css)
 
     def test_af2_small_talk_gets_light_prompt(self) -> None:
         # «как дела» —.social реплика: ЛЁГКИЙ промпт без песочницы/инструментов
@@ -3730,6 +3733,51 @@ class IterationAFTests(unittest.TestCase):
         self.assertIn("return !(ui && ui.sound === false);", js)
         # конфиг приехал — кнопка пересинхронизировалась
         self.assertIn("S.config = st.config || {};\n  syncSoundBtn();", js)
+
+
+class IterationAGTests(unittest.TestCase):
+    """AG (beta.37): док-меню, тьма в самом полёте, чистые голосовые,
+    свежий звонок, понятные ошибки зрения, дороже тумблер."""
+
+    def test_ag1_scenarios_muted(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn('.nav-item[data-view="scenarios"] .nav-ico{color:#a84a5b}', css)
+        self.assertIn('.view-scenarios .panel-head h2{color:#e9ccd3}', css)
+
+    def test_ag2_voice_files_never_touch_workspace(self) -> None:
+        code = Path("app/jarvis/tools/media.py").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # корень: transcribe сохранял voice_*.webm В ПЕСОЧНИЦУ
+        self.assertIn('tempfile.TemporaryDirectory(prefix="jarvis-asr-")', code)
+        self.assertNotIn('"voice_%d.%s"', code)
+        self.assertIn("transient = bool(body.get(\"transient\")) or", 
+                      Path("app/jarvis/server.py").read_text(encoding="utf-8"))
+        # каждый звонок — НОВЫЙ разговор, старая беседа не подтягивается
+        self.assertNotIn("jarvisVoiceChat", js)
+        openv = js.split("async function openVoiceMode()")[1].split("\nasync function ")[0]
+        self.assertNotIn("voiceLoadTranscript()", openv)
+
+    def test_ag3_dimming_inside_flight(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        fold = js.split("function qtFold(ui, node, isLast)")[1].split("\nfunction ")[0]
+        self.assertIn("const flyKeys = (target) => [", fold)
+        self.assertIn("offset: .45", fold)
+        self.assertIn("flight.effect.setKeyframes(flyKeys(aim));", fold)
+        # CSS-гонка с задержками убрана: остаётся только высота
+        self.assertNotIn("opacity .5s ease-in .5s", fold)
+
+    def test_ag5_empty_llm_body_readable(self) -> None:
+        code = Path("app/jarvis/llm.py").read_text(encoding="utf-8")
+        self.assertIn('last_error = LLMError("пустой ответ от модели %s" % model)', code)
+
+    def test_ag6_collapsed_dock(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        dock = css.split("/* ---- узкий режим: БОКОВОЙ DOCK")[1].split("/* подпись иконки")[0]
+        self.assertIn("backdrop-filter:blur(16px)", dock)
+        self.assertIn("border-radius:18px", dock)
+        self.assertIn("justify-content:center", dock)
+        self.assertIn(".app.collapsed .nav-item:hover{background:rgba(0,212,255,.09);transform:scale(1.08)}", css)
+        self.assertIn(".app.collapsed .nav-ico{width:auto;font-size:16px;opacity:.55", css)
 
 
 class BareToolArgumentsTests(unittest.TestCase):

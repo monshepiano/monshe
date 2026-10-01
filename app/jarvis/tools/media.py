@@ -7,6 +7,7 @@ import json
 import re
 import ssl
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.error
@@ -745,6 +746,7 @@ def _asr_routes() -> list:
 def transcribe_audio(path_or_data_url: str, language: str = "ru") -> Dict[str, Any]:
     """Распознать речь из аудиофайла. Ответ окончательный: текст либо отказ."""
     global _ASR_ROUTE, _ASR_ROUTE_AT
+    _asr_tmp = None
 
     if path_or_data_url.startswith("data:"):
         header, _, b64 = path_or_data_url.partition(",")
@@ -767,7 +769,12 @@ def transcribe_audio(path_or_data_url: str, language: str = "ru") -> Dict[str, A
             ext = "wav"
         else:
             ext = "webm"
-        src = _ws() / ("voice_%d.%s" % (int(time.time()), ext))
+        # AG: КОРЕНЬ «ГОЛОСОВЫЕ ОСТАЮТСЯ В ФАЙЛАХ» — запись сохранялась в
+        # песочницу как voice_*.webm и жила там вечно. Голос — служебный груз
+        # одного запроса: живёт во временном каталоге системы и исчезает
+        # сразу после распознавания.
+        _asr_tmp = tempfile.TemporaryDirectory(prefix="jarvis-asr-")
+        src = Path(_asr_tmp.name) / ("voice.%s" % ext)
         src.write_bytes(raw)
     else:
         src = Path(path_or_data_url)
@@ -776,6 +783,19 @@ def transcribe_audio(path_or_data_url: str, language: str = "ru") -> Dict[str, A
         if not src.exists():
             return {"ok": False, "error": "аудиофайл не найден"}
 
+    try:
+        return _transcribe_with(src, language)
+    finally:
+        # временная запись исчезает — каким бы ни был результат
+        try:
+            if _asr_tmp:
+                _asr_tmp.cleanup()
+        except Exception:
+            pass
+
+
+def _transcribe_with(src: Path, language: str) -> Dict[str, Any]:
+    global _ASR_ROUTE, _ASR_ROUTE_AT
     if src.stat().st_size < 1200:
         return {"ok": False, "error": "Запись слишком короткая — я ничего не услышал."}
 

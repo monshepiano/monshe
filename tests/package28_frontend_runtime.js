@@ -1744,21 +1744,21 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
     'answer end folds tools ONE BY ONE into the group (170ms), strip compressing in the same beat');
 
   const rf = extractFunction(js, 'qtFold');
-  assert(/'height \.42s cubic-bezier\(\.4,\.6,\.3,1\) \.58s, '/.test(rf) &&
+  assert(/'height \.42s cubic-bezier\(\.4,\.6,\.3,1\) \.58s'/.test(rf) &&
     !/position = 'fixed'/.test(rf) && !/ghost/.test(rf) &&
     /requestAnimationFrame\(homing\)/.test(rf) &&
     /const flight = node\.animate\(/.test(rf) &&
-    /flight\.effect\.setKeyframes\(\[/.test(rf) &&
+    /flight\.effect\.setKeyframes\(flyKeys\(aim\)\)/.test(rf) &&
     /const labC = \(lRect0\.top \+ lRect0\.height \/ 2\) - base0;/.test(rf) &&
     /let aim = titleC\(\) - labC - base0;/.test(rf) &&
     /const need = titleC\(\) - labC - baseTop;/.test(rf) &&
     !/scale\(\.93\)/.test(rf) &&
     /getComputedTiming\(\)\.progress/.test(rf) &&
     /easing: 'cubic-bezier\(\.2,\.5,\.2,1\)', fill: 'forwards'/.test(rf) &&
-    /'opacity \.5s ease-in \.5s, filter \.5s ease-in \.5s'/.test(rf) &&
+    /const flyKeys = \(target\) => \[/.test(rf) &&
     /function qtFold\(ui, node, isLast\)/.test(js) &&
     /if \(isLast\) setTimeout\(folderBlink, 820\);/.test(rf) &&
-    /node\.style\.filter = 'blur\(4px\) brightness\(\.08\)'/.test(rf) &&
+    /filter: 'blur\(4px\) brightness\(\.08\)'/.test(rf) &&
     /folder\._pend = \(folder\._pend \|\| 0\) \+ 1;/.test(extractFunction(js, 'qtFold')) &&
     /folder\.classList\.add\('blink'\)/.test(extractFunction(js, 'qtFold')) &&
     /\.qt-folder\.blink \.qt-name\{animation:qtBlink \.5s ease-out both\}/.test(css) &&
@@ -2084,7 +2084,7 @@ function testIterationYContracts() {
   // П.2: подпись доживает до названия: поток складывается первым, фейд в конце
   // AD: затемнение теперь стартует в середине полёта — инструмент тонет в темноте
   assert(/bodyEl\.style\.transition = 'height \.3s ease, opacity \.22s ease';/.test(fold) &&
-    /'opacity \.5s ease-in \.5s, filter \.5s ease-in \.5s'/.test(fold) &&
+    /const flyKeys = \(target\) => \[/.test(fold) &&
     /\}, 1200\);/.test(fold),
     'Y2: the flying label survives until the group TITLE: stream collapses first, dimming sinks it');
   // П.5: строка статуса возрождается сама — курсор не умирает между ходами
@@ -2355,9 +2355,11 @@ function testIterationADContracts() {
     'AD1: a finished sentence is the preferred line boundary');
   // AD2: инструмент тонет в темноте под группой
   const fold = extractFunction(js, 'qtFold');
-  assert(/opacity \.5s ease-in \.5s/.test(fold) &&
-    /blur\(4px\) brightness\(\.08\)/.test(fold),
-    'AD2: tools dim from mid-flight and land in near-total darkness');
+  assert(/const flyKeys = \(target\) => \[/.test(fold) &&
+    /offset: \.45/.test(fold) &&
+    /blur\(4px\) brightness\(\.08\)/.test(fold) &&
+    /setKeyframes\(flyKeys\(aim\)\)/.test(fold),
+    'AD2: dimming lives INSIDE the WAAPI flight keyframes — cannot be lost');
   // AD3: ховер — только сам инструмент
   assert(/\.qt-head:hover \.qt-name,\.qt-row:hover \.qt-name/.test(css) &&
     !/\.qt-folder:hover \.qt-name/.test(css) &&
@@ -2390,8 +2392,26 @@ function testIterationADContracts() {
     /title="Звук"/.test(html) && !/Голос Джарвиса: озвучивать/.test(html),
     'AD8: the corner button is the master sound switch (UI sounds + spoken replies)');
   // AD9: кружок AGENT чуть медленнее
-  assert(/transition:transform \.95s cubic-bezier\(\.25,\.75,\.3,1\)/.test(css),
+  assert(/transition:transform 1\.1s cubic-bezier\(\.23,\.86,\.24,1\)/.test(css),
     'AD9: agent toggle dot travels a touch slower again');
+}
+
+function testIterationAGContracts() {
+  // AG2: каждый звонок — новый разговор; голосовые не в песочнице
+  assert(!/jarvisVoiceChat/.test(js) &&
+    !/voiceLoadTranscript\(\);/.test(extractFunction(js, 'openVoiceMode')),
+    'AG2: each call starts a fresh conversation; no old transcript on open');
+  // AG3: затемнение — ключи WAAPI-полёта
+  const foldFn = extractFunction(js, 'qtFold');
+  assert(/const flyKeys = \(target\) => \[/.test(foldFn) &&
+    /setKeyframes\(flyKeys\(aim\)\)/.test(foldFn),
+    'AG3: dimming keys travel inside the flight, homing keeps them');
+  // AG6: свёрнутое меню — боковой док
+  const dock = css.split('/* ---- узкий режим: БОКОВОЙ DOCK')[1].split('/* подпись иконки')[0];
+  assert(/backdrop-filter:blur\(16px\)/.test(dock) &&
+    /border-radius:18px/.test(dock) &&
+    /transform:scale\(1\.08\)/.test(css),
+    'AG6: collapsed sidebar is a translucent Mac-style dock');
 }
 
 function testIterationAFContracts() {
@@ -2406,10 +2426,9 @@ function testIterationAFContracts() {
 
 function testIterationAEContracts() {
   // AE1: сценам — красноватый в общей палитре
-  assert(/\.nav-item\[data-view="scenarios"\] \.nav-ico\{color:var\(--red\)\}/.test(css) &&
-    /\.nav-item\[data-view="scenarios"\]\.active::before\{background:var\(--red\)/.test(css) &&
-    /\.view-scenarios \.panel-head h2\{color:var\(--red\)\}/.test(css),
-    'AE1: scenarios tab, its active state and the page title share the palette red');
+  assert(/\.nav-item\[data-view="scenarios"\] \.nav-ico\{color:#a84a5b\}/.test(css) &&
+    /\.view-scenarios \.panel-head h2\{color:#e9ccd3\}/.test(css),
+    'AE1: scenarios tab is muted dark red; the page title is pale, near-white');
   // AE2: живые вложения не становятся файлами
   assert(/transient: true,/.test(extractFunction(js, 'camAttachFrame')),
     'AE2: camera frames upload as transient — never stored as dialog files');
@@ -2521,7 +2540,8 @@ function testIterationABContracts() {
   testIterationADContracts();
   testIterationAEContracts();
   testIterationAFContracts();
-  console.log('package28_frontend_runtime: 23 regression groups passed');
+  testIterationAGContracts();
+  console.log('package28_frontend_runtime: 24 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

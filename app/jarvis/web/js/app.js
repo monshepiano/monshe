@@ -4633,14 +4633,14 @@ function qtFold(ui, node, isLast) {
   // Z: ВЫСОТА СХЛОПЫВАЕТСЯ ПОЗДНО И БЫСТРО. Раньше она резала подпись с
   // самого начала полёта — текст обрезался на полпути и «таял ниже
   // названия». Теперь подпись целиком доживает до самой папки.
-  // AF: ЗАТЕМНЕНИЕ С САМОЙ СЕРЕДИНЫ ПОЛЁТА, к посадке — почти ПОЛНАЯ ТЬМА:
-  // старт .5с (ещё в воздухе), весь остаток пути строка гаснет и к моменту
-  // входа под группу чёрная (brightness .08) — с названием не сливается.
-  node.style.transition =
-    'height .42s cubic-bezier(.4,.6,.3,1) .58s, ' +
-    'opacity .5s ease-in .5s, filter .5s ease-in .5s';
-  node.style.filter = 'blur(4px) brightness(.08)';
-  node.style.opacity = '0';
+  // AG: ЗАТЕМНЕНИЕ ЖИВЁТ В САМОМ ПОЛЁТЕ. Раньше это был CSS-переход с
+  // задержкой ВДОГОНКУ WAAPI-полёту — и в живом ответе (лента едет, поток
+  // дышит) переход терялся: инструменты залетали в группу читаемыми и
+  // сливались с названием. Ключи opacity/filter теперь ВНУТРИ той же
+  // WAAPI-анимации, что и transform: затемнение физически не может
+  // потеряться — оно и есть полёт. С 45% пути строка гаснет и к посадке
+  // почти чёрная (brightness .08).
+  node.style.transition = 'height .42s cubic-bezier(.4,.6,.3,1) .58s';
   node.style.height = '0px';
   const t0 = performance.now();
   const DUR = 1050;
@@ -4669,9 +4669,13 @@ function qtFold(ui, node, isLast) {
     return r.top + r.height / 2;
   };
   let aim = titleC() - labC - base0;
+  const flyKeys = (target) => [
+    { transform: 'translateY(0px)', opacity: 1, filter: 'blur(0px) brightness(1)' },
+    { opacity: 1, filter: 'blur(1.5px) brightness(.5)', offset: .45 },
+    { transform: 'translateY(' + target + 'px)', opacity: 0,
+      filter: 'blur(4px) brightness(.08)' }];
   const flight = node.animate(
-    [{ transform: 'translateY(0px)' },
-     { transform: 'translateY(' + aim + 'px)' }],
+    flyKeys(aim),
     { duration: DUR, easing: 'cubic-bezier(.2,.5,.2,1)', fill: 'forwards' });
   const homing = () => {
     // прогресс — у самой анимации; уравнение решается каждый кадр по
@@ -4684,9 +4688,9 @@ function qtFold(ui, node, isLast) {
     const need = titleC() - labC - baseTop;
     if (Math.abs(need - aim) > 0.5) {
       aim = need;
-      flight.effect.setKeyframes([
-        { transform: 'translateY(0px)' },
-        { transform: 'translateY(' + aim + 'px)' }]);
+      // перенацеливание несёт ТЕ ЖЕ ключи затемнения — иначе setKeyframes
+      // стёр бы их и полёт продолжился бы без затемнения
+      flight.effect.setKeyframes(flyKeys(aim));
     }
     if (pr < 1) requestAnimationFrame(homing);
   };
@@ -5964,7 +5968,6 @@ function handleEvent(ev, ui) {
       } else if (ui.voiceIsolated) {
         // AB: изолированный разговор — свой служебный диалог, С.chatId не трогаем
         VOICE.chatId = ev.chat_id;
-        try { localStorage.setItem('jarvisVoiceChat', ev.chat_id); } catch (e) {}
       } else {
         S.chatId = ev.chat_id;
         // AB: прогон только что узнал свой диалог — регистрируем для возврата
@@ -6901,13 +6904,15 @@ async function openVoiceMode() {
   VOICE.open = true;
   VOICE.nodes = [];
   VOICE.ctxOn = voiceCtxOn();
+  // AG: КАЖДЫЙ ЗВОНОК — НОВЫЙ РАЗГОВОР. Прежний код восстанавливал id
+  // прошлого диалога разговора из localStorage, и новая вкладка показывала
+  // СТАРУЮ беседу (даже в новом диалоге). Звонок положил — разговор закрыт;
+  // следующий звонок начинается с чистого листа.
   VOICE.chatId = '';
-  try { VOICE.chatId = localStorage.getItem('jarvisVoiceChat') || ''; } catch (e) {}
   beep(760, 0.08);
   showView('chat');
   killWelcome();
   voiceMount();
-  voiceLoadTranscript();
   const mb = $('#micBtn');
   if (mb) mb.classList.add('rec');      // кнопка микрофона «дышит», пока идёт разговор
   try {
