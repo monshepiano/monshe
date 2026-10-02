@@ -586,19 +586,40 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    coreSettle мягко оседает в идеальный кружок. */
 .ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;
   border-radius:50%;background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
-  /* BB: СВЕЧЕНИЕ — drop-shadow ПОСЛЕ clip-path: ореол ложится на силуэт
-     фигуры. Прежний box-shadow клипался полигоном и был невидим вовсе */
-  filter:drop-shadow(0 0 5px rgba(0,212,255,.6)) drop-shadow(0 0 13px rgba(0,212,255,.3));
-  animation:coreBreathe 3.4s ease-in-out infinite;
-  /* AZ: 12-точечный «круг» — все фигуры морфятся из него и в него,
-     плавной интерполяцией clip-path (равное число вершин).
-     BB: морф быстрее — превратился резко, повисел, вернулся */
+  /* BC: FPS-КОРЕНЬ «комп лагает в Джарвисе»: бесконечная анимация с
+     filter-кадрами висела на КАЖДОМ круглешке истории — в длинном диалоге
+     десятки ядер перерисовывались без остановки. История теперь СТАТИЧНА:
+     без анимации, с одним дешёвым свечением. Живёт только текущий ответ */
+  filter:drop-shadow(0 0 6px rgba(0,212,255,.55));
+  /* AZ: 12-точечный «круг» — все фигуры морфятся из него и в него */
   clip-path:polygon(50% 0%,75% 6.7%,93.3% 25%,100% 50%,93.3% 75%,75% 93.3%,
     50% 100%,25% 93.3%,6.7% 75%,0% 50%,6.7% 25%,25% 6.7%);
   transition:opacity .18s ease,clip-path .26s cubic-bezier(.65,0,.35,1),
     filter .26s ease}
-/* BB: светится РОВНО В МОМЕНТ ТРАНСФОРМАЦИИ — туда и обратно */
-.ai-core.sh-glow{filter:drop-shadow(0 0 8px var(--cy)) drop-shadow(0 0 20px rgba(0,212,255,.8))}
+/* BC: ФИГУРА ×1.5 — трансформация заметна издалека; пока фигура держится,
+   обычный такт приостановлен (transform занят пружиной) */
+.msg-ai.live .ai-core.shaped{transform:scale(1.5);animation:none}
+/* BC: ПРУЖИНА. Расширился из круга с перелётом (1.68) и ужался в фигуру
+   (1.5); обратно — присел (0.88) и упруго вернулся в круг. Золото и
+   свечение — РОВНО В МОМЕНТ трансформации, туда и обратно */
+.msg-ai.live .ai-core.sh-in{animation:dotMorphIn .56s cubic-bezier(.45,1.45,.4,1)}
+.msg-ai.live .ai-core.sh-out{animation:dotMorphOut .5s cubic-bezier(.5,1.35,.55,1)}
+@keyframes dotMorphIn{
+  0%{transform:scale(1);
+    background:radial-gradient(circle,#fff,#ffd489 45%,#a86a12);
+    filter:drop-shadow(0 0 9px var(--gold)) drop-shadow(0 0 22px rgba(217,164,65,.85))}
+  58%{transform:scale(1.68)}
+  82%{transform:scale(1.42)}
+  100%{transform:scale(1.5);
+    background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
+    filter:drop-shadow(0 0 8px var(--cy)) drop-shadow(0 0 20px rgba(0,212,255,.7))}}
+@keyframes dotMorphOut{
+  0%{transform:scale(1.5);
+    background:radial-gradient(circle,#fff,#ffd489 45%,#a86a12);
+    filter:drop-shadow(0 0 9px var(--gold)) drop-shadow(0 0 22px rgba(217,164,65,.85))}
+  55%{transform:scale(.88);background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8)}
+  100%{transform:scale(1);
+    filter:drop-shadow(0 0 6px rgba(0,212,255,.55)) drop-shadow(0 0 13px rgba(0,212,255,.3))}}
 /* AZ: СТРАННЫЕ ФОРМЫ — тессеракт, тетраэдр, кривая капля, звезда,
    шестиугольник, ромб. Внутренний контур тессеракта — псевдоэлемент */
 .ai-core::before{content:'';position:absolute;inset:22%;opacity:0;
@@ -609,6 +630,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .ai-core.sh-tess::before{opacity:.9;transform:rotate(45deg)}
 .ai-core.sh-tetra{clip-path:polygon(50% 0%,50% 0%,50% 0%,50% 0%,92% 92%,92% 92%,
   92% 92%,92% 92%,8% 92%,8% 92%,8% 92%,8% 92%)}
+.ai-core.sh-tetra::before{opacity:.85;border:0;transform:none;
+  clip-path:polygon(50% 34%,69% 76%,31% 76%);background:rgba(255,255,255,.9)}
 .ai-core.sh-blob{clip-path:polygon(50% 2%,80% 8%,95% 30%,88% 55%,96% 78%,70% 95%,
   45% 88%,20% 96%,4% 70%,10% 45%,3% 22%,25% 6%)}
 .ai-core.sh-star{clip-path:polygon(50% 0%,69% 17.1%,93.3% 25%,88% 50%,93.3% 75%,
@@ -617,8 +640,18 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   50% 100%,50% 100%,7% 75%,7% 75%,7% 25%,7% 25%)}
 .ai-core.sh-diamond{clip-path:polygon(50% 0%,50% 0%,50% 0%,100% 50%,100% 50%,
   100% 50%,50% 100%,50% 100%,50% 100%,0% 50%,0% 50%,0% 50%)}
-@keyframes coreBreathe{50%{transform:scale(1.22);
-  filter:drop-shadow(0 0 7px rgba(0,212,255,.8)) drop-shadow(0 0 18px rgba(0,212,255,.42))}}
+/* BC: БОЛЬШЕ 3D/4D-ФИГУР, чем плоских. Куб — квадрат с внутренней
+   гранью, призма — шестиугольник остриём вверх, кристалл — вытянутый
+   октаэдр, вихрь — асимметричная завихренная грань */
+.ai-core.sh-cube{clip-path:polygon(30% 5%,70% 5%,70% 5%,95% 30%,95% 30%,95% 70%,
+  70% 95%,70% 95%,30% 95%,30% 95%,5% 70%,5% 30%)}
+.ai-core.sh-cube::before{opacity:.85;transform:none}
+.ai-core.sh-prism{clip-path:polygon(50% 0%,50% 0%,93% 25%,93% 25%,93% 75%,93% 75%,
+  50% 100%,50% 100%,7% 75%,7% 75%,7% 25%,7% 25%)}
+.ai-core.sh-crystal{clip-path:polygon(50% 0%,50% 0%,72% 9%,88% 32%,88% 32%,88% 68%,
+  72% 91%,50% 100%,50% 100%,28% 91%,12% 68%,12% 32%)}
+.ai-core.sh-vortex{clip-path:polygon(50% 2%,74% 10%,92% 22%,86% 42%,96% 60%,80% 78%,
+  66% 96%,46% 88%,26% 98%,12% 80%,2% 58%,14% 38%)}
 /* AY: класс .live висит на карточке ответа с первого кадра до финала —
    круглешок активен и пока агент ДУМАЕТ, и пока ходит по инструментам,
    а не только при печати. AZ: база — СПОКОЙНОЕ ПЛАВНОЕ ДЫХАНИЕ 4.2с;
@@ -650,12 +683,6 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   72%{transform:scale(1.22);
     filter:drop-shadow(0 0 8px var(--cy)) drop-shadow(0 0 22px rgba(0,212,255,.65)) brightness(1.25)}
   100%{transform:scale(1)}}
-/* BB: РАМКА РЕЗУЛЬТАТА — ответ завершён: короткая вспышка рамкой
-   в тон темы и мягкое угасание */
-.msg-ai.flash-done{border-radius:14px;animation:doneFlash 1.5s ease-out}
-@keyframes doneFlash{
-  0%{box-shadow:0 0 0 1px rgba(0,212,255,.6),0 0 26px rgba(0,212,255,.28)}
-  100%{box-shadow:0 0 0 1px transparent,0 0 26px transparent}}
 /* AY: финал ответа — вязкая живая форма мягко оседает в кружок */
 @keyframes coreSettle{
   0%{transform:scale(1.24);

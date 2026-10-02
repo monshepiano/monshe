@@ -2423,9 +2423,9 @@ function testIterationAJContracts() {
     !/sigil/i.test(js) && !/sigil/i.test(css),
     'AS: answer avatar is a live core dot; the relay saga is gone for good');
   assert(css.includes('.ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;') &&
-    css.includes('animation:coreBreathe 3.4s ease-in-out infinite') &&
+    !css.includes('coreBreathe') &&
     css.includes('.msg-ai.live .ai-core{animation:coreLive 3.2s ease-in-out infinite}'),
-    'AS/AY: the dot breathes at rest and lives through the WHOLE answer (pure CSS)');
+    'AS/AY/BC: history cores are STATIC; only the live answer breathes (FPS)');
 }
 
 function testIterationAKContracts() {
@@ -2540,7 +2540,8 @@ function testIterationAZContracts() {
       .includes('dotAction(ui.node && ui.node.root);'),
     'AZ: calm dot at rest; energized burst only on visible actions (tool, plan step)');
   // AZ: игры с формой — тессеракт, тетраэдр, кривая, звезда… плавные морфы
-  assert(js.includes("const DOT_SHAPES = ['sh-tess', 'sh-tetra', 'sh-blob', 'sh-star', 'sh-hex', 'sh-diamond'];") &&
+  assert(js.includes("'sh-tess', 'sh-tetra', 'sh-cube', 'sh-prism', 'sh-crystal',") &&
+    js.includes("'sh-vortex', 'sh-blob', 'sh-star', 'sh-hex', 'sh-diamond']") &&
     js.includes('function dotShapePlay(') &&
     css.includes('.ai-core.sh-tess{clip-path:polygon(') &&
     css.split('.ai-core{')[1].split('}')[0].includes('clip-path:polygon(50% 0%,75% 6.7%'),
@@ -2571,19 +2572,32 @@ function testIterationBBContracts() {
   assert(init.indexOf('await loadIdeas();') > -1 &&
     init.indexOf('await loadIdeas();') < init.indexOf('buildWelcome()'),
     'BB: tiles are loaded BEFORE the welcome screen is built');
-  // BB: круглешок — частые быстрые трансформации со свечением
+  // BC: круглешок — фигуры ×1.5, пружина с золотом, больше 3D/4D-фигур
   const play = js.split('function dotShapePlay(')[1].split('\nfunction ')[0];
-  assert(js.includes('const DOT_MORPH_MS = 280;') &&
+  assert(js.includes('const DOT_MORPH_MS = 560;') &&
     js.includes('const DOT_HOLD_MS = 1250;') &&
-    play.includes('3200 + Math.random() * 3800') &&
-    play.includes("core.classList.toggle('sh-glow', on);") &&
-    css.includes('.ai-core.sh-glow{'),
-    'BB: the dot morphs faster and more often, glowing only while transforming');
-  // BB: рамка-вспышка в момент окончания ответа
-  assert(css.includes('.msg-ai.flash-done{border-radius:14px;animation:doneFlash 1.5s ease-out}') &&
-    css.includes('@keyframes doneFlash{') &&
-    js.includes("root.classList.add('flash-done');"),
-    'BB: a theme-colored frame flashes the moment the answer completes');
+    play.includes("core.classList.add(shape, 'shaped', 'sh-in');") &&
+    css.includes('.msg-ai.live .ai-core.shaped{transform:scale(1.5);animation:none}') &&
+    css.includes('@keyframes dotMorphIn{') && css.includes('@keyframes dotMorphOut{') &&
+    css.includes('transform:scale(1.68)') && css.includes('transform:scale(.88)'),
+    'BC: the dot springs into 1.5x stranger shapes — gold glow only while transforming');
+  // BC: рамка-вспышка УДАЛЕНА
+  assert(!css.includes('flash-done') && !js.includes('flash-done') &&
+    !css.includes('doneFlash'),
+    'BC: the done-frame flash is gone for good');
+}
+
+function testIterationBCContracts() {
+  // BC: рамка удалена; история статична; прогрев не на кнопке отправки
+  assert(!css.includes('flash-done') && !css.includes('doneFlash') &&
+    !css.includes('coreBreathe') &&
+    !js.includes("$('#sendBtn').addEventListener('pointerenter'"),
+    'BC: no done frame; history cores static; send-button warmup removed (FPS roots)');
+  // BC: фигуры ×1.5 с пружиной и золотом в момент морфа
+  assert(css.includes('.msg-ai.live .ai-core.shaped{transform:scale(1.5);animation:none}') &&
+    css.includes('transform:scale(1.68)') && css.includes('transform:scale(.88)') &&
+    css.includes('@keyframes dotMorphIn{') && css.includes('@keyframes dotMorphOut{'),
+    'BC: shapes are 1.5x with a springy gold-lit morph in and out');
 }
 
 function testIterationAWContracts() {
@@ -2612,7 +2626,7 @@ function testIterationAUContracts() {
       .includes('const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));'),
     'AV: classic speeds are back; the per-frame cap now follows real frame time');
   // AU: видимый номер сборки — всегда ясно, какой билд на экране
-  assert(html.includes('<span class="ver-chip">b59</span>') &&
+  assert(html.includes('<span class="ver-chip">b60</span>') &&
     css.includes('.ver-chip{align-self:center;'),
     'AU: the build number is visible in the top bar');
   // AU: призрак-надпись физически не может растянуться на весь экран
@@ -2667,7 +2681,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.59'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.60'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -2707,7 +2721,6 @@ function testIterationAQContracts() {
     'AQ: whenever the thought appears, it opens the answer — never hides at the bottom');
   // AS: покой — живое дыхание круглешка (эстафеты и стали больше нет)
   assert(css.includes('.ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;') &&
-    css.includes('@keyframes coreBreathe{') &&
     css.includes('@keyframes coreLive{') &&
     !css.includes('grayscale(.88) brightness(1.32)'),
     'AS: the core dot is alive — breathe at rest, pulse while printing');
@@ -2972,8 +2985,9 @@ function testIterationABContracts() {
   testIterationAZContracts();
   testIterationBAContracts();
   testIterationBBContracts();
+  testIterationBCContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 39 regression groups passed');
+  console.log('package28_frontend_runtime: 40 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

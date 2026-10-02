@@ -3881,11 +3881,10 @@ function loadDraft() {
 }
 $('#input').addEventListener('input', saveDraft);
 loadDraft();
-$('#sendBtn').addEventListener('pointerenter', () => {
-  const v = $('#input').value.trim();
-  if (v) warmHover(v);
-});
-$('#sendBtn').addEventListener('pointerleave', warmHoverCancel);
+/* BC: ПРОГРЕВ УБРАН С КНОПКИ ОТПРАВКИ — текст в поле меняется с каждым
+   символом, и каждый hover превращался в РЕАЛЬНЫЙ LLM-вызов на той же
+   машине: локальный сервер грузил CPU, ввод тормозил. Греем только
+   фиксированные тексты — плитки и чипы */
 $('#sendBtn').addEventListener('click', () => {
   // стоп — только когда поле пустое; если текст набран, отправляем (прервав старый поток)
   if (S.streaming && !$('#input').value.trim() && !S.attachments.length) {
@@ -6195,32 +6194,40 @@ function dotAction(root) {
 /* AZ: КРУГЛЕШОК ИГРАЕТ С ФОРМОЙ. Изредка, будто балуется: плавно
    перетекает в странную фигуру на полсекунды — тессеракт, тетраэдр,
    кривая капля, звезда — и так же плавно возвращается кружком */
-const DOT_SHAPES = ['sh-tess', 'sh-tetra', 'sh-blob', 'sh-star', 'sh-hex', 'sh-diamond'];
-const DOT_MORPH_MS = 280;      // BB: превратился — быстро и явно
-const DOT_HOLD_MS = 1250;      // BB: повисел секунду-полторы — и обратно
+/* BC: БОЛЬШЕ СТРАННЫХ ФИГУР — 3D/4D больше, чем плоских: тессеракт,
+   тетраэдр, куб, призма, кристалл, вихрь; плоские — капля, звезда,
+   шестиугольник, ромб */
+const DOT_SHAPES = ['sh-tess', 'sh-tetra', 'sh-cube', 'sh-prism', 'sh-crystal',
+  'sh-vortex', 'sh-blob', 'sh-star', 'sh-hex', 'sh-diamond'];
+const DOT_MORPH_MS = 560;      // BC: пружинная трансформация туда
+const DOT_MORPH_OUT_MS = 500;  // BC: упругий возврат обратно
+const DOT_HOLD_MS = 1250;      // BC: повисел секунду-полторы
 function dotShapePlay(root) {
   const core = root && root.querySelector ? root.querySelector('.ai-core') : null;
   if (!core) return;
   clearTimeout(core._shapeTimer);
   const schedule = () => {
-    /* BB: чаще — каждые 3.2–7 секунд */
     core._shapeTimer = setTimeout(play, 3200 + Math.random() * 3800);
   };
-  const glow = (on) => { if (core.classList) core.classList.toggle('sh-glow', on); };
   const play = () => {
     if (!core.isConnected || !root.classList.contains('live') ||
         core.classList.contains('dot-settle')) { return; }
     const shape = DOT_SHAPES[Math.floor(Math.random() * DOT_SHAPES.length)];
-    /* светится РОВНО в момент трансформации — туда и обратно */
-    core.classList.add(shape);
-    glow(true);
-    setTimeout(() => glow(false), DOT_MORPH_MS);
+    /* BC: ПРУЖИНА с золотом — расширился с перелётом и ужался в фигуру
+       ×1.5; золото и свечение живут В КАДРАХ самой трансформации */
+    core.classList.add(shape, 'shaped', 'sh-in');
     setTimeout(() => {
       if (!core.classList) return;
-      core.classList.remove(shape);
-      glow(true);
-      setTimeout(() => glow(false), DOT_MORPH_MS);
-      schedule();
+      core.classList.remove('sh-in');
+    }, DOT_MORPH_MS);
+    setTimeout(() => {
+      if (!core.classList) return;
+      core.classList.add('sh-out');
+      setTimeout(() => {
+        if (!core.classList) return;
+        core.classList.remove(shape, 'shaped', 'sh-out');
+        schedule();
+      }, DOT_MORPH_OUT_MS);
     }, DOT_MORPH_MS + DOT_HOLD_MS);
   };
   schedule();
@@ -6257,19 +6264,13 @@ function finishLiveDot(root) {
     clearTimeout(core._actTimer);
     clearTimeout(core._shapeTimer);
     DOT_SHAPES.forEach((sh) => core.classList.remove(sh));
-    core.classList.remove('dot-act');
+    core.classList.remove('dot-act', 'shaped', 'sh-in', 'sh-out');
     core.classList.add('dot-settle');
     setTimeout(() => {
       if (core.classList) core.classList.remove('dot-settle');
     }, 640);
   }
   root.classList.remove('live');
-  /* BB: РАМКА РЕЗУЛЬТАТА — ответ завершён: короткая вспышка рамкой
-     в тон темы и мягкое угасание */
-  root.classList.add('flash-done');
-  setTimeout(() => {
-    if (root.classList) root.classList.remove('flash-done');
-  }, 1700);
 }
 
 function settleVisualDone(ui) {
