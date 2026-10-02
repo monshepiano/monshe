@@ -3244,7 +3244,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.53", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.54", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4407,12 +4407,14 @@ class IterationAOTests(unittest.TestCase):
         # AS: эстафеты нет. Рождение ответа — перелёт из приветствия:
         # ядро большого реактора и надпись JARVIS летят в ответ
         self.assertIn("flyWelcomeInto(node, welcomeFlight);", js)
-        self.assertIn("welcomeFlight = (wlCore && wlTitle)", js)
+        self.assertIn("let welcomeFlight = null;", js)
+        self.assertIn("if (wlCore && wlTitle) {", js)
         self.assertIn(".welcome .reactor.xl .core", js)
         self.assertIn(".welcome .hello span", js)
         ghost = js.split("function flyGhost(")[1].split("\nfunction ")[0]
-        self.assertIn("g.animate([", ghost)
-        self.assertIn("'cubic-bezier(.3,.75,.25,1)'", ghost)
+        # AW: полёт на живом наведении (rAF), мягкая кривая easeInOut
+        self.assertIn("const ease = (t) => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;", ghost)
+        self.assertIn("g.style.transform = 'translate(' + (dx * e) + 'px,' + (dy * e) + 'px) scale(' +", ghost)
         # AV: посадка — кроссфейд, без вспышек и мгновенной подмены
         self.assertIn("fade.onfinish = () => g.remove();", js)
         self.assertIn("const titleTarget = () => {", js)
@@ -4576,8 +4578,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.53", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.53", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.54", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.54", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4673,9 +4675,10 @@ class IterationATTests(unittest.TestCase):
         self.assertNotIn("'reactor fly-ghost'", js)
         # цель меряется в момент старта (прокрутка утихла) — призрак не мимо
         ghost = js.split("function flyGhost(")[1].split("\nfunction ")[0]
-        self.assertIn("targetRect()", ghost)
-        fly = js.split("function flyWelcomeInto(")[1].split("\nfunction ")[0]
-        self.assertIn("}), 320);", fly)
+        # AW: живое наведение — цель перемеряется каждый кадр
+        self.assertIn("const to = targetRect();", ghost)
+        self.assertIn("requestAnimationFrame(tick);", ghost)
+        self.assertIn("g.dataset.landed", ghost)
 
 
 class IterationAUTests(unittest.TestCase):
@@ -4708,16 +4711,54 @@ class IterationAUTests(unittest.TestCase):
     def test_au3_version_chip(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b53</span>', html)
+        self.assertIn('<span class="ver-chip">b54</span>', html)
         self.assertIn(".ver-chip{align-self:center;", css)
 
     def test_au4_flight_waits_for_scroll(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        fly = js.split("function flyWelcomeInto(")[1].split("\nfunction ")[0]
-        self.assertIn("}), 320);", fly)
-        self.assertIn("setTimeout(() => requestAnimationFrame", fly)
+        # AW: призраки создаются В МОМЕНТ ОТПРАВКИ на местах элементов
+        # приветствия, оригиналы прячутся в тот же кадр — исчезновения нет
+        self.assertIn("const gc = el('div', 'fly-ghost ghost-core');", js)
+        self.assertIn("wlCore.style.visibility = 'hidden';", js)
+        self.assertIn("wlTitle.style.visibility = 'hidden';", js)
+        self.assertIn("welcomeFlight = { core: cr, title: tr, ghostCore: gc, ghostTitle: gt };", js)
+        # полёт стартует сразу, без ожидания укладки прокрутки
+        self.assertNotIn("}), 320);", js)
         self.assertIn("width:max-content}", css)
+
+
+class IterationAWTests(unittest.TestCase):
+    """AW (beta.54): перелёт без исчезновения (призраки рождаются в момент
+    отправки, летят сразу с живым наведением), мысли не штормят прокрутки,
+    thinkType коагулируется в кадр, llm-дедуп не глотает content дельты."""
+
+    def test_aw1_flight_immediate(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        fly = js.split("function flyWelcomeInto(")[1].split("\nfunction ")[0]
+        # никакого ожидания — только старт полёта и страховки
+        self.assertNotIn("setTimeout(() => requestAnimationFrame", fly)
+        self.assertIn("flyGhost(wf.ghostCore,", fly)
+        self.assertIn("flyGhost(wf.ghostTitle,", fly)
+
+    def test_aw2_think_no_scroll_storm(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        think_case = js.split("case 'thinking':")[1].split("case 'plan':")[0]
+        # события мыслей больше не дёргают принудительную прокрутку
+        self.assertNotIn("\n      scrollDown();\n      break;", think_case)
+        self.assertIn("scrollSoon(ui);", think_case)
+        # thinkType перерисовывается не чаще кадра
+        tt = js.split("function thinkType(")[1].split("\n}\n")[0]
+        self.assertIn("el._thinkRaf", tt)
+        self.assertIn("requestAnimationFrame", tt)
+
+    def test_aw3_llm_dedup_no_swallow(self) -> None:
+        src = Path("app/jarvis/llm.py").read_text(encoding="utf-8")
+        # узкий блок: от дедупа до обработки tool_calls той же дельты
+        block = src.split("think = _reasoning_increment(")[1].split(
+            'for tc in delta.get("tool_calls")')[0]
+        self.assertNotIn("\n                                    continue", block)
+        self.assertIn("if think:", block)
 
 
 if __name__ == "__main__":

@@ -1675,45 +1675,32 @@ function flyWelcomeInto(node, wf) {
   if (!wf || !node || !node.root) return;
   const core = node.root.querySelector('.ai-core');
   const name = node.root.querySelector('.ai-name');
-  /* AT: до прилёта места назначения ПУСТЫ — круглешка и имени ещё нет,
-     они появляются в момент посадки призраков */
-  if (core && wf.core) core.classList.add('pre-flight');
-  if (name && wf.title) name.classList.add('pre-flight');
-  /* AU: ждём укладки — плавная прокрутка к новому ответу занимает
-     ~300мс; два кадра были слишком рано, призраки летели по СТАРЫМ
-     координатам («мимо»). 320мс + кадр — скролл уже стоит */
-  setTimeout(() => requestAnimationFrame(() => {
-    if (!document.body.contains(node.root)) return;
-    if (core && wf.core && core.classList.contains('pre-flight')) {
-      const g = el('div', 'fly-ghost ghost-core');
-      g.style.cssText = 'left:' + wf.core.left + 'px;top:' + wf.core.top + 'px;width:' +
-        wf.core.width + 'px;height:' + wf.core.height + 'px';
-      document.body.appendChild(g);
-      flyGhost(g, () => core.getBoundingClientRect(), () => {
-        core.classList.remove('pre-flight');
-      });
-    }
-    if (name && wf.title && name.classList.contains('pre-flight')) {
-      const g = el('div', 'fly-ghost ghost-title');
-      g.style.cssText = 'left:' + wf.title.left + 'px;top:' + wf.title.top + 'px';
-      g.textContent = 'JARVIS';
-      document.body.appendChild(g);
-      /* AV: цель — САМ ТЕКСТ «JARVIS» в имени, а не вся строка: строка
-         flex шириной в колонку, и призрак раздувался до размеров экрана */
-      const titleTarget = () => {
-        const tn = name.firstChild;
-        if (tn && tn.nodeType === 3) {
-          const rg = document.createRange();
-          rg.selectNode(tn);
-          return rg.getBoundingClientRect();
-        }
-        return name.getBoundingClientRect();
-      };
-      flyGhost(g, titleTarget, () => {
-        name.classList.remove('pre-flight');
-      });
-    }
-  }), 320);
+  /* AW: до прилёта места назначения ПУСТЫ — круглешка и имени ещё нет */
+  if (core && core.classList) core.classList.add('pre-flight');
+  if (name && name.classList) name.classList.add('pre-flight');
+  /* полёт стартует СРАЗУ — призраки созданы в момент отправки и висят
+     на местах элементов приветствия; цели отслеживаются ЖИВО, прокрутка
+     не может устареть */
+  if (core && wf.ghostCore) {
+    flyGhost(wf.ghostCore, () => core.getBoundingClientRect(), () => {
+      core.classList.remove('pre-flight');
+    });
+  }
+  if (name && wf.ghostTitle) {
+    /* цель — САМ ТЕКСТ «JARVIS» в имени, не flex-строка на всю колонку */
+    const titleTarget = () => {
+      const tn = name.firstChild;
+      if (tn && tn.nodeType === 3) {
+        const rg = document.createRange();
+        rg.selectNode(tn);
+        return rg.getBoundingClientRect();
+      }
+      return name.getBoundingClientRect();
+    };
+    flyGhost(wf.ghostTitle, titleTarget, () => {
+      name.classList.remove('pre-flight');
+    });
+  }
   /* страховка: в фоновой вкладке анимации замирают — имя и ядро всё
      равно проявятся */
   setTimeout(() => {
@@ -1722,27 +1709,34 @@ function flyWelcomeInto(node, wf) {
   }, 1600);
 }
 
-/* Полёт-призрак: цель меряется В МОМЕНТ старта (прокрутка уже утихла),
-   сжатие по ширине, мягкая кривая. По прибытии — вспышка на настоящем. */
+/* Полёт с ЖИВЫМ наведением: каждый кадр цель перемеряется (прокрутка
+   ещё едет — и это нормально), позиция и масштаб интерполируются мягкой
+   кривой. Приземление — кроссфейд: призрак растворяется, настоящий
+   элемент проявляется одновременно, без рывка. */
 function flyGhost(g, targetRect, done) {
-  const to = targetRect();
-  const r = g.getBoundingClientRect();
-  const k = Math.max(0.06, to.width / Math.max(1, r.width));
-  const dx = (to.left + to.width / 2) - (r.left + r.width / 2);
-  const dy = (to.top + to.height / 2) - (r.top + r.height / 2);
-  const anim = g.animate([
-    { transform: 'translate(0,0) scale(1)', opacity: 1 },
-    { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(' + k + ')', opacity: .95 },
-  ], { duration: 850, easing: 'cubic-bezier(.3,.75,.25,1)', fill: 'both' });
-  anim.onfinish = () => {
-    /* AV: МЯГКАЯ ПОСАДКА — призрак растворяется, а настоящий элемент
-       проявляется одновременно (кроссфейд). Вспышки и мгновенной подмены
-       больше нет — рывка не осталось */
+  const start = g.getBoundingClientRect();
+  const t0 = performance.now();
+  const dur = 850;
+  g.dataset.landed = '0';
+  const ease = (t) => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  const tick = () => {
+    const p = Math.min(1, (performance.now() - t0) / dur);
+    const e = ease(p);
+    const to = targetRect();
+    const k = Math.max(0.06, to.width / Math.max(1, start.width));
+    const dx = (to.left + to.width / 2) - (start.left + start.width / 2);
+    const dy = (to.top + to.height / 2) - (start.top + start.height / 2);
+    g.style.transform = 'translate(' + (dx * e) + 'px,' + (dy * e) + 'px) scale(' +
+      (1 + (k - 1) * e) + ')';
+    if (p < 1) { requestAnimationFrame(tick); return; }
+    g.dataset.landed = '1';
+    /* мягкая посадка: кроссфейд 180мс вместо мгновенной подмены */
     const fade = g.animate([{ opacity: 1 }, { opacity: 0 }],
       { duration: 180, fill: 'both' });
     fade.onfinish = () => g.remove();
     done();
   };
+  requestAnimationFrame(tick);
 }
 function addAiMsg(ts, hostOverride) {
   const m = el('div', 'msg msg-ai');
@@ -3901,9 +3895,31 @@ async function send(opts) {
      перелетят на свои места (flyWelcomeInto) */
   const wlCore = document.querySelector('.welcome .reactor.xl .core');
   const wlTitle = document.querySelector('.welcome .hello span');
-  const welcomeFlight = (wlCore && wlTitle)
-    ? { core: wlCore.getBoundingClientRect(), title: wlTitle.getBoundingClientRect() }
-    : null;
+  let welcomeFlight = null;
+  if (wlCore && wlTitle) {
+    const cr = wlCore.getBoundingClientRect();
+    const tr = wlTitle.getBoundingClientRect();
+    /* AW: ПРИЗРАКИ РОЖДАЮТСЯ В МОМЕНТ ОТПРАВКИ — прямо на месте элементов
+       приветствия, оригиналы прячем в ТОТ ЖЕ кадр. Надпись и круглешок
+       НЕ исчезают со стартовой страницы ни на миг: они уже летят */
+    const gc = el('div', 'fly-ghost ghost-core');
+    gc.style.cssText = 'left:' + cr.left + 'px;top:' + cr.top + 'px;width:' +
+      cr.width + 'px;height:' + cr.height + 'px';
+    const gt = el('div', 'fly-ghost ghost-title');
+    gt.style.cssText = 'left:' + tr.left + 'px;top:' + tr.top + 'px';
+    gt.textContent = 'JARVIS';
+    document.body.appendChild(gc);
+    document.body.appendChild(gt);
+    wlCore.style.visibility = 'hidden';
+    wlTitle.style.visibility = 'hidden';
+    welcomeFlight = { core: cr, title: tr, ghostCore: gc, ghostTitle: gt };
+    /* страховка: отправка сорвалась до рождения ответа — призраки
+       не должны висеть вечно */
+    setTimeout(() => {
+      if (gc.isConnected && !gc.dataset.landed) gc.remove();
+      if (gt.isConnected && !gt.dataset.landed) gt.remove();
+    }, 4000);
+  }
 
   // правка: подменяем текст на месте и убираем устаревший ответ ниже
   let userMsgNode = null;
@@ -5248,11 +5264,16 @@ function thinkType(el, chunk) {
   if (!el) return;
   el._raw = (el._raw != null ? el._raw : el.textContent || '') + chunk;
   // AN: текст ставим сразу ЦЕЛИКОМ, но отформатированным (thinkFormat):
-  // мысль по строкам, без кашы из точек — поток живой и читаемый
-  el.textContent = thinkFormat(el._raw);
-  const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
-  if (atEnd) el.scrollTop = el.scrollHeight;
-  return;
+  // мысль по строкам, без кашы из точек — поток живой и читаемый.
+  // AW: перерисовка коагулируется в кадр (rAF): сотня кусков мыслей
+  // между кадрами больше не перформатирует весь текст сотню раз
+  if (el._thinkRaf) return;
+  el._thinkRaf = requestAnimationFrame(() => {
+    el._thinkRaf = 0;
+    el.textContent = thinkFormat(el._raw);
+    const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
+    if (atEnd) el.scrollTop = el.scrollHeight;
+  });
 }
 
 
@@ -6296,7 +6317,7 @@ function handleEvent(ev, ui) {
         }
         const flow = ui.thinkCard.querySelector('.qt-flow');
         if (flow && ev.text) qtThinkFeed(flow, ev.text);
-        scrollDown();
+        scrollSoon(ui);
         break;
       }
       if (!ui.thinkCard) {
@@ -6316,7 +6337,7 @@ function handleEvent(ev, ui) {
       const ts = ui.thinkCard.querySelector('.think-stream');
       thinkType(ts, ev.text);
       ui.thinkCard.setTitle('Ход мыслей <span class="muted" style="font-size:10.5px">· думаю…</span>');
-      scrollDown();
+      scrollSoon(ui);
       break;
     }
 

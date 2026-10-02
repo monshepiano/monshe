@@ -704,10 +704,12 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
                                 # отдаём только настоящий прирост
                                 think = _reasoning_increment(
                                     "".join(acc_reasoning[-4:])[-80:], think)
-                                if not think:
-                                    continue
-                                acc_reasoning.append(think)
-                                yield {"type": "reasoning", "text": think}
+                                # AW: НЕ continue — в этой же дельте могут
+                                # ехать content и tool_calls; чистый дубль
+                                # просто не эмитится, остальное живёт
+                                if think:
+                                    acc_reasoning.append(think)
+                                    yield {"type": "reasoning", "text": think}
                             for tc in delta.get("tool_calls") or []:
                                 started_output = True
                                 span.first_token()

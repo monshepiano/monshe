@@ -2464,6 +2464,23 @@ function testIterationAOContracts() {
     'AO: no click blackout on the toggle, repaint guarded against double-fire');
 }
 
+function testIterationAWContracts() {
+  // AW: мысли не штормят прокрутки (английский теперь течёт — раньше
+  // каждый кусок дёргал scrollDown и валил кадры)
+  const thinkCase = js.split("case 'thinking':")[1].split("case 'plan':")[0];
+  assert(thinkCase.includes('scrollSoon(ui);') &&
+    !thinkCase.includes('\n      scrollDown();\n      break;'),
+    'AW: thinking events never force a scroll storm');
+  // AW: thinkType коагулирует перерисовку в кадр
+  assert(js.split('function thinkType(')[1].split('\n}\n')[0].includes('el._thinkRaf'),
+    'AW: think rendering is coalesced into animation frames');
+  // AW: llm-дедуп не глотает content/tool_calls дельты (continue убран)
+  const dedupBlock = pyLlm.split('think = _reasoning_increment(')[1]
+    .split('for tc in delta.get("tool_calls")')[0];
+  assert(dedupBlock.includes('if think:') && !dedupBlock.includes('\n                                    continue'),
+    'AW: a deduped reasoning chunk never swallows the rest of the delta');
+}
+
 function testIterationAUContracts() {
   // AV: скорости возвращены + КОРЕНЬ медленности закрыт (time-aware cap)
   assert(js.includes('const CPS_TALK = 125;') &&
@@ -2473,17 +2490,19 @@ function testIterationAUContracts() {
       .includes('const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));'),
     'AV: classic speeds are back; the per-frame cap now follows real frame time');
   // AU: видимый номер сборки — всегда ясно, какой билд на экране
-  assert(html.includes('<span class="ver-chip">b53</span>') &&
+  assert(html.includes('<span class="ver-chip">b54</span>') &&
     css.includes('.ver-chip{align-self:center;'),
     'AU: the build number is visible in the top bar');
   // AU: призрак-надпись физически не может растянуться на весь экран
   assert(css.includes('width:max-content}') &&
     css.includes('.ghost-title{font-size:30px;font-weight:200;letter-spacing:16px;'),
     'AU: the title ghost is clamped to its content');
-  // AU: перелёт ждёт укладки прокрутки (раньше летел по старым координатам)
-  const fly = js.split('function flyWelcomeInto(')[1].split('\nfunction ')[0];
-  assert(fly.includes('}), 320);') && fly.includes('setTimeout(() => requestAnimationFrame'),
-    'AU: the flight waits for the scroll to settle before measuring');
+  // AW: призраки рождаются В МОМЕНТ ОТПРАВКИ, оригиналы прячутся в тот же кадр
+  assert(js.includes("const gc = el('div', 'fly-ghost ghost-core');") &&
+    js.includes("wlCore.style.visibility = 'hidden';") &&
+    js.includes('welcomeFlight = { core: cr, title: tr, ghostCore: gc, ghostTitle: gt };') &&
+    !js.includes('}), 320);'),
+    'AW: ghosts are born at send time — the welcome never disappears');
 }
 
 function testIterationATContracts() {
@@ -2503,9 +2522,11 @@ function testIterationATContracts() {
     !js.includes("'hello fly-ghost'") && !js.includes("'reactor fly-ghost'"),
     'AT: destinations empty until landing; ghosts styled as themselves');
   // AT: цель меряется в момент старта — призрак не летит мимо
-  assert(js.split('function flyGhost(')[1].split('\nfunction ')[0].includes('targetRect()') &&
-    js.split('function flyWelcomeInto(')[1].split('\nfunction ')[0].includes('}), 320);'),
-    'AT/AU: target measured after the scroll settles (~320ms), never stale');
+  /* AW: полёт стартует мгновенно, наведение ЖИВОЕ — цель перемеряется
+     каждый кадр, устареть не может */
+  assert(js.split('function flyGhost(')[1].split('\nfunction ')[0].includes('const to = targetRect();') &&
+    js.includes('requestAnimationFrame(tick);') && !js.includes('}), 320);'),
+    'AT/AW: live homing — the target is re-measured every frame');
   // AU: перевод снесён — мысли любого языка идут в ленту живьём
   assert(pyAgent.includes('_HAS_LETTERS_RE') &&
     !pyAgent.includes('_translate_think') &&
@@ -2516,7 +2537,7 @@ function testIterationATContracts() {
 function testIterationARContracts() {
   // AS: рождение ответа — ПЕРЕЛЁТ из приветствия (ядро + надпись JARVIS)
   assert(js.includes('flyWelcomeInto(node, welcomeFlight);') &&
-    js.includes('welcomeFlight = (wlCore && wlTitle)') &&
+    js.includes('welcomeFlight = { core: cr, title: tr, ghostCore: gc, ghostTitle: gt };') &&
     js.includes('.welcome .reactor.xl .core') &&
     js.includes('.welcome .hello span'),
     'AS: first request — the big core and the JARVIS title fly into the reply');
@@ -2525,7 +2546,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.53'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.54'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -2824,8 +2845,9 @@ function testIterationABContracts() {
   testIterationARContracts();
   testIterationATContracts();
   testIterationAUContracts();
+  testIterationAWContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 33 regression groups passed');
+  console.log('package28_frontend_runtime: 34 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
