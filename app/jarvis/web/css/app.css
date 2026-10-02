@@ -383,7 +383,12 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   padding-top:56px}
 .topbar{position:fixed;top:0;left:0;right:0;z-index:55;display:flex;align-items:center;gap:12px;
   padding:11px 18px 11px 280px;border-bottom:1px solid var(--line);height:56px;
-  background:rgba(5,11,20,.6);backdrop-filter:blur(16px)}
+  background:rgba(5,11,20,.6);backdrop-filter:blur(16px);
+  /* AR: элементы панели едут за доком на новую площадь и flex сам
+     распределяет их равномерно; кривые — те же, что у дока */
+  transition:padding-left .6s cubic-bezier(.22,.68,.18,.2)}
+.app.collapsed .topbar{padding-left:18px;
+  transition:padding-left .6s cubic-bezier(.5,.35,.15,1)}
 
 /* ---------- центр уведомлений в правом верхнем углу ----------
    Колокольчик с точкой непрочитанного и выпадающий список под ним.
@@ -573,27 +578,33 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    обязателен: у реактора дока есть ID-правила (coreHalo при body.jv-busy),
    которые иначе перекрывали бы затухание — боковой реактор тогда
    вообще не гас. */
-.ai-avatar .reactor{filter:brightness(.13) saturate(.35)}
-.msg-ai:has(.typing) .ai-avatar .reactor{filter:brightness(1) saturate(1)}
-.msg-ai:has(.typing) .ai-avatar .reactor .ring{border-color:rgba(0,220,255,.75)}
-.msg-ai:has(.typing) .ai-avatar .reactor .r1{animation-duration:.9s}
-.msg-ai:has(.typing) .ai-avatar .reactor .r2{animation-duration:.62s}
-.msg-ai:has(.typing) .ai-avatar .reactor .core{animation-duration:.62s;
+.ai-avatar .reactor{filter:grayscale(.88) brightness(1.32)}
+.ai-avatar .reactor .ring,.ai-avatar .reactor .core{animation:none}
+/* AR: ГОРЯЩЕЕ состояние — класс дуги стоит от рождения ответа до
+   настоящего финала (печать, инструменты, интерактив — всё это один
+   долгий ответ): кольца летят, ядро пульсирует */
+.ai-avatar .reactor.relay-in{filter:none}
+.ai-avatar .reactor.relay-in .ring{border-color:rgba(0,220,255,.75)}
+.ai-avatar .reactor.relay-in .r1{animation:spin .9s linear infinite}
+.ai-avatar .reactor.relay-in .r2{animation:spin .62s linear infinite reverse}
+.ai-avatar .reactor.relay-in .core{animation:pulse .62s ease-in-out infinite;
   box-shadow:0 0 16px var(--cy),0 0 40px rgba(0,212,255,.75)}
+/* док, отдавший электричество, — тоже мёртвый стальной: ID-правила
+   jv-busy (coreHalo) перебивались — отсюда !important */
+#brandReactor.relay-out .ring,#brandReactor.relay-out .core{animation:none!important}
 .reactor.relay-out{animation:relayBurn .8s linear both!important}
 .reactor.relay-in{animation:relayBurn .8s linear both reverse!important}
-/* перегорание: жёсткие мигания без разгона; финал — тёмный, но видимый */
+/* перегорание: жёсткие умирающие мигания, финал — стальной корпус */
 @keyframes relayBurn{
-  0%{filter:brightness(1) saturate(1)}
-  5%{filter:brightness(.15) saturate(.5)}
-  9%{filter:brightness(1.05) saturate(1)}
-  16%{filter:brightness(.08) saturate(.4)}
-  24%{filter:brightness(.75) saturate(.8)}
-  34%{filter:brightness(.05) saturate(.3)}
-  46%{filter:brightness(.35) saturate(.5)}
-  58%{filter:brightness(.04) saturate(.3)}
-  72%{filter:brightness(.16) saturate(.35)}
-  100%{filter:brightness(.13) saturate(.35)}}
+  0%{filter:none}
+  6%{filter:grayscale(.9) brightness(.22)}
+  11%{filter:none}
+  20%{filter:grayscale(.95) brightness(.12)}
+  32%{filter:brightness(.85) saturate(.55)}
+  46%{filter:grayscale(1) brightness(.08)}
+  62%{filter:grayscale(.7) brightness(.45)}
+  78%{filter:grayscale(1) brightness(.16)}
+  100%{filter:grayscale(.88) brightness(1.32)}}
 /* реактор тихнет в неактивных (камера закрыта) ответах */
 .ui-inert .ai-avatar{opacity:.55;filter:saturate(.7)}
 .ai-body{flex:1;min-width:0}

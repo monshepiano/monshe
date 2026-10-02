@@ -1695,6 +1695,11 @@ function relayTyping(ui, on) {
   const av = (root && root.querySelector('.ai-avatar .reactor')) ||
     document.querySelector('.msg-ai:last-of-type .ai-avatar .reactor');
   if (on) {
+    /* AR: электричество живёт в ОДНОМ месте — новый ответ забирает дугу,
+       все прочие реакторы ленты перегорают (забытый интерактив и т.п.) */
+    document.querySelectorAll('.msg-ai .ai-avatar .reactor.relay-in').forEach((r) => {
+      if (r !== av) relayFlick(r, 'relay-out');
+    });
     relayFlick(brand, 'relay-out');   // док гаснет — электричество уходит
     relayFlick(av, 'relay-in');       // ...и вспыхивает у ответа
   } else {
@@ -3920,6 +3925,11 @@ async function send(opts) {
     node.root.classList.add('voice-run');
     VOICE.nodes.push(node.root);
   }
+  /* AR: ЭСТАФЕТА ЗАЖИГАЕТСЯ В МОМЕНТ ПОЯВЛЕНИЯ ответа, а не с первой
+     буквы: пока Джарвис думает и зовёт инструменты, реактор ответа уже
+     горит — электричество уходит из дока сразу. Интерактив-продолжение
+     приходит в ТОТ ЖЕ узел — вызов безвреден, дуга уже стоит */
+  relayTyping({ node }, true);
   const runId = ++S.streamRun;
   // Уникальный токен прогона: по нему сервер гасит РАБОТУ при Stop
   // (инструменты, санкции, computer-use), а не только SSE-соединение.
@@ -5683,8 +5693,6 @@ function typerStart(ui) {
     ui.shown = ui.buffer.slice(0, ui.shown.length + step);
     if (ui.mdEl) {
       ui.mdEl.classList.add('typing');
-      // AO: печать пошла — фигура этого ответа развязывается в волну
-      relayTyping(ui, true);
       renderTyped(ui);
     }
     if (!code) {
@@ -5802,7 +5810,11 @@ function typerStop(ui) {
   if (ui.typer) { clearInterval(ui.typer); ui.typer = null; }
   if (ui.mdEl) {
     ui.mdEl.classList.remove('typing');
-    relayTyping(ui, false);
+    /* AR: смена диалога гасит дугу — но НЕ у сообщения с интерактивом:
+       отвеченный ask значит, что это сообщение сейчас продолжится, это
+       всё ещё один долгий ответ */
+    const sb = ui.node && ui.node.body;
+    if (!sb || !sb.querySelector('.ask-card')) relayTyping(ui, false);
     clearTypingDecorations(ui.mdEl);
   }
   ui.cps = 0;
@@ -5989,7 +6001,10 @@ function queueResponseFinish(ui, content, success) {
     if (ui.visualDone) return;
     try {
       ui.mdEl.classList.remove('typing');
-      relayTyping(ui, false);
+      /* AR: открытый ask — НЕ финал: клик продолжит это же сообщение,
+         реактор держит дугу до настоящего конца длинного ответа */
+      const ab = ui.node && ui.node.body;
+      if (!ab || !ab.querySelector('.ask-card:not([data-done])')) relayTyping(ui, false);
       clearTypingDecorations(ui.mdEl);
       ui.floor = 0;
       ui.mdEl.style.minHeight = '';

@@ -46,6 +46,19 @@ _CACHE_LOCK = threading.RLock()
 _UNSUPPORTED: Dict[Tuple[str, str], set[str]] = {}
 _CAPABILITY_PATH = LOG_DIR / "llm-capabilities.json"
 _CAPABILITY_LOADED = False
+
+def _reasoning_increment(seen_tail: str, piece: str) -> str:
+    """AR: причина мусора «ости октябряости октября России» — провайдер
+    гоняет reasoning кусками, начинающимися с ПОВТОРА уже сказанного
+    (хвост прошлого куска прилетает снова). Сверяем начало нового куска
+    с хвостом накопленного: большое перекрытие — это повтор, отдаём
+    только прирост. Короткие повторы (слова, «так так») не трогаем —
+    это живая речь, а не сбой потока."""
+    k = min(len(seen_tail), len(piece), 64)
+    while k >= 10 and seen_tail[-k:] != piece[:k]:
+        k -= 1
+    return piece[k:] if k >= 10 else piece
+
 _CAPABILITY_FIELDS = {"reasoning_effort", "stream_options", "tools", "tool_choice"}
 
 # Ориентировочные цены (₽ за 1 млн токенов) — для счётчика расходов в UI.
@@ -687,6 +700,12 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
                             if think:
                                 started_output = True
                                 span.first_token()
+                                # AR: повтор хвоста = сбой потока, а не мысль —
+                                # отдаём только настоящий прирост
+                                think = _reasoning_increment(
+                                    "".join(acc_reasoning[-4:])[-80:], think)
+                                if not think:
+                                    continue
                                 acc_reasoning.append(think)
                                 yield {"type": "reasoning", "text": think}
                             for tc in delta.get("tool_calls") or []:

@@ -1685,9 +1685,19 @@ class _ThinkFilter:
         return out
 
     @staticmethod
+    def _clean(sent: str) -> str:
+        """AR: склеенный дубль не выбрасываем, а РАСКЛЕИВАЕМ — мысль
+        спасена, мусора нет. Хвостовой мусор («…, .») подрезаем."""
+        for _ in range(3):
+            fixed = _THINK_REPEAT_RE.sub(r"\1", sent)
+            if fixed == sent:
+                break
+            sent = fixed
+        return re.sub(r"[,;:. ]+([.!?])$", r"\1", sent).strip()
+
+    @staticmethod
     def _ok(sent: str) -> bool:
-        return bool(sent.strip()) and _reasoning_ru_visible(sent) \
-            and not _THINK_REPEAT_RE.search(sent)
+        return bool(sent.strip()) and _reasoning_ru_visible(sent)
 
     def _drain(self, final: bool) -> List[str]:
         out: List[str] = []
@@ -1700,12 +1710,14 @@ class _ThinkFilter:
             if cut < 0:
                 break
             sent, self.buf = self.buf[:cut + 1], self.buf[cut + 1:]
+            sent = self._clean(sent)
             if self._ok(sent):
-                out.append(sent.strip())
+                out.append(sent)
         if final:
             tail, self.buf = self.buf, ""
+            tail = self._clean(tail)
             if self._ok(tail):
-                out.append(tail.strip())
+                out.append(tail)
         return out
 
 

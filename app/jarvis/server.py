@@ -570,7 +570,11 @@ class Handler(BaseHTTPRequestHandler):
         ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
         if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
             ctype += "; charset=utf-8"
-        self._send(200, target.read_bytes(), ctype)
+        # AR: БЕЗ ЭТОГО ЗАГОЛОВКА браузер держал статику эвристическим кэшем —
+        # пользователь неделями видел СТАРЫЙ CSS/JS и «правки не работали».
+        # no-cache = всегда сверяться с сервером (304 не делаем: файлы крошечные)
+        self._send(200, target.read_bytes(), ctype,
+                   {"Cache-Control": "no-cache, must-revalidate"})
 
     def _download(self, name: str, chat_id: str = "") -> None:
         if not name:

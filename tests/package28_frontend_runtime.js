@@ -13,6 +13,8 @@ const js = fs.readFileSync(path.join(root, 'app/jarvis/web/js/app.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'app/jarvis/web/css/app.css'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'app/jarvis/web/index.html'), 'utf8');
 const pyAgent = fs.readFileSync(path.join(root, 'app/jarvis/agent.py'), 'utf8');
+const pyLlm = fs.readFileSync(path.join(root, 'app/jarvis/llm.py'), 'utf8');
+const pyServer = fs.readFileSync(path.join(root, 'app/jarvis/server.py'), 'utf8');
 const markdown = fs.readFileSync(path.join(root, 'app/jarvis/web/js/markdown.js'), 'utf8');
 
 function extractFunction(source, name) {
@@ -982,6 +984,7 @@ async function testCameraLifecycleOwnershipAndLateResults() {
     ICO: {}, fmtSize() { return ''; },
     queueResponseFinish() { throw new Error('aborted upload must not finalize as a response'); },
     loadChats() {}, refreshState() {}, fetchReplies() {},
+    relayTyping() {},
   });
   const pendingSend = sendCtx.send();
   await uploadStarted;
@@ -2441,18 +2444,44 @@ function testIterationAOContracts() {
   assert(css.includes('.reactor.relay-in{animation:relayBurn .8s linear both reverse!important}') &&
     css.includes('.reactor.relay-out{animation:relayBurn .8s linear both!important}') &&
     css.includes('@keyframes relayBurn{') &&
-    css.includes('.msg-ai:has(.typing) .ai-avatar .reactor .r1{animation-duration:.9s}') &&
-    css.includes('.msg-ai:has(.typing) .ai-avatar .reactor .core{animation-duration:.62s'),
-    'AO/AQ: ONE burnout animation, ignition is the same reversed, !important beats dock ID rules');
+    css.includes('.ai-avatar .reactor.relay-in .r1{animation:spin .9s linear infinite}') &&
+    css.includes('.ai-avatar .reactor.relay-in .core{animation:pulse .62s ease-in-out infinite'),
+    'AO/AR: ONE burnout animation, ignition is the same reversed, !important beats dock ID rules');
   const typingTick = js.split("ui.mdEl.classList.add('typing');")[1].slice(0, 300);
-  assert(typingTick.includes('relayTyping(ui, true)') &&
+  assert(!typingTick.includes('relayTyping') &&
     (js.match(/relayTyping\(ui, false\);/g) || []).length === 2,
-    'AO/AQ: typing start lights the avatar; only REAL ends (not stream droughts) put it out');
+    'AO/AR: typing does not drive the relay — the arc is lit from message birth');
   // AO: ТУМБЛЕР — клики не блокируются, двойная пересадка защищена
   assert(!css.includes('.agent-switch.ag-switching .agent-switch-track{pointer-events:none}') &&
     extractFunction(js, 'agentPaint').includes('agentPaint._busy') &&
     js.includes('agentPaint._busy = false'),
     'AO: no click blackout on the toggle, repaint guarded against double-fire');
+}
+
+function testIterationARContracts() {
+  // AR: дуга зажигается В МОМЕНТ ПОЯВЛЕНИЯ ответа — не с первой буквы
+  assert(js.includes('relayTyping({ node }, true);'),
+    'AR: the arc lights the instant the reply is born (thinking/tools included)');
+  // AR: электричество в одном месте — новый ответ гасит прочие дуги
+  assert(js.includes(".reactor.relay-in').forEach((r) => {"),
+    'AR: only one live reactor on the stage — the new reply takes the arc');
+  // AR: интерактив — не конец: ask держит дугу до настоящего финала
+  assert(js.includes("querySelector('.ask-card:not([data-done])')") &&
+    js.split('function typerStop(')[1].split('\nfunction ')[0].includes("querySelector('.ask-card')"),
+    'AR: interactive asks never kill the arc — one long answer stays lit');
+  // AR: потухший реактор — стальной корпус, чуть светлее, без движения
+  assert(css.includes('.ai-avatar .reactor{filter:grayscale(.88) brightness(1.32)}') &&
+    css.includes('.ai-avatar .reactor .ring,.ai-avatar .reactor .core{animation:none}') &&
+    css.includes('#brandReactor.relay-out .ring,#brandReactor.relay-out .core{animation:none!important}'),
+    'AR: burnt out = steel shell, slightly lighter, motionless');
+  // AR: статика больше не кэшируется браузером
+  assert(pyServer.includes('"Cache-Control": "no-cache, must-revalidate"') &&
+    html.includes('/static/css/app.css?v=1.2.0-beta.49'),
+    'AR: statics are always fresh — no more week-old CSS in the browser');
+  // AR: повтор потока reasoning склеивается обратно в чистый текст
+  assert(pyLlm.includes('def _reasoning_increment(') &&
+    pyLlm.includes('think = _reasoning_increment('),
+    'AR: degenerate reasoning repeats collapse into clean text at the source');
 }
 
 function testIterationAQContracts() {
@@ -2468,6 +2497,11 @@ function testIterationAQContracts() {
   assert(css.includes('padding-top:56px}') &&
     css.includes('.topbar{padding-left:80px}'),
     'AQ: content starts below the band; mobile band clears the icon strip');
+  // AR: элементы панели едут на новую площадь кривыми дока
+  assert(css.includes('transition:padding-left .6s cubic-bezier(.22,.68,.18,.2)}') &&
+    css.includes('.app.collapsed .topbar{padding-left:18px;') &&
+    css.includes('transition:padding-left .6s cubic-bezier(.5,.35,.15,1)}'),
+    'AR: band content slides with the dock and redistributes');
   // AQ: ХОД МЫСЛЕЙ — целые предложения, дубли и огрызки умирают в буфере
   assert(pyAgent.includes('class _ThinkFilter:') &&
     pyAgent.includes('_THINK_REPEAT_RE') &&
@@ -2480,11 +2514,12 @@ function testIterationAQContracts() {
     thinkCase.includes('node.body.insertBefore(ui.thinkCard, node.body.firstChild)') &&
     thinkCase.includes('node.body.insertBefore(qn, node.body.firstChild)'),
     'AQ: whenever the thought appears, it opens the answer — never hides at the bottom');
-  // AQ: ПОКОЙ ответного реактора — ТЁМНЫЙ (контуры видны, света нет)
-  assert(css.includes('.ai-avatar .reactor{filter:brightness(.13) saturate(.35)}') &&
-    css.includes('.msg-ai:has(.typing) .ai-avatar .reactor{filter:brightness(1) saturate(1)}') &&
-    css.includes('100%{filter:brightness(.13) saturate(.35)}}'),
-    'AQ: spent avatar is dark but visible; printing lights it up');
+  // AR: покой — СТАЛЬНОЙ и неподвижный; горит — класс дуги с рождения
+  assert(css.includes('.ai-avatar .reactor{filter:grayscale(.88) brightness(1.32)}') &&
+    css.includes('.ai-avatar .reactor .ring,.ai-avatar .reactor .core{animation:none}') &&
+    css.includes('.ai-avatar .reactor.relay-in{filter:none}') &&
+    css.includes('.ai-avatar .reactor.relay-in .r1{animation:spin .9s linear infinite}'),
+    'AR: spent avatar is steel and still; the arc class spins it up');
 }
 
 function testIterationAPContracts() {
@@ -2737,8 +2772,9 @@ function testIterationABContracts() {
   testIterationANContracts();
   testIterationAPContracts();
   testIterationAQContracts();
+  testIterationARContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 30 regression groups passed');
+  console.log('package28_frontend_runtime: 31 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
