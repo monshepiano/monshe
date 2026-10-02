@@ -1223,6 +1223,10 @@ def run() -> None:
     # пусть это время работает на нас. Иначе первый вопрос за сеанс платил
     # за поход в облако за списком моделей.
     threading.Thread(target=_warm_models, name="jarvis-warm", daemon=True).start()
+    # BB: ИИ-ПЛИТКИ ПРИВЕТСТВИЯ ГОТОВЯТСЯ ПРИ СТАРТЕ — к первому открытию
+    # экрана они уже в кэше; дальше обновляются фоном раз в сутки
+    threading.Thread(target=ideas.refresh_ai_async, name="jarvis-ideas",
+                     daemon=True).start()
     httpd = Server((host, port), Handler)
     url = "http://%s:%d/" % ("localhost" if host in ("127.0.0.1", "0.0.0.0") else host, port)
     banner = """

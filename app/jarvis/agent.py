@@ -2494,9 +2494,10 @@ class Agent:
         # порога накопленное показывается целиком, дальнейшие chunks идут живьём.
         thinking_pending: List[str] = []
         thinking_visible = False
-        # Y: тихому режиму нужен ДЕЙСТВИТЕЛЬНО длинный ход мыслей (800 зн.),
-        # иначе показываем только после первого инструмента; агенту — 90
-        thinking_min_chars = 90 if self.show_thinking else 800
+        # BB: тихому режиму порог не нужен вовсе: мысли выпускает первый
+        # инструмент или второй ход, а ПРОСТОЙ запрос («как дела») вообще
+        # не должен рождать ход мыслей
+        thinking_min_chars = 90 if self.show_thinking else 10 ** 9
 
         def think_route(sentences: List[str],
                         force: bool = False) -> List[Dict[str, Any]]:
@@ -2517,10 +2518,16 @@ class Agent:
                                      "text": " ".join(thinking_pending)})
                         del thinking_pending[:]
             if force and not thinking_visible and thinking_pending:
-                thinking_visible = True
-                outs.append({"type": "thinking",
-                             "text": " ".join(thinking_pending)})
-                del thinking_pending[:]
+                # BB: тихий режим без инструментов — мысли держим при себе:
+                # впереди могут быть инструменты, и тогда первый вызов их
+                # выпустит; а простому ответу без работы ход мыслей не нужен
+                if self.quiet_thinking and not self.used_tools:
+                    pass
+                else:
+                    thinking_visible = True
+                    outs.append({"type": "thinking",
+                                 "text": " ".join(thinking_pending)})
+                    del thinking_pending[:]
             return outs
 
         for step in range(max_steps):

@@ -2477,11 +2477,13 @@ function testIterationAXContracts() {
     js.includes("'<span class=\"gt-grad\">JARVIS</span><span class=\"gt-solid\">JARVIS</span>'") &&
     js.includes('(p - .35) / .45'),
     'AX/AY: the core sheds its rings mid-flight (at flight speed); the title morphs mid-flight');
-  // AX/AZ: круглешок — золотые вспышки; смена формы теперь в играх .sh-*
+  // AX/BB: круглешок — такт чистым transform (FPS), золото во всплеске
   const live = css.split('@keyframes coreLive{')[1].split('}}')[0];
-  assert(live.includes('#ffd489') && live.includes('var(--gold)') &&
+  const burst = css.split('@keyframes coreBurst{')[1].split('}}')[0];
+  assert(live.includes('transform:scale(1.2)') &&
+    burst.includes('#ffd489') && burst.includes('var(--gold)') &&
     css.includes('.ai-core.sh-tess{clip-path:polygon('),
-    'AX/AZ: the dot flashes gold; shape play lives in the .sh-* morphs');
+    'AX/BB: the dot bursts gold; the idle beat is pure transform');
   // AX: плитки фиксированной высоты, описание — три строки с троеточием
   const sp = css.split('.sugg .sp{')[1].split('}')[0];
   assert(sp.includes('-webkit-line-clamp:5') &&
@@ -2499,11 +2501,11 @@ function testIterationAYContracts() {
     js.split('function welcomeExit(')[1].split('\nfunction ')[0]
       .includes("w.style.height = '0px';"),
     'AY: the welcome leaves as ONE motion — tiles scatter, page fades and folds');
-  // AY: киношное размытие в движении — от скорости, гаснет к посадке
+  // AY/BB: киношное размытие — ступенька через класс, transition ведёт браузер
   const fly = js.split('function flyGhost(')[1].split('\nfunction ')[0];
-  assert(fly.includes('Math.min(2.4, speed * .085)') &&
-    fly.includes("g.style.filter = blur > .25 ? 'blur(' + blur.toFixed(2) + 'px)' : '';"),
-    'AY: ghosts get a cinematic motion blur that dies out at landing');
+  assert(fly.includes("g.classList.toggle('motion', moving);") &&
+    css.includes('.fly-ghost.motion{filter:blur(1.4px)}'),
+    'AY/BB: cinematic motion blur as a stepped class — no per-frame filter writes');
   // AY: круглешок живёт весь ответ и в финале оседает кружком
   assert(js.includes('function finishLiveDot(') &&
     js.includes("node.root.classList.add('live');") &&
@@ -2563,6 +2565,27 @@ function testIterationBAContracts() {
     'BA: hover 0.3s on send/tile/chip warms the pipeline before the click');
 }
 
+function testIterationBBContracts() {
+  // BB: ИИ-плитки готовы ДО первого экрана; сервер греет их при старте
+  const init = js.split('(async function init()')[1].split('\n})();')[0];
+  assert(init.indexOf('await loadIdeas();') > -1 &&
+    init.indexOf('await loadIdeas();') < init.indexOf('buildWelcome()'),
+    'BB: tiles are loaded BEFORE the welcome screen is built');
+  // BB: круглешок — частые быстрые трансформации со свечением
+  const play = js.split('function dotShapePlay(')[1].split('\nfunction ')[0];
+  assert(js.includes('const DOT_MORPH_MS = 280;') &&
+    js.includes('const DOT_HOLD_MS = 1250;') &&
+    play.includes('3200 + Math.random() * 3800') &&
+    play.includes("core.classList.toggle('sh-glow', on);") &&
+    css.includes('.ai-core.sh-glow{'),
+    'BB: the dot morphs faster and more often, glowing only while transforming');
+  // BB: рамка-вспышка в момент окончания ответа
+  assert(css.includes('.msg-ai.flash-done{border-radius:14px;animation:doneFlash 1.5s ease-out}') &&
+    css.includes('@keyframes doneFlash{') &&
+    js.includes("root.classList.add('flash-done');"),
+    'BB: a theme-colored frame flashes the moment the answer completes');
+}
+
 function testIterationAWContracts() {
   // AW: мысли не штормят прокрутки (английский теперь течёт — раньше
   // каждый кусок дёргал scrollDown и валил кадры)
@@ -2589,7 +2612,7 @@ function testIterationAUContracts() {
       .includes('const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));'),
     'AV: classic speeds are back; the per-frame cap now follows real frame time');
   // AU: видимый номер сборки — всегда ясно, какой билд на экране
-  assert(html.includes('<span class="ver-chip">b58</span>') &&
+  assert(html.includes('<span class="ver-chip">b59</span>') &&
     css.includes('.ver-chip{align-self:center;'),
     'AU: the build number is visible in the top bar');
   // AU: призрак-надпись физически не может растянуться на весь экран
@@ -2644,7 +2667,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.58'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.59'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -2948,8 +2971,9 @@ function testIterationABContracts() {
   testIterationAYContracts();
   testIterationAZContracts();
   testIterationBAContracts();
+  testIterationBBContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 38 regression groups passed');
+  console.log('package28_frontend_runtime: 39 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

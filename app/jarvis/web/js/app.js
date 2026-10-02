@@ -1829,18 +1829,23 @@ function flyGhost(g, targetRect, done, onProgress) {
     const dx = (to.left + to.width / 2) - (start.left + start.width / 2);
     const dy = (to.top + to.height / 2) - (start.top + start.height / 2);
     const x = dx * e, y = dy * e;
-    /* AY: КИНОШНОЕ РАЗМЫТИЕ В ДВИЖЕНИИ — радиус растёт от мгновенной
-       скорости и сам гаснет к посадке: на старте и в конце призрак
-       резкий, в разгоне — слегка смазан, как в кино */
+    /* AY/BB: КИНОШНОЕ РАЗМЫТИЕ В ДВИЖЕНИИ. Раньше filter переписывался
+       КАЖДЫЙ кадр — стиль-пересчёт и перерисовка с блюром рвали FPS.
+       Теперь класс-ступенька: браузер сам ведёт transition фильтра,
+       JS лишь изредка переключает «в движении / встал» */
     const speed = Math.hypot(x - lx, y - ly);
-    const blur = p < 1 ? Math.min(2.4, speed * .085) : 0;
-    g.style.filter = blur > .25 ? 'blur(' + blur.toFixed(2) + 'px)' : '';
+    const moving = speed > 7;
+    if (moving !== g._motion) {
+      g._motion = moving;
+      g.classList.toggle('motion', moving);
+    }
     lx = x; ly = y;
     g.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' +
       (1 + (k - 1) * e) + ')';
     if (p < 1) { requestAnimationFrame(tick); return; }
     g.dataset.landed = '1';
-    g.style.filter = '';
+    g._motion = false;
+    g.classList.remove('motion');
     /* мягкая посадка: кроссфейд 180мс вместо мгновенной подмены */
     const fade = g.animate([{ opacity: 1 }, { opacity: 0 }],
       { duration: 180, fill: 'both' });
@@ -6191,22 +6196,32 @@ function dotAction(root) {
    перетекает в странную фигуру на полсекунды — тессеракт, тетраэдр,
    кривая капля, звезда — и так же плавно возвращается кружком */
 const DOT_SHAPES = ['sh-tess', 'sh-tetra', 'sh-blob', 'sh-star', 'sh-hex', 'sh-diamond'];
+const DOT_MORPH_MS = 280;      // BB: превратился — быстро и явно
+const DOT_HOLD_MS = 1250;      // BB: повисел секунду-полторы — и обратно
 function dotShapePlay(root) {
   const core = root && root.querySelector ? root.querySelector('.ai-core') : null;
   if (!core) return;
   clearTimeout(core._shapeTimer);
   const schedule = () => {
-    core._shapeTimer = setTimeout(play, 6000 + Math.random() * 9000);
+    /* BB: чаще — каждые 3.2–7 секунд */
+    core._shapeTimer = setTimeout(play, 3200 + Math.random() * 3800);
   };
+  const glow = (on) => { if (core.classList) core.classList.toggle('sh-glow', on); };
   const play = () => {
     if (!core.isConnected || !root.classList.contains('live') ||
         core.classList.contains('dot-settle')) { return; }
     const shape = DOT_SHAPES[Math.floor(Math.random() * DOT_SHAPES.length)];
+    /* светится РОВНО в момент трансформации — туда и обратно */
     core.classList.add(shape);
+    glow(true);
+    setTimeout(() => glow(false), DOT_MORPH_MS);
     setTimeout(() => {
-      if (core.classList) core.classList.remove(shape);
+      if (!core.classList) return;
+      core.classList.remove(shape);
+      glow(true);
+      setTimeout(() => glow(false), DOT_MORPH_MS);
       schedule();
-    }, 720);
+    }, DOT_MORPH_MS + DOT_HOLD_MS);
   };
   schedule();
 }
@@ -6249,6 +6264,12 @@ function finishLiveDot(root) {
     }, 640);
   }
   root.classList.remove('live');
+  /* BB: РАМКА РЕЗУЛЬТАТА — ответ завершён: короткая вспышка рамкой
+     в тон темы и мягкое угасание */
+  root.classList.add('flash-done');
+  setTimeout(() => {
+    if (root.classList) root.classList.remove('flash-done');
+  }, 1700);
 }
 
 function settleVisualDone(ui) {
@@ -9962,6 +9983,9 @@ window.addEventListener('keydown', (e) => {
 (async function init() {
   syncSoundBtn();
   setupScrollDate($('#stream'), $('#scrollDate'));
+  /* BB: ПЛИТКИ ГОТОВЫ ДО ЭКРАНА — экран собирается один раз с уже
+     загруженными плитками, никакой подмены на глазах */
+  await loadIdeas();
   $('#stream').appendChild(buildWelcome());
   requestAnimationFrame(fitSuggTexts);
   if (document.fonts && document.fonts.ready) {

@@ -3146,7 +3146,7 @@ class IterationXTests(unittest.TestCase):
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
         self.assertIn("self.quiet_thinking = bool(not social_only", src)
         self.assertIn("if self.show_thinking or self.quiet_thinking:", src)
-        self.assertIn("thinking_min_chars = 90 if self.show_thinking else 800", src)
+        self.assertIn("thinking_min_chars = 90 if self.show_thinking else 10 ** 9", src)
         self.assertIn("if self.quiet_thinking and not thinking_visible and thinking_pending:",
                       src)
 
@@ -3253,7 +3253,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.58", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.59", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4587,8 +4587,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.58", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.58", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.59", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.59", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4722,7 +4722,7 @@ class IterationAUTests(unittest.TestCase):
     def test_au3_version_chip(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b58</span>', html)
+        self.assertIn('<span class="ver-chip">b59</span>', html)
         self.assertIn(".ver-chip{align-self:center;", css)
 
     def test_au4_flight_waits_for_scroll(self) -> None:
@@ -4806,11 +4806,12 @@ class IterationAXTests(unittest.TestCase):
     def test_ax3_flexible_core(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         live = css.split("@keyframes coreLive{")[1].split("}}")[0]
-        # жёлтая вспышка в тон курсору мыслей
-        self.assertIn("#ffd489", live)
-        self.assertIn("var(--gold)", live)
-        # AZ: смена формы переехала из keyframes в ИГРЫ ФОРМЫ —
-        # плавные морфы clip-path по случайным фигурам (см. az4)
+        # BB: базовый такт — чистый transform (FPS); золото живёт во всплеске
+        self.assertIn("transform:scale(1.2)", live)
+        burst = css.split("@keyframes coreBurst{")[1].split("}}")[0]
+        self.assertIn("#ffd489", burst)
+        self.assertIn("var(--gold)", burst)
+        # AZ: смена формы — ИГРЫ ФОРМЫ, морфы clip-path (см. az4)
         self.assertIn(".ai-core.sh-tess{clip-path:polygon(", css)
 
     def test_ax4_tiles_fixed_ellipsis(self) -> None:
@@ -4862,10 +4863,11 @@ class IterationAYTests(unittest.TestCase):
     def test_ay3_motion_blur_and_ring_pace(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         fly = js.split("function flyGhost(")[1].split("\nfunction ")[0]
-        # киношное размытие в движении: растёт от скорости, гаснет к посадке
-        self.assertIn("Math.min(2.4, speed * .085)", fly)
-        self.assertIn("g.style.filter = blur > .25 ? 'blur(' + blur.toFixed(2) + 'px)' : '';", fly)
-        self.assertIn("g.style.filter = '';", fly)
+        # BB: киношное размытие СТУПЕНЬКОЙ — класс + CSS-transition:
+        # покадровая запись filter рвала FPS
+        self.assertIn("g.classList.toggle('motion', moving);", fly)
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn(".fly-ghost.motion{filter:blur(1.4px)}", css)
         # кольца тают СО СКОРОСТЬЮ полёта — по eased-прогрессу
         self.assertIn(
             "rings.forEach((r) => { r.style.opacity = String(Math.max(0, 1 - e)); });", js)
@@ -4973,7 +4975,7 @@ class IterationAZTests(unittest.TestCase):
         # база — 12-точечный «круг», переход clip-path плавный
         core = css.split(".ai-core{")[1].split("}")[0]
         self.assertIn("clip-path:polygon(50% 0%,75% 6.7%", core)
-        self.assertIn("clip-path .42s cubic-bezier(.65,0,.35,1)", core)
+        self.assertIn("clip-path .26s cubic-bezier(.65,0,.35,1)", core)
         # странные фигуры — равным числом вершин, морфятся интерполяцией
         for shape in ("sh-tess", "sh-tetra", "sh-blob", "sh-star", "sh-hex", "sh-diamond"):
             self.assertIn(".ai-core.%s{clip-path:polygon(" % shape, css)
@@ -5065,6 +5067,64 @@ class IterationBATests(unittest.TestCase):
         warm = srv.split('if path == "/api/warm":')[1].split('if path ==')[0]
         self.assertIn("_WARM_SEEN", warm)
         self.assertIn('operation="warmup"', warm)
+
+
+
+class IterationBBTests(unittest.TestCase):
+    """BB (beta.59): ИИ-плитки готовы ДО экрана и греются при старте
+    (фоном раз в сутки), FPS стартовой анимации и круглешка (размытие
+    ступенькой, такт чистым transform, свечение drop-shadow — box-shadow
+    клипался), круглешок чаще/быстрее меняет форму со свечением в момент
+    трансформации, ход мыслей только у рабочих ответов, рамка-вспышка
+    в конце ответа."""
+
+    def test_bb1_ideas_ready_before_first_paint(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        init = js.split("(async function init()")[1].split("\n})();")[0]
+        self.assertIn("await loadIdeas();", init)
+        self.assertLess(init.find("await loadIdeas();"),
+                        init.find("buildWelcome()"))
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertIn("threading.Thread(target=ideas.refresh_ai_async", srv)
+        src = Path("app/jarvis/ideas.py").read_text(encoding="utf-8")
+        self.assertIn("_AI_REFRESH = 24 * 3600", src)
+
+    def test_bb2_dot_fps_and_glow(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # такт живости — ТОЛЬКО transform (композит, без перерисовок)
+        live = css.split("@keyframes coreLive{")[1].split("}}")[0]
+        for prop in ("background", "box-shadow", "filter"):
+            self.assertNotIn(prop, live)
+        # свечение — drop-shadow поверх clip-path; box-shadow был невидим
+        core = css.split(".ai-core{")[1].split("}")[0]
+        self.assertIn("filter:drop-shadow(", core)
+        self.assertIn("drop-shadow(0 0 20px rgba(0,212,255,.8))",
+                      css.split(".ai-core.sh-glow{")[1].split("}")[0])
+
+    def test_bb3_shape_play_faster_with_glow(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("const DOT_MORPH_MS = 280;", js)
+        self.assertIn("const DOT_HOLD_MS = 1250;", js)
+        play = js.split("function dotShapePlay(")[1].split("\nfunction ")[0]
+        self.assertIn("3200 + Math.random() * 3800", play)
+        self.assertIn('core.classList.toggle("sh-glow", on);', play.replace(
+            "core.classList.toggle('sh-glow', on);",
+            'core.classList.toggle("sh-glow", on);'))
+
+    def test_bb4_thinking_only_for_work(self) -> None:
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        # тихий режим: порога нет, фаза не выпускает мысли без инструментов
+        self.assertIn("thinking_min_chars = 90 if self.show_thinking else 10 ** 9", src)
+        route = src.split("def think_route(")[1].split("\n        for step in")[0]
+        self.assertIn("if self.quiet_thinking and not self.used_tools:", route)
+
+    def test_bb5_done_flash_frame(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn(".msg-ai.flash-done{border-radius:14px;animation:doneFlash 1.5s ease-out}", css)
+        self.assertIn("@keyframes doneFlash{", css)
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        fd = js.split("function finishLiveDot(")[1].split("\nfunction ")[0]
+        self.assertIn("root.classList.add('flash-done');", fd)
 
 
 if __name__ == "__main__":
