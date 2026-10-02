@@ -3244,7 +3244,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.52", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.53", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4413,8 +4413,9 @@ class IterationAOTests(unittest.TestCase):
         ghost = js.split("function flyGhost(")[1].split("\nfunction ")[0]
         self.assertIn("g.animate([", ghost)
         self.assertIn("'cubic-bezier(.3,.75,.25,1)'", ghost)
-        self.assertIn("core.classList.add('arrived')", js)
-        self.assertIn("name.classList.add('arrived')", js)
+        # AV: посадка — кроссфейд, без вспышек и мгновенной подмены
+        self.assertIn("fade.onfinish = () => g.remove();", js)
+        self.assertIn("const titleTarget = () => {", js)
 
     def test_ao3_reasoning_no_ellipsis(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -4534,9 +4535,10 @@ class IterationAQTests(unittest.TestCase):
         self.assertNotIn("relay-out", css)
         # докский реактор никто не гасит: его правила без relay-классов
         self.assertIn("body.jv-busy #brandReactor .core{animation-duration:.62s;", css)
-        # вспышки прилёта: ядро и имя мигают при посадке призраков
-        self.assertIn(".ai-core.arrived{animation:arriveCore .6s ease-out}", css)
-        self.assertIn(".ai-name.arrived{animation:arriveName .7s ease-out}", css)
+        # AV: вспышек прилёта больше нет — только кроссфейд
+        self.assertNotIn("arriveCore", css)
+        self.assertNotIn("arriveName", css)
+        self.assertIn("transition:opacity .18s ease}", css)
         self.assertIn(".fly-ghost{position:fixed;z-index:400;pointer-events:none;margin:0", css)
 
     def test_ar1_llm_reasoning_dedup(self) -> None:
@@ -4574,8 +4576,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.52", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.52", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.53", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.53", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4693,14 +4695,20 @@ class IterationAUTests(unittest.TestCase):
 
     def test_au2_faster_typing(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        self.assertIn("const CPS_TALK = 170;", js)
-        self.assertIn("const CPS_TALK_MAX = 420;", js)
-        self.assertIn("const CPS_CODE = 700;", js)
+        # AV: скорости возвращены как были (юзер не просил ускорять)
+        self.assertIn("const CPS_TALK = 125;", js)
+        self.assertIn("const CPS_TALK_MAX = 245;", js)
+        self.assertIn("const CPS_CODE = 470;", js)
+        # КОРЕНЬ аномальной медленности: предел кадра привязан ко времени
+        # кадра — тяжёлый рендер больше не роняет темп до «полслова в секунду»
+        typer = js.split("function typerStart(")[1].split("\nfunction ")[0]
+        self.assertIn("const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));", typer)
+        self.assertIn("step = Math.min(step, left, frameCap);", typer)
 
     def test_au3_version_chip(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b52</span>', html)
+        self.assertIn('<span class="ver-chip">b53</span>', html)
         self.assertIn(".ver-chip{align-self:center;", css)
 
     def test_au4_flight_waits_for_scroll(self) -> None:

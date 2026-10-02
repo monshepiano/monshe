@@ -386,20 +386,20 @@ function testImportantHeadingCaretAndTrail() {
     },
   );
   assert(/const TYPE_MS\s*=\s*20/.test(js), 'DOM typing is capped at 50 renders per second');
-  assert(/const CPS_TALK\s*=\s*170/.test(js) && /const CPS_TALK_MAX\s*=\s*420/.test(js));
+  assert(/const CPS_TALK\s*=\s*125/.test(js) && /const CPS_TALK_MAX\s*=\s*245/.test(js));
   // код: 470 базово (быстрее старых 420, медленнее спорных 560), хвост —
   // до 2000 симв/с: выше автопрокрутка перестаёт поспевать (near-зона 420px)
-  assert(/const CPS_CODE\s*=\s*700/.test(js) && /const CPS_SMOOTH_MS\s*=\s*340/.test(js) &&
+  assert(/const CPS_CODE\s*=\s*470/.test(js) && /const CPS_SMOOTH_MS\s*=\s*340/.test(js) &&
     /Math\.min\(2000, 700 \+ left \* 0\.18\)/.test(js) &&
     /box\.scrollHeight - box\.scrollTop - box\.clientHeight < 420/.test(js));
   assert(!/CPS_IMPORTANT/.test(js), 'headings must not have a separate speed');
   assert(!/function importantLine|function headingEndedSince/.test(js),
     'headings must not add a hidden rate or pause branch');
   const target = loadFunctions(['talkTargetCps'], {
-    Math, Number, CPS_TALK: 170, CPS_TALK_MAX: 420,
+    Math, Number, CPS_TALK: 125, CPS_TALK_MAX: 245,
   });
-  assert.strictEqual(target.talkTargetCps(120), 170);
-  assert(target.talkTargetCps(800) > 300 && target.talkTargetCps(800) < 420,
+  assert.strictEqual(target.talkTargetCps(120), 125);
+  assert(target.talkTargetCps(800) > 200 && target.talkTargetCps(800) < 245,
     'a long ready tail accelerates continuously without crossing the visual-speed ceiling');
   const typer = extractFunction(js, 'typerStart');
   assert(/let want\s*=\s*code\s*\?\s*CPS_CODE\s*:\s*talkTargetCps\(left\)/.test(typer));
@@ -408,8 +408,14 @@ function testImportantHeadingCaretAndTrail() {
     'elapsed-time CPS must survive delayed timer frames');
   assert(/Math\.min\(250,\s*now\s*-\s*lastTick\)/.test(typer),
     'a delayed browser frame is credited HONESTLY (up to 250ms): heavy frames must never slow the text pace — the step cap already prevents bursts');
-  assert(/step\s*=\s*Math\.min\(step,\s*left,\s*\(code\s*\?\s*\(ui\.fastFinish\s*\?\s*26\s*:\s*10\)\s*:\s*4\)\s*\*\s*turbo\)/.test(typer),
-    'step limit stays 4 for prose, rises for dense content after done, and doubles under turbo');
+  /* AV: старая формула «4 знака на тик ВСЕГДА» и была багом «полслова в
+     секунду»: тяжёлый кадр тянулся 250мс, а тик всё равно давал 4 знака.
+     Теперь предел привязан ко времени кадра — темп честный при любых
+     лагах, а накопитель acc по-прежнему не даёт залпов */
+  assert(/const baseCap = \(code \? \(ui\.fastFinish \? 26 : 10\) : 4\) \* turbo;/.test(typer) &&
+    /const frameCap = Math\.max\(baseCap, Math\.ceil\(\(ui\.cps \* elapsed\) \/ 1000\)\);/.test(typer) &&
+    /step = Math\.min\(step, left, frameCap\);/.test(typer),
+    'AV: step cap follows real frame time — heavy frames never slow the pace');
   assert(/const turbo = S\.turbo \? 16 : 1;/.test(typer) &&
     /want \*= turbo;/.test(typer) && /pause \/ turbo/.test(typer),
     'the ×3.5 boost button speeds target rate, frame cap and shrinks punctuation pauses');
@@ -2443,10 +2449,11 @@ function testIterationAOContracts() {
     'AO/AP: work area slides with the DOCK curve in both directions (margin, Safari-proof)');
   // AO: ВОЛНА СИГИЛА — печать развязывает фигуру в линию волн (жёлтая,
   // яркий пульс), конец печати медленно замеряет её в последней позе
-  assert(css.includes('.ai-core.arrived{animation:arriveCore .6s ease-out}') &&
-    css.includes('.ai-name.arrived{animation:arriveName .7s ease-out}') &&
+  assert(css.includes('transition:opacity .18s ease}') &&
+    !css.includes('arriveCore') && !css.includes('arriveName') &&
+    js.includes('fade.onfinish = () => g.remove();') &&
     css.includes('.fly-ghost{position:fixed;z-index:400;pointer-events:none;margin:0'),
-    'AO/AS: welcome ghosts land with a flash on the real elements');
+    'AO/AV: ghosts land with a soft crossfade — no flash, no jerk');
   const typingTick = js.split("ui.mdEl.classList.add('typing');")[1].slice(0, 300);
   assert(!typingTick.includes('flyWelcomeInto') && !js.includes('relayTyping'),
     'AO/AS: typing drives nothing — the dot livenes is pure CSS');
@@ -2458,13 +2465,15 @@ function testIterationAOContracts() {
 }
 
 function testIterationAUContracts() {
-  // AU: печать заметно быстрее
-  assert(js.includes('const CPS_TALK = 170;') &&
-    js.includes('const CPS_TALK_MAX = 420;') &&
-    js.includes('const CPS_CODE = 700;'),
-    'AU: typing is noticeably faster across the board');
+  // AV: скорости возвращены + КОРЕНЬ медленности закрыт (time-aware cap)
+  assert(js.includes('const CPS_TALK = 125;') &&
+    js.includes('const CPS_TALK_MAX = 245;') &&
+    js.includes('const CPS_CODE = 470;') &&
+    js.split('function typerStart(')[1].split('\nfunction ')[0]
+      .includes('const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));'),
+    'AV: classic speeds are back; the per-frame cap now follows real frame time');
   // AU: видимый номер сборки — всегда ясно, какой билд на экране
-  assert(html.includes('<span class="ver-chip">b52</span>') &&
+  assert(html.includes('<span class="ver-chip">b53</span>') &&
     css.includes('.ver-chip{align-self:center;'),
     'AU: the build number is visible in the top bar');
   // AU: призрак-надпись физически не может растянуться на весь экран
@@ -2516,7 +2525,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.52'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.53'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&

@@ -584,7 +584,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;
   border-radius:50%;background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
   box-shadow:0 0 10px rgba(0,212,255,.5),0 0 26px rgba(0,212,255,.22);
-  animation:coreBreathe 3.4s ease-in-out infinite}
+  animation:coreBreathe 3.4s ease-in-out infinite;
+  /* AV: кроссфейд при посадке призрака — вместо вспышки и рывка */
+  transition:opacity .18s ease}
 @keyframes coreBreathe{50%{transform:scale(1.22);box-shadow:0 0 15px rgba(0,212,255,.75),0 0 34px rgba(0,212,255,.35)}}
 .msg-ai:has(.typing) .ai-core{animation:coreLive .55s ease-in-out infinite}
 @keyframes coreLive{50%{transform:scale(1.38);filter:brightness(1.55);
@@ -604,15 +606,11 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   text-shadow:0 0 26px rgba(0,212,255,.7);white-space:nowrap;
   /* AU: явно под содержимое — ни при каких обстоятельствах не на весь экран */
   display:block;width:max-content}
-.ai-core.arrived{animation:arriveCore .6s ease-out}
-@keyframes arriveCore{0%{filter:brightness(2.4);box-shadow:0 0 26px var(--cy)}}
-.ai-name.arrived{animation:arriveName .7s ease-out}
-@keyframes arriveName{0%{text-shadow:0 0 20px var(--cy);color:#fff}}
 /* реактор тихнет в неактивных (камера закрыта) ответах */
 .ui-inert .ai-avatar{opacity:.55;filter:saturate(.7)}
 .ai-body{flex:1;min-width:0}
 .ai-name{font-size:10.5px;letter-spacing:2.2px;color:var(--cy);text-transform:uppercase;margin-bottom:7px;
-  display:flex;align-items:center;gap:8px}
+  display:flex;align-items:center;gap:8px;transition:opacity .18s ease}
 .ai-model{color:var(--tx3);letter-spacing:.2px;text-transform:none;font-size:10px;font-family:var(--fm);
   max-width:48%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ai-route{max-width:72%;color:rgba(154,202,219,.43);letter-spacing:.08px;

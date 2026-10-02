@@ -1690,9 +1690,7 @@ function flyWelcomeInto(node, wf) {
         wf.core.width + 'px;height:' + wf.core.height + 'px';
       document.body.appendChild(g);
       flyGhost(g, () => core.getBoundingClientRect(), () => {
-        g.remove();
         core.classList.remove('pre-flight');
-        core.classList.add('arrived');
       });
     }
     if (name && wf.title && name.classList.contains('pre-flight')) {
@@ -1700,10 +1698,19 @@ function flyWelcomeInto(node, wf) {
       g.style.cssText = 'left:' + wf.title.left + 'px;top:' + wf.title.top + 'px';
       g.textContent = 'JARVIS';
       document.body.appendChild(g);
-      flyGhost(g, () => name.getBoundingClientRect(), () => {
-        g.remove();
+      /* AV: цель — САМ ТЕКСТ «JARVIS» в имени, а не вся строка: строка
+         flex шириной в колонку, и призрак раздувался до размеров экрана */
+      const titleTarget = () => {
+        const tn = name.firstChild;
+        if (tn && tn.nodeType === 3) {
+          const rg = document.createRange();
+          rg.selectNode(tn);
+          return rg.getBoundingClientRect();
+        }
+        return name.getBoundingClientRect();
+      };
+      flyGhost(g, titleTarget, () => {
         name.classList.remove('pre-flight');
-        name.classList.add('arrived');
       });
     }
   }), 320);
@@ -1727,7 +1734,15 @@ function flyGhost(g, targetRect, done) {
     { transform: 'translate(0,0) scale(1)', opacity: 1 },
     { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(' + k + ')', opacity: .95 },
   ], { duration: 850, easing: 'cubic-bezier(.3,.75,.25,1)', fill: 'both' });
-  anim.onfinish = done;
+  anim.onfinish = () => {
+    /* AV: МЯГКАЯ ПОСАДКА — призрак растворяется, а настоящий элемент
+       проявляется одновременно (кроссфейд). Вспышки и мгновенной подмены
+       больше нет — рывка не осталось */
+    const fade = g.animate([{ opacity: 1 }, { opacity: 0 }],
+      { duration: 180, fill: 'both' });
+    fade.onfinish = () => g.remove();
+    done();
+  };
 }
 function addAiMsg(ts, hostOverride) {
   const m = el('div', 'msg msg-ai');
@@ -5336,9 +5351,9 @@ const TYPE_MS = 20;              // не чаще 50 DOM-render/с: кадры �
    то невероятно быстро» — не два неверных числа, а сама лестница.
    Теперь скорость задаётся в знаках в секунду, накапливается дробно и
    сглаживается, поэтому переходы не видны, а темп ровный. */
-const CPS_TALK = 170;            // AU: разговорный темп бодрее (было 125)
-const CPS_TALK_MAX = 420;        // AU: длинный хвост догоняет заметно шустрее
-const CPS_CODE = 700;            // AU: код и таблицы — почти мгновенно
+const CPS_TALK = 125;            // естественный разговор при короткой очереди
+const CPS_TALK_MAX = 245;        // длинный готовый хвост не держит интерфейс
+const CPS_CODE = 470;            // код: быстрее прежнего, но страница успевает ехать
 const CPS_SMOOTH_MS = 340;        // заметно мягче старых ступеней скорости
 
 function talkTargetCps(left) {
@@ -5706,8 +5721,15 @@ function typerStart(ui) {
     ui.acc = (ui.acc || 0) + (ui.cps * elapsed) / 1000;
     let step = Math.floor(ui.acc);
     if (step < 1) return;
-    // Дополнительный предел страхует от пачек и при нетипичном timer jitter.
-    step = Math.min(step, left, (code ? (ui.fastFinish ? 26 : 10) : 4) * turbo);
+    /* AV: ПРЕДЕЛ КАДРА СВЯЗАН СО ВРЕМЕНЕМ КАДРА. Раньше тик давал не
+       больше 4 знаков НЕЗАВИСИМО от паузы: дорогой рендер длинного ответа
+       или зажатый браузером таймер растягивали тик до 100-250мс — и темп
+       падал до 10-20 зн/с («полслова в секунду»). Пропавшее время теперь
+       отрабатывается тем же темпом: предел растёт вместе с паузой, а
+       накопитель acc не даёт выстрелить быстрее положенного. */
+    const baseCap = (code ? (ui.fastFinish ? 26 : 10) : 4) * turbo;
+    const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));
+    step = Math.min(step, left, frameCap);
 
     // Не перепрыгиваем через знак препинания пачкой: заканчиваем этот render
     // прямо на нём, а остаток времени переносим на следующий кадр.
