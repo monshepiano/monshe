@@ -250,6 +250,26 @@ function toast(text, kind, title) {
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 400); }, 5200);
 }
 
+/* BE: включение/отключение инструмента — стильная строка В ЧАТЕ, а не
+   всплывашка: остаётся в ленте, и видно, КОГДА режим заработал и когда
+   его сняли. Иконка режима + название + состояние, без времени.
+   (Камера и микрофон уже отображаются своими карточками/областью —
+   здесь только агент и компьютер.) */
+function toolLine(kind, on) {
+  const box = stream();
+  if (!box) return;
+  const agent = kind === 'agent';
+  const row = el('div', 'tool-mark ' + (on ? 'on' : 'off'));
+  row.innerHTML = '<span class="tm-ico' + (agent ? ' ag' : '') + '">' +
+    (agent
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="5" r="1.7"/><circle cx="18.5" cy="19" r="1.7"/><path d="M7.2 5h5.3a4 4 0 0 1 0 8H9.5a4 4 0 0 0 0 8h7.3"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="4.6" width="17.2" height="12.4" rx="2.2"/><path d="M9.5 20.5h5M12 17v3.5"/></svg>') +
+    '</span><span class="tm-name">' + (agent ? 'Агент' : 'Компьютер') + '</span>' +
+    '<span class="tm-state">' + (on ? 'включён' : 'отключён') + '</span>';
+  box.appendChild(row);
+  scrollDown(false);
+}
+
 /* ================== ЗВУК ==================
    Раньше каждый звук был голой синусоидой на 5% громкости: тонко, сухо и
    почти неслышно. Ухо любит не чистый тон, а НОТУ — основной тон плюс
@@ -778,7 +798,9 @@ $('#tgAgent').addEventListener('change', function () {
   $('#input').placeholder = S.agentMode
     ? 'Поставь задачу — разобью на шаги и сделаю сам…'
     : 'Сообщение для JARVIS…';
-  if (S.agentMode) toast('Агентский режим включён: планирую и выполняю сам.', 'info', 'AGENT');
+  /* BE: строка в чате вместо всплывашки — включение и выключение
+     остаются в ленте */
+  toolLine('agent', S.agentMode);
 });
 $$('.agent-switch').forEach((sw) => sw.addEventListener('mouseleave', function () {
   this.classList.remove('tip-dismissed');
@@ -813,7 +835,8 @@ $('#tgCamera').addEventListener('click', function () {
 $('#tgComputer').addEventListener('click', function () {
   S.computerUse = !S.computerUse; this.classList.toggle('on', S.computerUse);
   beep(S.computerUse ? 760 : 420, 0.1);
-  if (!S.computerUse) return;
+  /* BE: отключение — сразу строка в чате (включение — после самопроверки) */
+  if (!S.computerUse) { toolLine('computer', false); return; }
   // Самопроверка при включении: раньше «не работает» выглядело как молчаливое
   // бездействие агента. Теперь тумблер сразу называет конкретную причину —
   // права macOS, скриншот или зрительную модель.
@@ -821,8 +844,8 @@ $('#tgComputer').addEventListener('click', function () {
     // формат: {ok: <запрос дошёл>, computer: {ok: <режим готов>, error: ...}}
     const st = (r && r.computer) || {};
     if (st.ok) {
-      toast('Готов управлять: экран вижу, права есть. Этот тумблер — само согласие: на клики и ввод во время работы спрашивать не буду.',
-        'success', 'COMPUTER-USE');
+      /* BE: строка в чате вместо всплывашки — остаётся в ленте */
+      toolLine('computer', true);
     } else {
       S.computerUse = false;
       const t = $('#tgComputer');
@@ -1401,45 +1424,78 @@ function runScrollBox(ui) {
   return ui.node.root.closest('.cam-chat') || stream();
 }
 
-/* Геометрия после роста ответа не говорит, хотел ли человек оставаться внизу:
-   один высокий panel уже сам делает `near=false`. Поэтому каждый run хранит
-   явное follow-intent. Оно снимается только реальным scroll-away жестом и не
-   может случайно потеряться из-за печати кода или появления reply_ui. */
+/* BE: СКРОЛЛ ЗА ОТВЕТОМ — ПЛАВНЫЙ И ЧЕСТНЫЙ. Прилипание живёт только
+   пока читатель в самом низу: любой реальный уход вверх — колесо, тач,
+   клавиши, тащок скроллбара — сразу снимает его; вернулся до упора
+   вниз — включается снова. Прокрутка за ответом «догоняющая»: каждый
+   кадр экран проходит четверть оставшейся дистанции, поэтому движение
+   плавное, но от быстрой печати кода не отстаёт. */
 function watchRunFollow(ui) {
   const box = runScrollBox(ui);
   if (!box || !box.addEventListener || box.__jarvisFollowRuns) return;
   box.__jarvisFollowRuns = true;
+  const st = (box.__jarvisScroll = box.__jarvisScroll ||
+    { lastTop: box.scrollTop, autoPend: 0, chasing: false });
   let touchY = null;
   const active = () => {
     const run = S.followUi;
     return run && runScrollBox(run) === box ? run : null;
   };
-  box.addEventListener('wheel', (e) => {
+  const leave = () => {
     const run = active();
-    if (run && Number(e.deltaY || 0) < 0) run.followOutput = false;
+    if (run) run.followOutput = false;
+  };
+  box.addEventListener('wheel', (e) => {
+    if (Number(e.deltaY || 0) < 0) leave();
   }, { passive: true });
   box.addEventListener('touchstart', (e) => {
     touchY = e.touches && e.touches[0] ? e.touches[0].clientY : null;
   }, { passive: true });
   box.addEventListener('touchmove', (e) => {
     const y = e.touches && e.touches[0] ? e.touches[0].clientY : null;
-    const run = active();
-    if (run && touchY != null && y != null && y > touchY + 4) run.followOutput = false;
+    if (touchY != null && y != null && y > touchY + 4) leave();
     if (y != null) touchY = y;
   }, { passive: true });
   box.addEventListener('scroll', () => {
+    const top = box.scrollTop;
+    // наш догоняющий кадр scrollTop уменьшить не может: уменьшение —
+    // это человек (клавиши, скроллбар, инерция) — прилипание снимаем
+    if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }
+    st.lastTop = top;
+    if (st.autoPend > 0) { st.autoPend -= 1; return; }
     const run = active();
     if (!run) return;
-    const distance = box.scrollHeight - box.scrollTop - box.clientHeight;
-    // ВОССТАНАВЛИВАЕМ прилипание, когда пользователь вернулся вниз.
-    // ВАЖНО: НЕ снимаем followOutput при «далеко от низа» — этот scroll-event
-    // приходит и от НАШЕЙ же программной прокрутки. При быстрой печати кода
-    // (2000 симв/с) контент успевает вырасти >150px между двумя pin-ами, и
-    // обработчик принимал собственную прокрутку за «пользователь ушёл» —
-    // лента бросала ответ вниз без читателя. Намерение уйти снимают только
-    // реальные жесты: wheel и touch выше.
-    if (distance < 64) run.followOutput = true;
+    // вернулся до упора вниз — прилипание снова включается
+    if (box.scrollHeight - top - box.clientHeight < 24) run.followOutput = true;
   }, { passive: true });
+}
+
+/* BE: ДОГОНЯЮЩИЙ СКРОЛЛ. Вместо мгновенных прыжков — плавное сближение
+   с дном: за кадр четверть остатка (и не меньше 3px). Пружинка сходится
+   быстро, но зримо плавно; на время догона выключаем scroll-behavior,
+   иначе браузер анимировал бы КАЖДУЮ запись. Жест «наверх» останавливает
+   догон на следующем кадре. */
+function chaseBottom(box, run) {
+  const st = (box.__jarvisScroll = box.__jarvisScroll ||
+    { lastTop: box.scrollTop, autoPend: 0, chasing: false });
+  if (st.chasing) return;
+  st.chasing = true;
+  box.classList.add('pin-instant');
+  const frame = () => {
+    st.chasing = false;
+    if (run && run.followOutput === false) { box.classList.remove('pin-instant'); return; }
+    const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
+    if (gap <= 1) { box.classList.remove('pin-instant'); return; }
+    st.autoPend += 1;
+    box.scrollTop = box.scrollTop + Math.max(3, Math.ceil(gap * 0.26));
+    if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) {
+      st.chasing = true;
+      requestAnimationFrame(frame);
+    } else {
+      box.classList.remove('pin-instant');
+    }
+  };
+  requestAnimationFrame(frame);
 }
 
 function scrollDown(force, owner) {
@@ -1451,18 +1507,11 @@ function scrollDown(force, owner) {
   if (main && !boxes.includes(main)) boxes.push(main);
   boxes.forEach((box) => {
     const run = owner || (S.followUi && runScrollBox(S.followUi) === box ? S.followUi : null);
-    // 420px «зоны прилипания»: при быстрой печати контент вырастает скачком
-    // (markdown-превращения, таблицы), и старого порога в 220px перестало
-    // хватать — прокрутка решала, что пользователь «ушёл», и бросала его вверху
-    const near = box.scrollHeight - box.scrollTop - box.clientHeight < 420;
+    // без активного run-а следуем только из «зоны у дна»: далеко от низа
+    // и без ответа — прокрутку не дёргаем
+    const near = box.scrollHeight - box.scrollTop - box.clientHeight < 160;
     if (force || (run ? run.followOutput !== false : near)) {
-      // МГНОВЕННЫЙ pin. scroll-behavior:smooth превращал каждое присваивание
-      // в анимацию: при быстрой печати кода контент рос быстрее анимации,
-      // и экран безнадёжно отставал от текста. Плавность здесь создаёт сам
-      // ритм мелких pin-ов (80мс), а не интерполяция браузера.
-      box.classList.add('pin-instant');
-      box.scrollTop = box.scrollHeight;
-      box.classList.remove('pin-instant');
+      chaseBottom(box, run);
     }
   });
 }
@@ -6182,6 +6231,9 @@ function clearRunRoute(ui) {
 function dotAction(root) {
   const core = root && root.querySelector ? root.querySelector('.ai-core') : null;
   if (!core || !root.classList.contains('live')) return;
+  /* BE: пока идёт игра с фигурой — не вспыхиваем: у morph/burst один
+     animation, всплеск сжал бы фигуру до размера покоя */
+  if (core.classList.contains('shaped')) return;
   core.classList.add('dot-act');
   clearTimeout(core._actTimer);
   core._actTimer = setTimeout(() => {
@@ -6189,11 +6241,16 @@ function dotAction(root) {
   }, 1150);
 }
 
-/* BD: ГАРМОНИЧНЫЕ УЗНАВАЕМЫЕ ФИГУРЫ (все 12-вершинные, морфятся
-   интерполяцией): 3D — тессеракт, куб, тетраэдр, кристалл, призма,
-   цилиндр; плоские — звезда, шестиугольник, ромб, трилистник */
-const DOT_SHAPES = ['sh-tess', 'sh-cube', 'sh-tetra', 'sh-crystal', 'sh-prism',
-  'sh-cyl', 'sh-star', 'sh-hex', 'sh-diamond', 'sh-trefoil'];
+/* BE: ГАРМОНИЧНЫЕ УЗНАВАЕМЫЕ ФИГУРЫ — меньше, но понятнее: 4D —
+   тессеракт, пентахорон; 3D — куб, тетраэдр, кристалл; 2D — звезда,
+   шестиугольник, крест; 1D — линия, дуга-волна, зигзаг. Все с рёбрами
+   и полупрозрачной поверхностью (1D — сплошные линии) */
+const DOT_SHAPES = ['sh-tess', 'sh-penta', 'sh-cube', 'sh-tetra', 'sh-crystal',
+  'sh-star', 'sh-hex', 'sh-cross', 'sh-line', 'sh-wave', 'sh-zig'];
+/* BE: пока фигура держится, она ВРАЩАЕТСЯ — каждый раз в другой
+   плоскости: экрана / перпендикулярная экрану / под углом / вокруг
+   вертикальной оси */
+const DOT_SPINS = ['rot-z', 'rot-x', 'rot-y', 'rot-d'];
 const DOT_MORPH_MS = 700;      // BD: пружинисто расширяется до фигуры
 const DOT_MORPH_OUT_MS = 650;  // BD: упруго сжимается обратно в круг
 const DOT_HOLD_MS = 1500;      // BD: полторы секунды в фигуре
@@ -6202,22 +6259,28 @@ function dotShapePlay(root) {
   if (!core) return;
   clearTimeout(core._shapeTimer);
   const schedule = () => {
-    /* BD: гораздо реже — каждые 8–16 секунд, без суеты */
-    core._shapeTimer = setTimeout(play, 8000 + Math.random() * 8000);
+    /* BE: ЧАСТО — каждые 3.5–8 секунд: круглешок забавляется,
+       чтобы читатель не скучал */
+    core._shapeTimer = setTimeout(play, 3500 + Math.random() * 4500);
   };
   const play = () => {
     if (!core.isConnected || !root.classList.contains('live') ||
         core.classList.contains('dot-settle')) { return; }
     const shape = DOT_SHAPES[Math.floor(Math.random() * DOT_SHAPES.length)];
+    const spin = DOT_SPINS[Math.floor(Math.random() * DOT_SPINS.length)];
     /* BC: ПРУЖИНА с золотом — расширился с перелётом и ужался в фигуру
-       ×1.5; золото и свечение живут В КАДРАХ самой трансформации */
+       ×2.1; золото и свечение живут В КАДРАХ самой трансформации */
     core.classList.add(shape, 'shaped', 'sh-in');
     setTimeout(() => {
       if (!core.classList) return;
       core.classList.remove('sh-in');
+      /* BE: фигура встала — на полторы секунды она вращается */
+      core.classList.add(spin);
     }, DOT_MORPH_MS);
     setTimeout(() => {
       if (!core.classList) return;
+      /* доворот уже завершился (1.42с < 1.5с) — снимаем без рывка */
+      core.classList.remove(spin);
       core.classList.add('sh-out');
       setTimeout(() => {
         if (!core.classList) return;
@@ -6237,6 +6300,7 @@ function finishLiveDot(root) {
     clearTimeout(core._actTimer);
     clearTimeout(core._shapeTimer);
     DOT_SHAPES.forEach((sh) => core.classList.remove(sh));
+    DOT_SPINS.forEach((sp) => core.classList.remove(sp));
     core.classList.remove('dot-act', 'shaped', 'sh-in', 'sh-out');
     core.classList.add('dot-settle');
     setTimeout(() => {
@@ -8172,7 +8236,7 @@ function questionCard(ev, onPick) {
 }
 
 /* Варианты продолжения над полем ввода.
-   Обычный клик отправляет реплику сразу, клик по «карандашу» кладёт её в поле
+   Обычный клик отправляет реплику сразу, клик по «Enter» кладёт её в поле
    ввода — можно дописать своё. Готовый вариант почти всегда хочется поправить,
    и без этого подсказки превращались бы в жёсткое меню из трёх пунктов. */
 function showReplies(items) {
@@ -8184,7 +8248,9 @@ function showReplies(items) {
     const chip = el('span', 'reply-chip');
     chip.style.animationDelay = (i * 60) + 'ms';
     const go = el('button', 'rc-go', esc(t));
-    const ed = el('button', 'rc-ed', '✎');
+    /* BE: значок Enter вместо карандашика — карандаш читался как
+       «редактирование подсказки»; Enter честно говорит «в поле ввода» */
+    const ed = el('button', 'rc-ed', '↵');
     ed.title = 'Вставить в поле ввода и дописать';
     go.addEventListener('click', () => {
       box.hidden = true;

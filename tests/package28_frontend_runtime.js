@@ -388,10 +388,10 @@ function testImportantHeadingCaretAndTrail() {
   assert(/const TYPE_MS\s*=\s*20/.test(js), 'DOM typing is capped at 50 renders per second');
   assert(/const CPS_TALK\s*=\s*125/.test(js) && /const CPS_TALK_MAX\s*=\s*245/.test(js));
   // код: 470 базово (быстрее старых 420, медленнее спорных 560), хвост —
-  // до 2000 симв/с: выше автопрокрутка перестаёт поспевать (near-зона 420px)
+  // до 2000 симв/с; BE: у дна — догоняющий скролл, зона без run-а — 160px
   assert(/const CPS_CODE\s*=\s*470/.test(js) && /const CPS_SMOOTH_MS\s*=\s*340/.test(js) &&
     /Math\.min\(2000, 700 \+ left \* 0\.18\)/.test(js) &&
-    /box\.scrollHeight - box\.scrollTop - box\.clientHeight < 420/.test(js));
+    /box\.scrollHeight - box\.scrollTop - box\.clientHeight < 160/.test(js));
   assert(!/CPS_IMPORTANT/.test(js), 'headings must not have a separate speed');
   assert(!/function importantLine|function headingEndedSince/.test(js),
     'headings must not add a hidden rate or pause branch');
@@ -2340,10 +2340,12 @@ function testProactiveModesBudgetAndAbortContracts() {
     !/else txt = JSON\.stringify\(r, null, 1\)/.test(js) &&
     /'HTTP ' \+ r\.status \+ ' · получено '/.test(js),
   'tool cards render a human digest, never a raw JSON envelope');
-  // экран успевает за печатью: pin без smooth-интерполяции
+  // экран успевает за печатью: BE — догоняющий скролл без smooth-интерполяции
+  // (pin-instant на весь догон, записи точные, каждый кадр — четверть остатка)
   const scrollFn = extractFunction(js, 'scrollDown');
-  assert(/pin-instant/.test(scrollFn),
-    'scrollDown pins instantly so the screen keeps up with fast code');
+  const chaseFn = extractFunction(js, 'chaseBottom');
+  assert(/chaseBottom\(box, run\)/.test(scrollFn) && /pin-instant/.test(chaseFn),
+    'chaseBottom keeps up with fast code — instant writes, eased distance');
   // ГЛАВНОЕ: программная прокрутка не снимает follow-интент. Раньше scroll-
   // событие от НАШЕГО ЖЕ pin-а при подросшем контенте (>150px) гасило
   // followOutput — ответ «улетал вниз», страница не скроллилась следом.
@@ -2539,9 +2541,9 @@ function testIterationAZContracts() {
     js.split("case 'tool_start': {")[1].split("case '")[0]
       .includes('dotAction(ui.node && ui.node.root);'),
     'AZ: calm dot at rest; energized burst only on visible actions (tool, plan step)');
-  // AZ/BD: игры с формой — 10 гармоничных фигур, плавные морфы
-  assert(js.includes("'sh-tess', 'sh-cube', 'sh-tetra', 'sh-crystal', 'sh-prism',") &&
-    js.includes("'sh-cyl', 'sh-star', 'sh-hex', 'sh-diamond', 'sh-trefoil']") &&
+  // AZ/BE: игры с формой — 11 понятных фигур, плавные морфы
+  assert(js.includes("'sh-tess', 'sh-penta', 'sh-cube', 'sh-tetra', 'sh-crystal',") &&
+    js.includes("'sh-star', 'sh-hex', 'sh-cross', 'sh-line', 'sh-wave', 'sh-zig']") &&
     js.includes('function dotShapePlay(') &&
     css.includes('.ai-core.sh-tess{clip-path:polygon(') &&
     css.split('.msg-ai.live .ai-core{')[1].split('}')[0]
@@ -2577,8 +2579,8 @@ function testIterationBBContracts() {
   assert(js.includes('const DOT_MORPH_MS = 700;') &&
     js.includes('const DOT_HOLD_MS = 1500;') &&
     play.includes("core.classList.add(shape, 'shaped', 'sh-in');") &&
-    play.includes('8000 + Math.random() * 8000') &&
-    css.includes('.msg-ai.live .ai-core.shaped{transform:scale(2.1);animation:none}') &&
+    play.includes('3500 + Math.random() * 4500') &&
+    css.includes('.msg-ai.live .ai-core.shaped{transform:scale(2.1);animation:none;') &&
     css.includes('@keyframes dotMorphIn{') && css.includes('@keyframes dotMorphOut{') &&
     css.includes('transform:scale(2.42)') && css.includes('transform:scale(.92)'),
     'BC/BD: the dot springs into 2.1x shapes — calm pace, gold only in the morph');
@@ -2595,7 +2597,8 @@ function testIterationBCContracts() {
     !js.includes('pointerenter'),
     'BC/BD: no done frame; history cores static; hover warmup gone entirely');
   // BC/BD: фигуры ×2.1 с пружиной и золотом в момент морфа
-  assert(css.includes('.msg-ai.live .ai-core.shaped{transform:scale(2.1);animation:none}') &&
+  assert(css.includes('.msg-ai.live .ai-core.shaped{transform:scale(2.1);animation:none;') &&
+    css.includes('linear-gradient(155deg,rgba(130,228,255,.30)') &&
     css.includes('transform:scale(2.42)') && css.includes('transform:scale(.92)') &&
     css.includes('@keyframes dotMorphIn{') && css.includes('@keyframes dotMorphOut{'),
     'BC/BD: shapes are 2.1x with a springy gold-lit morph in and out');
@@ -2606,11 +2609,11 @@ function testIterationBDContracts() {
   assert(!pyServer.includes('/api/warm') && !pyServer.includes('_WARM_SEEN') &&
     !js.includes('warmRequest') && !js.includes('pointerenter'),
     'BD: warmup is completely gone — server and client');
-  // BD: честный пустой [] — это НЕТ чипов, а не провал в шаблоны
+  // BE: пустой [] — СБОЙ, а не «чипов нет»: подсказки всегда три
   const sra = pyAgent.split('def suggest_replies_ai(')[1].split('\ndef ')[0];
-  assert(sra.includes('if not parsed and re.search(r"\\[\\s*\\]", raw_text):') &&
-    sra.includes('span.finish("empty")') && sra.includes('return []'),
-    'BD: an honest empty [] means NO chips — never a template fallback');
+  assert(!sra.includes('span.finish("empty")') && !sra.includes('return []') &&
+    sra.includes('верни ровно ТРИ ') && sra.includes('живые реплики ВСЕГДА'),
+    'BE: an empty [] is a FAILURE — chips are always three (local fallback)');
   // BD: шаблонная тройка не кэшируется в meta
   assert((pyServer.match(/items != agent\.suggest_replies\(/g) || []).length === 2,
     'BD: template replies are never cached into chat meta');
@@ -2632,6 +2635,47 @@ function testIterationBDContracts() {
   assert(js.split("case 'file': {")[1].split("case '")[0]
       .includes('dotAction(ui.node && ui.node.root);'),
     'BD: the dot pulses on file events too');
+}
+
+function testIterationBEContracts() {
+  // BE: подсказки ВСЕГДА — приветствие тоже получает три (локальный запас)
+  const sra2 = pyAgent.split('def suggest_replies_ai(')[1].split('\ndef ')[0];
+  assert(sra2.includes('верни ровно ТРИ ') && sra2.includes('живые реплики ВСЕГДА') &&
+    !sra2.includes('return []'),
+    'BE: suggestions are an integral part of every answer — never empty');
+  // BE: значок Enter в чипах (карандаш читался как «редактирование»)
+  const sr = js.split('function showReplies(')[1].split('\nfunction ')[0];
+  assert(sr.includes("el('button', 'rc-ed', '↵');") && !sr.includes('✎'),
+    'BE: chips carry an Enter glyph, not a pencil');
+  // BE: 11 понятных фигур — 2×4D + 3×3D + 3×2D + 3×1D, с рёбрами и стеклом
+  assert(css.split('polygon(evenodd,').length === 9 &&
+    css.includes('.ai-core.sh-tess::after{clip-path:polygon(') &&
+    css.includes('.msg-ai.live .ai-core.sh-line,.msg-ai.live .ai-core.sh-wave,' +
+      '.msg-ai.live .ai-core.sh-zig{') &&
+    css.includes('linear-gradient(155deg,rgba(130,228,255,.30)'),
+    'BE: shapes are few but readable — edges, glass surface, back edges');
+  // BE: вращение во время показа — 4 плоскости, часто (3.5–8с)
+  assert(js.includes("const DOT_SPINS = ['rot-z', 'rot-x', 'rot-y', 'rot-d'];") &&
+    css.includes('@keyframes spinZ{') && css.includes('@keyframes spinX{') &&
+    css.includes('@keyframes spinY{') && css.includes('@keyframes spinD{') &&
+    js.split('function dotShapePlay(')[1].split('\nfunction ')[0]
+      .includes('3500 + Math.random() * 4500') &&
+    js.includes('DOT_SPINS.forEach((sp) => core.classList.remove(sp));'),
+    'BE: the shape spins while shown — a different plane every time');
+  // BE: скролл — плавный догон и честное прилипание только у дна
+  assert(js.includes('function chaseBottom(') &&
+    js.includes('Math.max(3, Math.ceil(gap * 0.26))') &&
+    js.includes('if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }') &&
+    js.includes('if (box.scrollHeight - top - box.clientHeight < 24) run.followOutput = true;'),
+    'BE: smooth chase-scroll; stickiness only at the very bottom');
+  // BE: агент и компьютер — строка в чате, не всплывашка
+  assert(js.includes('function toolLine(') &&
+    js.includes("toolLine('agent', S.agentMode);") &&
+    js.includes("toolLine('computer', false);") &&
+    js.includes("toolLine('computer', true);") &&
+    !js.includes('Агентский режим включён') && !js.includes('Готов управлять') &&
+    css.includes('.tool-mark{'),
+    'BE: tool toggles leave a stylish line in the chat, not a toast');
 }
 
 function testIterationAWContracts() {
@@ -2660,7 +2704,7 @@ function testIterationAUContracts() {
       .includes('const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));'),
     'AV: classic speeds are back; the per-frame cap now follows real frame time');
   // AU: видимый номер сборки — всегда ясно, какой билд на экране
-  assert(html.includes('<span class="ver-chip">b61</span>') &&
+  assert(html.includes('<span class="ver-chip">b62</span>') &&
     css.includes('.ver-chip{align-self:center;'),
     'AU: the build number is visible in the top bar');
   // AU: призрак-надпись физически не может растянуться на весь экран
@@ -2715,7 +2759,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.61'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.62'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -3021,8 +3065,9 @@ function testIterationABContracts() {
   testIterationBBContracts();
   testIterationBCContracts();
   testIterationBDContracts();
+  testIterationBEContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 41 regression groups passed');
+  console.log('package28_frontend_runtime: 42 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

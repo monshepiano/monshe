@@ -605,8 +605,11 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   border:1.5px solid rgba(255,255,255,.92);border-radius:2px;
   transition:opacity .3s ease,transform .3s cubic-bezier(.65,0,.35,1)}
 /* BD: ФИГУРА ×2.1 — рост ТОЛЬКО в трансформациях, зато заметный; пока
-   фигура держится, обычный такт приостановлен */
-.msg-ai.live .ai-core.shaped{transform:scale(2.1);animation:none}
+   фигура держится, обычный такт приостановлен.
+   BE: СТЕКЛО — у фигуры ПОЛУПРОЗРАЧНАЯ поверхность: сквозь неё видно
+   чат, рёбра читаются на просвет (1D-линии — сплошные и ярче) */
+.msg-ai.live .ai-core.shaped{transform:scale(2.1);animation:none;
+  background:linear-gradient(155deg,rgba(130,228,255,.30),rgba(0,150,235,.10))}
 /* BD: ПРУЖИНА — расширяется ДО фигуры пружинисто (перелёт и ужатие)
    и сжимается обратно так же упруго. Плавно, без суеты: .7с/.65с */
 .msg-ai.live .ai-core.sh-in{animation:dotMorphIn .7s cubic-bezier(.42,1.3,.45,1)}
@@ -618,7 +621,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   62%{transform:scale(2.42)}
   84%{transform:scale(2.0)}
   100%{transform:scale(2.1);
-    background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
+    background:linear-gradient(155deg,rgba(130,228,255,.30),rgba(0,150,235,.10));
     filter:drop-shadow(0 0 8px var(--cy)) drop-shadow(0 0 22px rgba(0,212,255,.7))}}
 @keyframes dotMorphOut{
   0%{transform:scale(2.1);
@@ -628,37 +631,109 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   78%{transform:scale(1.05)}
   100%{transform:scale(1);
     filter:drop-shadow(0 0 5px rgba(0,212,255,.55))}}
-/* BD: ФИГУРЫ — странные, но ГАРМОНИЧНЫЕ и УЗНАВАЕМЫЕ, с перевесом 3D/4D:
-   тессеракт (квадрат в квадрате), куб, тетраэдр, кристалл, призма-пентагон,
-   цилиндр; плоские — звезда, шестиугольник, ромб, трилистник.
-   ВСЕ — 12 вершин: морф честной интерполяцией. (Прежняя «призма» была
-   копией шестиугольника — две одинаковые фигуры) */
+/* BE: ФИГУРЫ — меньше, но ПОНЯТНЕЕ: 2×4D (тессеракт, пентахорон),
+   3×3D (куб, тетраэдр, кристалл-октаэдр), 3×2D (звезда, шестиугольник,
+   крест), 3×1D (линия, дуга-волна, зигзаг). Все силуэты — 12 вершин:
+   морф из круглешка честной интерполяцией точек. У 2D/3D/4D — яркие
+   РЁБРА (кольцо-контур) и полупрозрачная поверхность; у объёмных видны
+   и ЗАДНИЕ рёбра (::after). 1D — сплошные светлые линии */
 .ai-core.sh-tess{clip-path:polygon(8% 8%,40% 8%,60% 8%,92% 8%,92% 40%,92% 60%,
   92% 92%,60% 92%,40% 92%,8% 92%,8% 60%,8% 40%)}
-.ai-core.sh-tess::before{opacity:.9;transform:rotate(45deg)}
-.ai-core.sh-cube{clip-path:polygon(30% 5%,70% 5%,70% 5%,95% 30%,95% 30%,95% 70%,
-  70% 95%,70% 95%,30% 95%,30% 95%,5% 70%,5% 30%)}
-.ai-core.sh-cube::before{opacity:.85;transform:none}
-.ai-core.sh-tetra{clip-path:polygon(50% 0%,50% 0%,50% 0%,50% 0%,92% 92%,92% 92%,
-  92% 92%,92% 92%,8% 92%,8% 92%,8% 92%,8% 92%)}
-.ai-core.sh-tetra::before{opacity:.85;border:0;transform:none;
-  clip-path:polygon(50% 34%,69% 76%,31% 76%);background:rgba(255,255,255,.9)}
-.ai-core.sh-crystal{clip-path:polygon(50% 0%,50% 0%,72% 9%,88% 32%,88% 32%,88% 68%,
-  72% 91%,50% 100%,50% 100%,28% 91%,12% 68%,12% 32%)}
-.ai-core.sh-crystal::before{opacity:.85;border:0;transform:none;
-  clip-path:polygon(50% 32%,66% 55%,50% 78%,34% 55%);background:rgba(255,255,255,.9)}
-.ai-core.sh-prism{clip-path:polygon(50% 0%,73% 6%,100% 38%,100% 38%,88% 76%,66% 100%,
-  66% 100%,34% 100%,34% 100%,12% 76%,0% 38%,0% 38%)}
-.ai-core.sh-cyl{clip-path:polygon(30% 0%,70% 0%,85% 8%,85% 8%,85% 92%,85% 92%,
-  70% 100%,30% 100%,15% 92%,15% 92%,15% 8%,15% 8%)}
-.ai-core.sh-star{clip-path:polygon(50% 0%,69% 17.1%,93.3% 25%,88% 50%,93.3% 75%,
-  69% 82.9%,50% 100%,31% 82.9%,6.7% 75%,12% 50%,6.7% 25%,31% 17.1%)}
+.ai-core.sh-penta{clip-path:polygon(50% 3%,72% 19%,94% 35%,85% 65%,77% 95%,62% 95%,
+  50% 95%,38% 95%,23% 95%,15% 65%,6% 35%,28% 19%)}
+.ai-core.sh-cube{clip-path:polygon(50% 4%,50% 4%,89% 27%,89% 27%,89% 73%,89% 73%,
+  50% 96%,50% 96%,11% 73%,11% 73%,11% 27%,11% 27%)}
+.ai-core.sh-tetra{clip-path:polygon(50% 4%,61% 27%,72% 50%,94% 90%,79% 90%,65% 90%,
+  50% 90%,35% 90%,21% 90%,6% 90%,28% 50%,39% 27%)}
+.ai-core.sh-crystal{clip-path:polygon(50% 3%,65% 17%,81% 32%,96% 50%,81% 68%,65% 83%,
+  50% 97%,35% 83%,19% 68%,4% 50%,19% 32%,35% 17%)}
+.ai-core.sh-star{clip-path:polygon(50% 0%,61.2% 34.6%,97.6% 34.5%,68.1% 55.9%,79.4% 90.5%,
+  50% 69%,20.6% 90.5%,31.9% 55.9%,2.4% 34.5%,38.8% 34.6%,50% 0%,61.2% 34.6%)}
 .ai-core.sh-hex{clip-path:polygon(50% 0%,50% 0%,93% 25%,93% 25%,93% 75%,93% 75%,
   50% 100%,50% 100%,7% 75%,7% 75%,7% 25%,7% 25%)}
-.ai-core.sh-diamond{clip-path:polygon(50% 0%,50% 0%,50% 0%,100% 50%,100% 50%,
-  100% 50%,50% 100%,50% 100%,50% 100%,0% 50%,0% 50%,0% 50%)}
-.ai-core.sh-trefoil{clip-path:polygon(50% 6%,72% 0%,94% 26%,78% 44%,100% 66%,
-  72% 84%,50% 100%,28% 84%,0% 66%,22% 44%,6% 26%,28% 0%)}
+.ai-core.sh-cross{clip-path:polygon(36% 4%,64% 4%,64% 36%,96% 36%,96% 64%,64% 64%,
+  64% 96%,36% 96%,36% 64%,4% 64%,4% 36%,36% 36%)}
+.ai-core.sh-line{clip-path:polygon(12% 80%,16% 84%,20% 88%,37% 71%,54% 54%,71% 37%,
+  88% 20%,84% 16%,80% 12%,63% 29%,46% 46%,29% 63%)}
+.ai-core.sh-wave{clip-path:polygon(0% 68%,14% 46%,34% 31%,66% 31%,86% 46%,100% 68%,
+  100% 82%,86% 60%,66% 45%,34% 45%,14% 60%,0% 82%)}
+.ai-core.sh-zig{clip-path:polygon(0% 42%,20% 64%,40% 42%,60% 64%,80% 42%,100% 64%,
+  100% 78%,80% 56%,60% 78%,40% 56%,20% 78%,0% 56%)}
+/* BE: РЁБРА — контур фигуры как рамка (evenodd: внешний и внутренний
+   контуры одного силуэта). Проявляются с задержкой — когда морф уже
+   завершился, — и гаснут на выходе */
+.ai-core.sh-tess::before,.ai-core.sh-penta::before,.ai-core.sh-cube::before,
+.ai-core.sh-tetra::before,.ai-core.sh-crystal::before,.ai-core.sh-star::before,
+.ai-core.sh-hex::before,.ai-core.sh-cross::before{inset:0;border:0;border-radius:0;
+  transform:none;opacity:0;background:rgba(178,238,255,.95);
+  transition:opacity .35s ease .55s}
+.ai-core.sh-tess::before{clip-path:polygon(evenodd,8% 8%,40% 8%,60% 8%,92% 8%,92% 40%,92% 60%,
+  92% 92%,60% 92%,40% 92%,8% 92%,8% 60%,8% 40%,21.4% 21.4%,43.2% 21.4%,56.8% 21.4%,78.6% 21.4%,
+  78.6% 43.2%,78.6% 56.8%,78.6% 78.6%,56.8% 78.6%,43.2% 78.6%,21.4% 78.6%,21.4% 56.8%,21.4% 43.2%)}
+.ai-core.sh-penta::before{clip-path:polygon(evenodd,50% 3%,72% 19%,94% 35%,85% 65%,77% 95%,62% 95%,
+  50% 95%,38% 95%,23% 95%,15% 65%,6% 35%,28% 19%,50% 15.2%,66.3% 27.1%,82.6% 38.9%,75.9% 61.1%,
+  70% 83.3%,58.9% 83.3%,50% 83.3%,41.1% 83.3%,30% 83.3%,24.1% 61.1%,17.4% 38.9%,33.7% 27.1%)}
+.ai-core.sh-cube::before{clip-path:polygon(evenodd,50% 4%,50% 4%,89% 27%,89% 27%,89% 73%,89% 73%,
+  50% 96%,50% 96%,11% 73%,11% 73%,11% 27%,11% 27%,50% 16%,50% 16%,78.9% 33%,78.9% 33%,78.9% 67%,
+  78.9% 67%,50% 84%,50% 84%,21.1% 67%,21.1% 67%,21.1% 33%,21.1% 33%)}
+.ai-core.sh-tetra::before{clip-path:polygon(evenodd,50% 4%,61% 27%,72% 50%,94% 90%,79% 90%,65% 90%,
+  50% 90%,35% 90%,21% 90%,6% 90%,28% 50%,39% 27%,50% 16.9%,57.9% 33.4%,65.8% 50%,81.7% 78.8%,
+  70.9% 78.8%,60.8% 78.8%,50% 78.8%,39.2% 78.8%,29.1% 78.8%,18.3% 78.8%,34.2% 50%,42.1% 33.4%)}
+.ai-core.sh-crystal::before{clip-path:polygon(evenodd,50% 3%,65% 17%,81% 32%,96% 50%,81% 68%,65% 83%,
+  50% 97%,35% 83%,19% 68%,4% 50%,19% 32%,35% 17%,50% 13.3%,61.7% 24.3%,74.2% 36%,85.9% 50%,
+  74.2% 64%,61.7% 75.7%,50% 86.7%,38.3% 75.7%,25.8% 64%,14.1% 50%,25.8% 36%,38.3% 24.3%)}
+.ai-core.sh-star::before{clip-path:polygon(evenodd,50% 0%,61.2% 34.6%,97.6% 34.5%,68.1% 55.9%,79.4% 90.5%,
+  50% 69%,20.6% 90.5%,31.9% 55.9%,2.4% 34.5%,38.8% 34.6%,50% 0%,61.2% 34.6%,50% 10%,58.9% 37.7%,
+  88% 37.6%,64.5% 54.7%,73.5% 82.4%,50% 65.2%,26.5% 82.4%,35.5% 54.7%,12% 37.6%,41.1% 37.7%,
+  50% 10%,58.9% 37.7%)}
+.ai-core.sh-hex::before{clip-path:polygon(evenodd,50% 0%,50% 0%,93% 25%,93% 25%,93% 75%,93% 75%,
+  50% 100%,50% 100%,7% 75%,7% 75%,7% 25%,7% 25%,50% 12%,50% 12%,82.7% 31%,82.7% 31%,82.7% 69%,
+  82.7% 69%,50% 88%,50% 88%,17.3% 69%,17.3% 69%,17.3% 31%,17.3% 31%)}
+.ai-core.sh-cross::before{clip-path:polygon(evenodd,36% 4%,64% 4%,64% 36%,96% 36%,96% 64%,64% 64%,
+  64% 96%,36% 96%,36% 64%,4% 64%,4% 36%,36% 36%,39.1% 14.1%,60.9% 14.1%,60.9% 39.1%,85.9% 39.1%,
+  85.9% 60.9%,60.9% 60.9%,60.9% 85.9%,39.1% 85.9%,39.1% 60.9%,14.1% 60.9%,14.1% 39.1%,39.1% 39.1%)}
+/* BE: ЗАДНИЕ РЁБРА объёмных фигур — видны сквозь полупрозрачную
+   поверхность: у тессеракта — соединения кубов (X), у пентахорона —
+   внутренняя звезда-5ячеикник, у куба — Y-развёртка, у тетраэдра —
+   обратная грань, у кристалла — пояс-экватор */
+.ai-core.sh-tess::after,.ai-core.sh-penta::after,.ai-core.sh-cube::after,
+.ai-core.sh-tetra::after,.ai-core.sh-crystal::after{content:'';position:absolute;inset:0;
+  background:rgba(190,240,255,.9);opacity:0;transition:opacity .35s ease .6s}
+.ai-core.sh-tess::after{clip-path:polygon(18% 25%,25% 18%,50% 43%,75% 18%,82% 25%,57% 50%,
+  82% 75%,75% 82%,50% 57%,25% 82%,18% 75%,43% 50%)}
+.ai-core.sh-penta::after{clip-path:polygon(50% 24%,55.8% 42%,74.7% 42%,59.4% 53.1%,65.3% 71%,
+  50% 59.9%,34.7% 71%,40.6% 53.1%,25.3% 42%,44.2% 42%,50% 24%,55.8% 42%)}
+.ai-core.sh-cube::after{clip-path:polygon(46% 20%,54% 20%,52.5% 47%,83% 70%,79% 78%,50% 58%,
+  21% 78%,17% 70%,47.5% 47%)}
+.ai-core.sh-tetra::after{clip-path:polygon(30% 46%,70% 46%,50% 80%)}
+.ai-core.sh-crystal::after{clip-path:polygon(18% 45%,82% 45%,82% 56%,18% 56%)}
+/* BE: 1D — сплошные светлые линии: у линии/дуги/зигзага нет ни
+   поверхности, ни внутреннего контура */
+.msg-ai.live .ai-core.sh-line,.msg-ai.live .ai-core.sh-wave,.msg-ai.live .ai-core.sh-zig{
+  background:rgba(178,238,255,.92)}
+/* BE: рёбра проявляются, когда фигура встала; на выходе гаснут быстро */
+.msg-ai.live .ai-core.sh-tess::before,.msg-ai.live .ai-core.sh-penta::before,
+.msg-ai.live .ai-core.sh-cube::before,.msg-ai.live .ai-core.sh-tetra::before,
+.msg-ai.live .ai-core.sh-crystal::before,.msg-ai.live .ai-core.sh-star::before,
+.msg-ai.live .ai-core.sh-hex::before,.msg-ai.live .ai-core.sh-cross::before{opacity:.95}
+.msg-ai.live .ai-core.shaped::after{opacity:.85}
+.msg-ai.live .ai-core.sh-out::before,.msg-ai.live .ai-core.sh-out::after{
+  opacity:0;transition:opacity .2s ease}
+/* BE: ВРАЩЕНИЕ — пока фигура держится, она КРУТИТСЯ, и каждый раз в
+   другой плоскости: экрана (Z), перпендикулярная экрану (X), под углом
+   (диагональ), вокруг вертикальной оси (Y). Оборот успевает закончиться
+   чуть раньше конца показа — класс снимается без рывка */
+.msg-ai.live .ai-core.rot-z{animation:spinZ 1.42s linear}
+.msg-ai.live .ai-core.rot-x{animation:spinX 1.42s ease-in-out}
+.msg-ai.live .ai-core.rot-y{animation:spinY 1.42s ease-in-out}
+.msg-ai.live .ai-core.rot-d{animation:spinD 1.42s ease-in-out}
+@keyframes spinZ{from{transform:scale(2.1) rotate(0deg)}to{transform:scale(2.1) rotate(360deg)}}
+@keyframes spinX{from{transform:perspective(150px) scale(2.1) rotateX(0deg)}
+  to{transform:perspective(150px) scale(2.1) rotateX(-360deg)}}
+@keyframes spinY{from{transform:perspective(150px) scale(2.1) rotateY(0deg)}
+  to{transform:perspective(150px) scale(2.1) rotateY(360deg)}}
+@keyframes spinD{from{transform:perspective(150px) scale(2.1) rotate3d(.5,1,.35,0deg)}
+  to{transform:perspective(150px) scale(2.1) rotate3d(.5,1,.35,360deg)}}
 /* BD: всплеск на видимых действиях (инструмент, шаг, файл) */
 .msg-ai.live .ai-core.dot-act{animation:coreBurst 1.15s cubic-bezier(.65,0,.35,1)}
 .ai-core.dot-settle{animation:coreSettle .55s cubic-bezier(.65,0,.35,1) forwards}
@@ -1102,11 +1177,29 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .rc-go,.rc-ed{border:0;background:none;font-family:inherit;font-size:12px;cursor:pointer;
   color:var(--tx2);transition:color .18s,background .18s}
 .rc-go{padding:7px 6px 7px 13px}
-.rc-ed{padding:7px 10px 7px 6px;font-size:11px;color:var(--tx3);
+.rc-ed{padding:7px 10px 7px 6px;font-size:13px;color:var(--tx3);
   border-left:1px solid transparent}
 .reply-chip:hover .rc-go{color:var(--cy2)}
 .rc-ed:hover{color:var(--cy2);background:rgba(0,200,240,.16)}
 @keyframes chipIn{from{opacity:0;transform:translateY(8px) scale(.94)}}
+/* BE: строка инструмента В ЧАТЕ — включение/отключение агента и
+   компьютера остаётся в ленте (не всплывашкой): видно, когда режим
+   заработал и когда его сняли. Иконка режима + название + состояние,
+   без времени; цвет состояния различает вкл/выкл */
+.tool-mark{display:flex;align-items:center;gap:8px;width:max-content;
+  margin:10px auto;padding:4px 14px;border-radius:999px;
+  font-size:11.5px;letter-spacing:.05em;color:var(--tx2);
+  background:rgba(120,160,190,.07);border:1px solid rgba(120,170,200,.14);
+  animation:toolMarkIn .45s cubic-bezier(.3,.7,.3,1)}
+.tool-mark .tm-ico{display:flex;width:15px;height:15px;color:var(--cy2)}
+.tool-mark .tm-ico svg{width:100%;height:100%}
+.tool-mark .tm-ico.ag{color:#e3798d}
+.tool-mark .tm-name{font-weight:600}
+.tool-mark .tm-state{opacity:.9}
+.tool-mark.on .tm-state{color:var(--cy2)}
+.tool-mark.off{opacity:.66}
+.tool-mark.off .tm-state{color:var(--tx3)}
+@keyframes toolMarkIn{from{opacity:0;transform:translateY(6px)}}
 /* заглушки на время, пока подсказки считаются */
 .reply-skel{width:96px;height:29px;border-radius:999px;border:1px solid var(--line2);
   position:relative;overflow:hidden;background:rgba(0,200,240,.05)}
