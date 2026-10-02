@@ -1679,9 +1679,10 @@ function flyWelcomeInto(node, wf) {
      они появляются в момент посадки призраков */
   if (core && wf.core) core.classList.add('pre-flight');
   if (name && wf.title) name.classList.add('pre-flight');
-  /* два кадра: сообщение успевает встать и прокрутка — утихнуть,
-     иначе призраки летят по СТАРЫМ координатам */
-  requestAnimationFrame(() => requestAnimationFrame(() => {
+  /* AU: ждём укладки — плавная прокрутка к новому ответу занимает
+     ~300мс; два кадра были слишком рано, призраки летели по СТАРЫМ
+     координатам («мимо»). 320мс + кадр — скролл уже стоит */
+  setTimeout(() => requestAnimationFrame(() => {
     if (!document.body.contains(node.root)) return;
     if (core && wf.core && core.classList.contains('pre-flight')) {
       const g = el('div', 'fly-ghost ghost-core');
@@ -1705,7 +1706,7 @@ function flyWelcomeInto(node, wf) {
         name.classList.add('arrived');
       });
     }
-  }));
+  }), 320);
   /* страховка: в фоновой вкладке анимации замирают — имя и ядро всё
      равно проявятся */
   setTimeout(() => {
@@ -5335,9 +5336,9 @@ const TYPE_MS = 20;              // не чаще 50 DOM-render/с: кадры �
    то невероятно быстро» — не два неверных числа, а сама лестница.
    Теперь скорость задаётся в знаках в секунду, накапливается дробно и
    сглаживается, поэтому переходы не видны, а темп ровный. */
-const CPS_TALK = 125;            // естественный разговор при короткой очереди
-const CPS_TALK_MAX = 245;        // длинный готовый хвост не держит интерфейс
-const CPS_CODE = 470;            // код: быстрее прежнего, но страница успевает ехать
+const CPS_TALK = 170;            // AU: разговорный темп бодрее (было 125)
+const CPS_TALK_MAX = 420;        // AU: длинный хвост догоняет заметно шустрее
+const CPS_CODE = 700;            // AU: код и таблицы — почти мгновенно
 const CPS_SMOOTH_MS = 340;        // заметно мягче старых ступеней скорости
 
 function talkTargetCps(left) {

@@ -601,7 +601,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 /* призрак надписи: та же типографика, что JARVIS в приветствии;
    fixed-элемент сжимается под содержимое — НЕ растягивается на экран */
 .ghost-title{font-size:30px;font-weight:200;letter-spacing:16px;color:var(--cy);
-  text-shadow:0 0 26px rgba(0,212,255,.7);white-space:nowrap}
+  text-shadow:0 0 26px rgba(0,212,255,.7);white-space:nowrap;
+  /* AU: явно под содержимое — ни при каких обстоятельствах не на весь экран */
+  display:block;width:max-content}
 .ai-core.arrived{animation:arriveCore .6s ease-out}
 @keyframes arriveCore{0%{filter:brightness(2.4);box-shadow:0 0 26px var(--cy)}}
 .ai-name.arrived{animation:arriveName .7s ease-out}
@@ -2085,6 +2087,8 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 
 /* --- кнопка голоса справа сверху --- */
 .top-acts{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.ver-chip{align-self:center;font:9.5px/1 var(--fm);color:var(--tx3);opacity:.75;
+  letter-spacing:.6px;padding:4px 2px 4px 6px;user-select:none}
 /* AE: ИКОНКА ЗВУКА — спокойная линейная SVG: включённая НЕ пульсирует,
    выключенная однотонная (без красного), живой отклик — только короткая
    вспышка в момент переключения (.tick) */

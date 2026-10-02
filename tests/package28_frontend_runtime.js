@@ -386,20 +386,20 @@ function testImportantHeadingCaretAndTrail() {
     },
   );
   assert(/const TYPE_MS\s*=\s*20/.test(js), 'DOM typing is capped at 50 renders per second');
-  assert(/const CPS_TALK\s*=\s*125/.test(js) && /const CPS_TALK_MAX\s*=\s*245/.test(js));
+  assert(/const CPS_TALK\s*=\s*170/.test(js) && /const CPS_TALK_MAX\s*=\s*420/.test(js));
   // код: 470 базово (быстрее старых 420, медленнее спорных 560), хвост —
   // до 2000 симв/с: выше автопрокрутка перестаёт поспевать (near-зона 420px)
-  assert(/const CPS_CODE\s*=\s*470/.test(js) && /const CPS_SMOOTH_MS\s*=\s*340/.test(js) &&
+  assert(/const CPS_CODE\s*=\s*700/.test(js) && /const CPS_SMOOTH_MS\s*=\s*340/.test(js) &&
     /Math\.min\(2000, 700 \+ left \* 0\.18\)/.test(js) &&
     /box\.scrollHeight - box\.scrollTop - box\.clientHeight < 420/.test(js));
   assert(!/CPS_IMPORTANT/.test(js), 'headings must not have a separate speed');
   assert(!/function importantLine|function headingEndedSince/.test(js),
     'headings must not add a hidden rate or pause branch');
   const target = loadFunctions(['talkTargetCps'], {
-    Math, Number, CPS_TALK: 125, CPS_TALK_MAX: 245,
+    Math, Number, CPS_TALK: 170, CPS_TALK_MAX: 420,
   });
-  assert.strictEqual(target.talkTargetCps(120), 125);
-  assert(target.talkTargetCps(800) > 200 && target.talkTargetCps(800) < 245,
+  assert.strictEqual(target.talkTargetCps(120), 170);
+  assert(target.talkTargetCps(800) > 300 && target.talkTargetCps(800) < 420,
     'a long ready tail accelerates continuously without crossing the visual-speed ceiling');
   const typer = extractFunction(js, 'typerStart');
   assert(/let want\s*=\s*code\s*\?\s*CPS_CODE\s*:\s*talkTargetCps\(left\)/.test(typer));
@@ -2457,6 +2457,26 @@ function testIterationAOContracts() {
     'AO: no click blackout on the toggle, repaint guarded against double-fire');
 }
 
+function testIterationAUContracts() {
+  // AU: печать заметно быстрее
+  assert(js.includes('const CPS_TALK = 170;') &&
+    js.includes('const CPS_TALK_MAX = 420;') &&
+    js.includes('const CPS_CODE = 700;'),
+    'AU: typing is noticeably faster across the board');
+  // AU: видимый номер сборки — всегда ясно, какой билд на экране
+  assert(html.includes('<span class="ver-chip">b52</span>') &&
+    css.includes('.ver-chip{align-self:center;'),
+    'AU: the build number is visible in the top bar');
+  // AU: призрак-надпись физически не может растянуться на весь экран
+  assert(css.includes('width:max-content}') &&
+    css.includes('.ghost-title{font-size:30px;font-weight:200;letter-spacing:16px;'),
+    'AU: the title ghost is clamped to its content');
+  // AU: перелёт ждёт укладки прокрутки (раньше летел по старым координатам)
+  const fly = js.split('function flyWelcomeInto(')[1].split('\nfunction ')[0];
+  assert(fly.includes('}), 320);') && fly.includes('setTimeout(() => requestAnimationFrame'),
+    'AU: the flight waits for the scroll to settle before measuring');
+}
+
 function testIterationATContracts() {
   // AT: ФПС — blur-стекло и gap больше не анимируются (пересчёт размытия
   // рвал кадры в Safari); геометрия по-прежнему едет кривыми дока
@@ -2475,13 +2495,13 @@ function testIterationATContracts() {
     'AT: destinations empty until landing; ghosts styled as themselves');
   // AT: цель меряется в момент старта — призрак не летит мимо
   assert(js.split('function flyGhost(')[1].split('\nfunction ')[0].includes('targetRect()') &&
-    js.includes('requestAnimationFrame(() => requestAnimationFrame('),
-    'AT: target measured after layout settles, never stale');
-  // AT: перевод мыслей фоновый — поток не блокирует инструменты
-  assert(pyAgent.includes('def think_translated_events(') &&
-    pyAgent.includes('threading.Thread(target=_tr, daemon=True') &&
-    pyAgent.includes('think_translated_events(3.0)'),
-    'AT: English thinking translates in a background thread');
+    js.split('function flyWelcomeInto(')[1].split('\nfunction ')[0].includes('}), 320);'),
+    'AT/AU: target measured after the scroll settles (~320ms), never stale');
+  // AU: перевод снесён — мысли любого языка идут в ленту живьём
+  assert(pyAgent.includes('_HAS_LETTERS_RE') &&
+    !pyAgent.includes('_translate_think') &&
+    !pyAgent.includes('think_translated_events'),
+    'AU: thinking streams live in any language, no translation at all');
 }
 
 function testIterationARContracts() {
@@ -2496,7 +2516,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.51'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.52'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -2794,8 +2814,9 @@ function testIterationABContracts() {
   testIterationAQContracts();
   testIterationARContracts();
   testIterationATContracts();
+  testIterationAUContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 32 regression groups passed');
+  console.log('package28_frontend_runtime: 33 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

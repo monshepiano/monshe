@@ -3244,7 +3244,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.51", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.52", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4501,7 +4501,8 @@ class IterationAQTests(unittest.TestCase):
                       " данные. Let me check. 2 2026."]:
             o2 += tf2.feed(piece)
         o2 += tf2.close()
-        self.assertEqual(o2, ["Смотрю файлы.", "Нужно проверить данные."])
+        # AU: английская мысль — живая, показывается как есть
+        self.assertEqual(o2, ["Смотрю файлы.", "Нужно проверить данные.", "Let me check."])
         # склеенный дубль рас kleilся в чистый текст — не выброшен
         tf3 = ag._ThinkFilter()
         o3 = tf3.feed("новости октябряости октября России") + tf3.close()
@@ -4573,8 +4574,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.51", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.51", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.52", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.52", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4597,26 +4598,18 @@ class IterationAQTests(unittest.TestCase):
 
     def test_as1_think_translate_fallback(self) -> None:
         from jarvis import agent as ag
-        # английские предложения копятся и достаются одним куском
+        # AU: перевод снесён — мысли (любой язык) идут в ленту ЖИВЬЁМ
         tf = ag._ThinkFilter()
-        for piece in ["Let me check the news. ", "First I search sources. "]:
-            tf.feed(piece)
-        tf.close()
-        en = tf.pop_hidden()
-        self.assertIn("Let me check the news", en)
-        self.assertIn("First I search sources", en)
-        self.assertEqual(tf.pop_hidden(), "")
-        # переводчик существует и ходит в nano-уровень с жёстким таймаутом
+        out = tf.feed("Let me check the news. First I search sources. ") + tf.close()
+        self.assertEqual(out, ["Let me check the news.", "First I search sources."])
+        # мусор без букв по-прежнему умирает
+        tf2 = ag._ThinkFilter()
+        self.assertEqual(tf2.feed(", .,.:,. 2 2026.") + tf2.close(), [])
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
-        self.assertIn("def _translate_think(", src)
-        self.assertIn('tier="nano", timeout=20', src)
+        self.assertNotIn("_translate_think", src)
+        self.assertNotIn("think_translated_events", src)
+        self.assertIn("_HAS_LETTERS_RE", src)
         self.assertIn("def think_close_events(", src)
-        # AT: перевод ФОНОВЫЙ — не блокирует инструменты ответа
-        self.assertIn("def think_translated_events(", src)
-        self.assertIn("threading.Thread(target=_tr, daemon=True", src)
-        self.assertIn("self._think_tr_dead = True", src)
-        self.assertIn("think_translated_events(3.0)", src)
-
     def test_as2_flight_and_curve(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # кривая разворачивания панели исправлена (была .2 — рывок в конце)
@@ -4648,13 +4641,11 @@ class IterationATTests(unittest.TestCase):
 
     def test_at2_translate_not_blocking(self) -> None:
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
-        # в close НЕТ прямого вызова перевода — только запуск потока
+        # AU: переводческой машинерии больше нет вообще — нечему блокировать
+        self.assertNotIn("threading.Thread(target=_tr", src)
+        self.assertNotIn("_think_tr", src)
         close = src.split("def think_close_events(")[1].split("\n\n")[0]
-        self.assertIn("len(en) >= 20", close)
-        self.assertIn("self._think_tr = (thread, box)", src)
-        # подхват на границе шагов + финальное короткое ожидание
-        self.assertIn("for out in think_translated_events():", src)
-        self.assertIn("thread.join(wait)", src)
+        self.assertIn("force=True", close)
 
     def test_at3_fps_no_blur_transition(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4681,7 +4672,44 @@ class IterationATTests(unittest.TestCase):
         # цель меряется в момент старта (прокрутка утихла) — призрак не мимо
         ghost = js.split("function flyGhost(")[1].split("\nfunction ")[0]
         self.assertIn("targetRect()", ghost)
-        self.assertIn("requestAnimationFrame(() => requestAnimationFrame(", js)
+        fly = js.split("function flyWelcomeInto(")[1].split("\nfunction ")[0]
+        self.assertIn("}), 320);", fly)
+
+
+class IterationAUTests(unittest.TestCase):
+    """AU (beta.52): ход мыслей — живой поток (английский виден сразу,
+    перевода нет, мусор без букв умирает), печать заметно быстрее,
+    перелёт ждёт укладки прокрутки, видимый номер сборки в панели."""
+
+    def test_au1_live_thinking_any_language(self) -> None:
+        from jarvis import agent as ag
+        tf = ag._ThinkFilter()
+        out = []
+        for piece in ["Let me check the latest news. ",
+                      "Смотрю данные. ", ", .,.:,. 2 2026. "]:
+            out += tf.feed(piece)
+        out += tf.close()
+        self.assertEqual(out, ["Let me check the latest news.", "Смотрю данные."])
+
+    def test_au2_faster_typing(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("const CPS_TALK = 170;", js)
+        self.assertIn("const CPS_TALK_MAX = 420;", js)
+        self.assertIn("const CPS_CODE = 700;", js)
+
+    def test_au3_version_chip(self) -> None:
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn('<span class="ver-chip">b52</span>', html)
+        self.assertIn(".ver-chip{align-self:center;", css)
+
+    def test_au4_flight_waits_for_scroll(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        fly = js.split("function flyWelcomeInto(")[1].split("\nfunction ")[0]
+        self.assertIn("}), 320);", fly)
+        self.assertIn("setTimeout(() => requestAnimationFrame", fly)
+        self.assertIn("width:max-content}", css)
 
 
 if __name__ == "__main__":
