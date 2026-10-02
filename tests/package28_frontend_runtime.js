@@ -2475,7 +2475,7 @@ function testIterationARContracts() {
     css.includes('#brandReactor.relay-out .ring,#brandReactor.relay-out .core{animation:none!important}'),
     'AR: burnt out = steel shell, slightly lighter, motionless');
   // AR: статика больше не кэшируется браузером
-  assert(pyServer.includes('"Cache-Control": "no-cache, must-revalidate"') &&
+  assert(pyServer.includes('"Cache-Control", "no-store"') &&
     html.includes('/static/css/app.css?v=1.2.0-beta.49'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
@@ -2581,10 +2581,10 @@ function testIterationANContracts() {
     'AN: thinkType/thinkFlush/restoreTrace/qtThinkFeed all render through the live format');
   // AN: ПЛИТКИ — ИЗНАЧАЛЬНЫЙ ВИД: строки не принудительно равны (не было
   // полей сверху/снизу у коротких), заголовок — одна строка с троеточием
-  const suggGrid = css.split('.suggestions{')[1].split('\n')[0];
+  const suggGrid = css.split('.suggestions{')[1].split('}')[0];
   assert(/repeat\(3,minmax\(0,1fr\)\)/.test(suggGrid) &&
-    !/grid-auto-rows/.test(suggGrid),
-    'AN/AQ: minmax(0,1fr) columns — tiles stay equal, long titles cannot blow up the grid');
+    /grid-auto-rows:1fr/.test(suggGrid),
+    'AN/AR: equal columns AND equal row heights — a perfectly even tile grid');
   const suggB = css.split('.sugg b .st{')[1].split('}')[0];
   assert(/white-space:nowrap/.test(suggB) &&
     /overflow:hidden/.test(suggB) &&

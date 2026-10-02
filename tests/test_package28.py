@@ -3888,13 +3888,12 @@ class IterationAKTests(unittest.TestCase):
     def test_al_suggestion_tiles(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # AN: ИЗНАЧАЛЬНЫЙ вид (как до выравнивателей): без grid-auto-rows:1fr —
-        # он тянул ВСЕ строки сетки под самую высокую плитку, и в коротких
-        # оставались поля сверху и снизу. Теперь высоту ряда задаёт самая
-        # высокая плитка СВОЕГО ряда, а внутри ряда плитки равны растяжкой.
-        sugg_grid = css.split(".suggestions{")[1].split("\n")[0]
+        # AR: РОВНАЯ сетка — колонки minmax(0,1fr) (равная ширина, заголовок
+        # не распирает) + grid-auto-rows:1fr (все плитки одной высоты —
+        # ряды больше не гуляют, текст стоит ровно)
+        sugg_grid = css.split(".suggestions{")[1].split("}")[0]
         self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", sugg_grid)
-        self.assertNotIn("grid-auto-rows", sugg_grid)
+        self.assertIn("grid-auto-rows:1fr", sugg_grid)
         # AQ: заголовок — одна строка во внутреннем span (min-width:0):
         # колонки minmax(0,1fr) не дают плиткам разъехаться, «…» работает
         self.assertIn(".sugg b{display:flex;min-width:0;color:var(--cy);font-size:12px;margin-bottom:4px;font-weight:600}", css)
@@ -4638,10 +4637,20 @@ class IterationARTests(unittest.TestCase):
 
     def test_ar4_static_no_cache(self) -> None:
         src = Path("app/jarvis/server.py").read_text(encoding="utf-8")
-        self.assertIn('"Cache-Control": "no-cache, must-revalidate"', src)
+        # _send всегда отвечает no-store — статика никогда не кэшируется
+        self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn("/static/css/app.css?v=1.2.0-beta.49", html)
         self.assertIn("/static/js/app.js?v=1.2.0-beta.49", html)
+
+    def test_ar6_sugg_even_grid(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # AR: все плитки ОДНОЙ высоты — ряды не гуляют, сетка ровная
+        grid = css.split(".suggestions{")[1].split("}")[0]
+        self.assertIn("grid-auto-rows:1fr", grid)
+        # единый ритм строк
+        self.assertIn("line-height:1.55}", css)
+        self.assertIn("line-height:1.35}", css)
 
     def test_ar5_steel_dark_reactor(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")

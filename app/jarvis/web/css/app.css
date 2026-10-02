@@ -512,18 +512,24 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   background-clip:text;color:transparent;font-weight:600}
 .hello-sub{color:var(--tx2);font-size:13.5px;margin:0 0 26px}
 /* шесть подсказок — две ровные строки по три, без дыр во второй строке */
-.suggestions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.suggestions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;
+  /* AR: РОВНАЯ СЕТКА — все плитки одной высоты: ряды больше не гуляют
+     (в свободном виде второй ряд был выше первого — «текст неровный») */
+  grid-auto-rows:1fr}
 @media (max-width:900px){.suggestions{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:560px){.suggestions{grid-template-columns:minmax(0,1fr)}}
 .sugg{padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);
-  cursor:pointer;text-align:left;transition:.25s;font-size:12.5px;color:var(--tx2);animation:popIn .45s both}
+  cursor:pointer;text-align:left;transition:.25s;font-size:12.5px;color:var(--tx2);animation:popIn .45s both;
+  /* AR: единый ритм строк во всех плитках */
+  line-height:1.55}
 /* AN/AQ: ИЗНАЧАЛЬНЫЙ свободный вид — текст целиком, высота ряда по
    самой высокой плитке СВОЕГО ряда. Заголовок — одна строка: он лежит
    в собственном span (min-width:0 внутри flex) — единственный паттерн
    «…», работающий в любом браузере, включая кнопки. Колонки minmax(0,1fr)
    не дают сетке разъехаться под длинный заголовок — плитки равные. */
 .sugg b{display:flex;min-width:0;color:var(--cy);font-size:12px;margin-bottom:4px;font-weight:600}
-.sugg b .st{display:block;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sugg b .st{display:block;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  line-height:1.35}
 .sugg:hover{border-color:var(--line2);background:rgba(0,212,255,.1);transform:translateY(-3px);
   box-shadow:0 10px 26px rgba(0,150,220,.16);color:#fff}
 /* карточки-подсказки чередуют оттенки */
