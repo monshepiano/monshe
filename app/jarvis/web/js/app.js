@@ -1675,32 +1675,51 @@ function flyWelcomeInto(node, wf) {
   if (!wf || !node || !node.root) return;
   const core = node.root.querySelector('.ai-core');
   const name = node.root.querySelector('.ai-name');
-  if (wf.core && core) {
-    const g = el('div', 'reactor fly-ghost');
-    g.style.cssText = 'left:' + wf.core.left + 'px;top:' + wf.core.top + 'px;width:' +
-      wf.core.width + 'px;height:' + wf.core.height + 'px';
-    g.innerHTML = '<div class="core" style="width:100%;height:100%"></div>';
-    document.body.appendChild(g);
-    flyGhost(g, core.getBoundingClientRect(), () => {
-      g.remove(); core.classList.add('arrived');
-    });
-  }
-  if (wf.title && name) {
-    const g = el('h1', 'hello fly-ghost');
-    g.style.cssText = 'left:' + wf.title.left + 'px;top:' + wf.title.top + 'px';
-    g.innerHTML = '<span>JARVIS</span>';
-    document.body.appendChild(g);
-    flyGhost(g, name.getBoundingClientRect(), () => {
-      g.remove(); name.classList.add('arrived');
-    });
-  }
+  /* AT: до прилёта места назначения ПУСТЫ — круглешка и имени ещё нет,
+     они появляются в момент посадки призраков */
+  if (core && wf.core) core.classList.add('pre-flight');
+  if (name && wf.title) name.classList.add('pre-flight');
+  /* два кадра: сообщение успевает встать и прокрутка — утихнуть,
+     иначе призраки летят по СТАРЫМ координатам */
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (!document.body.contains(node.root)) return;
+    if (core && wf.core && core.classList.contains('pre-flight')) {
+      const g = el('div', 'fly-ghost ghost-core');
+      g.style.cssText = 'left:' + wf.core.left + 'px;top:' + wf.core.top + 'px;width:' +
+        wf.core.width + 'px;height:' + wf.core.height + 'px';
+      document.body.appendChild(g);
+      flyGhost(g, () => core.getBoundingClientRect(), () => {
+        g.remove();
+        core.classList.remove('pre-flight');
+        core.classList.add('arrived');
+      });
+    }
+    if (name && wf.title && name.classList.contains('pre-flight')) {
+      const g = el('div', 'fly-ghost ghost-title');
+      g.style.cssText = 'left:' + wf.title.left + 'px;top:' + wf.title.top + 'px';
+      g.textContent = 'JARVIS';
+      document.body.appendChild(g);
+      flyGhost(g, () => name.getBoundingClientRect(), () => {
+        g.remove();
+        name.classList.remove('pre-flight');
+        name.classList.add('arrived');
+      });
+    }
+  }));
+  /* страховка: в фоновой вкладке анимации замирают — имя и ядро всё
+     равно проявятся */
+  setTimeout(() => {
+    if (core) core.classList.remove('pre-flight');
+    if (name) name.classList.remove('pre-flight');
+  }, 1600);
 }
 
-/* Полёт-призрак: от исходного прямоугольника к цели, сжатие по ширине,
-   мягкая кривая перелёта. По прибытии — вспышка на настоящем элементе. */
-function flyGhost(g, to, done) {
+/* Полёт-призрак: цель меряется В МОМЕНТ старта (прокрутка уже утихла),
+   сжатие по ширине, мягкая кривая. По прибытии — вспышка на настоящем. */
+function flyGhost(g, targetRect, done) {
+  const to = targetRect();
   const r = g.getBoundingClientRect();
-  const k = Math.max(0.05, to.width / Math.max(1, r.width));
+  const k = Math.max(0.06, to.width / Math.max(1, r.width));
   const dx = (to.left + to.width / 2) - (r.left + r.width / 2);
   const dy = (to.top + to.height / 2) - (r.top + r.height / 2);
   const anim = g.animate([

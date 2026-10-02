@@ -148,9 +148,12 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sidebar{position:fixed;top:0;bottom:0;left:0;width:262px;z-index:60;
   display:flex;flex-direction:column;gap:12px;padding:16px 12px;min-height:0;overflow:hidden;
   background:rgba(6,12,21,.88);border-right:1px solid var(--line);backdrop-filter:blur(18px);
-  /* кривая разворачивания: плавный выезд с мягким замедлением */
+  /* кривая разворачивания: плавный выезд с мягким замедлением.
+     AT/ФПС: blur-стекло и gap больше НЕ анимируются — пересчёт размытия
+     каждый кадр рвал анимацию по кадрам (Safari); стекло переключается
+     сразу, едет только геометрия */
   transition:width .6s cubic-bezier(.22,.68,.18,1),padding .6s cubic-bezier(.22,.68,.18,1),
-    gap .6s ease,background-color .5s ease,border-color .5s ease,backdrop-filter .5s ease}
+    background-color .5s ease,border-color .5s ease}
 @media (min-width:901px){
 /* ---- свёрнутый режим: панель превращается в плавающий DOCK ----
    AH: стеклянная пилюля у левого края, как Dock на маке. Контент занимает
@@ -161,9 +164,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    рисунок, отличается только кривая плавности. */
 .app.collapsed .sidebar{width:68px;padding:10px 0;gap:0;overflow:visible;pointer-events:none;
   background:rgba(6,12,21,0);border-right-color:transparent;backdrop-filter:blur(0px);
-  /* кривая сворачивания: лёгкий разгон, мягкое прилежание */
+  /* кривая сворачивания: лёгкий разгон, мягкое прилежание (без blur — см. ФПС выше) */
   transition:width .6s cubic-bezier(.5,.35,.15,1),padding .6s cubic-bezier(.5,.35,.15,1),
-    gap .6s ease,background-color .5s ease,border-color .5s ease,backdrop-filter .5s ease}
+    background-color .5s ease,border-color .5s ease}
 /* сам док: ВЫПУКЛОЕ матовое стекло — без резкой рамки, форму держат
    светлая верхняя кромка, тёмный низ и мягкая тень-парение (AI).
    AJ: чуть прозрачнее, чуть крупнее; отступы симметричны — зазоры между
@@ -178,7 +181,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
      идёт базовой кривой дока — рисунок один, кривые зеркальны */
   transition:transform .6s cubic-bezier(.5,.35,.15,1),margin .6s cubic-bezier(.5,.35,.15,1),
     padding .6s ease,border-radius .5s ease,background-color .5s ease,border-color .5s ease,
-    box-shadow .5s ease,backdrop-filter .5s ease,-webkit-backdrop-filter .5s ease}
+    box-shadow .5s ease}
 /* рабочее пространство: контент получает воздух слева, чтобы не ехать
    под док; верхняя рамка остаётся на всю ширину до края.
    AO: и БАЗОВОЕ состояние тоже скользит (.6s кривой разворачивания) —
@@ -230,7 +233,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   transform:translateY(var(--dock-y,0px));
   transition:transform .6s cubic-bezier(.22,.68,.18,1),margin .6s cubic-bezier(.22,.68,.18,1),
     padding .6s ease,border-radius .5s ease,background-color .5s ease,border-color .5s ease,
-    box-shadow .5s ease,backdrop-filter .5s ease,-webkit-backdrop-filter .5s ease}
+    box-shadow .5s ease}
 .brand{display:flex;align-items:center;gap:10px;padding:4px 6px 12px;border-bottom:1px solid var(--line)}
 .brand-text{flex:1;min-width:0}
 .brand-name{font-size:17px;font-weight:600;letter-spacing:4px;color:#eaf9ff;text-shadow:0 0 18px rgba(0,212,255,.5)}
@@ -588,6 +591,17 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   box-shadow:0 0 18px var(--cy),0 0 44px rgba(0,212,255,.6)}}
 /* AS: ПЕРВЫЙ ЗАПРОС — ядро и надпись JARVIS перелетают из приветствия */
 .fly-ghost{position:fixed;z-index:400;pointer-events:none;margin:0;will-change:transform}
+/* AT: до прилёта места назначения ПУСТЫ — круглешка и имени нет */
+.ai-core.pre-flight{opacity:0}
+.ai-name.pre-flight{opacity:0}
+/* призрак ядра: тот же вид, что большое ядро приветствия */
+.ghost-core{border-radius:50%;
+  background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
+  box-shadow:0 0 18px var(--cy),0 0 45px rgba(0,212,255,.55)}
+/* призрак надписи: та же типографика, что JARVIS в приветствии;
+   fixed-элемент сжимается под содержимое — НЕ растягивается на экран */
+.ghost-title{font-size:30px;font-weight:200;letter-spacing:16px;color:var(--cy);
+  text-shadow:0 0 26px rgba(0,212,255,.7);white-space:nowrap}
 .ai-core.arrived{animation:arriveCore .6s ease-out}
 @keyframes arriveCore{0%{filter:brightness(2.4);box-shadow:0 0 26px var(--cy)}}
 .ai-name.arrived{animation:arriveName .7s ease-out}

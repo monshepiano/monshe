@@ -2457,6 +2457,33 @@ function testIterationAOContracts() {
     'AO: no click blackout on the toggle, repaint guarded against double-fire');
 }
 
+function testIterationATContracts() {
+  // AT: ФПС — blur-стекло и gap больше не анимируются (пересчёт размытия
+  // рвал кадры в Safari); геометрия по-прежнему едет кривыми дока
+  assert(!css.includes('backdrop-filter .5s') &&
+    !css.includes('gap .6s ease') &&
+    css.includes('transition:width .6s cubic-bezier(.22,.68,.18,1),padding'),
+    'AT: dock FPS — no blur/gap transitions, geometry only');
+  // AT: перелёт v2 — места пусты до прилёта, призраки по своим классам
+  assert(js.includes("core.classList.add('pre-flight')") &&
+    js.includes("name.classList.add('pre-flight')") &&
+    css.includes('.ai-core.pre-flight{opacity:0}') &&
+    css.includes('.ai-name.pre-flight{opacity:0}') &&
+    js.includes("'fly-ghost ghost-core'") && js.includes("'fly-ghost ghost-title'") &&
+    css.includes('.ghost-title{font-size:30px;font-weight:200;letter-spacing:16px;') &&
+    !js.includes("'hello fly-ghost'") && !js.includes("'reactor fly-ghost'"),
+    'AT: destinations empty until landing; ghosts styled as themselves');
+  // AT: цель меряется в момент старта — призрак не летит мимо
+  assert(js.split('function flyGhost(')[1].split('\nfunction ')[0].includes('targetRect()') &&
+    js.includes('requestAnimationFrame(() => requestAnimationFrame('),
+    'AT: target measured after layout settles, never stale');
+  // AT: перевод мыслей фоновый — поток не блокирует инструменты
+  assert(pyAgent.includes('def think_translated_events(') &&
+    pyAgent.includes('threading.Thread(target=_tr, daemon=True') &&
+    pyAgent.includes('think_translated_events(3.0)'),
+    'AT: English thinking translates in a background thread');
+}
+
 function testIterationARContracts() {
   // AS: рождение ответа — ПЕРЕЛЁТ из приветствия (ядро + надпись JARVIS)
   assert(js.includes('flyWelcomeInto(node, welcomeFlight);') &&
@@ -2469,7 +2496,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.50'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.51'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -2766,8 +2793,9 @@ function testIterationABContracts() {
   testIterationAPContracts();
   testIterationAQContracts();
   testIterationARContracts();
+  testIterationATContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 31 regression groups passed');
+  console.log('package28_frontend_runtime: 32 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

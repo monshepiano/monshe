@@ -1671,7 +1671,7 @@ def _translate_think(text: str) -> str:
                          "языком. Выведи ТОЛЬКО перевод, без пояснений "
                          "и кавычек."},
              {"role": "user", "content": text[:4000]}],
-            tier="nano", timeout=45, operation="think_translate")
+            tier="nano", timeout=20, operation="think_translate")
         return str(r.get("content") or "").strip()
     except Exception:
         return ""
@@ -2405,10 +2405,19 @@ class Agent:
         # Y: тихому режиму нужен ДЕЙСТВИТЕЛЬНО длинный ход мыслей (800 зн.),
         # иначе показываем только после первого инструмента; агенту — 90
         thinking_min_chars = 90 if self.show_thinking else 800
+        # AT: перевод английских мыслей живёт в ФОНОВОМ потоке — блокирующий
+        # вызов (beta.50) держал инструменты на 45 секунд: «первый инструмент
+        # через минуту» был именно им. Теперь перевод варится, пока идёт
+        # работа инструмента, и подхватывается на границе шагов
+        self._think_tr = None
+        self._think_tr_dead = False
 
-        def think_route(sentences: List[str]) -> List[Dict[str, Any]]:
-            """AQ: провести ЦЕЛЫЕ предложения по правилам показа мыслей
-            (порог длины до первого показа, дальше — живьём)."""
+        def think_route(sentences: List[str],
+                        force: bool = False) -> List[Dict[str, Any]]:
+            """AQ/AT: провести ЦЕЛЫЕ предложения по правилам показа мыслей.
+            Порог длины до первого показа — НЕ приговор: force=True
+            (конец фазы, готовый перевод) вываливает всё накопленное —
+            ход мыслей не имеет права пропасть целиком."""
             nonlocal thinking_visible
             outs: List[Dict[str, Any]] = []
             for sent in sentences:
@@ -2421,7 +2430,30 @@ class Agent:
                         outs.append({"type": "thinking",
                                      "text": " ".join(thinking_pending)})
                         del thinking_pending[:]
+            if force and not thinking_visible and thinking_pending:
+                thinking_visible = True
+                outs.append({"type": "thinking",
+                             "text": " ".join(thinking_pending)})
+                del thinking_pending[:]
             return outs
+
+        def think_translated_events(wait: float = 0.0) -> List[Dict[str, Any]]:
+            # AT: перевод готов? Отдаём в ленту. Не готов — не ждём (кроме
+            # финального короткого ожидания). Провал — больше не мучаем
+            # модель повторными попытками в этом прогоне
+            job = self._think_tr
+            if job is None:
+                return []
+            thread, box = job
+            thread.join(wait)
+            if thread.is_alive():
+                return []
+            self._think_tr = None
+            ru = str(box.get("ru") or "").strip()
+            if not ru:
+                self._think_tr_dead = True
+                return []
+            return think_route([ru], force=True)
 
         for step in range(max_steps):
             if self._cancelled():
@@ -2432,14 +2464,22 @@ class Agent:
             think_open = True
 
             def think_close_events() -> List[Dict[str, Any]]:
-                # AS: закрываем фазу мыслей; если модель думала
-                # по-английски — переводим накопленное одним вызовом
-                outs = think_route(think_filter.close())
+                # AT: закрываем фазу мыслей. Порог больше НЕ съедает мысли
+                # целиком: что накопилось — показывается. Английский уходит
+                # в фоновый перевод (неблокирующе)
+                outs = think_route(think_filter.close(), force=True)
                 en = think_filter.pop_hidden()
-                if len(en) >= 120:
-                    ru = _translate_think(en)
-                    if ru:
-                        outs.extend(think_route([ru]))
+                if len(en) >= 20 and not self._think_tr_dead \
+                        and self._think_tr is None:
+                    box: Dict[str, Any] = {}
+
+                    def _tr() -> None:
+                        box["ru"] = _translate_think(en)
+
+                    thread = threading.Thread(target=_tr, daemon=True,
+                                               name="jarvis-think-tr")
+                    thread.start()
+                    self._think_tr = (thread, box)
                 return outs
             # Лимит рублей: проверка ДО следующего платного хода. Исчерпан —
             # агент спрашивает: увеличить, отключить или остановиться.
@@ -2490,6 +2530,12 @@ class Agent:
             gate_open = False
             defer_plan_decision = bool((plan_pending and not plan_announced) or intro_hold)
 
+            # AT: перевод прошлой фазы готов — отдаём, не задерживая модель
+            for out in think_translated_events():
+                if defer_plan_decision and not text_released:
+                    deferred_work_events.append(out)
+                else:
+                    yield out
             for event in llm.chat_stream(
                     _with_reasoning_lang(convo), tier=tier, tools=available,
                     operation="auto_model" if self.task_id else "foreground_model",
@@ -2497,9 +2543,11 @@ class Agent:
                 if self._cancelled():
                     return
                 etype = event.get("type")
-                # AQ: фаза мыслей кончилась — хвост предложения закрываем:
-                # недописанное слово никогда не остаётся висеть в буфере
-                if etype != "reasoning" and think_open:
+                # AQ/AT: фаза мыслей кончилась — хвост предложения закрываем.
+                # НЕ «model»: это технический заголовок стрима, он летит
+                # ПЕРВЫМ, до мыслей — раньше он закрывал фразу на пустом
+                # буфере, и настоящий хвост мыслей не закрывался никогда
+                if etype not in ("reasoning", "model") and think_open:
                     think_open = False
                     for out in think_close_events():
                         if defer_plan_decision and not text_released:
@@ -3381,6 +3429,10 @@ class Agent:
 
         if self._cancelled():
             return
+
+        # AT: последний перевод мыслей — ждём недолго и отдаём в ленту
+        for out in think_translated_events(3.0):
+            yield out
 
         # Финальная сводка — тоже платный ход: лимит проверяется и здесь
         if self.budget_rub and self._spent_rub >= self.budget_rub:

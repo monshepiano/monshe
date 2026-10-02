@@ -590,7 +590,11 @@ class RoutingAndPlanCostTests(unittest.TestCase):
                 ))
 
         tiny = run_with(["Проверяю."])
-        self.assertFalse(any(event.get("type") == "thinking" for event in tiny))
+        # AT: короткая ЖИВАЯ русская мысль больше не глотается порогом —
+        # ход мыслей показывается всегда (пользователь: «пусть будет»)
+        self.assertEqual(
+            [e["text"] for e in tiny if e.get("type") == "thinking"],
+            ["Проверяю."])
         parts = ["Сначала проверяю исходные ограничения и зависимости. ",
                  "Затем сопоставляю варианты, риски и проверяемый итог решения."]
         substantial = run_with(parts)
@@ -3240,7 +3244,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.50", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.51", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4569,8 +4573,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.50", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.50", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.51", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.51", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4605,9 +4609,13 @@ class IterationAQTests(unittest.TestCase):
         # переводчик существует и ходит в nano-уровень с жёстким таймаутом
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
         self.assertIn("def _translate_think(", src)
-        self.assertIn('tier="nano", timeout=45', src)
+        self.assertIn('tier="nano", timeout=20', src)
         self.assertIn("def think_close_events(", src)
-        self.assertIn("outs.extend(think_route([ru]))", src)
+        # AT: перевод ФОНОВЫЙ — не блокирует инструменты ответа
+        self.assertIn("def think_translated_events(", src)
+        self.assertIn("threading.Thread(target=_tr, daemon=True", src)
+        self.assertIn("self._think_tr_dead = True", src)
+        self.assertIn("think_translated_events(3.0)", src)
 
     def test_as2_flight_and_curve(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4619,6 +4627,61 @@ class IterationAQTests(unittest.TestCase):
         src = Path("app/jarvis/tools/__init__.py").read_text(encoding="utf-8")
         # AS: модель больше не перебирает все ссылки — сниппетов хватает
         self.assertIn("открывай не больше двух ссылок", src)
+
+
+class IterationATTests(unittest.TestCase):
+    """AT (beta.51): ход мыслей показывается ВСЕГДА (порог не глотает
+    короткие), перевод английского — в фоновом потоке (инструменты больше
+    не стоят минуту), перелёт: места пусты до прилёта, призраки летят по
+    своим стилям в правильные точки; ФПС дока — без анимации blur-стекла."""
+
+    def test_at1_think_never_swallowed(self) -> None:
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        # короткий накопленный ход мыслей показывается ВСЁ РАВНО
+        self.assertIn("if force and not thinking_visible and thinking_pending:", src)
+        close = src.split("def think_close_events(")[1].split("\n\n")[0]
+        self.assertIn("think_route(think_filter.close(), force=True)", close)
+        # ГЛАВНЫЙ КОРЕНЬ «мыслей нет»: технический заголовок стрима (model)
+        # летит ПЕРВЫМ и раньше закрывал фазу на пустом буфере — сброс
+        # порога не срабатывал никогда; модель его больше не закрывает
+        self.assertIn('if etype not in ("reasoning", "model") and think_open:', src)
+
+    def test_at2_translate_not_blocking(self) -> None:
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        # в close НЕТ прямого вызова перевода — только запуск потока
+        close = src.split("def think_close_events(")[1].split("\n\n")[0]
+        self.assertIn("len(en) >= 20", close)
+        self.assertIn("self._think_tr = (thread, box)", src)
+        # подхват на границе шагов + финальное короткое ожидание
+        self.assertIn("for out in think_translated_events():", src)
+        self.assertIn("thread.join(wait)", src)
+
+    def test_at3_fps_no_blur_transition(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # blur-стекло не анимируется (пересчёт размытия рвал кадры, Safari)
+        self.assertNotIn("backdrop-filter .5s", css)
+        self.assertNotIn("gap .6s ease", css)
+        # геометрия по-прежнему едет кривыми дока
+        self.assertIn("transition:width .6s cubic-bezier(.22,.68,.18,1),padding", css)
+
+    def test_at4_flight_v2(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # до прилёта места ПУСТЫ, призраки — по своим классам (не .hello/.reactor)
+        self.assertIn("core.classList.add('pre-flight')", js)
+        self.assertIn("name.classList.add('pre-flight')", js)
+        self.assertIn(".ai-core.pre-flight{opacity:0}", css)
+        self.assertIn(".ai-name.pre-flight{opacity:0}", css)
+        self.assertIn("'fly-ghost ghost-core'", js)
+        self.assertIn("'fly-ghost ghost-title'", js)
+        self.assertIn(".ghost-core{border-radius:50%;", css)
+        self.assertIn(".ghost-title{font-size:30px;font-weight:200;letter-spacing:16px;", css)
+        self.assertNotIn("'hello fly-ghost'", js)
+        self.assertNotIn("'reactor fly-ghost'", js)
+        # цель меряется в момент старта (прокрутка утихла) — призрак не мимо
+        ghost = js.split("function flyGhost(")[1].split("\nfunction ")[0]
+        self.assertIn("targetRect()", ghost)
+        self.assertIn("requestAnimationFrame(() => requestAnimationFrame(", js)
 
 
 if __name__ == "__main__":
