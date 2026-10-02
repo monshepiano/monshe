@@ -1654,6 +1654,61 @@ def _reasoning_ru_visible(text: str) -> bool:
     return cyr >= 4 and cyr >= lat
 
 
+# AQ: мгновенный дубль — признак вырожденного потока рассуждений:
+# модель повторяет кусок текста сразу за собой («…октябряости октября…»).
+# В живой речи повтор 8+ символов ПОДРЯД не встречается — такие
+# предложения в ленту не идут: лучше тишина, чем склеенный мусор.
+_THINK_REPEAT_RE = re.compile(r"(.{8,}?)\1")
+
+
+class _ThinkFilter:
+    """AQ: ход мыслей режется в ленту ТОЛЬКО целыми предложениями.
+    Прежний фильтр решал судьбу каждого куска ОТДЕЛЬНО: обломок «нов»
+    гиб (кириллицы меньше четырёх букв), а следом летело «ости октября» —
+    и на экране слова склеивались в мусор «ости октябряости октября
+    России». Теперь куски копятся до границы предложения, и фильтр видит
+    предложение ЦЕЛИКОМ: обломки слов не показываются никогда, мусор без
+    живой кириллицы и склеенные дубли не показываются вовсе."""
+
+    ENDINGS = ".!?\n…"
+
+    def __init__(self) -> None:
+        self.buf = ""
+
+    def feed(self, piece: str) -> List[str]:
+        self.buf += str(piece or "")
+        return self._drain(False)
+
+    def close(self) -> List[str]:
+        out = self._drain(True)
+        self.buf = ""
+        return out
+
+    @staticmethod
+    def _ok(sent: str) -> bool:
+        return bool(sent.strip()) and _reasoning_ru_visible(sent) \
+            and not _THINK_REPEAT_RE.search(sent)
+
+    def _drain(self, final: bool) -> List[str]:
+        out: List[str] = []
+        while True:
+            cut = -1
+            for i, ch in enumerate(self.buf):
+                if ch in _ThinkFilter.ENDINGS:
+                    cut = i
+                    break
+            if cut < 0:
+                break
+            sent, self.buf = self.buf[:cut + 1], self.buf[cut + 1:]
+            if self._ok(sent):
+                out.append(sent.strip())
+        if final:
+            tail, self.buf = self.buf, ""
+            if self._ok(tail):
+                out.append(tail.strip())
+        return out
+
+
 def _compact_convo(convo: List[Dict[str, Any]]) -> None:
     """Сжать старые результаты инструментов в контексте прогона.
 
@@ -2305,9 +2360,30 @@ class Agent:
         # иначе показываем только после первого инструмента; агенту — 90
         thinking_min_chars = 90 if self.show_thinking else 800
 
+        def think_route(sentences: List[str]) -> List[Dict[str, Any]]:
+            """AQ: провести ЦЕЛЫЕ предложения по правилам показа мыслей
+            (порог длины до первого показа, дальше — живьём)."""
+            nonlocal thinking_visible
+            outs: List[Dict[str, Any]] = []
+            for sent in sentences:
+                if thinking_visible:
+                    outs.append({"type": "thinking", "text": sent})
+                else:
+                    thinking_pending.append(sent)
+                    if len("".join(thinking_pending).strip()) >= thinking_min_chars:
+                        thinking_visible = True
+                        outs.append({"type": "thinking",
+                                     "text": " ".join(thinking_pending)})
+                        del thinking_pending[:]
+            return outs
+
         for step in range(max_steps):
             if self._cancelled():
                 return
+            # AQ: фильтр мыслей живёт один шаг модели: куски копятся до
+            # целых предложений, хвост закрывается на смене фазы
+            think_filter = _ThinkFilter()
+            think_open = True
             # Лимит рублей: проверка ДО следующего платного хода. Исчерпан —
             # агент спрашивает: увеличить, отключить или остановиться.
             if self.budget_rub and self._spent_rub >= self.budget_rub:
@@ -2364,6 +2440,15 @@ class Agent:
                 if self._cancelled():
                     return
                 etype = event.get("type")
+                # AQ: фаза мыслей кончилась — хвост предложения закрываем:
+                # недописанное слово никогда не остаётся висеть в буфере
+                if etype != "reasoning" and think_open:
+                    think_open = False
+                    for out in think_route(think_filter.close()):
+                        if defer_plan_decision and not text_released:
+                            deferred_work_events.append(out)
+                        else:
+                            yield out
                 if etype == "model":
                     self.model_used = event.get("model", "")
                     yield {"type": "model", "model": event.get("model"), "tier": tier}
@@ -2371,27 +2456,14 @@ class Agent:
                     # МЫСЛИ НУЖНЫ НЕ ВСЕГДА. Даже в сложном режиме одна короткая
                     # служебная фраза не заслуживает отдельной карточки.
                     if self.show_thinking or self.quiet_thinking:
-                        piece = str(event.get("text") or "")
-                        # английские обломки мышления в ленту не идут
-                        if piece and not _reasoning_ru_visible(piece):
-                            piece = ""
-                        if thinking_visible:
-                            if piece:
-                                out = {"type": "thinking", "text": piece}
-                                if defer_plan_decision and not text_released:
-                                    deferred_work_events.append(out)
-                                else:
-                                    yield out
-                        elif piece:
-                            thinking_pending.append(piece)
-                            if len("".join(thinking_pending).strip()) >= thinking_min_chars:
-                                thinking_visible = True
-                                out = {"type": "thinking", "text": "".join(thinking_pending)}
-                                if defer_plan_decision and not text_released:
-                                    deferred_work_events.append(out)
-                                else:
-                                    yield out
-                                thinking_pending = []
+                        # AQ: сначала куски копятся до ЦЕЛЫХ предложений
+                        # (_ThinkFilter), потом — прежние правила показа
+                        for out in think_route(
+                                think_filter.feed(str(event.get("text") or ""))):
+                            if defer_plan_decision and not text_released:
+                                deferred_work_events.append(out)
+                            else:
+                                yield out
                 elif etype == "delta":
                     acc_text.append(event["text"])
                     # Модель отмечает начало шага строкой [ШАГ N]. Ловим её в
@@ -2496,6 +2568,15 @@ class Agent:
                 yield {"type": "error", "error": stream_failed}
                 return
 
+            # AQ: поток мог оборваться прямо в мыслях — закрываем хвост,
+            # недописанное предложение не теряется и не висит обрубком
+            if think_open:
+                think_open = False
+                for out in think_route(think_filter.close()):
+                    if defer_plan_decision and not text_released:
+                        deferred_work_events.append(out)
+                    else:
+                        yield out
             text_piece = _STEP_MARK.sub("", "".join(acc_text))
             from_text = False
 

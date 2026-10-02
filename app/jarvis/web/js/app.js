@@ -1273,68 +1273,24 @@ async function loadIdeas() {
   } catch (e) { /* останутся встроенные */ }
 }
 
-/* AO: ТРОЕТОЧИЕ ЗАГОЛОВКА ПЛИТКИ — средствами JS. CSS text-overflow
-   внутри <button> капризен: в части браузеров режет по буквам без
-   «…». Здесь режем сами: срезаем по символу, пока не влезет, и
-   ставим явное троеточие. Полный текст живёт в dataset.t — окно
-   можно сузить/расширить, подгон повторится от оригинала. */
-function fitSuggTitle(b) {
-  if (!b || !b.clientWidth) return;   // плитка скрыта — мерить нечего
-  const full = b.dataset.t || b.textContent;
-  if (!full) return;
-  b.dataset.t = full;
-  b.textContent = full;
-  if (b.scrollWidth <= b.clientWidth) return;   // влезает целиком
-  let t = full;
-  while (t.length > 1 && b.scrollWidth > b.clientWidth) {
-    t = t.slice(0, -1).replace(/[\s,;:.\u2026-]+$/, '');
-    b.textContent = t + '\u2026';
-  }
-}
-
-/* AP: КОРЕНЬ «ТРОЕТОЧИЕ НЕ ПОЯВЛЯЕТСЯ». Плиты подсказок создаются
-   ДО подключения к экрану (welcome собирается в оторванном узле):
-   clientWidth = 0, подгон тихо выходил — и оставался несделанным,
-   пока не случится resize. ResizeObserver стреляет САМ в момент,
-   когда элемент впервые ложится на экран (и при любой смене размера
-   плитки) — подгон теперь невозможен пропустить. */
-function watchSuggTitle(b) {
-  if (!b) return;
-  if (b._suggRO) { fitSuggTitle(b); return; }
-  if (window.ResizeObserver) {
-    b._suggRO = new ResizeObserver(() => fitSuggTitle(b));
-    b._suggRO.observe(b);
-  } else {
-    fitSuggTitle(b);   // очень старый браузер: хотя бы одна попытка
-  }
-}
-
+/* AQ: ТРОЕТОЧИЕ ПЛИТОК — чистый CSS. Три итерации JS-обрезки не
+   пережили реальности (плиты создаются до подключения к экрану,
+   шрифты меняют метрики), а CSS-«многоточие» не работало из-за
+   сетки: колонки 1fr не могут быть уже самого длинного nowrap-заголовка
+   (min-content), плитки разъезжались и текст «неровнел». Теперь колонки
+   minmax(0,1fr) — плитки всегда равные, а заголовок лежит в собственном
+   span с min-width:0 (канонический паттерн, работает в любом браузере):
+   длинный заголовок обрезается с «…» на границе плитки. */
 function fillSuggestions(box) {
   box.innerHTML = '';
   S.ideas.slice(0, 6).forEach((s, i) => {
-    const b = el('button', 'sugg', '<b>' + esc(s.title) + '</b>' + esc(s.prompt));
+    const b = el('button', 'sugg',
+      '<b><span class="st">' + esc(s.title) + '</span></b>' + esc(s.prompt));
     b.style.animationDelay = (0.04 * i) + 's';
     b.addEventListener('click', () => { $('#input').value = s.prompt; autoGrow(); send(); });
     box.appendChild(b);
-    watchSuggTitle(b.querySelector('b'));
   });
 }
-
-/* подгон повторяется от оригинального текста при смене ширины окна
-   и после догрузки шрифтов (метрики меняются) */
-let suggFitT = 0;
-window.addEventListener('resize', () => {
-  clearTimeout(suggFitT);
-  suggFitT = setTimeout(() => {
-    document.querySelectorAll('.sugg b').forEach(fitSuggTitle);
-  }, 180);
-});
-if (document.fonts && document.fonts.ready) {
-  document.fonts.ready.then(() => {
-    document.querySelectorAll('.sugg b').forEach(fitSuggTitle);
-  });
-}
-
 function buildWelcome() {
   const w = el('div', 'welcome');
   w.innerHTML = '<div class="reactor xl"><div class="ring r1"></div><div class="ring r2"></div>' +
@@ -5669,8 +5625,9 @@ function typerStart(ui) {
       clearInterval(ui.typer); ui.typer = null;
       if (ui.mdEl) {
         ui.mdEl.classList.remove('typing');
-        // AO: печать закончилась — волна медленно гаснет и замирает
-        relayTyping(ui, false);
+        /* AQ: осушение потока — НЕ конец: сеть может принести ещё текст,
+           и реактор не должен мигать на каждой паузе. Эстафета гасит
+           ответный реактор только на НАСТОЯЩЕМ конце (onTyped/typerStop) */
         // Сетевой поток может ненадолго осушиться до следующего chunk. Каретка
         // уже скрылась, значит и цветной trail обязан немедленно стать обычным
         // текстом — последнее слово не остаётся синим/жёлтым в паузе.
@@ -6278,7 +6235,8 @@ function handleEvent(ev, ui) {
           qn.querySelector('.qt-head').addEventListener('click', () => qtToggleThink(qn));
           ui.thinkCard = qn;
           markBorn(qn);
-          node.body.insertBefore(qn, ensureStatus(ui));
+          /* AQ: и тихая строка мыслей открывает ответ, а не замыкает */
+          node.body.insertBefore(qn, node.body.firstChild);
         }
         const flow = ui.thinkCard.querySelector('.qt-flow');
         if (flow && ev.text) qtThinkFeed(flow, ev.text);
@@ -6290,7 +6248,14 @@ function handleEvent(ev, ui) {
         ui.thinkCard = makeCard('◇', 'Ход мыслей', 'think-card', true);
         markBorn(ui.thinkCard);
         ui.thinkCard.inner.appendChild(el('div', 'think-stream'));
-        node.body.insertBefore(ui.thinkCard, ui.statusEl);
+        node.body.appendChild(ui.thinkCard);
+      }
+      /* AQ: ХОД МЫСЛЕЙ — РАНЬШЕ ВСЕХ. Мысли могут прийти к нам позже
+         инструментов (модель думает между вызовами) — карточка при
+         каждом событии поднимается в САМЫЙ ВЕРХ ответа: если уж мысль
+         показывается, она открывает ответ, а не прячется под низом */
+      if (node.body.firstChild !== ui.thinkCard) {
+        node.body.insertBefore(ui.thinkCard, node.body.firstChild);
       }
       const ts = ui.thinkCard.querySelector('.think-stream');
       thinkType(ts, ev.text);

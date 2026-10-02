@@ -595,7 +595,11 @@ class RoutingAndPlanCostTests(unittest.TestCase):
                  "Затем сопоставляю варианты, риски и проверяемый итог решения."]
         substantial = run_with(parts)
         thinking = [event["text"] for event in substantial if event.get("type") == "thinking"]
-        self.assertEqual(thinking, ["".join(parts)])
+        # AQ: до порога 90 знаков предложения копятся; первый показ —
+        # все накопленные ЦЕЛЫЕ предложения разом, с пробелами между ними
+        self.assertEqual(thinking, [
+            "Сначала проверяю исходные ограничения и зависимости. "
+            "Затем сопоставляю варианты, риски и проверяемый итог решения."])
 
 
 class TerminalPermissionTests(unittest.TestCase):
@@ -3236,7 +3240,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.47", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.48", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3860,15 +3864,16 @@ class IterationAJTests(unittest.TestCase):
         self.assertIn("function relayTyping(", js)
         self.assertIn("relayTyping(ui, true);", js)
         self.assertIn("relayTyping(ui, false);", js)
-        self.assertIn(".reactor.relay-in{animation:relayIn .72s linear both}", css)
-        self.assertIn(".reactor.relay-out{animation:relayOut .72s linear both}", css)
-        self.assertIn("@keyframes relayIn{", css)
-        self.assertIn("@keyframes relayOut{", css)
+        self.assertIn(".reactor.relay-in{animation:relayBurn .8s linear both reverse!important}", css)
+        self.assertIn(".reactor.relay-out{animation:relayBurn .8s linear both!important}", css)
+        self.assertIn("@keyframes relayBurn{", css)
         # печать: реактор ответа горит ярко, кольца летят
         self.assertIn(".msg-ai:has(.typing) .ai-avatar .reactor .r1{animation-duration:.9s}", css)
         self.assertIn(".msg-ai:has(.typing) .ai-avatar .reactor .core{animation-duration:.62s", css)
-        # покой: кольца тлеют потише
-        self.assertIn(".ai-avatar .reactor .ring{border-color:rgba(0,212,255,.22)", css)
+        # AQ: покой ответного реактора — ТЁМНЫЙ: контуры видны, света нет
+        self.assertIn(".ai-avatar .reactor{filter:brightness(.13) saturate(.35)}", css)
+        self.assertIn(
+            ".msg-ai:has(.typing) .ai-avatar .reactor{filter:brightness(1) saturate(1)}", css)
         # неактивный ответ: реактор тихнет
         self.assertIn(".ui-inert .ai-avatar{opacity:.55;filter:saturate(.7)}", css)
 
@@ -3884,15 +3889,16 @@ class IterationAKTests(unittest.TestCase):
         # оставались поля сверху и снизу. Теперь высоту ряда задаёт самая
         # высокая плитка СВОЕГО ряда, а внутри ряда плитки равны растяжкой.
         sugg_grid = css.split(".suggestions{")[1].split("\n")[0]
-        self.assertIn("display:grid;grid-template-columns:repeat(3,1fr);gap:10px", sugg_grid)
+        self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", sugg_grid)
         self.assertNotIn("grid-auto-rows", sugg_grid)
-        # заголовок — одна строка; если не влезает — троеточие,
-        # а не обрыв на середине слова
-        self.assertIn(".sugg b{display:block;color:var(--cy);font-size:12px;margin-bottom:4px;font-weight:600;", css)
-        sugg_b = css.split(".sugg b{")[1].split(".sugg:hover")[0]
+        # AQ: заголовок — одна строка во внутреннем span (min-width:0):
+        # колонки minmax(0,1fr) не дают плиткам разъехаться, «…» работает
+        self.assertIn(".sugg b{display:flex;min-width:0;color:var(--cy);font-size:12px;margin-bottom:4px;font-weight:600}", css)
+        sugg_b = css.split(".sugg b .st{")[1].split("}")[0]
         self.assertIn("white-space:nowrap", sugg_b)
         self.assertIn("overflow:hidden", sugg_b)
         self.assertIn("text-overflow:ellipsis", sugg_b)
+        self.assertIn("min-width:0", sugg_b)
         # текст подсказки — целиком, без зажимов
         sugg_block = css.split(".sugg{")[1].split(".sugg:hover")[0]
         self.assertNotIn("line-clamp", sugg_block)
@@ -4435,6 +4441,8 @@ class IterationAOTests(unittest.TestCase):
         # отступ вида скользит, а не прыгает
         self.assertIn(
             ".main .view{transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}", css)
+        # AQ: полоса закреплена и контент начинается ниже неё
+        self.assertIn("padding-top:56px}", css)
     def test_ao2_relay_engine(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4450,12 +4458,12 @@ class IterationAOTests(unittest.TestCase):
         # печатающий ответ: реактор у ответа горит, у дока гаснет
         typer = js.split("ui.mdEl.classList.add('typing');")[1][:220]
         self.assertIn("relayTyping(ui, true)", typer)
-        self.assertEqual(js.count("relayTyping(ui, false);"), 3)
-        # жёсткие электрические мигания в CSS
-        self.assertIn("@keyframes relayIn{", css)
-        self.assertIn("@keyframes relayOut{", css)
-        self.assertIn(".reactor.relay-in{animation:relayIn .72s linear both}", css)
-        self.assertIn(".reactor.relay-out{animation:relayOut .72s linear both}", css)
+        # AQ: осушение потока НЕ гасит реактор — только настоящий конец
+        self.assertEqual(js.count("relayTyping(ui, false);"), 2)
+        # AQ: перегорание — одна анимация, загорание — та же наоборот
+        self.assertIn("@keyframes relayBurn{", css)
+        self.assertIn(".reactor.relay-in{animation:relayBurn .8s linear both reverse!important}", css)
+        self.assertIn(".reactor.relay-out{animation:relayBurn .8s linear both!important}", css)
 
     def test_ao3_reasoning_no_ellipsis(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -4470,25 +4478,24 @@ class IterationAOTests(unittest.TestCase):
 
     def test_ao4_sugg_ellipsis_js(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # троеточие ставит JS: режем до вместимости, «…» в конце
-        self.assertIn("function fitSuggTitle(", js)
-        fit = js.split("function fitSuggTitle(")[1].split("\nfunction ")[0]
-        self.assertIn("b.dataset.t", fit)
-        self.assertIn("scrollWidth", fit)
-        self.assertIn("'\\u2026'", fit)
-        # AP: подгон делает ResizeObserver — срабатывает в момент, когда
-        # плитка ВПЕРВЫЕ ложится на экран (раньше welcome собирался
-        # в оторванном узле, clientWidth=0 и подгон тихо пропускался)
-        self.assertIn("function watchSuggTitle(", js)
-        watch = js.split("function watchSuggTitle(")[1].split("\nfunction ")[0]
-        self.assertIn("ResizeObserver", watch)
-        self.assertIn("observe(b)", watch)
-        fill = js.split("function fillSuggestions(")[1].split("\nfunction ")[0]
-        self.assertIn("watchSuggTitle(b.querySelector('b'))", fill)
-        # плюс пересчёт при ресайзе и после загрузки шрифтов
-        self.assertIn("window.addEventListener('resize'", js)
-        self.assertIn("document.fonts.ready", js)
-
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # AQ: КОРЕНЬ БЫЛ В СЕТКЕ. Колонки 1fr не могут быть уже nowrap-
+        # заголовка (min-content) — плитки разъезжались, текст «неровнел»,
+        # и заголовок НИКОГДА не переполнялся (ни CSS «…», ни JS-обрезка
+        # не видели переполнения). minmax(0,1fr) держит плитки равными.
+        sugg_grid = css.split(".suggestions{")[1].split("\n")[0]
+        self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", sugg_grid)
+        # заголовок — во внутреннем span (min-width:0): каноническое «…»
+        self.assertIn(".sugg b{display:flex;min-width:0;", css)
+        st = css.split(".sugg b .st{")[1].split("}")[0]
+        self.assertIn("min-width:0", st)
+        self.assertIn("white-space:nowrap", st)
+        self.assertIn("overflow:hidden", st)
+        self.assertIn("text-overflow:ellipsis", st)
+        self.assertIn("'<b><span class=\"st\">' + esc(s.title) + '</span></b>' + esc(s.prompt)", js)
+        # JS-обрезка удалена: три итерации измерений не пережили реальности
+        self.assertNotIn("fitSuggTitle", js)
+        self.assertNotIn("watchSuggTitle", js)
     def test_ao5_toggle_clicks_never_blocked(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4498,6 +4505,81 @@ class IterationAOTests(unittest.TestCase):
         paint = js.split("function agentPaint(")[1].split("\nfunction ")[0]
         self.assertIn("agentPaint._busy", paint)
         self.assertIn("agentPaint._busy = false", paint)
+
+
+class IterationAQTests(unittest.TestCase):
+    """AQ (beta.48): верхняя панель — непрерывная полоса под меню (без
+    анимации самой панели), плитки minmax(0,1fr) + span-троеточие, ход
+    мыслей целыми предложениями (без огрызков и склеек) и РАНЬШЕ ВСЕХ,
+    реактор-эстафета: перегорание/загорание одной анимацией, тёмный покой."""
+
+    def test_aq1_topbar_continuous_band(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # полоса НА ВСЮ ШИРИНУ, всегда на месте: меню (z-60) закрывает её
+        # слева, уезжая в док — панель ОТКРЫВАЕТСЯ за ним без анимации
+        top = css.split(".topbar{")[1].split("}")
+        topbar = top[0]
+        self.assertIn("position:fixed", topbar)
+        self.assertIn("top:0;left:0;right:0", topbar)
+        self.assertIn("z-index:55", topbar)
+        self.assertIn("padding:11px 18px 11px 280px", topbar)   # чипы правее меню
+        # контент — ниже полосы
+        self.assertIn("padding-top:56px}", css)
+        # мобильная полоса: отступ узкой полосы иконок (62+18)
+        self.assertIn(".topbar{padding-left:80px}", css)
+
+    def test_aq2_think_filter_sentences(self) -> None:
+        from jarvis import agent as ag
+        tf = ag._ThinkFilter()
+        out: list = []
+        # дословный кейс юзера: обломки, склейка, дубль, мусор
+        for piece in ["нов", "ости октября", "ости октября России",
+                      ", .,.:,. 2 2026."]:
+            out += tf.feed(piece)
+        out += tf.close()
+        self.assertEqual(out, [])   # ни один огрызок не дошёл до экрана
+        # нормальный поток: куски собираются в целые слова
+        tf2 = ag._ThinkFilter()
+        o2: list = []
+        for piece in ["Смотрю файлы. Н", "ужно проверить",
+                      " данные. Let me check. 2 2026."]:
+            o2 += tf2.feed(piece)
+        o2 += tf2.close()
+        self.assertEqual(o2, ["Смотрю файлы.", "Нужно проверить данные."])
+        # мгновенный дубль — вырожденный поток, в ленту не идёт
+        tf3 = ag._ThinkFilter()
+        o3 = tf3.feed("новости октябряости октября России") + tf3.close()
+        self.assertEqual(o3, [])
+        # сервер гоняет мысли через фильтр предложений
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        self.assertIn("class _ThinkFilter:", src)
+        self.assertIn("think_filter.feed(", src)
+        self.assertIn("think_filter.close()", src)
+        self.assertIn("_THINK_REPEAT_RE", src)
+
+    def test_aq3_think_card_on_top(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # правило юзера: если ход мыслей появляется — он РАНЬШЕ ВСЕХ
+        think_case = js.split("case 'thinking':")[1].split("case 'plan':")[0]
+        self.assertIn("node.body.firstChild !== ui.thinkCard", think_case)
+        self.assertIn("node.body.insertBefore(ui.thinkCard, node.body.firstChild)", think_case)
+        self.assertIn("node.body.insertBefore(qn, node.body.firstChild)", think_case)
+
+    def test_aq4_relay_burnout(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # покой ответного реактора — ТЁМНЫЙ, но видимый (контуры есть)
+        self.assertIn(".ai-avatar .reactor{filter:brightness(.13) saturate(.35)}", css)
+        # печать — горит
+        self.assertIn(".msg-ai:has(.typing) .ai-avatar .reactor{filter:brightness(1)", css)
+        # перегорание и загорание — ОДНА анимация, вторая наоборот;
+        # !important перекрывает ID-правила реактора дока (coreHalo)
+        self.assertIn(".reactor.relay-out{animation:relayBurn .8s linear both!important}", css)
+        self.assertIn(".reactor.relay-in{animation:relayBurn .8s linear both reverse!important}", css)
+        self.assertIn("100%{filter:brightness(.13) saturate(.35)}}", css)   # финал: тёмный, но видимый
+        self.assertIn("0%{filter:brightness(1) saturate(1)}", css)
+        # старых раздельных миганий нет
+        self.assertNotIn("relayIn", css)
+        self.assertNotIn("relayOut", css)
 
 
 if __name__ == "__main__":

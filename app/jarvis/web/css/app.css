@@ -129,14 +129,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   transition:opacity .6s ease,transform .6s ease}
 .app.ready{opacity:1;transform:none}
 /* AH: свёрнутое меню = колонка исчезает ВООБЩЕ: контент занимает всю
-   ширину (верхняя панель продолжается до края), меню живёт отдельным
-   плавающим доком поверх. Кнопка в доке возвращает панель.
-   AP: ПРИМАГНИЧИВАНИЕ ВЫЛЕЧЕНО. Место под меню резервировала сетка
-   (grid-template-columns), а её анимацию Safari НЕ ПОДДЕРЖИВАЕТ — на
-   маке верхняя панель и контент ПРЫГАЛИ к левому краю мгновенно.
-   Сетка теперь статична, место под меню держит margin-left рабочей
-   области — он анимируется ВЕЗДЕ, той же кривой, что и док:
-   сворачивание (.5,.35,.15,1), разворачивание (.22,.68,.18,1). */
+   ширину, меню живёт отдельным плавающим доком поверх.
+   AQ: ВЕРХНЯЯ ПАНЕЛЬ — НЕПРЕРЫВНАЯ ПОЛОСА НА ВСЮ ШИРИНУ. Она всегда
+   лежит под боковым меню (z-55 против z-60 меню): пока меню раскрыто,
+   оно закрывает её левую часть; меню уезжает в док — и полоса
+   ОТАКРЫВАЕТСЯ за ним до самого края, БЕЗ всякой анимации самой
+   панели. Пустоты наверху больше не бывает в принципе: панель там
+   была всегда. Контент ниже полосы ездит в такт доку (margin-left). */
 .app.collapsed .main{margin-left:0;
   transition:margin-left .6s cubic-bezier(.5,.35,.15,1)}
 
@@ -380,9 +379,11 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 @keyframes sweep{0%{transform:translateX(-100%)}100%{transform:translateX(320%)}}
 
 /* ---------- main ---------- */
-.main{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;position:relative}
-.topbar{position:relative;display:flex;align-items:center;gap:12px;padding:11px 18px;border-bottom:1px solid var(--line);
-  background:rgba(5,11,20,.6);backdrop-filter:blur(16px);min-height:56px}
+.main{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;position:relative;
+  padding-top:56px}
+.topbar{position:fixed;top:0;left:0;right:0;z-index:55;display:flex;align-items:center;gap:12px;
+  padding:11px 18px 11px 280px;border-bottom:1px solid var(--line);height:56px;
+  background:rgba(5,11,20,.6);backdrop-filter:blur(16px)}
 
 /* ---------- центр уведомлений в правом верхнем углу ----------
    Колокольчик с точкой непрочитанного и выпадающий список под ним.
@@ -506,20 +507,18 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   background-clip:text;color:transparent;font-weight:600}
 .hello-sub{color:var(--tx2);font-size:13.5px;margin:0 0 26px}
 /* шесть подсказок — две ровные строки по три, без дыр во второй строке */
-.suggestions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-@media (max-width:900px){.suggestions{grid-template-columns:repeat(2,1fr)}}
-@media (max-width:560px){.suggestions{grid-template-columns:1fr}}
+.suggestions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:900px){.suggestions{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.suggestions{grid-template-columns:minmax(0,1fr)}}
 .sugg{padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);
   cursor:pointer;text-align:left;transition:.25s;font-size:12.5px;color:var(--tx2);animation:popIn .45s both}
-/* AN: ИЗНАЧАЛЬНЫЙ свободный вид — как было до выравнивателей: текст
-   целиком, высота строки сетки задаётся самой высокой плиткой СВОЕГО
-   ряда (без grid-auto-rows:1fr — он тянул ВСЕ строки под самую высокую
-   плитку, и в коротких оставались поля сверху и снизу). Внутри ряда
-   плитки всё равно одинаковые: grid растягивает их по строке сам. */
-.sugg b{display:block;color:var(--cy);font-size:12px;margin-bottom:4px;font-weight:600;
-  /* заголовок — одна строка; если не влезает — мягкое троеточие,
-     а не обрыв на середине слова */
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* AN/AQ: ИЗНАЧАЛЬНЫЙ свободный вид — текст целиком, высота ряда по
+   самой высокой плитке СВОЕГО ряда. Заголовок — одна строка: он лежит
+   в собственном span (min-width:0 внутри flex) — единственный паттерн
+   «…», работающий в любом браузере, включая кнопки. Колонки minmax(0,1fr)
+   не дают сетке разъехаться под длинный заголовок — плитки равные. */
+.sugg b{display:flex;min-width:0;color:var(--cy);font-size:12px;margin-bottom:4px;font-weight:600}
+.sugg b .st{display:block;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sugg:hover{border-color:var(--line2);background:rgba(0,212,255,.1);transform:translateY(-3px);
   box-shadow:0 10px 26px rgba(0,150,220,.16);color:#fff}
 /* карточки-подсказки чередуют оттенки */
@@ -565,30 +564,36 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   white-space:pre-wrap;word-break:break-word}
 .msg-ai{display:flex;gap:13px}
 .ai-avatar{flex-shrink:0;width:34px;height:34px;position:relative}
-/* AP: ФИГУРКА ОТВЕТА — РЕАКТОР, КАК В ДОКЕ. У ответов стоит тот же
-   реактор, что и в боковом меню. В покое кольца тлеют потише; пока
-   ответ печатается (:has(.typing)) реактор ГОРИТ: кольца летят, ядро
-   пульсирует. Переселение электричества — жёсткими миганиями:
-   relayIn загорается вспышками, relayOut гаснет, как перегоревшая
-   лампочка. Выглядит как телепорт между двумя коллайдерами. */
-.ai-avatar .reactor .ring{border-color:rgba(0,212,255,.22);
-  box-shadow:inset 0 0 12px rgba(0,212,255,.14),0 0 12px rgba(0,212,255,.08)}
-.ai-avatar .reactor .core{opacity:.6;
-  box-shadow:0 0 10px var(--cy),0 0 26px rgba(0,212,255,.25)}
+/* AP→AQ: ЭСТАФЕТА РЕАКТОРОВ. У ответа — тот же реактор, что в доке.
+   ПОКОЙ ответного реактора — ТЁМНЫЙ: контуры и форма видны, свечения
+   нет (электричество сейчас в доке). Печать началась — реактор дока
+   ПЕРЕГОРАЕТ (жёсткие умирающие мигания, как лампочка), ответный —
+   ТА ЖЕ анимация в обратную сторону ЗАГОРАЕТСЯ: телепорт электричества
+   из коллайдера в коллайдер. Кончил отвечать — наоборот. !important
+   обязателен: у реактора дока есть ID-правила (coreHalo при body.jv-busy),
+   которые иначе перекрывали бы затухание — боковой реактор тогда
+   вообще не гас. */
+.ai-avatar .reactor{filter:brightness(.13) saturate(.35)}
+.msg-ai:has(.typing) .ai-avatar .reactor{filter:brightness(1) saturate(1)}
 .msg-ai:has(.typing) .ai-avatar .reactor .ring{border-color:rgba(0,220,255,.75)}
 .msg-ai:has(.typing) .ai-avatar .reactor .r1{animation-duration:.9s}
 .msg-ai:has(.typing) .ai-avatar .reactor .r2{animation-duration:.62s}
-.msg-ai:has(.typing) .ai-avatar .reactor .core{animation-duration:.62s;opacity:1;
+.msg-ai:has(.typing) .ai-avatar .reactor .core{animation-duration:.62s;
   box-shadow:0 0 16px var(--cy),0 0 40px rgba(0,212,255,.75)}
-.reactor.relay-in{animation:relayIn .72s linear both}
-.reactor.relay-out{animation:relayOut .72s linear both}
-/* электрические мигания: жёсткие вспышки без разгона, как контакт в розетке */
-@keyframes relayIn{
-  0%{opacity:0}7%{opacity:.55}10%{opacity:.05}20%{opacity:.85}26%{opacity:.15}
-  38%{opacity:1}46%{opacity:.35}58%{opacity:1}66%{opacity:.6}82%{opacity:1}100%{opacity:1}}
-@keyframes relayOut{
-  0%{opacity:1}8%{opacity:.2}15%{opacity:.9}27%{opacity:.08}36%{opacity:.65}
-  50%{opacity:.04}62%{opacity:.4}74%{opacity:0}85%{opacity:.25}100%{opacity:0}}
+.reactor.relay-out{animation:relayBurn .8s linear both!important}
+.reactor.relay-in{animation:relayBurn .8s linear both reverse!important}
+/* перегорание: жёсткие мигания без разгона; финал — тёмный, но видимый */
+@keyframes relayBurn{
+  0%{filter:brightness(1) saturate(1)}
+  5%{filter:brightness(.15) saturate(.5)}
+  9%{filter:brightness(1.05) saturate(1)}
+  16%{filter:brightness(.08) saturate(.4)}
+  24%{filter:brightness(.75) saturate(.8)}
+  34%{filter:brightness(.05) saturate(.3)}
+  46%{filter:brightness(.35) saturate(.5)}
+  58%{filter:brightness(.04) saturate(.3)}
+  72%{filter:brightness(.16) saturate(.35)}
+  100%{filter:brightness(.13) saturate(.35)}}
 /* реактор тихнет в неактивных (камера закрыта) ответах */
 .ui-inert .ai-avatar{opacity:.55;filter:saturate(.7)}
 .ai-body{flex:1;min-width:0}
@@ -1810,6 +1815,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   .app.nav-open .collapse-btn{transform:none}
   .side-foot{margin-top:auto;border-top:0;padding:6px 0 2px}
   .app.nav-open .side-foot{border-top:1px solid var(--line);padding:10px 4px 2px}
+  .topbar{padding-left:80px}
   .status-cluster .status-chip:nth-child(n+2){display:none}
   .top-title{display:none}
   .stream{padding:16px 14px 8px}

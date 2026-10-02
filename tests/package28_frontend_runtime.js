@@ -2410,10 +2410,10 @@ function testIterationAJContracts() {
     !/sigil/i.test(js) && !/sigil/i.test(css),
     'AP: answer avatar is the DOCK REACTOR; the whole sigil saga is gone');
   // эстафета: телепорт электричества миганиями между доком и ответом
-  assert(css.includes('.reactor.relay-in{animation:relayIn .72s linear both}') &&
-    css.includes('.reactor.relay-out{animation:relayOut .72s linear both}') &&
-    css.includes('@keyframes relayIn{') && css.includes('@keyframes relayOut{'),
-    'AP: hard electric flicker keyframes for the relay teleport');
+  assert(css.includes('.reactor.relay-in{animation:relayBurn .8s linear both reverse!important}') &&
+    css.includes('.reactor.relay-out{animation:relayBurn .8s linear both!important}') &&
+    css.includes('@keyframes relayBurn{'),
+    'AP/AQ: one burnout animation, ignition is the same reversed');
 }
 
 function testIterationAKContracts() {
@@ -2438,21 +2438,53 @@ function testIterationAOContracts() {
     'AO/AP: work area slides with the DOCK curve in both directions (margin, Safari-proof)');
   // AO: ВОЛНА СИГИЛА — печать развязывает фигуру в линию волн (жёлтая,
   // яркий пульс), конец печати медленно замеряет её в последней позе
-  assert(css.includes('.reactor.relay-in{animation:relayIn .72s linear both}') &&
-    css.includes('.reactor.relay-out{animation:relayOut .72s linear both}') &&
-    css.includes('@keyframes relayIn{') && css.includes('@keyframes relayOut{') &&
+  assert(css.includes('.reactor.relay-in{animation:relayBurn .8s linear both reverse!important}') &&
+    css.includes('.reactor.relay-out{animation:relayBurn .8s linear both!important}') &&
+    css.includes('@keyframes relayBurn{') &&
     css.includes('.msg-ai:has(.typing) .ai-avatar .reactor .r1{animation-duration:.9s}') &&
     css.includes('.msg-ai:has(.typing) .ai-avatar .reactor .core{animation-duration:.62s'),
-    'AO/AP: relay flicker CSS — teleport of electricity between two reactors');
+    'AO/AQ: ONE burnout animation, ignition is the same reversed, !important beats dock ID rules');
   const typingTick = js.split("ui.mdEl.classList.add('typing');")[1].slice(0, 300);
   assert(typingTick.includes('relayTyping(ui, true)') &&
-    (js.match(/relayTyping\(ui, false\);/g) || []).length === 3,
-    'AO/AP: typing start lights the avatar and kills the dock one, and vice versa');
+    (js.match(/relayTyping\(ui, false\);/g) || []).length === 2,
+    'AO/AQ: typing start lights the avatar; only REAL ends (not stream droughts) put it out');
   // AO: ТУМБЛЕР — клики не блокируются, двойная пересадка защищена
   assert(!css.includes('.agent-switch.ag-switching .agent-switch-track{pointer-events:none}') &&
     extractFunction(js, 'agentPaint').includes('agentPaint._busy') &&
     js.includes('agentPaint._busy = false'),
     'AO: no click blackout on the toggle, repaint guarded against double-fire');
+}
+
+function testIterationAQContracts() {
+  // AQ: ВЕРХНЯЯ ПАНЕЛЬ — НЕПРЕРЫВНАЯ ПОЛОСА на всю ширину, всегда за
+  // меню (z-55 против z-60): меню уезжает в док — полоса открывается
+  // за ним БЕЗ анимации самой панели. Никакого скольжения верха.
+  const topbar = css.split('.topbar{')[1].split('}')[0];
+  assert(/position:fixed/.test(topbar) &&
+    /top:0;left:0;right:0/.test(topbar) &&
+    /z-index:55/.test(topbar) &&
+    /padding:11px 18px 11px 280px/.test(topbar),
+    'AQ: topbar is a fixed full-width band under the sidebar — revealed, never animated');
+  assert(css.includes('padding-top:56px}') &&
+    css.includes('.topbar{padding-left:80px}'),
+    'AQ: content starts below the band; mobile band clears the icon strip');
+  // AQ: ХОД МЫСЛЕЙ — целые предложения, дубли и огрызки умирают в буфере
+  assert(pyAgent.includes('class _ThinkFilter:') &&
+    pyAgent.includes('_THINK_REPEAT_RE') &&
+    pyAgent.includes('think_filter.feed(') &&
+    pyAgent.includes('think_filter.close()'),
+    'AQ: backend buffers reasoning into whole sentences, kills glued doubles');
+  // AQ: карточка мыслей — РАНЬШЕ ВСЕХ в ответе
+  const thinkCase = js.split("case 'thinking':")[1].split("case 'plan':")[0];
+  assert(thinkCase.includes('node.body.firstChild !== ui.thinkCard') &&
+    thinkCase.includes('node.body.insertBefore(ui.thinkCard, node.body.firstChild)') &&
+    thinkCase.includes('node.body.insertBefore(qn, node.body.firstChild)'),
+    'AQ: whenever the thought appears, it opens the answer — never hides at the bottom');
+  // AQ: ПОКОЙ ответного реактора — ТЁМНЫЙ (контуры видны, света нет)
+  assert(css.includes('.ai-avatar .reactor{filter:brightness(.13) saturate(.35)}') &&
+    css.includes('.msg-ai:has(.typing) .ai-avatar .reactor{filter:brightness(1) saturate(1)}') &&
+    css.includes('100%{filter:brightness(.13) saturate(.35)}}'),
+    'AQ: spent avatar is dark but visible; printing lights it up');
 }
 
 function testIterationAPContracts() {
@@ -2515,24 +2547,19 @@ function testIterationANContracts() {
   // AN: ПЛИТКИ — ИЗНАЧАЛЬНЫЙ ВИД: строки не принудительно равны (не было
   // полей сверху/снизу у коротких), заголовок — одна строка с троеточием
   const suggGrid = css.split('.suggestions{')[1].split('\n')[0];
-  assert(!/grid-auto-rows/.test(suggGrid) && /gap:10px/.test(suggGrid),
-    'AN: suggestion rows are NOT force-equalized — no dead space around text');
-  const suggB = css.split('.sugg b{')[1].split('.sugg:hover')[0];
+  assert(/repeat\(3,minmax\(0,1fr\)\)/.test(suggGrid) &&
+    !/grid-auto-rows/.test(suggGrid),
+    'AN/AQ: minmax(0,1fr) columns — tiles stay equal, long titles cannot blow up the grid');
+  const suggB = css.split('.sugg b .st{')[1].split('}')[0];
   assert(/white-space:nowrap/.test(suggB) &&
     /overflow:hidden/.test(suggB) &&
-    /text-overflow:ellipsis/.test(suggB),
-    'AN: suggestion title — single line, ellipsis instead of a mid-word cut');
-  // AO: троеточие ставит и JS — text-overflow внутри <button> капризен
-  assert(typeof extractFunction(js, 'fitSuggTitle') === 'string' &&
-    /b\.dataset\.t/.test(extractFunction(js, 'fitSuggTitle')) &&
-    extractFunction(js, 'fitSuggTitle').includes('\\' + 'u2026') &&
-    typeof extractFunction(js, 'watchSuggTitle') === 'string' &&
-    extractFunction(js, 'watchSuggTitle').includes('ResizeObserver') &&
-    extractFunction(js, 'watchSuggTitle').includes('observe(b)') &&
-    extractFunction(js, 'fillSuggestions').includes("watchSuggTitle(b.querySelector('b'))") &&
-    /window\.addEventListener\('resize'/.test(js) &&
-    /document\.fonts\.ready/.test(js),
-    'AO/AP: ellipsis via JS + ResizeObserver fires the moment tiles hit the layout');
+    /text-overflow:ellipsis/.test(suggB) &&
+    /min-width:0/.test(suggB),
+    'AQ: title lives in an inner span (min-width:0) — the canonical ellipsis pattern');
+  assert(css.includes('.sugg b{display:flex;min-width:0;') &&
+    js.includes("'<b><span class=\"st\">' + esc(s.title) + '</span></b>' + esc(s.prompt)") &&
+    !js.includes('fitSuggTitle') && !js.includes('watchSuggTitle'),
+    'AQ: JS measuring is gone — pure CSS ellipsis inside the span');
   // AN: НАВЕДЕНИЕ ЧУТЬ МЕДЛЕННЕЕ, вкл/выкл прежние .45с одной кривой
   assert(/animation:agKnobRubber 1s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
     /animation:agEmberRun \.9s cubic-bezier\(\.3,\.5,\.35,1\) both/.test(css) &&
@@ -2709,8 +2736,9 @@ function testIterationABContracts() {
   testIterationAKContracts();
   testIterationANContracts();
   testIterationAPContracts();
+  testIterationAQContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 29 regression groups passed');
+  console.log('package28_frontend_runtime: 30 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
