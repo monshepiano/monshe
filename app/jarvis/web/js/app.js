@@ -187,7 +187,10 @@ function placeDaySeparator(node) {
   // а этапы сценария — это не дни.
   if (S.scenarioActive) return null;
   let prev = node.previousElementSibling;
-  while (prev && prev.classList.contains('day-separator')) prev = prev.previousElementSibling;
+  /* BF: строки инструментов (.tool-mark) — не сообщения и не дни: после
+     них следующий ответ того же дня снова рисовал разделитель даты */
+  while (prev && (prev.classList.contains('day-separator') ||
+                  prev.classList.contains('tool-mark'))) prev = prev.previousElementSibling;
   if (prev && prev.classList.contains('msg') && prev.dataset.day === node.dataset.day) return null;
   const immediate = node.previousElementSibling;
   if (immediate && immediate.classList.contains('day-separator') &&
@@ -259,11 +262,14 @@ function toolLine(kind, on) {
   const box = stream();
   if (!box) return;
   const agent = kind === 'agent';
-  const row = el('div', 'tool-mark ' + (on ? 'on' : 'off'));
-  row.innerHTML = '<span class="tm-ico' + (agent ? ' ag' : '') + '">' +
+  /* BF: иконка агента — РОБОТ, как в проактивном предложении о включении;
+     дизайн строки скопирован с предлагашек (иконка в мягкой плитке),
+     но меньше и тише */
+  const row = el('div', 'tool-mark ' + (on ? 'on' : 'off') + (agent ? ' ag' : ''));
+  row.innerHTML = '<span class="tm-ico">' +
     (agent
-      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="5" r="1.7"/><circle cx="18.5" cy="19" r="1.7"/><path d="M7.2 5h5.3a4 4 0 0 1 0 8H9.5a4 4 0 0 0 0 8h7.3"/></svg>'
-      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="4.6" width="17.2" height="12.4" rx="2.2"/><path d="M9.5 20.5h5M12 17v3.5"/></svg>') +
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V5.4"/><circle cx="12" cy="3.6" r="1.3"/><circle cx="9.2" cy="12.6" r=".9" fill="currentColor" stroke="none"/><circle cx="14.8" cy="12.6" r=".9" fill="currentColor" stroke="none"/><path d="M9.5 16h5"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="4.6" width="17.2" height="12.4" rx="2.2"/><path d="M9.5 20.5h5M12 17v3.5"/></svg>') +
     '</span><span class="tm-name">' + (agent ? 'Агент' : 'Компьютер') + '</span>' +
     '<span class="tm-state">' + (on ? 'включён' : 'отключён') + '</span>';
   box.appendChild(row);
@@ -1435,7 +1441,7 @@ function watchRunFollow(ui) {
   if (!box || !box.addEventListener || box.__jarvisFollowRuns) return;
   box.__jarvisFollowRuns = true;
   const st = (box.__jarvisScroll = box.__jarvisScroll ||
-    { lastTop: box.scrollTop, autoPend: 0, chasing: false });
+    { lastTop: box.scrollTop, lastH: box.scrollHeight, autoPend: 0, chasing: false });
   let touchY = null;
   const active = () => {
     const run = S.followUi;
@@ -1458,6 +1464,18 @@ function watchRunFollow(ui) {
   }, { passive: true });
   box.addEventListener('scroll', () => {
     const top = box.scrollTop;
+    const h = box.scrollHeight;
+    /* BF: АГЕНТСКИЙ РЕЖИМ — инструменты СВЁРТЫВАЮТСЯ, контент сжимается и
+       браузер сам УМЕНЬШАЕТ scrollTop (clamp). Это не человек: уменьшение
+       высоты при уменьшении scrollTop — служебная подстройка, прилипание
+       не трогаем. Настоящий уход вверх (колесо/тач/клавиши/скроллбар)
+       высоту не меняет */
+    if (h < st.lastH - 2) {
+      st.lastTop = top; st.lastH = h;
+      if (st.autoPend > 0) st.autoPend -= 1;
+      return;
+    }
+    st.lastH = h;
     // наш догоняющий кадр scrollTop уменьшить не может: уменьшение —
     // это человек (клавиши, скроллбар, инерция) — прилипание снимаем
     if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }
@@ -1466,7 +1484,7 @@ function watchRunFollow(ui) {
     const run = active();
     if (!run) return;
     // вернулся до упора вниз — прилипание снова включается
-    if (box.scrollHeight - top - box.clientHeight < 24) run.followOutput = true;
+    if (h - top - box.clientHeight < 24) run.followOutput = true;
   }, { passive: true });
 }
 
@@ -1477,7 +1495,7 @@ function watchRunFollow(ui) {
    догон на следующем кадре. */
 function chaseBottom(box, run) {
   const st = (box.__jarvisScroll = box.__jarvisScroll ||
-    { lastTop: box.scrollTop, autoPend: 0, chasing: false });
+    { lastTop: box.scrollTop, lastH: box.scrollHeight, autoPend: 0, chasing: false });
   if (st.chasing) return;
   st.chasing = true;
   box.classList.add('pin-instant');
@@ -1510,7 +1528,11 @@ function scrollDown(force, owner) {
     // без активного run-а следуем только из «зоны у дна»: далеко от низа
     // и без ответа — прокрутку не дёргаем
     const near = box.scrollHeight - box.scrollTop - box.clientHeight < 160;
-    if (force || (run ? run.followOutput !== false : near)) {
+    /* BF: force больше не всесилен: если человек ЯВНО ушёл вверх во время
+       ответа (followOutput=false), агентские scrollDown(true) от карточек
+       инструментов не тащат его обратно */
+    const gone = !!(run && run.followOutput === false);
+    if (!gone && (force || run || near)) {
       chaseBottom(box, run);
     }
   });
@@ -4433,7 +4455,12 @@ async function send(opts) {
   loadChats();
   // Поздний background-прогон не заказывает подсказки для чужого активного
   // диалога и не обновляет его состояние посреди нового ответа.
-  if (S.streamRun === runId && node.root && node.root.isConnected) {
+  /* BF: подсказки пишутся после КАЖДОГО ответа. Прежнее условие требовало
+     живую ноду — если пользователь за время ответа перезашёл в диалог
+     (лента перерисовалась, нода умерла), заказ молча скипался и у поля
+     ввода оставались подсказки ПРОШЛОГО ответа */
+  if (S.streamRun === runId &&
+      ((node.root && node.root.isConnected) || ui.chatId === activeChatId())) {
     refreshState();
     fetchReplies();   // подсказки — уже после того, как ответ закрыт
   }
@@ -5689,7 +5716,10 @@ function renderTyped(ui) {
   if (idx >= 0 && idx + 2 > src.length) {
     const cand = text.slice(0, idx + 2);
     // границу нельзя ставить внутри блока кода — он рендерится целиком
-    if (!inCodeBlock(cand)) {
+    // BF: и внутри ОТКРЫТОЙ формулы \[ ... \] — математическая панель
+    // живёт в хвосте и растёт по мере печати, заморозка её бы порвала
+    const mathOpen = (cand.match(/\\\[/g) || []).length !== (cand.match(/\\\]/g) || []).length;
+    if (!inCodeBlock(cand) && !mathOpen) {
       src = cand;
       html = MD.render(stripSteps(cand));
       ui.frozen = { src, html };
@@ -6274,12 +6304,13 @@ function dotShapePlay(root) {
     setTimeout(() => {
       if (!core.classList) return;
       core.classList.remove('sh-in');
-      /* BE: фигура встала — на полторы секунды она вращается */
+      /* BF: фигура встала — полторы секунды она МЕДЛЕННО доворачивается
+         (~125–140°, ease-in-out), каждый раз в другой плоскости */
       core.classList.add(spin);
     }, DOT_MORPH_MS);
     setTimeout(() => {
       if (!core.classList) return;
-      /* доворот уже завершился (1.42с < 1.5с) — снимаем без рывка */
+      /* медленный доворот завершился вместе с показом — снимаем без рывка */
       core.classList.remove(spin);
       core.classList.add('sh-out');
       setTimeout(() => {
@@ -8259,8 +8290,9 @@ function showReplies(items) {
       send();
     });
     ed.addEventListener('click', (e) => {
+      /* BF: подсказки НЕ исчезают — реплика легла в поле ввода, а полоса
+         ждёт следующего решения (отправить самому или взять другой чип) */
       e.stopPropagation();
-      box.hidden = true;
       const input = $('#input');
       input.value = t;
       autoGrow();
@@ -8788,10 +8820,90 @@ function paintTaskCard(card, t) {
       await api('/api/tasks/cancel', { task_id: t.id }); loadTasks();
     });
   }
+  // BF: правка задачи — как в сценариях (кроме живого прогона)
+  mk('Редактировать', '', () => { editTask(t); }, st === 'running');
   mk('Удалить', 'danger', async () => {
     await api('/api/tasks/delete', { task_id: t.id }); loadTasks();
   });
+  // BF: клик по карточке — полный просмотр задачи (как у сценария)
+  card.onclick = () => openTask(t);
   card.dataset.fingerprint = taskFingerprint(t);
+}
+
+/* BF: полный просмотр задачи — то же окно Джарвиса, что у сценария:
+   задание целиком, расписание, статус и последний результат. */
+function openTask(t) {
+  const stRu = {
+    queued: 'в очереди', running: 'выполняется', done: 'готово', error: 'ошибка',
+    scheduled: 'по расписанию', paused: 'на паузе', cancelled: 'отменена',
+  }[t.status] || t.status;
+  modal(
+    '<div class="jw-ico">◎</div>' +
+    '<h3>' + esc(t.title) + '</h3>' +
+    '<div class="md-sub">' + esc(stRu) +
+      (t.schedule ? ' · ⟳ ' + esc(t.schedule) : '') +
+      (t.next_run ? ' · следующий запуск ' + fmtTime(t.next_run) : '') + '</div>' +
+    '<div class="sc-steps-full"><div class="sc-step-full"><i>?</i>' +
+      esc(t.prompt) + '</div></div>' +
+    (t.result ? '<div class="sd" style="margin:4px 0 10px">Последний результат:</div>' +
+      '<div class="tc-result md">' + MD.render(String(t.result).slice(0, 2500)) + '</div>' : '') +
+    '<div class="modal-acts">' +
+      '<button class="btn" id="tkClose">Закрыть</button>' +
+      '<button class="btn" id="tkEdit">Редактировать</button>' +
+      (t.status !== 'running'
+        ? '<button class="btn primary" id="tkRun">Запустить</button>'
+        : '<button class="btn primary" id="tkCancel">Отменить</button>') +
+    '</div>', null, { soft: true });
+  $('#tkClose').addEventListener('click', closeModal);
+  $('#tkEdit').addEventListener('click', () => editTask(t));
+  const run = $('#tkRun');
+  if (run) run.addEventListener('click', () => {
+    closeModal();
+    api('/api/tasks/run', { task_id: t.id }).then((r) => {
+      if (!r.ok) toast(r.error || 'Задача уже занята', 'warn');
+      else toast('Задача запущена', 'info');
+      loadTasks();
+    });
+  });
+  const cancel = $('#tkCancel');
+  if (cancel) cancel.addEventListener('click', () => {
+    closeModal();
+    api('/api/tasks/cancel', { task_id: t.id }).then(() => loadTasks());
+  });
+}
+
+/* BF: редактирование задачи — та же форма, что и создание, но с уже
+   заполненными полями. Расписание пересчитает сервер. */
+function editTask(t) {
+  modal(
+    '<h3>Редактировать задачу</h3>' +
+    '<div class="md-sub">JARVIS выполнит её сам и пришлёт результат — в уведомления и в Telegram.</div>' +
+    '<div class="field"><label>Название</label><input id="mTitle" placeholder="Утренняя сводка"></div>' +
+    '<div class="field"><label>Что сделать</label><textarea id="mPrompt" rows="4" placeholder="Собери главные новости про ИИ и сделай короткую сводку"></textarea></div>' +
+    '<div class="field"><label>Расписание (необязательно)</label><input id="mSched" placeholder="daily 09:00  ·  every 2h  ·  every 30m"></div>' +
+    '<div class="modal-acts"><button class="btn ghost" id="mCancel">Отмена</button>' +
+    '<button class="btn primary" id="mOk">Сохранить</button></div>',
+    (m) => {
+      $('#mTitle', m).value = t.title || '';
+      $('#mPrompt', m).value = t.prompt || '';
+      $('#mSched', m).value = t.schedule || '';
+      $('#mCancel', m).addEventListener('click', closeModal);
+      $('#mOk', m).addEventListener('click', async () => {
+        const title = $('#mTitle', m).value.trim();
+        const prompt = $('#mPrompt', m).value.trim();
+        if (!prompt) { toast('Опиши задачу', 'warn'); return; }
+        const r = await api('/api/tasks/update', {
+          task_id: t.id,
+          title: title || prompt.slice(0, 40),
+          prompt,
+          schedule: $('#mSched', m).value.trim(),
+        });
+        closeModal();
+        if (r.ok) { toast('Задача обновлена', 'success'); loadTasks(); }
+        else toast(r.error || 'Не удалось обновить задачу', 'warn');
+      });
+    }
+  );
 }
 
 function renderTasks() {

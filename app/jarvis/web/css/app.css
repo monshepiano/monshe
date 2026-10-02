@@ -580,11 +580,15 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   white-space:pre-wrap;word-break:break-word}
 .msg-ai{display:flex;gap:13px}
 .ai-avatar{flex-shrink:0;width:34px;height:34px;position:relative}
+/* BF: ДЛИННЫЙ ОТВЕТ — круглешок всегда на виду: аватар прилипает к верху
+   экрана и едет рядом, пока хоть часть ответа в кадре. У истории всё
+   как было — каждый круглешок живёт у своего сообщения */
+.msg-ai.live .ai-avatar{position:sticky;top:8px;z-index:2}
 /* AS/AY: КРУГЛЕШОК ОТВЕТА — ядро реактора без колец, живое: в покое дышит,
    ВЕСЬ ответ (мысли, инструменты, печать) живёт по-настоящему — меняет
    форму и размер, вспыхивает золотом в тон курсору, светится; в финале
    coreSettle мягко оседает в идеальный кружок. */
-.ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;
+.ai-core{position:absolute;left:50%;top:8px;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;
   border-radius:50%;background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
   box-shadow:0 0 10px rgba(0,212,255,.5),0 0 26px rgba(0,212,255,.22);
   /* BD: ВТОРОЙ FPS-КОРЕНЬ «комп лагает» (эра BB): на КАЖДОМ историческом
@@ -606,10 +610,11 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   transition:opacity .3s ease,transform .3s cubic-bezier(.65,0,.35,1)}
 /* BD: ФИГУРА ×2.1 — рост ТОЛЬКО в трансформациях, зато заметный; пока
    фигура держится, обычный такт приостановлен.
-   BE: СТЕКЛО — у фигуры ПОЛУПРОЗРАЧНАЯ поверхность: сквозь неё видно
-   чат, рёбра читаются на просвет (1D-линии — сплошные и ярче) */
+   BF: фигура — ОБЪЁМНОЕ ТЕЛО: сплошной градиент от блика к тени читается
+   как предмет, а не «штука на фоне круга»; рёбра и задние грани дорисовывают
+   объём, 1D-линии — сплошные светлые */
 .msg-ai.live .ai-core.shaped{transform:scale(2.1);animation:none;
-  background:linear-gradient(155deg,rgba(130,228,255,.30),rgba(0,150,235,.10))}
+  background:linear-gradient(148deg,#eafaff 0%,#a5e3ff 34%,#3ea8dd 68%,#0a6ea6 100%)}
 /* BD: ПРУЖИНА — расширяется ДО фигуры пружинисто (перелёт и ужатие)
    и сжимается обратно так же упруго. Плавно, без суеты: .7с/.65с */
 .msg-ai.live .ai-core.sh-in{animation:dotMorphIn .7s cubic-bezier(.42,1.3,.45,1)}
@@ -621,7 +626,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   62%{transform:scale(2.42)}
   84%{transform:scale(2.0)}
   100%{transform:scale(2.1);
-    background:linear-gradient(155deg,rgba(130,228,255,.30),rgba(0,150,235,.10));
+    background:linear-gradient(148deg,#eafaff 0%,#a5e3ff 34%,#3ea8dd 68%,#0a6ea6 100%);
     filter:drop-shadow(0 0 8px var(--cy)) drop-shadow(0 0 22px rgba(0,212,255,.7))}}
 @keyframes dotMorphOut{
   0%{transform:scale(2.1);
@@ -665,7 +670,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .ai-core.sh-tess::before,.ai-core.sh-penta::before,.ai-core.sh-cube::before,
 .ai-core.sh-tetra::before,.ai-core.sh-crystal::before,.ai-core.sh-star::before,
 .ai-core.sh-hex::before,.ai-core.sh-cross::before{inset:0;border:0;border-radius:0;
-  transform:none;opacity:0;background:rgba(178,238,255,.95);
+  transform:none;opacity:0;background:rgba(236,250,255,.95);
   transition:opacity .35s ease .55s}
 .ai-core.sh-tess::before{clip-path:polygon(evenodd,8% 8%,40% 8%,60% 8%,92% 8%,92% 40%,92% 60%,
   92% 92%,60% 92%,40% 92%,8% 92%,8% 60%,8% 40%,21.4% 21.4%,43.2% 21.4%,56.8% 21.4%,78.6% 21.4%,
@@ -698,7 +703,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    обратная грань, у кристалла — пояс-экватор */
 .ai-core.sh-tess::after,.ai-core.sh-penta::after,.ai-core.sh-cube::after,
 .ai-core.sh-tetra::after,.ai-core.sh-crystal::after{content:'';position:absolute;inset:0;
-  background:rgba(190,240,255,.9);opacity:0;transition:opacity .35s ease .6s}
+  background:rgba(8,48,78,.42);opacity:0;transition:opacity .35s ease .6s}
 .ai-core.sh-tess::after{clip-path:polygon(18% 25%,25% 18%,50% 43%,75% 18%,82% 25%,57% 50%,
   82% 75%,75% 82%,50% 57%,25% 82%,18% 75%,43% 50%)}
 .ai-core.sh-penta::after{clip-path:polygon(50% 24%,55.8% 42%,74.7% 42%,59.4% 53.1%,65.3% 71%,
@@ -719,21 +724,22 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .msg-ai.live .ai-core.shaped::after{opacity:.85}
 .msg-ai.live .ai-core.sh-out::before,.msg-ai.live .ai-core.sh-out::after{
   opacity:0;transition:opacity .2s ease}
-/* BE: ВРАЩЕНИЕ — пока фигура держится, она КРУТИТСЯ, и каждый раз в
-   другой плоскости: экрана (Z), перпендикулярная экрану (X), под углом
-   (диагональ), вокруг вертикальной оси (Y). Оборот успевает закончиться
-   чуть раньше конца показа — класс снимается без рывка */
-.msg-ai.live .ai-core.rot-z{animation:spinZ 1.42s linear}
-.msg-ai.live .ai-core.rot-x{animation:spinX 1.42s ease-in-out}
-.msg-ai.live .ai-core.rot-y{animation:spinY 1.42s ease-in-out}
-.msg-ai.live .ai-core.rot-d{animation:spinD 1.42s ease-in-out}
-@keyframes spinZ{from{transform:scale(2.1) rotate(0deg)}to{transform:scale(2.1) rotate(360deg)}}
+/* BF: ВРАЩЕНИЕ — пока фигура держится, она МЕДЛЕННО и плавно
+   доворачивается (~125–140° за все полторы секунды, ease-in-out),
+   каждый раз в другой плоскости: экрана (Z), перпендикулярная экрану
+   (X), под углом (диагональ), вокруг вертикальной оси (Y). Класс
+   снимается в конце доворота — без рывка */
+.msg-ai.live .ai-core.rot-z{animation:spinZ 1.5s ease-in-out}
+.msg-ai.live .ai-core.rot-x{animation:spinX 1.5s ease-in-out}
+.msg-ai.live .ai-core.rot-y{animation:spinY 1.5s ease-in-out}
+.msg-ai.live .ai-core.rot-d{animation:spinD 1.5s ease-in-out}
+@keyframes spinZ{from{transform:scale(2.1) rotate(0deg)}to{transform:scale(2.1) rotate(140deg)}}
 @keyframes spinX{from{transform:perspective(150px) scale(2.1) rotateX(0deg)}
-  to{transform:perspective(150px) scale(2.1) rotateX(-360deg)}}
+  to{transform:perspective(150px) scale(2.1) rotateX(-125deg)}}
 @keyframes spinY{from{transform:perspective(150px) scale(2.1) rotateY(0deg)}
-  to{transform:perspective(150px) scale(2.1) rotateY(360deg)}}
+  to{transform:perspective(150px) scale(2.1) rotateY(125deg)}}
 @keyframes spinD{from{transform:perspective(150px) scale(2.1) rotate3d(.5,1,.35,0deg)}
-  to{transform:perspective(150px) scale(2.1) rotate3d(.5,1,.35,360deg)}}
+  to{transform:perspective(150px) scale(2.1) rotate3d(.5,1,.35,125deg)}}
 /* BD: всплеск на видимых действиях (инструмент, шаг, файл) */
 .msg-ai.live .ai-core.dot-act{animation:coreBurst 1.15s cubic-bezier(.65,0,.35,1)}
 .ai-core.dot-settle{animation:coreSettle .55s cubic-bezier(.65,0,.35,1) forwards}
@@ -1182,24 +1188,39 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .reply-chip:hover .rc-go{color:var(--cy2)}
 .rc-ed:hover{color:var(--cy2);background:rgba(0,200,240,.16)}
 @keyframes chipIn{from{opacity:0;transform:translateY(8px) scale(.94)}}
-/* BE: строка инструмента В ЧАТЕ — включение/отключение агента и
+/* BF: строка инструмента В ЧАТЕ — включение/отключение агента и
    компьютера остаётся в ленте (не всплывашкой): видно, когда режим
-   заработал и когда его сняли. Иконка режима + название + состояние,
-   без времени; цвет состояния различает вкл/выкл */
-.tool-mark{display:flex;align-items:center;gap:8px;width:max-content;
-  margin:10px auto;padding:4px 14px;border-radius:999px;
-  font-size:11.5px;letter-spacing:.05em;color:var(--tx2);
-  background:rgba(120,160,190,.07);border:1px solid rgba(120,170,200,.14);
+   заработал и когда его сняли. Дизайн скопирован с предлагашек-тумблеров
+   (иконка в скруглённой плитке + название), но заметно МЕНЬШЕ и тише:
+   без рамки и фона, мелкий шрифт, полупрозрачно */
+.tool-mark{display:inline-flex;align-items:center;gap:7px;width:max-content;
+  margin:7px auto;padding:2px 10px 2px 3px;
+  font-size:10.5px;letter-spacing:.04em;color:var(--tx3);opacity:.78;
   animation:toolMarkIn .45s cubic-bezier(.3,.7,.3,1)}
-.tool-mark .tm-ico{display:flex;width:15px;height:15px;color:var(--cy2)}
-.tool-mark .tm-ico svg{width:100%;height:100%}
-.tool-mark .tm-ico.ag{color:#e3798d}
-.tool-mark .tm-name{font-weight:600}
-.tool-mark .tm-state{opacity:.9}
-.tool-mark.on .tm-state{color:var(--cy2)}
-.tool-mark.off{opacity:.66}
+.tool-mark .tm-ico{display:grid;place-items:center;width:19px;height:19px;
+  border-radius:6px;flex-shrink:0;
+  background:color-mix(in srgb,var(--tmc,#3aa0c8) 13%,transparent);
+  color:var(--tmc,#3aa0c8)}
+.tool-mark .tm-ico svg{width:12px;height:12px}
+.tool-mark.ag{--tmc:#c4536b}
+.tool-mark .tm-name{font-weight:600;color:var(--tx2)}
+.tool-mark.on .tm-state{color:var(--tmc,#3aa0c8)}
 .tool-mark.off .tm-state{color:var(--tx3)}
 @keyframes toolMarkIn{from{opacity:0;transform:translateY(6px)}}
+/* BF: МАТЕМАТИЧЕСКАЯ ПАНЕЛЬ — модель пишет \[ ... \]; интерфейс печатает
+   это сразу математикой: чуть увеличенный математический шрифт,
+   таб-смещение слева, тихая подложка. Открытая (недопечатанная) формула
+   помечена math-live */
+.math-block{font-family:'STIX Two Math','Cambria Math','Latin Modern Math',
+    'Times New Roman',Georgia,serif;
+  font-size:1.13em;line-height:1.7;color:#dbeaf6;margin:8px 0;
+  padding:5px 14px 5px 16px;border-radius:4px 12px 12px 4px;
+  border-left:2px solid rgba(0,190,255,.35);background:rgba(0,150,235,.05);
+  white-space:pre-wrap;overflow-x:auto;word-break:break-word}
+.math-block.math-live{border-left-color:rgba(0,190,255,.6)}
+.math-inline{font-family:'STIX Two Math','Cambria Math','Latin Modern Math',
+    'Times New Roman',Georgia,serif;
+  font-size:1.08em;color:#dbeaf6;padding:0 2px}
 /* заглушки на время, пока подсказки считаются */
 .reply-skel{width:96px;height:29px;border-radius:999px;border:1px solid var(--line2);
   position:relative;overflow:hidden;background:rgba(0,200,240,.05)}

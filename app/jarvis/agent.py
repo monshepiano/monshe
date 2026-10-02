@@ -1231,7 +1231,7 @@ def suggest_replies_ai(user_text: str, answer: str,
     Дешёвая nano-модель видит ПОСЛЕДНИЕ РЕПЛИКИ переписки (а не одну пару
     вопрос-ответ) и живой текст ответа, и предлагает три следующие реплики
     пользователя — настолько естественные, что разговор можно вести одними
-    подсказками. Таймаут 5 секунд: подсказки обязаны появиться сразу после
+    подсказками. Таймаут 9 секунд: подсказки обязаны появиться сразу после
     печати. Всё, что не похоже на живую фразу, отсеивается; сбой, мусор или
     пустой массив честно падает в локальный запас: после AGENT-прогона —
     проактивные шаги, в разговоре — разговорные продолжения. Подсказки —
@@ -1281,22 +1281,23 @@ def suggest_replies_ai(user_text: str, answer: str,
                         "по направлению. Ответь ТОЛЬКО JSON-массивом из "
                         "трёх строк."},
             {"role": "user", "content": "\n\n".join(parts)},
-        ], tier="nano", timeout=5, operation="reply_suggestions_ai")
+        ], tier="nano", timeout=9, operation="reply_suggestions_ai")
         content = raw.get("content") if isinstance(raw, dict) else str(raw)
         raw_text = str(content or "")
         parsed = [x for x in _parse_reply_suggestions(raw_text)
                   if _suggestion_usable(x)]
         # BE: пустой массив — это СБОЙ подсказок, а не «чипов не будет»:
         # подсказки неотъемлемы, проваливаемся в запас ниже
-        # BA: ТОНКИЙ ДИАЛОГ (приветствие, вежливость — предмета нет) требует
-        # от реплики общего значимого слова с перепиской: иначе «умный дом»
-        # после «привет». Содержательный диалог достаточно богат предметом —
-        # верим промпту и не режем живые продолжения
+        # BA/BF: ТОНКИЙ ДИАЛОГ (приветствие) — тема скудная, и фильтр общих
+        # слов выкидывал ВСЕ живые реплики, оставляя шаблон. Промпт стал
+        # сильнее (запрещает чужие темы и завершения) — если nano вернула
+        # пригодные реплики, а фильтр опустел, верим промпту и модели
         topic = _topic_words("\n".join(lines) + "\n" + tail + "\n" + q)
-        if len(topic) < 3:
-            items = [x for x in parsed if _topic_words(x) & topic]
-        else:
+        if len(topic) >= 3:
             items = parsed
+        else:
+            themed = [x for x in parsed if _topic_words(x) & topic]
+            items = themed or parsed
         if items:
             span.finish("ok", count=len(items))
             return items[:3]

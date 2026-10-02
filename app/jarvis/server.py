@@ -453,6 +453,18 @@ class Handler(BaseHTTPRequestHandler):
                 schedule=body.get("schedule") or "",
                 chat_id=body.get("chat_id") or "")
             return self._json({"ok": True, "task": task})
+        if path == "/api/tasks/update":
+            # BF: правка задачи AUTO — как сценарии. Живой прогон править
+            # нельзя: он пишет события и результат прямо сейчас
+            task = auto.update_background_task(
+                body.get("task_id", ""),
+                body.get("title") or "",
+                body.get("prompt") or "",
+                body.get("schedule") or "")
+            if not task:
+                return self._json({"ok": False,
+                                   "error": "Задача не найдена или уже выполняется"})
+            return self._json({"ok": True, "task": task})
         if path == "/api/tasks/run":
             started = auto.launch_task(body.get("task_id", ""), manual=True)
             return self._json({"ok": started,

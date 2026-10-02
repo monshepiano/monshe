@@ -2424,7 +2424,7 @@ function testIterationAJContracts() {
     (js.match(/<animate/g) || []).length === 0 &&
     !/sigil/i.test(js) && !/sigil/i.test(css),
     'AS: answer avatar is a live core dot; the relay saga is gone for good');
-  assert(css.includes('.ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;') &&
+  assert(css.includes('.ai-core{position:absolute;left:50%;top:8px;width:13px;height:13px;') &&
     !css.includes('coreBreathe') &&
     css.includes('animation:coreLive 4.6s ease-in-out infinite}'),
     'AS/AY/BC/BD: history cores are STATIC and cheap; only the live answer breathes');
@@ -2598,7 +2598,7 @@ function testIterationBCContracts() {
     'BC/BD: no done frame; history cores static; hover warmup gone entirely');
   // BC/BD: фигуры ×2.1 с пружиной и золотом в момент морфа
   assert(css.includes('.msg-ai.live .ai-core.shaped{transform:scale(2.1);animation:none;') &&
-    css.includes('linear-gradient(155deg,rgba(130,228,255,.30)') &&
+    css.includes('linear-gradient(148deg,#eafaff') &&
     css.includes('transform:scale(2.42)') && css.includes('transform:scale(.92)') &&
     css.includes('@keyframes dotMorphIn{') && css.includes('@keyframes dotMorphOut{'),
     'BC/BD: shapes are 2.1x with a springy gold-lit morph in and out');
@@ -2652,7 +2652,7 @@ function testIterationBEContracts() {
     css.includes('.ai-core.sh-tess::after{clip-path:polygon(') &&
     css.includes('.msg-ai.live .ai-core.sh-line,.msg-ai.live .ai-core.sh-wave,' +
       '.msg-ai.live .ai-core.sh-zig{') &&
-    css.includes('linear-gradient(155deg,rgba(130,228,255,.30)'),
+    css.includes('linear-gradient(148deg,#eafaff'),
     'BE: shapes are few but readable — edges, glass surface, back edges');
   // BE: вращение во время показа — 4 плоскости, часто (3.5–8с)
   assert(js.includes("const DOT_SPINS = ['rot-z', 'rot-x', 'rot-y', 'rot-d'];") &&
@@ -2666,7 +2666,7 @@ function testIterationBEContracts() {
   assert(js.includes('function chaseBottom(') &&
     js.includes('Math.max(3, Math.ceil(gap * 0.26))') &&
     js.includes('if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }') &&
-    js.includes('if (box.scrollHeight - top - box.clientHeight < 24) run.followOutput = true;'),
+    js.includes('if (h - top - box.clientHeight < 24) run.followOutput = true;'),
     'BE: smooth chase-scroll; stickiness only at the very bottom');
   // BE: агент и компьютер — строка в чате, не всплывашка
   assert(js.includes('function toolLine(') &&
@@ -2676,6 +2676,50 @@ function testIterationBEContracts() {
     !js.includes('Агентский режим включён') && !js.includes('Готов управлять') &&
     css.includes('.tool-mark{'),
     'BE: tool toggles leave a stylish line in the chat, not a toast');
+}
+
+function testIterationBFContracts() {
+  // BF: задачи AUTO открываются и редактируются — как сценарии
+  assert(js.includes('function openTask(') && js.includes('function editTask(') &&
+    js.includes("card.onclick = () => openTask(t);") &&
+    js.includes("api('/api/tasks/update'") &&
+    js.split('function paintTaskCard(')[1].split('\nfunction ')[0]
+      .includes("mk('Редактировать', '', () => { editTask(t); }, st === 'running');") &&
+    pyServer.includes('if path == "/api/tasks/update":'),
+    'BF: AUTO tasks open and edit — same affordances as scenarios');
+  // BF: подсказки после КАЖДОГО ответа; Enter не прячет чипы
+  assert(js.includes('ui.chatId === activeChatId()') &&
+    !js.split("ed.addEventListener('click'")[1].split('chip.appendChild')[0]
+      .includes('box.hidden = true') &&
+    pyAgent.split('def suggest_replies_ai(')[1].split('\ndef ')[0]
+      .includes('items = themed or parsed'),
+    'BF: chips refresh after every answer; Enter keeps them on screen');
+  // BF: круглешок выше (уровень JARVIS), sticky в длинном ответе, тело объёмное
+  assert(css.includes('.ai-core{position:absolute;left:50%;top:8px;width:13px;height:13px;') &&
+    css.includes('.msg-ai.live .ai-avatar{position:sticky;top:8px;z-index:2}') &&
+    css.includes('linear-gradient(148deg,#eafaff') &&
+    css.includes('.msg-ai.live .ai-core.rot-z{animation:spinZ 1.5s ease-in-out}') &&
+    css.includes('rotate(140deg)'),
+    'BF: the dot sits level with the JARVIS label, sticks while reading, shapes are solid bodies');
+  // BF: строка инструмента — робот с предлагашек, меньше и тише
+  const tl = js.split('function toolLine(')[1].split('\nfunction ')[0];
+  assert(tl.includes('<rect x="5" y="8" width="14" height="11" rx="3"/>') &&
+    tl.includes('<circle cx="12" cy="3.6" r="1.3"/>') &&
+    css.includes('.tool-mark .tm-ico{display:grid;place-items:center;width:19px;height:19px;') &&
+    js.split('function placeDaySeparator(')[1].split('\nfunction ')[0]
+      .includes("prev.classList.contains('tool-mark')"),
+    'BF: tool lines wear the robot glyph, quieter design, no stray date separator');
+  // BF: агентский скролл честный — clamp свёртки и force
+  assert(js.includes('if (h < st.lastH - 2) {') &&
+    js.includes('const gone = !!(run && run.followOutput === false);') &&
+    js.includes('if (!gone && (force || run || near)) {'),
+    'BF: folding clamp is not a user escape; force never drags a reader who left');
+  // BF: математическая панель — с открывающей скобки, живьём
+  const markdown = fs.readFileSync(path.join(root, 'app/jarvis/web/js/markdown.js'), 'utf8');
+  assert(markdown.includes('math-block') && markdown.includes('math-live') &&
+    js.split('function renderTyped(')[1].split('\nfunction ')[0].includes('mathOpen') &&
+    css.includes(".math-block{font-family:'STIX Two Math','Cambria Math'"),
+    'BF: \\[ ... \\] prints as a math panel the moment it starts');
 }
 
 function testIterationAWContracts() {
@@ -2704,7 +2748,7 @@ function testIterationAUContracts() {
       .includes('const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));'),
     'AV: classic speeds are back; the per-frame cap now follows real frame time');
   // AU: видимый номер сборки — всегда ясно, какой билд на экране
-  assert(html.includes('<span class="ver-chip">b62</span>') &&
+  assert(html.includes('<span class="ver-chip">b63</span>') &&
     css.includes('.ver-chip{align-self:center;'),
     'AU: the build number is visible in the top bar');
   // AU: призрак-надпись физически не может растянуться на весь экран
@@ -2759,7 +2803,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.62'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.63'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -2798,7 +2842,7 @@ function testIterationAQContracts() {
     thinkCase.includes('node.body.insertBefore(qn, node.body.firstChild)'),
     'AQ: whenever the thought appears, it opens the answer — never hides at the bottom');
   // AS: покой — живое дыхание круглешка (эстафеты и стали больше нет)
-  assert(css.includes('.ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;') &&
+  assert(css.includes('.ai-core{position:absolute;left:50%;top:8px;width:13px;height:13px;') &&
     css.includes('@keyframes coreLive{') &&
     !css.includes('grayscale(.88) brightness(1.32)'),
     'AS: the core dot is alive — breathe at rest, pulse while printing');
@@ -3066,8 +3110,9 @@ function testIterationABContracts() {
   testIterationBCContracts();
   testIterationBDContracts();
   testIterationBEContracts();
+  testIterationBFContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 42 regression groups passed');
+  console.log('package28_frontend_runtime: 43 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

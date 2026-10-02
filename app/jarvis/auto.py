@@ -497,6 +497,42 @@ def create_background_task(title: str, prompt: str, schedule: str = "",
     return task
 
 
+def update_background_task(task_id: str, title: str, prompt: str,
+                           schedule: str) -> Optional[Dict[str, Any]]:
+    """BF: правка задачи AUTO из интерфейса — как сценарии.
+
+    Работает только по НЕ работающей в данный момент задаче: живой прогон
+    пишет события и результат, правка посреди него ломала бы отчёт.
+    Расписание пересчитывается по тем же правилам, что и при создании:
+    «every 30m» снова уходит в scheduled, пустое — в queued.
+    """
+    task = db.get_task(task_id)
+    if not task:
+        return None
+    if task.get("status") == "running":
+        return None
+    fields: Dict[str, Any] = {
+        "title": (title or task.get("title") or "Задача").strip() or "Задача",
+        "prompt": (prompt or task.get("prompt") or "").strip(),
+        "schedule": (schedule or "").strip(),
+    }
+    nxt = parse_schedule(fields["schedule"])
+    if task.get("status") == "paused":
+        resume = task.get("resume_status") or ("scheduled" if nxt else "queued")
+        if nxt:
+            fields.update(resume_status=resume, next_run=nxt)
+        else:
+            fields.update(resume_status="queued", next_run="")
+    else:
+        wanted = "scheduled" if nxt and nxt > time.time() + 0.5 else "queued"
+        if wanted == "scheduled":
+            fields.update(status="scheduled", resume_status="", next_run=nxt)
+        else:
+            fields.update(status="queued", next_run="")
+    db.update_task(task_id, **fields)
+    return db.get_task(task_id)
+
+
 # ------------------------------------------------ распознавание «в фон?»
 _UNIT_WORDS = {
     "сек": 1, "секунд": 1, "секунды": 1, "секунду": 1, "сек.": 1, "s": 1, "sec": 1,

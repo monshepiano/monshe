@@ -3253,7 +3253,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.62", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.63", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3867,7 +3867,7 @@ class IterationAJTests(unittest.TestCase):
         self.assertNotIn("relayFlick", js)
         self.assertNotIn("relay", css)
         # круглешок живой: дышит в покое, пульсирует при печати (чистый CSS)
-        self.assertIn(".ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;", css)
+        self.assertIn(".ai-core{position:absolute;left:50%;top:8px;width:13px;height:13px;", css)
         # BD: история статична И дешёвая; дышит только текущий ответ
         self.assertNotIn("coreBreathe", css)
         self.assertIn("animation:coreLive 4.6s ease-in-out infinite}", css)
@@ -4589,8 +4589,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.62", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.62", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.63", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.63", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4724,7 +4724,7 @@ class IterationAUTests(unittest.TestCase):
     def test_au3_version_chip(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b62</span>', html)
+        self.assertIn('<span class="ver-chip">b63</span>', html)
         self.assertIn(".ver-chip{align-self:center;", css)
 
     def test_au4_flight_waits_for_scroll(self) -> None:
@@ -5025,7 +5025,9 @@ class IterationBATests(unittest.TestCase):
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
         self.assertIn("def _topic_words(", src)
         self.assertIn("_SUGGEST_STOPWORDS", src)
-        self.assertIn("items = [x for x in parsed if _topic_words(x) & topic]", src)
+        # BF: скудная тема больше не выкидывает живые реплики в шаблон
+        self.assertIn("themed = [x for x in parsed if _topic_words(x) & topic]", src)
+        self.assertIn("items = themed or parsed", src)
         # BE: модель ушла в сторону — тоже сбой: запас вместо чужой темы
         self.assertIn('span.finish("off_topic")', src)
         # BE: подсказки ВСЕГДА — финал функции не возвращает пусто
@@ -5182,9 +5184,9 @@ class IterationBCTests(unittest.TestCase):
         self.assertIn("const DOT_MORPH_MS = 700;", js)
         self.assertIn("const DOT_MORPH_OUT_MS = 650;", js)
         self.assertIn("const DOT_HOLD_MS = 1500;", js)
-        # BD: фигура заметно больше круга (×2.1); BE: поверхность — стекло
+        # BD: фигура заметно больше круга (×2.1); BF: ОБЪЁМНОЕ ТЕЛО
         self.assertIn(".msg-ai.live .ai-core.shaped{transform:scale(2.1);animation:none;", css)
-        self.assertIn("linear-gradient(155deg,rgba(130,228,255,.30)", css)
+        self.assertIn("linear-gradient(148deg,#eafaff", css)
         # пружина: перелёт 2.42 -> 2.1; обратно присел 0.92 -> 1
         self.assertIn("transform:scale(2.42)", css)
         self.assertIn("transform:scale(.92)", css)
@@ -5321,8 +5323,8 @@ class IterationBETests(unittest.TestCase):
         self.assertEqual(css.count("polygon(evenodd,"), 8)
         self.assertIn(".ai-core.sh-tess::after{clip-path:polygon(", css)
         self.assertIn(".ai-core.sh-cube::after{clip-path:polygon(", css)
-        # полупрозрачная поверхность фигуры
-        self.assertIn("linear-gradient(155deg,rgba(130,228,255,.30)", css)
+        # BF: объёмное тело — сплошной градиент от блика к тени
+        self.assertIn("linear-gradient(148deg,#eafaff", css)
         # 1D — сплошные светлые линии
         self.assertIn(".msg-ai.live .ai-core.sh-line,.msg-ai.live .ai-core.sh-wave,"
                       ".msg-ai.live .ai-core.sh-zig{", css)
@@ -5345,7 +5347,7 @@ class IterationBETests(unittest.TestCase):
         # наш догоняющий кадр scrollTop уменьшить не может
         self.assertIn("if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }", js)
         # вернулся до упора вниз — прилипает снова
-        self.assertIn("if (box.scrollHeight - top - box.clientHeight < 24) run.followOutput = true;", js)
+        self.assertIn("if (h - top - box.clientHeight < 24) run.followOutput = true;", js)
         # зона у дна без активного run-а — скромная
         self.assertIn("const near = box.scrollHeight - box.scrollTop - box.clientHeight < 160;", js)
 
@@ -5362,6 +5364,101 @@ class IterationBETests(unittest.TestCase):
         # стильная строка: иконка + название + состояние, без времени
         self.assertIn(".tool-mark{", css)
         self.assertIn(".tool-mark.off .tm-state{color:var(--tx3)}", css)
+
+
+class IterationBFTests(unittest.TestCase):
+    """BF (beta.63): задачи AUTO открываются и редактируются (как сценарии);
+    подсказки пишутся после КАЖДОГО ответа, Enter не прячет чипы, скудная
+    тема не выкидывает живые реплики в шаблон; круглешок выше (уровень
+    JARVIS), прилипает к верху в длинном ответе, фигуры — объёмные тела,
+    вращение медленное; строка инструмента — робот с предлагашек, меньше
+    и тише, без лишнего разделителя даты; агентский скролл честный
+    (clamp свёртки не считается уходом, force не тащит ушедшего);
+    математика \[ ... \] печатается панелью сразу с открывающей скобки."""
+
+    def test_bf1_auto_task_editable(self) -> None:
+        from jarvis import auto as auto_mod
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn('if path == "/api/tasks/update":', srv)
+        self.assertIn("auto.update_background_task(", srv)
+        # работающую задачу править нельзя — живой прогон пишет результат
+        fn = Path("app/jarvis/auto.py").read_text(encoding="utf-8") \
+            .split("def update_background_task(")[1].split("\ndef ")[0]
+        self.assertIn('if task.get("status") == "running":', fn)
+        self.assertIn("parse_schedule(fields[\"schedule\"])", fn)
+        # фронт: карточка открывается, форма редактирования заполнена
+        self.assertIn("function openTask(", js)
+        self.assertIn("function editTask(", js)
+        self.assertIn("card.onclick = () => openTask(t);", js)
+        self.assertIn("api('/api/tasks/update'", js)
+        paint = js.split("function paintTaskCard(")[1].split("\nfunction ")[0]
+        self.assertIn("mk('Редактировать', '', () => { editTask(t); }, st === 'running');", paint)
+
+    def test_bf2_replies_every_answer_and_no_templates(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        ag = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        # подсказки заказываются даже если нода ответа умерла (перезашёл в диалог)
+        self.assertIn("ui.chatId === activeChatId()", js)
+        # Enter кладёт реплику в поле, но чипы НЕ исчезают
+        ed = js.split("ed.addEventListener('click'")[1].split("chip.appendChild")[0]
+        self.assertNotIn("box.hidden = true", ed)
+        # скудная тема не выкидывает живые реплики; таймаут nano 9с
+        fn = ag.split("def suggest_replies_ai(")[1].split("\ndef ")[0]
+        self.assertIn("items = themed or parsed", fn)
+        self.assertIn('tier="nano", timeout=9', fn)
+
+    def test_bf3_dot_higher_always_visible_solid(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # круглешок на уровне надписи JARVIS
+        self.assertIn(".ai-core{position:absolute;left:50%;top:8px;width:13px;height:13px;", css)
+        # длинный ответ: аватар прилипает к верху — круглешок всегда в кадре
+        self.assertIn(".msg-ai.live .ai-avatar{position:sticky;top:8px;z-index:2}", css)
+        # фигура — ОБЪЁМНОЕ ТЕЛО (сплошной градиант блика к тени)
+        self.assertIn("linear-gradient(148deg,#eafaff 0%,#a5e3ff 34%,#3ea8dd 68%,#0a6ea6 100%)", css)
+        # вращение медленное и плавное: ~125-140° за полторы секунды
+        self.assertIn(".msg-ai.live .ai-core.rot-z{animation:spinZ 1.5s ease-in-out}", css)
+        self.assertIn("rotate(140deg)", css)
+        self.assertIn("rotateX(-125deg)", css)
+
+    def test_bf4_tool_line_robot_quiet(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        tl = js.split("function toolLine(")[1].split("\nfunction ")[0]
+        # робот — тот же, что в проактивном предложении о включении
+        self.assertIn('<rect x="5" y="8" width="14" height="11" rx="3"/>', tl)
+        self.assertIn('<circle cx="12" cy="3.6" r="1.3"/>', tl)
+        # меньше и незаметнее: тихая плитка-иконка, мелкий шрифт
+        self.assertIn(".tool-mark .tm-ico{display:grid;place-items:center;width:19px;height:19px;", css)
+        self.assertIn("font-size:10.5px;letter-spacing:.04em;color:var(--tx3);opacity:.78;", css)
+        # разделитель даты после строки инструмента не появляется
+        pds = js.split("function placeDaySeparator(")[1].split("\nfunction ")[0]
+        self.assertIn("prev.classList.contains('tool-mark')", pds)
+
+    def test_bf5_agent_scroll_honest(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # свёртка инструментов сжимает контент: clamp браузера НЕ считается
+        # уходом пользователя (высота при этом уменьшилась)
+        self.assertIn("if (h < st.lastH - 2) {", js)
+        # force-скроллы больше не тащат пользователя, явно ушедшего вверх
+        self.assertIn("const gone = !!(run && run.followOutput === false);", js)
+        self.assertIn("if (!gone && (force || run || near)) {", js)
+
+    def test_bf6_math_panel(self) -> None:
+        md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # распознавание \[ ... \] и \( ... \), в т.ч. НЕЗАКРЫТАЯ формула
+        self.assertIn("math-block", md)
+        self.assertIn("math-live", md)
+        self.assertIn("math-inline", md)
+        # печать не замораживает открытую формулу
+        rt = js.split("function renderTyped(")[1].split("\nfunction ")[0]
+        self.assertIn("mathOpen", rt)
+        # дизайн: математический шрифт, чуть крупнее, таб-смещение
+        self.assertIn(".math-block{font-family:'STIX Two Math','Cambria Math'", css)
+        self.assertIn("font-size:1.13em", css)
+        self.assertIn("padding:5px 14px 5px 16px;", css)
 
 
 if __name__ == "__main__":

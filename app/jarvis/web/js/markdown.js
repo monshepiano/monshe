@@ -27,7 +27,37 @@
     return s;
   }
 
+  /* BF: МАТЕМАТИКА. Модель пишет формулы как \[ ... \] (и \( ... \)
+     на строку). Рендерер заранее делит текст на обычный markdown и
+     математические фрагменты: формула попадает в свою панель СРАЗУ —
+     как только напечаталась открывающая скобка, ещё до закрытия
+     (незакрытый хвост помечен math-live). После закрытия остальной
+     текст печатается как обычно. */
+  var MATH_RE = /\\\[([\s\S]*?)(\\\]|$)|\\\(([\s\S]*?)(\\\)|$)/g;
+
   function render(src) {
+    if (!src) return '';
+    src = String(src);
+    MATH_RE.lastIndex = 0;
+    var m, last = 0, out = [], hit = false;
+    while ((m = MATH_RE.exec(src))) {
+      hit = true;
+      if (m.index > last) out.push(_render(src.slice(last, m.index)));
+      if (m[1] !== undefined) {
+        out.push('<div class="math-block' + (m[2] ? '' : ' math-live') + '">' +
+          esc(m[1].trim()) + '</div>');
+      } else {
+        out.push('<span class="math-inline' + (m[4] ? '' : ' math-live') + '">' +
+          esc((m[3] || '').trim()) + '</span>');
+      }
+      last = MATH_RE.lastIndex;
+    }
+    if (!hit) return _render(src);
+    if (last < src.length) out.push(_render(src.slice(last)));
+    return out.join('');
+  }
+
+  function _render(src) {
     if (!src) return '';
     var lines = String(src).replace(/\r\n/g, '\n').split('\n');
     var out = [], i = 0;
