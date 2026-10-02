@@ -495,15 +495,20 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   background-clip:text;color:transparent;font-weight:600}
 .hello-sub{color:var(--tx2);font-size:13.5px;margin:0 0 26px}
 /* шесть подсказок — две ровные строки по три, без дыр во второй строке */
-.suggestions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;grid-auto-rows:1fr}
+.suggestions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 @media (max-width:900px){.suggestions{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:560px){.suggestions{grid-template-columns:1fr}}
 .sugg{padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);
   cursor:pointer;text-align:left;transition:.25s;font-size:12.5px;color:var(--tx2);animation:popIn .45s both}
-/* AM: прежний свободный вид (текст целиком, высокие прямыеугольные плитки),
-   но все ОДИНАКОВЫЕ: строки сетки равны самой высокой (grid-auto-rows:1fr
-   в .suggestions) — ничего не обрывается и не сплющивается */
-.sugg b{display:block;color:var(--cy);font-size:12px;margin-bottom:4px;font-weight:600}
+/* AN: ИЗНАЧАЛЬНЫЙ свободный вид — как было до выравнивателей: текст
+   целиком, высота строки сетки задаётся самой высокой плиткой СВОЕГО
+   ряда (без grid-auto-rows:1fr — он тянул ВСЕ строки под самую высокую
+   плитку, и в коротких оставались поля сверху и снизу). Внутри ряда
+   плитки всё равно одинаковые: grid растягивает их по строке сам. */
+.sugg b{display:block;color:var(--cy);font-size:12px;margin-bottom:4px;font-weight:600;
+  /* заголовок — одна строка; если не влезает — мягкое троеточие,
+     а не обрыв на середине слова */
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sugg:hover{border-color:var(--line2);background:rgba(0,212,255,.1);transform:translateY(-3px);
   box-shadow:0 10px 26px rgba(0,150,220,.16);color:#fff}
 /* карточки-подсказки чередуют оттенки */
@@ -1340,7 +1345,8 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   box-shadow:0 0 6px rgba(var(--sp),.28)}
 .budget-btn:not(.on):hover .budget-coin{color:rgba(var(--sp),.85)}
 
-/* ТУМБЛЕР AGENT — РЕЗИНКА. Наведение: круглёшек тянется вправо, замирает и
+/* ТУМБЛЕР AGENT — РЕЗИНКА. AN: наведение стало чуть неторопливее (1с —
+   резинка, .9с огонёк, 1.1с искра), но всё ещё быстрое. Круглёшек тянется вправо, замирает и
    РЫВКОМ — но плавно, как резинка — возвращается. Огонёк ЖИВЁТ ТОЛЬКО
    ВНУТРИ трека (track с overflow:hidden — за рамку его не видно), в конце
    он «вылетает» за правый край, растворяясь в обрезе, а СНАРУЖИ остаётся
@@ -1370,7 +1376,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   100%{transform:translateX(0);background:#8d4d5e;color:#1d060b}}
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)) i{
   /* цвета едут внутри agKnobRubber: статичной подмены больше нет */
-  animation:agKnobRubber .8s cubic-bezier(.3,.7,.3,1) both}
+  animation:agKnobRubber 1s cubic-bezier(.3,.7,.3,1) both}
 /* огонёк: ЕЩЁ КРУПНЕЕ, сильно размыт, светится в стороны — движется бодро
    и тормозит ТОЛЬКО В КОНЦЕ, у правого края трека (слепая зона за круглёшком):
    сам он обрезан рамкой, снаружи живёт лишь его свечение. Пока курсор
@@ -1382,7 +1388,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
     а не фейерверк; замирает у правого края, чуть видный ВНУТРИ трека */
   background:radial-gradient(circle,rgba(255,150,168,.7),rgba(255,86,112,.38) 48%,transparent 78%);
   filter:blur(7px);
-  animation:agEmberRun .72s cubic-bezier(.3,.5,.35,1) both}
+  animation:agEmberRun .9s cubic-bezier(.3,.5,.35,1) both}
 @keyframes agEmberRun{
   0%{opacity:0;transform:translateX(0)}
   12%{opacity:.85;transform:translateX(4px)}
@@ -1392,7 +1398,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 /* свечение огонька: ЩЕДРЕЕ в стороны, СНАРУЖИ справа — box-shadow самого
    трека обрезкой не_clip-ится и живёт у правого края всё наведение */
 .agent-switch.ag-play .agent-switch-track:not(:has(input:checked)){
-  animation:agRestGlow .4s ease .5s both}
+  animation:agRestGlow .5s ease .6s both}
 @keyframes agRestGlow{to{box-shadow:inset 0 1px 5px rgba(0,0,0,.42),
   inset 14px 0 26px -8px rgba(255,86,112,.4)}}
 /* искра по контуру: один проход (no-repeat!), в конце замедляется и тает */
@@ -1401,7 +1407,7 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   pointer-events:none;
   background:linear-gradient(100deg,transparent 37%,rgba(255,84,112,.55) 50%,transparent 63%);
   background-size:250% 100%;background-repeat:no-repeat;
-  animation:agSparkRun .88s linear both;
+  animation:agSparkRun 1.1s linear both;
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude}
 @keyframes agSparkRun{

@@ -1583,7 +1583,7 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
   // возвращается, как под действием резинки; насыщенный огонёк уходит
   // за правый край (остаётся свечение справа), по контуру бежит ЯВНАЯ
   // искра насыщенного красного, в конце замедляется и гаснет.
-  assert(/animation:agKnobRubber \.8s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
+  assert(/animation:agKnobRubber 1s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
     /15%\{background:#a03c50;color:#1d060b\}/.test(css) &&
     /@keyframes agKnobRubber\{[\s\S]*?44%\{transform:translateX\(6px\);background:#c4475e;color:#1d060b\}/.test(css) &&
     /52%\{transform:translateX\(6px\)/.test(css) &&
@@ -1592,7 +1592,7 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
     /@keyframes agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:#8d4d5e;color:#1d060b\}\}/.test(css) &&
     !/agKnobRubber\{[\s\S]*?100%\{transform:translateX\(0\);background:var\(--tx3\)\}\}/.test(css),
     'the knob is ITS OLD GREY self, painting DARK bordo on the way right and unpainting on the way back, synced to the motion');
-  assert(/animation:agEmberRun \.72s cubic-bezier\(\.3,\.5,\.35,1\) both/.test(css) &&
+  assert(/animation:agEmberRun \.9s cubic-bezier\(\.3,\.5,\.35,1\) both/.test(css) &&
     /rgba\(255,150,168,\.7\),rgba\(255,86,112,\.38\) 48%/.test(css) &&
     /@keyframes agEmberRun\{[\s\S]*?40%\{transform:translateX\(14px\)\}[\s\S]*?70%\{transform:translateX\(21px\)\}[\s\S]*?100%\{opacity:\.85;transform:translateX\(26px\)\}\}/.test(css) &&
     /filter:blur\(7px\)/.test(css) &&
@@ -1600,9 +1600,9 @@ function testBudgetScenariosDraftsAndTailRaceContracts() {
     /\.agent-switch-track\{overflow:hidden\}/.test(css),
     'the ember is DIMMED to the background: bigger, blurrier, freezes at the right edge INSIDE the track');
   assert(/@keyframes agRestGlow\{to\{box-shadow:inset 0 1px 5px rgba\(0,0,0,\.42\),[\s\S]*?inset 14px 0 26px -8px rgba\(255,86,112,\.4\)\}\}/.test(css) &&
-    /animation:agRestGlow \.4s ease \.5s both/.test(css),
+    /animation:agRestGlow \.5s ease \.6s both/.test(css),
     'the ember glow is GENEROUS and stays outside at the right edge');
-  assert(/animation:agSparkRun \.88s linear both/.test(css) &&
+  assert(/animation:agSparkRun 1\.1s linear both/.test(css) &&
     /rgba\(255,84,112,\.55\) 50%/.test(css) &&
     /background-repeat:no-repeat/.test(css) &&
     /@keyframes agSparkRun\{[\s\S]*?0%\{background-position:135% 0;opacity:0\}[\s\S]*?100%\{background-position:-11% 0;opacity:0\}\}/.test(css) &&
@@ -1970,7 +1970,7 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   // огонёк живёт ВНУТРИ трека (overflow:hidden), свечение остаётся СНАРУЖИ
   // справа, искра — один проход с замедлением в конце
   assert(/\.agent-switch-track\{overflow:hidden\}/.test(css) &&
-    /\.agent-switch\.ag-play \.agent-switch-track:not\(:has\(input:checked\)\) i\{[\s\S]*?agKnobRubber \.8s/.test(css) &&
+    /\.agent-switch\.ag-play \.agent-switch-track:not\(:has\(input:checked\)\) i\{[\s\S]*?agKnobRubber 1s/.test(css) &&
     /sw\.classList\.remove\('ag-play'\);[\s\S]*?void sw\.offsetWidth;[\s\S]*?sw\.classList\.add\('ag-play'\);/.test(js) &&
     !/cooling/.test(js) &&
     !/:has\(input:checked\)\):hover i\{/.test(css),
@@ -1979,7 +1979,7 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   assert(spark && /background-repeat:no-repeat/.test(spark[1]) &&
     /rgba\(255,84,112,\.55\) 50%/.test(spark[1]),
     'the contour spark is a SINGLE pass (no-repeat), bright');
-  assert(/animation:agSparkRun \.88s linear both/.test(css) &&
+  assert(/animation:agSparkRun 1\.1s linear both/.test(css) &&
     /@keyframes agSparkRun\{[\s\S]*?100%\{background-position:-11% 0;opacity:0\}\}/.test(css) &&
     /92%\{background-position:-8% 0;opacity:1\}/.test(css) &&
     /40%\{background-position:40% 0\}/.test(css),
@@ -2397,7 +2397,7 @@ function testIterationADContracts() {
   assert(/transition:transform \.45s cubic-bezier\(\.3,\.6,\.3,1\)/.test(css) &&
     /\.agent-switch-track input:checked \+ i\{transform:translateX\(10px\)/.test(css) &&
     /left:5px;top:3px/.test(css) &&
-    /animation:agKnobRubber .8s/.test(css),
+    /animation:agKnobRubber 1s/.test(css),
     'AD9: agent toggle — 10px travel, 1.3s glide both ways, hover 1.5s');
 }
 
@@ -2426,6 +2426,58 @@ function testIterationAKContracts() {
     'AK: collapse arrow is an SVG chevron, perfectly centered');
   assert(/_with_reasoning_lang\(convo\)/.test(pyAgent),
     'AK: reasoning-language system note rides next to the last message');
+}
+
+function testIterationANContracts() {
+  // AN: СИГИЛ ЖИВ. В AL/AM вставка kick съела закрывающий `Z"/>` главного
+  // morph-animate: парсер склеивал обе анимации в одну мусорную с
+  // begin="indefinite" — фигура стояла намертво, селектор .sigil-kick
+  // ничего не находил. Структура проверяется явно, не только значения.
+  assert(js.includes('5.5Z"/><animate class="sigil-kick"') &&
+    (js.match(/<animate/g) || []).length === 3 &&
+    (js.match(/dur="9s"/g) || []).length === 2 &&
+    (js.match(/dur="0.9s"/g) || []).length === 1,
+    'AN: sigil main morph is CLOSED, kick is its sibling tag, 2x9s cycle + 0.9s kick');
+  // AN: ТУМБЛЕР ИГРАЕТ ВСЕГДА — даже если клик пришёлся на живую резинку.
+  // Круглёшок ведёт WAAPI от его текущего положения, той же кривой .45с.
+  const ch = js.split("$('#tgAgent').addEventListener('change'")[1].split('\n});')[0];
+  assert(/getComputedStyle\(knob\)\.transform/.test(ch) &&
+    /knob\.getAnimations\(\)\.forEach/.test(ch) &&
+    /knob\.animate\(/.test(ch) &&
+    /duration: 450/.test(ch) &&
+    /easing: 'cubic-bezier\(\.3,\.6,\.3,1\)'/u.test(ch) &&
+    /go\.onfinish/.test(ch),
+    'AN: toggle on/off always animates — WAAPI leads the knob over the rubber');
+  // AN: ХОД МЫСЛЕЙ — ЖИВОЙ ФОРМАТ: исполняем thinkFormat и сверяем строки
+  const fmt = loadFunctions(['thinkFormat'], {});
+  assert(fmt.thinkFormat('Хм... так... надо сделать. Проверю.') === 'Хм …\nтак …\nнадо сделать.\nПроверю.' &&
+    fmt.thinkFormat('Ищу новости. Читаю источники.') === 'Ищу новости.\nЧитаю источники.' &&
+    fmt.thinkFormat('т. д. и т. п. без изменений') === 'т. д. и т. п. без изменений' &&
+    fmt.thinkFormat('...........') === '…' &&
+    fmt.thinkFormat('') === '',
+    'AN: reasoning — one thought per line, dot-runs collapse to a single ellipsis');
+  const thinkType = extractFunction(js, 'thinkType');
+  assert(/el\._raw/.test(thinkType) && /thinkFormat\(el\._raw\)/.test(thinkType) &&
+    /thinkFormat\(el\._raw\)/.test(extractFunction(js, 'thinkFlush')) &&
+    /thinkFormat\(think\)/.test(extractFunction(js, 'restoreTrace')) &&
+    extractFunction(js, 'qtThinkFeed').includes('(?:\\.\\s*){2,}'),
+    'AN: thinkType/thinkFlush/restoreTrace/qtThinkFeed all render through the live format');
+  // AN: ПЛИТКИ — ИЗНАЧАЛЬНЫЙ ВИД: строки не принудительно равны (не было
+  // полей сверху/снизу у коротких), заголовок — одна строка с троеточием
+  const suggGrid = css.split('.suggestions{')[1].split('\n')[0];
+  assert(!/grid-auto-rows/.test(suggGrid) && /gap:10px/.test(suggGrid),
+    'AN: suggestion rows are NOT force-equalized — no dead space around text');
+  const suggB = css.split('.sugg b{')[1].split('.sugg:hover')[0];
+  assert(/white-space:nowrap/.test(suggB) &&
+    /overflow:hidden/.test(suggB) &&
+    /text-overflow:ellipsis/.test(suggB),
+    'AN: suggestion title — single line, ellipsis instead of a mid-word cut');
+  // AN: НАВЕДЕНИЕ ЧУТЬ МЕДЛЕННЕЕ, вкл/выкл прежние .45с одной кривой
+  assert(/animation:agKnobRubber 1s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
+    /animation:agEmberRun \.9s cubic-bezier\(\.3,\.5,\.35,1\) both/.test(css) &&
+    /animation:agRestGlow \.5s ease \.6s both/.test(css) &&
+    /animation:agSparkRun 1\.1s linear both/.test(css),
+    'AN: hover slightly slower — 1s rubber, .9s ember, 1.1s spark, .5s glow');
 }
 
 function testIterationAHContracts() {
@@ -2594,7 +2646,8 @@ function testIterationABContracts() {
   testIterationAHContracts();
   testIterationAJContracts();
   testIterationAKContracts();
-  console.log('package28_frontend_runtime: 26 regression groups passed');
+  testIterationANContracts();
+  console.log('package28_frontend_runtime: 27 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

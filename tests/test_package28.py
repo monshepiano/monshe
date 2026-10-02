@@ -3202,8 +3202,8 @@ class IterationZTests(unittest.TestCase):
         fq = js.split("function flushQt")[1].split("\nfunction ")[0]
         self.assertIn("qt-think", sweep)
         self.assertIn("qt-think", fq)
-        # П.4: тумблер быстрее
-        self.assertIn("agKnobRubber .8s", css)
+        # П.4: тумблер быстрее (AN: резинка чуть замедлена — 1с)
+        self.assertIn("agKnobRubber 1s", css)
         # П.5: страж курсора + мягкий приезд
         send = js.split("async function send(opts)")[1].split("\nasync function ")[0]
         self.assertIn("const statusWatch = setInterval", send)
@@ -3236,7 +3236,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.44", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.45", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3647,13 +3647,14 @@ class IterationADTests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         self.assertIn("transition:transform .45s cubic-bezier(.3,.6,.3,1),background .45s ease,", css)
         # AK: размер прежний, движение ещё меньше — ход 10px, симметричные
-        # отступы (left 5px), наведение замедлено до 1.9с
+        # отступы (left 5px); AN: наведение чуть медленнее (1с/.9с/1.1с)
         self.assertIn(".agent-switch-track{box-sizing:border-box;width:42px;height:28px", css)
         self.assertIn("width:20px;height:20px;left:5px;top:3px", css)
         self.assertIn(".agent-switch-track input:checked + i{transform:translateX(10px);", css)
-        self.assertIn("animation:agKnobRubber .8s cubic-bezier(.3,.7,.3,1) both", css)
-        self.assertIn("animation:agEmberRun .72s cubic-bezier(.3,.5,.35,1) both", css)
-        self.assertIn("animation:agSparkRun .88s linear both", css)
+        self.assertIn("animation:agKnobRubber 1s cubic-bezier(.3,.7,.3,1) both", css)
+        self.assertIn("animation:agEmberRun .9s cubic-bezier(.3,.5,.35,1) both", css)
+        self.assertIn("animation:agSparkRun 1.1s linear both", css)
+        self.assertIn("animation:agRestGlow .5s ease .6s both", css)
 
 
 class IterationAETests(unittest.TestCase):
@@ -3854,6 +3855,15 @@ class IterationAJTests(unittest.TestCase):
         for d in shape_vals.split(';'):
             self.assertEqual(d.count('C'), 8)
             self.assertTrue(d.startswith('M17.0 5.5'))
+        # AN: СТРУКТУРНАЯ ЦЕЛОСТНОСТЬ СИГИЛА. В AL/AM при вставке kick был
+        # съеден закрывающий `Z"/>` главного morph-animate: парсер склеивал
+        # обе анимации в одну мусорную с begin="indefinite" — фигура стояла
+        # намертво, а .sigil-kick не находился селектором. Значений это не
+        # ломало (тест выше проходил!), поэтому теперь проверяется САМ
+        # тег: главный morph закрыт, kick — его сосед, счёт тегов сходится.
+        self.assertIn('5.5Z"/><animate class="sigil-kick"', js)
+        self.assertEqual(js.count('<animate'), 3)
+        self.assertEqual(js.count('dur="9s"'), 2)
         self.assertIn('.85 0 .15 1', js)   # резкий рывок среди сплайнов
         # AM: свой темп (9с) + ускорение при событиях (kick 0.9с)
         self.assertIn('class="sigil-kick"', js)
@@ -3881,10 +3891,21 @@ class IterationAKTests(unittest.TestCase):
     def test_al_suggestion_tiles(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # AM: прежние высокие прямоугольные плитки с ПОЛНЫМ текстом,
-        # но все одинаковые: строки сетки равны самой высокой
-        self.assertIn("grid-auto-rows:1fr", css)
-        self.assertIn(".sugg b{display:block;color:var(--cy);font-size:12px;margin-bottom:4px", css)
+        # AN: ИЗНАЧАЛЬНЫЙ вид (как до выравнивателей): без grid-auto-rows:1fr —
+        # он тянул ВСЕ строки сетки под самую высокую плитку, и в коротких
+        # оставались поля сверху и снизу. Теперь высоту ряда задаёт самая
+        # высокая плитка СВОЕГО ряда, а внутри ряда плитки равны растяжкой.
+        sugg_grid = css.split(".suggestions{")[1].split("\n")[0]
+        self.assertIn("display:grid;grid-template-columns:repeat(3,1fr);gap:10px", sugg_grid)
+        self.assertNotIn("grid-auto-rows", sugg_grid)
+        # заголовок — одна строка; если не влезает — троеточие,
+        # а не обрыв на середине слова
+        self.assertIn(".sugg b{display:block;color:var(--cy);font-size:12px;margin-bottom:4px;font-weight:600;", css)
+        sugg_b = css.split(".sugg b{")[1].split(".sugg:hover")[0]
+        self.assertIn("white-space:nowrap", sugg_b)
+        self.assertIn("overflow:hidden", sugg_b)
+        self.assertIn("text-overflow:ellipsis", sugg_b)
+        # текст подсказки — целиком, без зажимов
         sugg_block = css.split(".sugg{")[1].split(".sugg:hover")[0]
         self.assertNotIn("line-clamp", sugg_block)
         self.assertNotIn("sugg-p", css)
@@ -4341,6 +4362,63 @@ class LongIntroReleaseTests(unittest.TestCase):
         self.assertIn(long_a.strip()[:40], streamed,
                       "начало длинного ответа не теряется при выпуске")
         self.assertTrue(len(streamed) >= len(long_a + long_b) - 2)
+
+
+class IterationANTests(unittest.TestCase):
+    """AN (beta.45): сигил снова жив (структура SMIL починена), тумблер
+    играет всегда (WAAPI-ведение поверх резинки), плитки — изначальный
+    вид с троеточием в заголовке, ход мыслей — живой формат по строкам."""
+
+    def test_an1_sigil_structure_alive(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # главный morph закрыт (`Z"/>`), kick — его сосед, а не склейка
+        self.assertIn('5.5Z"/><animate class="sigil-kick"', js)
+        self.assertEqual(js.count('<animate'), 3)
+        self.assertEqual(js.count('dur="9s"'), 2)
+        kick = js.split('class="sigil-kick"')[1].split('/>')[0]
+        self.assertIn('begin="indefinite"', kick)
+        self.assertIn('dur="0.9s"', kick)
+        fn = js.split("function sigilKick()")[1].split("\nfunction ")[0]
+        self.assertIn("q.beginElement()", fn)
+
+    def test_an2_toggle_always_plays(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        ch = js.split("$('#tgAgent').addEventListener('change'")[1].split("\n});")[0]
+        # снимаем текущее положение круглёшка ДО гашения резинки
+        self.assertIn("getComputedStyle(knob).transform", ch)
+        # резинка (fill:both на transform) больше не может украсть переход
+        self.assertIn("knob.getAnimations().forEach", ch)
+        # ведём круглёшок сами: WAAPI, та же кривая .45с, само-снятие
+        self.assertIn("knob.animate(", ch)
+        self.assertIn("duration: 450", ch)
+        self.assertIn("easing: 'cubic-bezier(.3,.6,.3,1)'", ch)
+        self.assertIn("go.onfinish", ch)
+        self.assertIn("fill: 'both'", ch)
+
+    def test_an3_reasoning_live_format(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("function thinkFormat(", js)
+        tt = js.split("function thinkType(")[1].split("\nfunction ")[0]
+        self.assertIn("el._raw", tt)
+        self.assertIn("thinkFormat(el._raw)", tt)
+        tf = js.split("function thinkFlush(")[1].split("\nfunction ")[0]
+        self.assertIn("thinkFormat(el._raw)", tf)
+        # тихий поток: цепочки точек схлопываются там же
+        qf = js.split("function qtThinkFeed(")[1].split("\nfunction ")[0]
+        self.assertIn("(?:\\.\\s*){2,}", qf)
+        # история показывает тот же живой формат
+        rt = js.split("function restoreTrace(")[1].split("\nfunction ")[0]
+        self.assertIn("thinkFormat(think)", rt)
+
+    def test_an4_hover_slightly_slower(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn("animation:agKnobRubber 1s cubic-bezier(.3,.7,.3,1) both", css)
+        self.assertIn("animation:agEmberRun .9s cubic-bezier(.3,.5,.35,1) both", css)
+        self.assertIn("animation:agRestGlow .5s ease .6s both", css)
+        self.assertIn("animation:agSparkRun 1.1s linear both", css)
+        # вкл/выкл — прежние .45с одной кривой в обе стороны
+        self.assertIn(
+            "transition:transform .45s cubic-bezier(.3,.6,.3,1),background .45s ease,", css)
 
 
 if __name__ == "__main__":
