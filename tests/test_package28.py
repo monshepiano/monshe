@@ -3236,7 +3236,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.46", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.47", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3789,11 +3789,10 @@ class IterationAGTests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        # AH: контент на всю ширину, верхняя рамка — до конца налево
-        self.assertIn(".app.collapsed{grid-template-columns:0px 1fr;", css)
-        # AO: сетка каркаса сворачивается кривой дока
-        self.assertIn("grid-template-columns .6s cubic-bezier(.5,.35,.15,1)}", css)
-        self.assertIn(".main{grid-column:2}", css)
+        # AP: место под меню держит margin, а не grid-анимация (Safari)
+        self.assertIn(".app.collapsed .main{margin-left:0;", css)
+        self.assertIn("transition:margin-left .6s cubic-bezier(.5,.35,.15,1)}", css)
+        self.assertIn(".main{grid-column:1;margin-left:262px;", css)
         dock = css.split("/* ---- свёрнутый режим: панель превращается в плавающий DOCK")[1].split("/* подпись иконки")[0]
         # AJ: сайдбар 68px, док 52px — чуток крупнее и прозрачнее
         self.assertIn(".app.collapsed .sidebar{width:68px;", dock)
@@ -3843,45 +3842,35 @@ class IterationAJTests(unittest.TestCase):
     def test_aj_sigil_replaces_reactor(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        # реактор больше не рендерится у ответов (сигил вместо него)
-        self.assertNotIn('<div class="reactor sm" style="width:34px;height:34px">', js)
-        self.assertIn("const SIGIL_SVG =", js)
-        self.assertIn('class="ai-sigil"', js)
-        self.assertIn('class="sigil-shape"', js)
-        self.assertIn('class="sigil-sweep"', js)
-        # AK: 10 причудливых форм по 8 сегментов, быстрые превращения 9с,
-        # переходы то плавные, то рывком (чередование сплайнов)
-        self.assertIn('dur="9s"', js)
-        shape_vals = js.split('class="sigil-shape"')[1].split('values="')[1].split('"')[0]
-        self.assertEqual(len(shape_vals.split(';')), 11)   # 10 форм + замыкание
-        for d in shape_vals.split(';'):
-            self.assertEqual(d.count('C'), 8)
-            self.assertTrue(d.startswith('M17.0 5.5'))
-        # AN/AO: СТРУКТУРНАЯ ЦЕЛОСТНОСТЬ СИГИЛА. В AL/AM при вставке kick был
-        # съеден закрывающий `Z"/>` главного morph-animate: парсер склеивал
-        # анимации в одну мусорную — фигура стояла намертво. AO убрал kick
-        # совсем и добавил путь волны: проверяем, что morph-тег закрыт,
-        # волна — отдельный самозакрывающийся путь, счёт тегов сходится.
-        self.assertIn('5.5Z"/></path>', js)
-        self.assertEqual(js.count('<animate'), 2)
-        self.assertEqual(js.count('dur="9s"'), 2)
-        self.assertIn('.85 0 .15 1', js)   # резкий рывок среди сплайнов
-        # AO: ускорений больше НЕТ — kick удалён целиком; печать = волна
-        self.assertNotIn('sigil-kick', js)
-        self.assertNotIn('sigilKick', js)
-        self.assertIn('class="sigil-flow"', js)
-        # пульс светом, как ядро; цвет в currentColor
-        self.assertIn("animation:sigilPulse 2.6s ease-in-out infinite", css)
-        self.assertIn("stroke:currentColor", css)
-        # печать: жёлтая как курсор, потом снова синяя
-        self.assertIn(".msg-ai:has(.typing) .sigil-shape{color:#fff0a6}", css)
-        self.assertIn("color:var(--cy2)", css)
-        self.assertNotIn(".msg-ai:has(.typing) .sigil-shape{opacity:0}", css)
-        # волны больше нет — фигура остаётся фигурой
-        self.assertNotIn("sigil-wave", js)
-        self.assertNotIn("sigil-wave", css)
-        # редкий блик остаётся
-        self.assertIn("animation:sigilSweep 12s ease-in-out infinite", css)
+        # AP: у ответов снова РЕАКТОР — тот же, что в доке. Вся морфинг-
+        # сага (формы, kick, волна, жёлтая печать) удалена целиком
+        self.assertIn("const AVATAR_REACTOR =", js)
+        self.assertIn('class="reactor sm"', js)
+        self.assertIn('class="ring r1"', js)
+        self.assertIn('class="ring r2"', js)
+        self.assertIn('class="core"', js)
+        self.assertEqual(js.count("AVATAR_REACTOR +"), 4)
+        # SMIL-анимаций в приложении больше нет вообще
+        self.assertEqual(js.count("<animate"), 0)
+        for gone in ("sigil", "SIGIL", "sigilPulse", "sigilSweep", "sigil-flow"):
+            self.assertNotIn(gone, js)
+            self.assertNotIn(gone, css)
+        # эстафета: мигания-телепорт между доком и ответом
+        self.assertIn("function relayFlick(", js)
+        self.assertIn("function relayTyping(", js)
+        self.assertIn("relayTyping(ui, true);", js)
+        self.assertIn("relayTyping(ui, false);", js)
+        self.assertIn(".reactor.relay-in{animation:relayIn .72s linear both}", css)
+        self.assertIn(".reactor.relay-out{animation:relayOut .72s linear both}", css)
+        self.assertIn("@keyframes relayIn{", css)
+        self.assertIn("@keyframes relayOut{", css)
+        # печать: реактор ответа горит ярко, кольца летят
+        self.assertIn(".msg-ai:has(.typing) .ai-avatar .reactor .r1{animation-duration:.9s}", css)
+        self.assertIn(".msg-ai:has(.typing) .ai-avatar .reactor .core{animation-duration:.62s", css)
+        # покой: кольца тлеют потише
+        self.assertIn(".ai-avatar .reactor .ring{border-color:rgba(0,212,255,.22)", css)
+        # неактивный ответ: реактор тихнет
+        self.assertIn(".ui-inert .ai-avatar{opacity:.55;filter:saturate(.7)}", css)
 
 
 class IterationAKTests(unittest.TestCase):
@@ -3924,6 +3913,14 @@ class IterationAKTests(unittest.TestCase):
         # английские обломки мышления в ленту не идут
         self.assertTrue(ag._reasoning_ru_visible("Собираю отчёт по файлам"))
         self.assertFalse(ag._reasoning_ru_visible("Let me check the files first"))
+        # AP: БЕЗБУКВЕННЫЙ МУСОР больше не проходит (старый фильтр
+        # пропускал его: букв нет — считать долю латиницы нечего)
+        self.assertFalse(ag._reasoning_ru_visible(", .,.:,. 2 2026."))
+        self.assertFalse(ag._reasoning_ru_visible("2 2026"))
+        self.assertFalse(ag._reasoning_ru_visible("... ... ..."))
+        self.assertFalse(ag._reasoning_ru_visible(""))
+        # смесь русского с латиницей видна, пока русский главный
+        self.assertTrue(ag._reasoning_ru_visible("Проверяю API и делаю выводы"))
         # перед ПОСЛЕДНИМ сообщением (user или tool — без разницы)
         convo3 = [{"role": "user", "content": "a"},
                   {"role": "assistant", "content": "b"},
@@ -4370,14 +4367,11 @@ class IterationANTests(unittest.TestCase):
 
     def test_an1_sigil_structure_alive(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # AN/AO: главный morph закрыт (`Z"/>`), рядом — путь волны, не склейка
-        self.assertIn('5.5Z"/></path>', js)
-        self.assertEqual(js.count('<animate'), 2)
-        self.assertEqual(js.count('dur="9s"'), 2)
-        self.assertIn('class="sigil-flow"', js)
-        # AO: ускорения (kick) больше нет вообще
-        self.assertNotIn('sigil-kick', js)
-        self.assertNotIn('sigilKick', js)
+        # AP: сигил заменён реактором; SMIL-тегов нет вообще — склеек быть не может
+        self.assertEqual(js.count('<animate'), 0)
+        self.assertIn('const AVATAR_REACTOR =', js)
+        self.assertIn('class="reactor sm"', js)
+        self.assertNotIn('sigil', js.lower())
 
     def test_an2_toggle_always_plays(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -4427,40 +4421,41 @@ class IterationAOTests(unittest.TestCase):
 
     def test_ao1_workarea_matches_dock(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        # сворачивание: сетка каркаса едет кривой СВОРАЧИВАНИЯ дока
-        self.assertIn(
-            ".app.collapsed{grid-template-columns:0px 1fr;\n"
-            "  transition:opacity .6s ease,transform .6s ease,"
-            "grid-template-columns .6s cubic-bezier(.5,.35,.15,1)}", css)
-        # разворачивание: базовая кривая дока, отступ скользит, не прыгает
+        # AP: сетка статична (Safari не анимирует grid-template-columns —
+        # панель «примагничивалась» к краю), место держит margin-left,
+        # он анимируется везде и в такт доку
+        self.assertIn(".main{grid-column:1;margin-left:262px;", css)
+        self.assertIn("transition:margin-left .6s cubic-bezier(.22,.68,.18,1)}", css)
+        self.assertIn(".app.collapsed .main{margin-left:0;", css)
+        self.assertIn("transition:margin-left .6s cubic-bezier(.5,.35,.15,1)}", css)
+        self.assertIn("grid-template-columns:1fr;height:100vh", css)
+        self.assertNotIn("grid-template-columns .6s", css)
+        # мобильный каркас: узкая полоса 62px
+        self.assertIn(".main,.app.collapsed .main{margin-left:62px}", css)
+        # отступ вида скользит, а не прыгает
         self.assertIn(
             ".main .view{transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}", css)
-        # сам док не тронут: обе его кривые прежние
-        self.assertIn("transition:width .6s cubic-bezier(.22,.68,.18,1)", css)
-        self.assertIn("transition:width .6s cubic-bezier(.5,.35,.15,1)", css)
-
-    def test_ao2_sigil_wave_engine(self) -> None:
+    def test_ao2_relay_engine(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        # движок волны: путь строится, разгоняется, медленно замирает
-        for marker in ("function sigilFlowD(", "function sigilFlowStart(",
-                       "function sigilFlowStop(", "function sigilTyping(",
-                       "sg.classList.add('flow-on')", "st.decay = true",
-                       "Math.exp(-dt / 1.05)", "Math.exp(-dt / .85)",
-                       "sigilTyping(ui, true)", "sigilTyping(ui, false)"):
+        # эстафета: печать началась — док гаснет, ответ загорается
+        for marker in ("function relayFlick(", "function relayTyping(",
+                       "relayFlick(brand, 'relay-out')", "relayFlick(av, 'relay-in')",
+                       "relayFlick(av, 'relay-out')", "relayFlick(brand, 'relay-in')"):
             self.assertIn(marker, js)
-        # печать включает волну у фигуры ЭТОГО ответа
-        typer = js.split("ui.mdEl.classList.add('typing');")[1][:200]
-        self.assertIn("sigilTyping(ui, true)", typer)
-        # события инструментов фигуру НЕ трогают: вызовов ускорения нет
-        self.assertNotIn("sigilKick", js)
-        # CSS: жёлтая волна пульсирует ярко и часто, после — тихий пульс
-        self.assertIn(".msg-ai:has(.typing) .sigil-flow{color:#fff0a6;", css)
-        self.assertIn("animation:sigilPulseHot .8s ease-in-out infinite", css)
-        self.assertIn(".ai-sigil.flow-on .sigil-flow{opacity:.92}", css)
-        self.assertIn(".ai-sigil.flow-on .sigil-shape{opacity:0}", css)
-        self.assertIn(".ai-sigil.flow-on .sigil-sweep{opacity:0}", css)
-        self.assertIn(".sigil-flow{fill:none;stroke:currentColor;stroke-width:1.6", css)
+        # мигание не перезапускается, пока играет (нет лишних вспышек)
+        rf = js.split("function relayFlick(")[1].split("\nfunction ")[0]
+        self.assertIn("el.classList.contains(cls)", rf)
+        self.assertIn("void el.offsetWidth", rf)
+        # печатающий ответ: реактор у ответа горит, у дока гаснет
+        typer = js.split("ui.mdEl.classList.add('typing');")[1][:220]
+        self.assertIn("relayTyping(ui, true)", typer)
+        self.assertEqual(js.count("relayTyping(ui, false);"), 3)
+        # жёсткие электрические мигания в CSS
+        self.assertIn("@keyframes relayIn{", css)
+        self.assertIn("@keyframes relayOut{", css)
+        self.assertIn(".reactor.relay-in{animation:relayIn .72s linear both}", css)
+        self.assertIn(".reactor.relay-out{animation:relayOut .72s linear both}", css)
 
     def test_ao3_reasoning_no_ellipsis(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -4469,6 +4464,9 @@ class IterationAOTests(unittest.TestCase):
         self.assertIn(".replace(/(?:\\s*\\.\\s*){2,}/g, '" + chr(92) + "n')", tf)
         self.assertNotIn("' \u2026 '", tf)
         self.assertNotIn("'\u2026\n'", tf)
+        # AP: строки БЕЗ букв (мусор ", .,.:,. 2 2026.") не показываются
+        self.assertIn(".filter((ln) =>", tf)
+        self.assertIn("a-zA-Z]", tf)
 
     def test_ao4_sugg_ellipsis_js(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -4478,11 +4476,18 @@ class IterationAOTests(unittest.TestCase):
         self.assertIn("b.dataset.t", fit)
         self.assertIn("scrollWidth", fit)
         self.assertIn("'\\u2026'", fit)
-        # подгон повторяется при ресайзе и после загрузки шрифтов
+        # AP: подгон делает ResizeObserver — срабатывает в момент, когда
+        # плитка ВПЕРВЫЕ ложится на экран (раньше welcome собирался
+        # в оторванном узле, clientWidth=0 и подгон тихо пропускался)
+        self.assertIn("function watchSuggTitle(", js)
+        watch = js.split("function watchSuggTitle(")[1].split("\nfunction ")[0]
+        self.assertIn("ResizeObserver", watch)
+        self.assertIn("observe(b)", watch)
+        fill = js.split("function fillSuggestions(")[1].split("\nfunction ")[0]
+        self.assertIn("watchSuggTitle(b.querySelector('b'))", fill)
+        # плюс пересчёт при ресайзе и после загрузки шрифтов
         self.assertIn("window.addEventListener('resize'", js)
         self.assertIn("document.fonts.ready", js)
-        fill = js.split("function fillSuggestions(")[1].split("\nfunction ")[0]
-        self.assertIn("fitSuggTitle(b.querySelector('b'))", fill)
 
     def test_ao5_toggle_clicks_never_blocked(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")

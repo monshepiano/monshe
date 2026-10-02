@@ -2402,21 +2402,18 @@ function testIterationADContracts() {
 }
 
 function testIterationAJContracts() {
-  // AJ/AK: сигил вместо второго реактора у ответов
-  assert(!/class="reactor sm" style="width:34px;height:34px"/.test(js) &&
-    /const SIGIL_SVG =/.test(js) &&
-    /class="ai-sigil"/.test(js),
-    'AJ: answer avatar is a sigil (morphing figure), not a reactor');
-  // AK: 10 форм по 8 сегментов, превращения быстрее (9с), то плавно то рывком
-  const shapeVals = js.split('class="sigil-shape"')[1].split('values="')[1].split('"')[0];
-  assert(shapeVals.split(';').length === 11 &&
-    shapeVals.split(';').every((d) => (d.match(/C/g) || []).length === 8) &&
-    /\.85 0 \.15 1/.test(js),
-    'AK: ten exotic forms morph faster, alternating smooth and snappy');
-  assert(/animation:sigilSweep 12s ease-in-out infinite/.test(css) &&
-    !/sigilBreathe/.test(css) && !/sigil-wave/.test(js) &&
-    /stroke:currentColor/.test(css),
-    'AM: figure stays a figure; pulse and rare glint remain');
+  // AJ→AP: у ответов снова РЕАКТОР, тот же, что в доке. Морфинг-фигура
+  // со всеми превращениями удалена целиком — SMIL-тегов в коде нет
+  assert(js.includes('const AVATAR_REACTOR =') &&
+    js.includes('class="reactor sm"') &&
+    (js.match(/<animate/g) || []).length === 0 &&
+    !/sigil/i.test(js) && !/sigil/i.test(css),
+    'AP: answer avatar is the DOCK REACTOR; the whole sigil saga is gone');
+  // эстафета: телепорт электричества миганиями между доком и ответом
+  assert(css.includes('.reactor.relay-in{animation:relayIn .72s linear both}') &&
+    css.includes('.reactor.relay-out{animation:relayOut .72s linear both}') &&
+    css.includes('@keyframes relayIn{') && css.includes('@keyframes relayOut{'),
+    'AP: hard electric flicker keyframes for the relay teleport');
 }
 
 function testIterationAKContracts() {
@@ -2431,33 +2428,26 @@ function testIterationAKContracts() {
 function testIterationAOContracts() {
   // AO: РАБОЧАЯ ОБЛАСТЬ ЖИВЁТ В ТАКТ ДОКУ — та же кривая дока в каждую
   // сторону, отступ вида скользит, а не прыгает
-  assert(css.includes('.app.collapsed{grid-template-columns:0px 1fr;') &&
-    css.includes('grid-template-columns .6s cubic-bezier(.5,.35,.15,1)}') &&
+  assert(css.includes('.main{grid-column:1;margin-left:262px;') &&
+    css.includes('transition:margin-left .6s cubic-bezier(.22,.68,.18,1)}') &&
+    css.includes('.app.collapsed .main{margin-left:0;') &&
+    css.includes('transition:margin-left .6s cubic-bezier(.5,.35,.15,1)}') &&
     css.includes('.main .view{transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}') &&
     css.includes('transition:width .6s cubic-bezier(.22,.68,.18,1)') &&
     css.includes('transition:width .6s cubic-bezier(.5,.35,.15,1)'),
-    'AO: work area resizes with the DOCK curve in both directions');
+    'AO/AP: work area slides with the DOCK curve in both directions (margin, Safari-proof)');
   // AO: ВОЛНА СИГИЛА — печать развязывает фигуру в линию волн (жёлтая,
   // яркий пульс), конец печати медленно замеряет её в последней позе
-  const flowD = extractFunction(js, 'sigilFlowD');
-  assert(/2 \* Math\.PI/.test(flowD) && flowD.includes('toFixed(1)') &&
-    typeof extractFunction(js, 'sigilFlowStart') === 'string' &&
-    typeof extractFunction(js, 'sigilFlowStop') === 'string' &&
-    typeof extractFunction(js, 'sigilTyping') === 'string' &&
-    extractFunction(js, 'sigilFlowStart').includes("sg.classList.add('flow-on')") &&
-    extractFunction(js, 'sigilFlowStart').includes('Math.exp(-dt / 1.05)') &&
-    extractFunction(js, 'sigilFlowStop').includes('st.decay = true'),
-    'AO: wave engine — sine path, smooth rise, slow exponential freeze');
+  assert(css.includes('.reactor.relay-in{animation:relayIn .72s linear both}') &&
+    css.includes('.reactor.relay-out{animation:relayOut .72s linear both}') &&
+    css.includes('@keyframes relayIn{') && css.includes('@keyframes relayOut{') &&
+    css.includes('.msg-ai:has(.typing) .ai-avatar .reactor .r1{animation-duration:.9s}') &&
+    css.includes('.msg-ai:has(.typing) .ai-avatar .reactor .core{animation-duration:.62s'),
+    'AO/AP: relay flicker CSS — teleport of electricity between two reactors');
   const typingTick = js.split("ui.mdEl.classList.add('typing');")[1].slice(0, 300);
-  assert(typingTick.includes('sigilTyping(ui, true)') &&
-    js.includes('sigilTyping(ui, false)'),
-    'AO: typing start launches the wave, typing end freezes it');
-  assert(css.includes('.msg-ai:has(.typing) .sigil-flow{color:#fff0a6;') &&
-    css.includes('animation:sigilPulseHot .8s ease-in-out infinite') &&
-    css.includes('.ai-sigil.flow-on .sigil-flow{opacity:.92}') &&
-    css.includes('.ai-sigil.flow-on .sigil-shape{opacity:0}') &&
-    css.includes('.ai-sigil.flow-on .sigil-sweep{opacity:0}'),
-    'AO: wave is yellow + hot pulse while printing, blob hidden, stays frozen');
+  assert(typingTick.includes('relayTyping(ui, true)') &&
+    (js.match(/relayTyping\(ui, false\);/g) || []).length === 3,
+    'AO/AP: typing start lights the avatar and kills the dock one, and vice versa');
   // AO: ТУМБЛЕР — клики не блокируются, двойная пересадка защищена
   assert(!css.includes('.agent-switch.ag-switching .agent-switch-track{pointer-events:none}') &&
     extractFunction(js, 'agentPaint').includes('agentPaint._busy') &&
@@ -2465,17 +2455,36 @@ function testIterationAOContracts() {
     'AO: no click blackout on the toggle, repaint guarded against double-fire');
 }
 
+function testIterationAPContracts() {
+  // AP: ТУМБЛЕР — детерминированный старт: ВЫКЛ под курсором больше не
+  // телепортируется (резинка перезапускалась с 0% и врала нулём)
+  const ch = js.split("$('#tgAgent').addEventListener('change'")[1].split('\n});')[0];
+  assert(/let from;/.test(ch) &&
+    /if \(this\.checked\) \{[\s\S]*?getComputedStyle\(knob\)\.transform/.test(ch) &&
+    ch.includes("from = 'translateX(10px)'") &&
+    ch.includes('if (from !== to)') &&
+    /knob\.animate\(/.test(ch),
+    'AP: toggle always animates — deterministic from/to, no teleport on hover+click');
+  // AP: ХОД МЫСЛЕЙ — серверный фильтр требует живую кириллицу
+  assert(pyAgent.includes('cyr >= 4 and cyr >= lat'),
+    'AP: backend reasoning filter demands real Cyrillic — garbage never shown');
+  // AP: ВЕРХНЯЯ ПАНЕЛЬ — margin вместо grid-колонок (Safari их не анимирует)
+  assert(css.includes('.app.collapsed .main{margin-left:0;') &&
+    !css.includes('grid-template-columns .6s'),
+    'AP: no more left-edge snapping — margin slides everywhere');
+}
+
 function testIterationANContracts() {
-  // AN: СИГИЛ ЖИВ. В AL/AM вставка kick съела закрывающий `Z"/>` главного
-  // morph-animate: парсер склеивал обе анимации в одну мусорную с
-  // begin="indefinite" — фигура стояла намертво, селектор .sigil-kick
-  // ничего не находил. Структура проверяется явно, не только значения.
-  assert(js.includes('5.5Z"/></path>') &&
-    (js.match(/<animate/g) || []).length === 2 &&
-    (js.match(/dur="9s"/g) || []).length === 2 &&
-    js.includes('class="sigil-flow"') &&
-    !js.includes('sigil-kick') && !js.includes('sigilKick'),
-    'AN/AO: sigil morph is CLOSED, flow-wave path added, kick removed completely');
+  // AN/AP: СИГИЛ ЗАМЕНЁН РЕАКТОРОМ (как в доке) — вся SMIL-сага удалена;
+  // мигания-телепорт между доком и ответом делает CSS relayIn/relayOut
+  assert(js.includes('const AVATAR_REACTOR =') &&
+    js.includes('class="reactor sm"') &&
+    (js.match(/AVATAR_REACTOR \+/g) || []).length === 4 &&
+    (js.match(/<animate/g) || []).length === 0 &&
+    !/sigil/i.test(js) && !/sigil/i.test(css) &&
+    typeof extractFunction(js, 'relayFlick') === 'string' &&
+    typeof extractFunction(js, 'relayTyping') === 'string',
+    'AN/AP: avatar is the DOCK REACTOR, zero SMIL tags, relay engine present');
   // AN: ТУМБЛЕР ИГРАЕТ ВСЕГДА — даже если клик пришёлся на живую резинку.
   // Круглёшок ведёт WAAPI от его текущего положения, той же кривой .45с.
   const ch = js.split("$('#tgAgent').addEventListener('change'")[1].split('\n});')[0];
@@ -2493,9 +2502,10 @@ function testIterationANContracts() {
     fmt.thinkFormat('т. д. и т. п. без изменений') === 'т. д. и т. п. без изменений' &&
     fmt.thinkFormat('...........') === '' &&
     fmt.thinkFormat('') === '' &&
+    fmt.thinkFormat(', .,.:,. 2 2026.') === '' &&
     !fmt.thinkFormat('думаю... ищу... читаю').includes('…') &&
     !fmt.thinkFormat('думаю... ищу... читаю').includes('..'),
-    'AN/AO: reasoning — one thought per line, NO ellipses on screen at all');
+    'AN/AP: reasoning — one thought per line, NO ellipses, letterless garbage dropped');
   const thinkType = extractFunction(js, 'thinkType');
   assert(/el\._raw/.test(thinkType) && /thinkFormat\(el\._raw\)/.test(thinkType) &&
     /thinkFormat\(el\._raw\)/.test(extractFunction(js, 'thinkFlush')) &&
@@ -2516,10 +2526,13 @@ function testIterationANContracts() {
   assert(typeof extractFunction(js, 'fitSuggTitle') === 'string' &&
     /b\.dataset\.t/.test(extractFunction(js, 'fitSuggTitle')) &&
     extractFunction(js, 'fitSuggTitle').includes('\\' + 'u2026') &&
-    extractFunction(js, 'fillSuggestions').includes("fitSuggTitle(b.querySelector('b'))") &&
+    typeof extractFunction(js, 'watchSuggTitle') === 'string' &&
+    extractFunction(js, 'watchSuggTitle').includes('ResizeObserver') &&
+    extractFunction(js, 'watchSuggTitle').includes('observe(b)') &&
+    extractFunction(js, 'fillSuggestions').includes("watchSuggTitle(b.querySelector('b'))") &&
     /window\.addEventListener\('resize'/.test(js) &&
     /document\.fonts\.ready/.test(js),
-    'AO: suggestion title ellipsis is enforced in JS too, refit on resize/font-load');
+    'AO/AP: ellipsis via JS + ResizeObserver fires the moment tiles hit the layout');
   // AN: НАВЕДЕНИЕ ЧУТЬ МЕДЛЕННЕЕ, вкл/выкл прежние .45с одной кривой
   assert(/animation:agKnobRubber 1s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
     /animation:agEmberRun \.9s cubic-bezier\(\.3,\.5,\.35,1\) both/.test(css) &&
@@ -2539,8 +2552,8 @@ function testIterationAHContracts() {
     /setKeyframes\(flyKeys\(aim\)\)/.test(foldFn),
     'AG3: dimming keys travel inside the flight, homing keeps them');
   // AH: свёрнутое меню — плавающий док, контент на всю ширину
-  assert(/\.app\.collapsed\{grid-template-columns:0px 1fr;/.test(css) &&
-    /\.main\{grid-column:2\}/.test(css),
+  assert(/\.app\.collapsed \.main\{margin-left:0;/.test(css) &&
+    /\.main\{grid-column:1;margin-left:262px;/.test(css),
     'AH: content spans full width when collapsed; topbar reaches the left edge');
   const dock = css.split('/* ---- свёрнутый режим: панель превращается в плавающий DOCK')[1].split('/* подпись иконки')[0];
   assert(/\.app\.collapsed \.dock\{pointer-events:auto/.test(dock) &&
@@ -2683,7 +2696,6 @@ function testIterationABContracts() {
   testBudgetScenariosDraftsAndTailRaceContracts();
   testProactiveModesBudgetAndAbortContracts();
   testQuietToolsBoostAskStylesAndAgentTheme();
-  testIterationAOContracts();
   testIterationXContracts();
   testIterationYContracts();
   testIterationZContracts();
@@ -2696,8 +2708,9 @@ function testIterationABContracts() {
   testIterationAJContracts();
   testIterationAKContracts();
   testIterationANContracts();
+  testIterationAPContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 28 regression groups passed');
+  console.log('package28_frontend_runtime: 29 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
