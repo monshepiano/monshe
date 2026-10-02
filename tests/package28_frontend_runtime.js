@@ -990,7 +990,7 @@ async function testCameraLifecycleOwnershipAndLateResults() {
     ICO: {}, fmtSize() { return ''; },
     queueResponseFinish() { throw new Error('aborted upload must not finalize as a response'); },
     loadChats() {}, refreshState() {}, fetchReplies() {},
-    flyWelcomeInto() {},
+    flyWelcomeInto() {}, dotShapePlay() {}, dotAction() {},
     document: { querySelector: () => null },
   });
   const pendingSend = sendCtx.send();
@@ -2423,7 +2423,7 @@ function testIterationAJContracts() {
     'AS: answer avatar is a live core dot; the relay saga is gone for good');
   assert(css.includes('.ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;') &&
     css.includes('animation:coreBreathe 3.4s ease-in-out infinite') &&
-    css.includes('.msg-ai.live .ai-core{animation:coreLive 2.8s ease-in-out infinite}'),
+    css.includes('.msg-ai.live .ai-core{animation:coreLive 4.2s ease-in-out infinite}'),
     'AS/AY: the dot breathes at rest and lives through the WHOLE answer (pure CSS)');
 }
 
@@ -2476,16 +2476,16 @@ function testIterationAXContracts() {
     js.includes("'<span class=\"gt-grad\">JARVIS</span><span class=\"gt-solid\">JARVIS</span>'") &&
     js.includes('(p - .35) / .45'),
     'AX/AY: the core sheds its rings mid-flight (at flight speed); the title morphs mid-flight');
-  // AX: гибкий круглешок — жёлтые вспышки и смена формы
+  // AX/AZ: круглешок — золотые вспышки; смена формы теперь в играх .sh-*
   const live = css.split('@keyframes coreLive{')[1].split('}}')[0];
   assert(live.includes('#ffd489') && live.includes('var(--gold)') &&
-    live.includes('border-radius:44% 56% 58% 42%'),
-    'AX: the typing dot is flexible — golden flashes, shape shifts, springs');
+    css.includes('.ai-core.sh-tess{clip-path:polygon('),
+    'AX/AZ: the dot flashes gold; shape play lives in the .sh-* morphs');
   // AX: плитки фиксированной высоты, описание — три строки с троеточием
   const sp = css.split('.sugg .sp{')[1].split('}')[0];
-  assert(sp.includes('-webkit-line-clamp:3') &&
-    js.includes("'</span></b><span class=\"sp\">' + esc(s.prompt) + '</span>'"),
-    'AX: fixed-height tiles; long descriptions end with an ellipsis');
+  assert(sp.includes('-webkit-line-clamp:4') &&
+    js.includes("'</span></b><span class=\"sp\">' + esc(s.desc || s.prompt) + '</span>'"),
+    'AX/AZ: fixed-height tiles show title+description; overflow ends with an ellipsis');
 }
 
 function testIterationAYContracts() {
@@ -2506,6 +2506,7 @@ function testIterationAYContracts() {
   // AY: круглешок живёт весь ответ и в финале оседает кружком
   assert(js.includes('function finishLiveDot(') &&
     js.includes("node.root.classList.add('live');") &&
+    css.includes('.msg-ai.live .ai-core{animation:coreLive 4.2s ease-in-out infinite}') &&
     css.includes('.msg-ai.settle .ai-core{animation:coreSettle .55s cubic-bezier(.65,0,.35,1) forwards}') &&
     !css.includes(':has(.typing) .ai-core'),
     'AY: the dot lives through thinking, tools and typing, then settles into a circle');
@@ -2517,6 +2518,34 @@ function testIterationAYContracts() {
   // AY: ИИ ещё придумывает плитки — клиент заберёт живые повторным заходом
   assert(js.includes('if (r.refreshing && !again) setTimeout(() => { loadIdeas(true); }, 2600);'),
     'AY: welcome tiles: local set instantly, AI set swaps in when ready');
+}
+
+function testIterationAZContracts() {
+  // AZ: подсказки принадлежат СВОЕМУ диалогу — смена диалога гасит полосу
+  const newChat = js.split('function newChat(')[1].split('\nfunction ')[0];
+  const openChat = js.split('async function openChat(')[1].split('\nfunction ')[0];
+  assert(newChat.includes("S.replyTicket = (S.replyTicket || 0) + 1;") &&
+    openChat.includes("rb.hidden = true; rb.innerHTML = '';") &&
+    js.split('async function fetchReplies(')[1].split('\nfunction ')[0]
+      .includes('if (activeChatId() !== chat) { showReplies([]); return; }'),
+    'AZ: reply chips are per-chat — switching chats clears them at once');
+  // AZ: спокойная база 4.2s, всплеск только на видимых действиях
+  assert(css.includes('.msg-ai.live .ai-core.act{animation:coreBurst 1.15s') &&
+    css.includes('@keyframes coreBurst{') &&
+    js.includes('function dotAction(') &&
+    js.split("case 'tool_start': {")[1].split("case '")[0]
+      .includes('dotAction(ui.node && ui.node.root);'),
+    'AZ: calm dot at rest; energized burst only on visible actions (tool, plan step)');
+  // AZ: игры с формой — тессеракт, тетраэдр, кривая, звезда… плавные морфы
+  assert(js.includes("const DOT_SHAPES = ['sh-tess', 'sh-tetra', 'sh-blob', 'sh-star', 'sh-hex', 'sh-diamond'];") &&
+    js.includes('function dotShapePlay(') &&
+    css.includes('.ai-core.sh-tess{clip-path:polygon(') &&
+    css.split('.ai-core{')[1].split('}')[0].includes('clip-path:polygon(50% 0%,75% 6.7%'),
+    'AZ: the dot occasionally plays with its shape — tesseract, tetra, blob, star');
+  // AZ: плитка = название + ОПИСАНИЕ, промпт — только по клику
+  assert(js.includes('desc: s[1], prompt: s[2]') &&
+    js.includes('esc(s.desc || s.prompt)'),
+    'AZ: tiles show title and description; the prompt itself waits for the click');
 }
 
 function testIterationAWContracts() {
@@ -2545,7 +2574,7 @@ function testIterationAUContracts() {
       .includes('const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));'),
     'AV: classic speeds are back; the per-frame cap now follows real frame time');
   // AU: видимый номер сборки — всегда ясно, какой билд на экране
-  assert(html.includes('<span class="ver-chip">b56</span>') &&
+  assert(html.includes('<span class="ver-chip">b57</span>') &&
     css.includes('.ver-chip{align-self:center;'),
     'AU: the build number is visible in the top bar');
   // AU: призрак-надпись физически не может растянуться на весь экран
@@ -2600,7 +2629,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.56'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.57'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -2716,7 +2745,7 @@ function testIterationANContracts() {
     /min-width:0/.test(suggB),
     'AQ: title lives in an inner span (min-width:0) — the canonical ellipsis pattern');
   assert(css.includes('.sugg b{display:flex;min-width:0;') &&
-    js.includes("'</span></b><span class=\"sp\">' + esc(s.prompt) + '</span>'") &&
+    js.includes("'</span></b><span class=\"sp\">' + esc(s.desc || s.prompt) + '</span>'") &&
     !js.includes('fitSuggTitle') && !js.includes('watchSuggTitle'),
     'AQ: JS measuring is gone — pure CSS ellipsis inside the span');
   // AN: НАВЕДЕНИЕ ЧУТЬ МЕДЛЕННЕЕ, вкл/выкл прежние .45с одной кривой
@@ -2902,8 +2931,9 @@ function testIterationABContracts() {
   testIterationAWContracts();
   testIterationAXContracts();
   testIterationAYContracts();
+  testIterationAZContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 36 regression groups passed');
+  console.log('package28_frontend_runtime: 37 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

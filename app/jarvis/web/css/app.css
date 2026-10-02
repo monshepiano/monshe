@@ -524,8 +524,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sugg{padding:12px 15px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);
   cursor:pointer;text-align:left;transition:.25s;font-size:13px;color:var(--tx2);animation:popIn .45s both;
   line-height:1.55;overflow:hidden}
-/* AX: описание — три строки, дальше троеточие */
-.sugg .sp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+/* AZ: описание — почти вся карточка (4 строки), дальше троеточие */
+.sugg .sp{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;
   overflow:hidden;min-width:0}
 /* AN/AQ: ИЗНАЧАЛЬНЫЙ свободный вид — текст целиком, высота ряда по
    самой высокой плитке СВОЕГО ряда. Заголовок — одна строка: он лежит
@@ -588,41 +588,60 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   border-radius:50%;background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
   box-shadow:0 0 10px rgba(0,212,255,.5),0 0 26px rgba(0,212,255,.22);
   animation:coreBreathe 3.4s ease-in-out infinite;
-  /* AV: кроссфейд при посадке призрака — вместо вспышки и рывка */
-  transition:opacity .18s ease}
+  /* AZ: 12-точечный «круг» — все фигуры морфятся из него и в него,
+     плавной интерполяцией clip-path (равное число вершин) */
+  clip-path:polygon(50% 0%,75% 6.7%,93.3% 25%,100% 50%,93.3% 75%,75% 93.3%,
+    50% 100%,25% 93.3%,6.7% 75%,0% 50%,6.7% 25%,25% 6.7%);
+  transition:opacity .18s ease,clip-path .42s cubic-bezier(.65,0,.35,1)}
+/* AZ: СТРАННЫЕ ФОРМЫ — тессеракт, тетраэдр, кривая капля, звезда,
+   шестиугольник, ромб. Внутренний контур тессеракта — псевдоэлемент */
+.ai-core::before{content:'';position:absolute;inset:22%;opacity:0;
+  border:1.5px solid rgba(255,255,255,.92);border-radius:2px;
+  transition:opacity .3s ease,transform .42s cubic-bezier(.65,0,.35,1)}
+.ai-core.sh-tess{clip-path:polygon(8% 8%,40% 8%,60% 8%,92% 8%,92% 40%,92% 60%,
+  92% 92%,60% 92%,40% 92%,8% 92%,8% 60%,8% 40%)}
+.ai-core.sh-tess::before{opacity:.9;transform:rotate(45deg)}
+.ai-core.sh-tetra{clip-path:polygon(50% 0%,50% 0%,50% 0%,50% 0%,92% 92%,92% 92%,
+  92% 92%,92% 92%,8% 92%,8% 92%,8% 92%,8% 92%)}
+.ai-core.sh-blob{clip-path:polygon(50% 2%,80% 8%,95% 30%,88% 55%,96% 78%,70% 95%,
+  45% 88%,20% 96%,4% 70%,10% 45%,3% 22%,25% 6%)}
+.ai-core.sh-star{clip-path:polygon(50% 0%,69% 17.1%,93.3% 25%,88% 50%,93.3% 75%,
+  69% 82.9%,50% 100%,31% 82.9%,6.7% 75%,12% 50%,6.7% 25%,31% 17.1%)}
+.ai-core.sh-hex{clip-path:polygon(50% 0%,50% 0%,93% 25%,93% 25%,93% 75%,93% 75%,
+  50% 100%,50% 100%,7% 75%,7% 75%,7% 25%,7% 25%)}
+.ai-core.sh-diamond{clip-path:polygon(50% 0%,50% 0%,50% 0%,100% 50%,100% 50%,
+  100% 50%,50% 100%,50% 100%,50% 100%,0% 50%,0% 50%,0% 50%)}
 @keyframes coreBreathe{50%{transform:scale(1.22);box-shadow:0 0 15px rgba(0,212,255,.75),0 0 34px rgba(0,212,255,.35)}}
 /* AY: класс .live висит на карточке ответа с первого кадра до финала —
    круглешок активен и пока агент ДУМАЕТ, и пока ходит по инструментам,
-   а не только при печати */
-.msg-ai.live .ai-core{animation:coreLive 2.8s ease-in-out infinite}
+   а не только при печати. AZ: база — СПОКОЙНОЕ ПЛАВНОЕ ДЫХАНИЕ 4.2с;
+   оживает только всплеском на видимых действиях (.act) */
+.msg-ai.live .ai-core{animation:coreLive 4.2s ease-in-out infinite}
+.msg-ai.live .ai-core.act{animation:coreBurst 1.15s cubic-bezier(.65,0,.35,1)}
 .msg-ai.settle .ai-core{animation:coreSettle .55s cubic-bezier(.65,0,.35,1) forwards}
-/* AY: круглешок ГИБКИЙ: пульс, две золотые вспышки (в тон золотому
-   курсору мыслей), пружины, плавная смена формы. Один такт 2.8с,
-   начало и конец — идеальный кружок */
+/* AZ: СПОКОЙНЫЙ круглешок: медленное дыхание, лёгкое покачивание формы,
+   изредка мягкая золотая волна — в тон курсору мыслей */
 @keyframes coreLive{
-  0%,28%,100%{transform:scale(1);border-radius:50%;
+  0%,34%,100%{transform:scale(1);
     background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
     box-shadow:0 0 10px rgba(0,212,255,.5),0 0 26px rgba(0,212,255,.22)}
-  6%{transform:scale(1.26);filter:brightness(1.35)}
-  10%{transform:scale(.9)}
-  15%{transform:scale(1.16)}
-  20%{transform:scale(1.02);border-radius:54% 46% 48% 52%}
-  38%{transform:scale(1.3);border-radius:50%;
+  17%{transform:scale(1.12)}
+  52%{transform:scale(1.07);filter:brightness(1.12)}
+  70%{transform:scale(1.13);
     background:radial-gradient(circle,#fff,#ffd489 45%,#a86a12);
-    box-shadow:0 0 18px var(--gold),0 0 44px rgba(217,164,65,.6)}
-  44%{transform:scale(.94);border-radius:46% 54% 52% 48%;
-    background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8)}
-  50%{transform:scale(1.2)}
-  56%{transform:scale(1)}
-  62%{transform:scale(1.22);border-radius:44% 56% 58% 42%}
-  68%{transform:scale(1.06);border-radius:52% 48% 46% 54%}
-  76%{transform:scale(1.24);filter:brightness(1.3);
-    box-shadow:0 0 16px var(--cy),0 0 40px rgba(0,212,255,.55)}
-  82%{transform:scale(.96);border-radius:50%;
-    background:radial-gradient(circle,#fff,#ffd489 40%,#a86a12);
     box-shadow:0 0 14px var(--gold),0 0 36px rgba(217,164,65,.5)}
-  88%{transform:scale(1.18);background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8)}
-  94%{transform:scale(1.02);border-radius:50%}}
+  86%{transform:scale(1.05);background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8)}}
+/* AZ: ВСПЛЕСК НА ДЕЙСТВИИ — открылся инструмент, шаг плана, файл:
+   короткий энергичный такт с золотой искрой, затем снова покой */
+@keyframes coreBurst{
+  0%{transform:scale(1);filter:brightness(1)}
+  22%{transform:scale(1.38);filter:brightness(1.45);
+    background:radial-gradient(circle,#fff,#ffd489 42%,#a86a12);
+    box-shadow:0 0 18px var(--gold),0 0 44px rgba(217,164,65,.6)}
+  48%{transform:scale(.94)}
+  72%{transform:scale(1.22);filter:brightness(1.3);
+    box-shadow:0 0 16px var(--cy),0 0 40px rgba(0,212,255,.55)}
+  100%{transform:scale(1);filter:brightness(1)}}
 /* AY: финал ответа — вязкая живая форма мягко оседает в кружок */
 @keyframes coreSettle{
   0%{transform:scale(1.24);border-radius:46% 54% 52% 48%;

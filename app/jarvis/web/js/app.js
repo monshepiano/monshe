@@ -1049,6 +1049,9 @@ function newChat() {
   S.sanctionNodes = {};
   S.chatId = null;
   S.fdir = '';
+  /* AZ: подсказки принадлежат диалогу — новый диалог начинается без чужих */
+  S.replyTicket = (S.replyTicket || 0) + 1;
+  { const rb = $('#replyBar'); if (rb) { rb.hidden = true; rb.innerHTML = ''; } }
   $('#stream').innerHTML = '';
   $('#stream').appendChild(buildWelcome());
   requestAnimationFrame(fitSuggTexts);
@@ -1076,6 +1079,10 @@ async function openChat(id) {
   S.sanctionNodes = {};
   S.chatId = id;
   S.fdir = '';
+  /* AZ: уйдя в другой диалог, чужие подсказки гасим сразу — свои придут
+     из meta последнего ответа или посчитаются заново */
+  S.replyTicket = (S.replyTicket || 0) + 1;
+  { const rb = $('#replyBar'); if (rb) { rb.hidden = true; rb.innerHTML = ''; } }
   showView('chat');
   const r = await api('/api/messages?chat_id=' + encodeURIComponent(id));
   // Быстрые переключения чатов могут вернуть HTTP-ответы в обратном порядке.
@@ -1252,15 +1259,23 @@ function appendFreshMessages(msgs) {
 /* Подсказки на пустом экране. Сервер отдаёт их ГОТОВЫМИ (считает заранее в
    фоне), поэтому новый диалог открывается мгновенно. Держим последний ответ
    в памяти вкладки — тогда даже первого запроса ждать не нужно. */
+/* AZ: ПЛИТКА = НАЗВАНИЕ + ОПИСАНИЕ, что произойдёт. Сам запрос (промпт)
+   пользователь не читает заранее — он введётся в поле по клику */
 const SUGGESTIONS = [
-  ['Что нового?', 'Найди в интернете 5 главных новостей за сегодня и сделай сводку'],
-  ['Собери отчёт', 'Собери таблицу с ценами на iPhone 17 в российских магазинах и сохрани в Excel'],
-  ['Каждое утро', 'Каждый день в 9:00 присылай мне погоду и курс доллара в Telegram'],
-  ['Сделай картинку', 'Нарисуй логотип для кофейни в стиле неон-минимализм'],
-  ['Разбери файл', 'Я пришлю документ — вытащи главное и сделай выжимку по пунктам'],
-  ['Наведи порядок', 'Загляни в мою песочницу, разложи файлы по папкам и скажи, что можно удалить'],
+  ['Что нового?', 'Найду главные новости дня в интернете и соберу из них короткую сводку',
+   'Найди в интернете 5 главных новостей за сегодня и сделай сводку'],
+  ['Собери отчёт', 'Пройду по магазинам, соберу цены в таблицу и сохраню её в Excel',
+   'Собери таблицу с ценами на iPhone 17 в российских магазинах и сохрани в Excel'],
+  ['Каждое утро', 'Настрою расписанное задание: погода и курс доллара в Telegram к 9:00',
+   'Каждый день в 9:00 присылай мне погоду и курс доллара в Telegram'],
+  ['Сделаю картинку', 'Придумаю и нарисую логотип в неон-минимализме — покажу варианты',
+   'Нарисуй логотип для кофейни в стиле неон-минимализм'],
+  ['Разберу файл', 'Прочитаю присланный документ, вытащу главное и соберу выжимку по пунктам',
+   'Я пришлю документ — вытащи из него главное и сделай выжимку по пунктам'],
+  ['Наведу порядок', 'Загляну в песочницу, разложу файлы по папкам и подскажу, что можно удалить',
+   'Загляни в мою песочницу, разложи файлы по папкам и скажи, что можно удалить'],
 ];
-S.ideas = SUGGESTIONS.map((s) => ({ title: s[0], prompt: s[1] }));
+S.ideas = SUGGESTIONS.map((s) => ({ title: s[0], desc: s[1], prompt: s[2] }));
 
 async function loadIdeas(again) {
   try {
@@ -1292,7 +1307,7 @@ function fillSuggestions(box, calm) {
   box.innerHTML = '';
   S.ideas.slice(0, 6).forEach((s, i) => {
     const b = el('button', 'sugg',
-      '<b><span class="st">' + esc(s.title) + '</span></b><span class="sp">' + esc(s.prompt) + '</span>');
+      '<b><span class="st">' + esc(s.title) + '</span></b><span class="sp">' + esc(s.desc || s.prompt) + '</span>');
     b.style.animationDelay = (0.04 * i) + 's';
     /* подмена плиток на живом экране — без повторного «всплытия» */
     if (calm) b.style.animation = 'none';
@@ -4113,8 +4128,12 @@ async function send(opts) {
      прилетают из приветствия и становятся круглешком и заголовком */
   flyWelcomeInto(node, welcomeFlight);
   /* AY: круглешок живёт С ПЕРВОГО кадра ответа и до конца — мысли,
-     инструменты, печать; в финале finishLiveDot вернёт ему кружок */
-  if (node && node.root) node.root.classList.add('live');
+     инструменты, печать; в финале finishLiveDot вернёт ему кружок.
+     AZ: между делом он изредка играет с формой */
+  if (node && node.root) {
+    node.root.classList.add('live');
+    dotShapePlay(node.root);
+  }
   const runId = ++S.streamRun;
   // Уникальный токен прогона: по нему сервер гасит РАБОТУ при Stop
   // (инструменты, санкции, computer-use), а не только SSE-соединение.
@@ -4382,7 +4401,8 @@ async function fetchReplies() {
   }, 22000);
   try {
     const r = await api('/api/replies', { chat_id: chat });
-    if (S.replyTicket !== ticket || activeChatId() !== chat) return;
+    if (S.replyTicket !== ticket) return;
+    if (activeChatId() !== chat) { showReplies([]); return; }
     showReplies(r.items || []);
   } catch (e) {
     if (S.replyTicket === ticket) showReplies([]);
@@ -6144,9 +6164,47 @@ function clearRunRoute(ui) {
   updateResponseMeta(ui);
 }
 
+/* AZ: ВСПЛЕСК НА ДЕЙСТВИИ. База круглешка спокойная; оживает он только
+   когда пользовательу есть что увидеть: открылся новый инструмент, шаг
+   плана, готов файл. Короткий энергичный такт — и обратно к дыханию */
+function dotAction(root) {
+  if (!root || !root.classList || !root.classList.contains('live')) return;
+  root.classList.add('act');
+  clearTimeout(root._actTimer);
+  root._actTimer = setTimeout(() => {
+    if (root.classList) root.classList.remove('act');
+  }, 1150);
+}
+
+/* AZ: КРУГЛЕШОК ИГРАЕТ С ФОРМОЙ. Изредка, будто балуется: плавно
+   перетекает в странную фигуру на полсекунды — тессеракт, тетраэдр,
+   кривая капля, звезда — и так же плавно возвращается кружком */
+const DOT_SHAPES = ['sh-tess', 'sh-tetra', 'sh-blob', 'sh-star', 'sh-hex', 'sh-diamond'];
+function dotShapePlay(root) {
+  if (!root || !root.classList) return;
+  clearTimeout(root._shapeTimer);
+  const schedule = () => {
+    root._shapeTimer = setTimeout(play, 6000 + Math.random() * 9000);
+  };
+  const play = () => {
+    if (!root.isConnected || !root.classList.contains('live') ||
+        root.classList.contains('settle')) { return; }
+    const shape = DOT_SHAPES[Math.floor(Math.random() * DOT_SHAPES.length)];
+    root.classList.add(shape);
+    setTimeout(() => {
+      if (root.classList) root.classList.remove(shape);
+      schedule();
+    }, 720);
+  };
+  schedule();
+}
+
 /* AY: финал ответа — живой круглешок мягко возвращает форму кружка */
 function finishLiveDot(root) {
   if (!root || !root.classList || !root.classList.contains('live')) return;
+  clearTimeout(root._actTimer);
+  clearTimeout(root._shapeTimer);
+  DOT_SHAPES.forEach((sh) => root.classList.remove(sh));
   root.classList.remove('live');
   root.classList.add('settle');
   setTimeout(() => { if (root.isConnected) root.classList.remove('settle'); }, 640);
@@ -6569,6 +6627,7 @@ function handleEvent(ev, ui) {
       ensureStatus(ui);
       busyMode(ui, toolTicker(ev), 2200);
       termLine('$ ' + ev.name + ' ' + JSON.stringify(ev.args || {}).slice(0, 300), 'cmd');
+      dotAction(ui.node && ui.node.root);
       ui._qtSwept = false;
       // РЕЖИМ РЕШАЕТСЯ «СЕЙЧАС» (X): включили AGENT после старта ответа —
       // инструменты этого диалога рисуются в агентском дизайне, а не в
@@ -6608,6 +6667,7 @@ function handleEvent(ev, ui) {
     }
 
     case 'plan_step': {
+      dotAction(ui.node && ui.node.root);
       // Шаг НАЧАЛСЯ: предыдущие отмечаем выполненными, текущий подсвечиваем.
       // Раньше фронт считал вызовы инструментов и в конце разом вычёркивал
       // весь список — теперь это факт от самой модели.

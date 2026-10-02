@@ -3253,7 +3253,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.56", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.57", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3869,7 +3869,7 @@ class IterationAJTests(unittest.TestCase):
         # круглешок живой: дышит в покое, пульсирует при печати (чистый CSS)
         self.assertIn(".ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;", css)
         self.assertIn("animation:coreBreathe 3.4s ease-in-out infinite", css)
-        self.assertIn(".msg-ai.live .ai-core{animation:coreLive 2.8s ease-in-out infinite}", css)
+        self.assertIn(".msg-ai.live .ai-core{animation:coreLive 4.2s ease-in-out infinite}", css)
 
     def test_ak_reasoning_lang_injection(self) -> None:
         from jarvis import agent as ag
@@ -4455,7 +4455,7 @@ class IterationAOTests(unittest.TestCase):
         self.assertIn("white-space:nowrap", st)
         self.assertIn("overflow:hidden", st)
         self.assertIn("text-overflow:ellipsis", st)
-        self.assertIn("'<b><span class=\"st\">' + esc(s.title) + '</span></b><span class=\"sp\">' + esc(s.prompt) + '</span>'", js)
+        self.assertIn("'<b><span class=\"st\">' + esc(s.title) + '</span></b><span class=\"sp\">' + esc(s.desc || s.prompt) + '</span>'", js)
         # JS-обрезка удалена: три итерации измерений не пережили реальности
         self.assertNotIn("fitSuggTitle", js)
         self.assertNotIn("watchSuggTitle", js)
@@ -4587,8 +4587,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.56", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.56", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.57", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.57", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4722,7 +4722,7 @@ class IterationAUTests(unittest.TestCase):
     def test_au3_version_chip(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b56</span>', html)
+        self.assertIn('<span class="ver-chip">b57</span>', html)
         self.assertIn(".ver-chip{align-self:center;", css)
 
     def test_au4_flight_waits_for_scroll(self) -> None:
@@ -4809,15 +4809,16 @@ class IterationAXTests(unittest.TestCase):
         # жёлтая вспышка в тон курсору мыслей
         self.assertIn("#ffd489", live)
         self.assertIn("var(--gold)", live)
-        # смена формы
-        self.assertIn("border-radius:44% 56% 58% 42%", live)
+        # AZ: смена формы переехала из keyframes в ИГРЫ ФОРМЫ —
+        # плавные морфы clip-path по случайным фигурам (см. az4)
+        self.assertIn(".ai-core.sh-tess{clip-path:polygon(", css)
 
     def test_ax4_tiles_fixed_ellipsis(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         grid = css.split(".suggestions{")[1].split("}")[0]
         self.assertIn("grid-auto-rows:128px", grid)
         sp = css.split(".sugg .sp{")[1].split("}")[0]
-        self.assertIn("-webkit-line-clamp:3", sp)
+        self.assertIn("-webkit-line-clamp:4", sp)
         self.assertIn("overflow:hidden", sp)
 
 
@@ -4871,7 +4872,7 @@ class IterationAYTests(unittest.TestCase):
 
     def test_ay4_dot_lives_the_whole_answer(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn(".msg-ai.live .ai-core{animation:coreLive 2.8s ease-in-out infinite}", css)
+        self.assertIn(".msg-ai.live .ai-core{animation:coreLive 4.2s ease-in-out infinite}", css)
         self.assertIn(
             ".msg-ai.settle .ai-core{animation:coreSettle .55s cubic-bezier(.65,0,.35,1) forwards}", css)
         self.assertIn("@keyframes coreSettle{", css)
@@ -4925,6 +4926,75 @@ class IterationAYTests(unittest.TestCase):
         self.assertTrue(agent._suggestion_usable("Добавь тесты в game.py"))
         self.assertFalse(agent._suggestion_usable("tool_calls"))
         self.assertFalse(agent._suggestion_usable("Content overview"))
+
+
+
+class IterationAZTests(unittest.TestCase):
+    """AZ (beta.57): подсказки всегда по теме (углубляющие) и принадлежат
+    только своему диалогу; круглешок спокойнее — оживает всплеском на
+    видимых действиях и изредка играет с формой (тессеракт, тетраэдр,
+    кривая, звезда); плитки — название + описание, промпт по клику."""
+
+    def test_az1_replies_stay_on_topic_and_per_chat(self) -> None:
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        # генератор обязан углублять ТУ ЖЕ тему, общие фразы — банлист
+        self.assertIn("СТРОГО о том же предмете", src)
+        self.assertIn("уходить в другую тему", src)
+        parse = src.split("def _parse_reply_suggestions(")[1].split("\ndef ")[0]
+        self.assertIn('"расскажи подробнее"', parse)
+        self.assertIn('"покажи на примере"', parse)
+
+    def test_az2_replies_belong_to_their_chat(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # новый диалог и чужой диалог гасят полосу подсказок сразу
+        new_chat = js.split("function newChat(")[1].split("\nfunction ")[0]
+        open_chat = js.split("async function openChat(")[1].split("\nfunction ")[0]
+        for seg in (new_chat, open_chat):
+            self.assertIn("S.replyTicket = (S.replyTicket || 0) + 1;", seg)
+            self.assertIn("rb.hidden = true; rb.innerHTML = '';", seg)
+        fr = js.split("async function fetchReplies(")[1].split("\nfunction ")[0]
+        self.assertIn("if (activeChatId() !== chat) { showReplies([]); return; }", fr)
+
+    def test_az3_dot_calm_base_action_burst(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn(".msg-ai.live .ai-core{animation:coreLive 4.2s ease-in-out infinite}", css)
+        self.assertIn(".msg-ai.live .ai-core.act{animation:coreBurst 1.15s cubic-bezier(.65,0,.35,1)}", css)
+        self.assertIn("@keyframes coreBurst{", css)
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("function dotAction(", js)
+        ts = js.split("case 'tool_start': {")[1].split("case '")[0]
+        self.assertIn("dotAction(ui.node && ui.node.root);", ts)
+        ps = js.split("case 'plan_step': {")[1].split("case '")[0]
+        self.assertIn("dotAction(ui.node && ui.node.root);", ps)
+
+    def test_az4_dot_plays_with_shapes(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # база — 12-точечный «круг», переход clip-path плавный
+        core = css.split(".ai-core{")[1].split("}")[0]
+        self.assertIn("clip-path:polygon(50% 0%,75% 6.7%", core)
+        self.assertIn("clip-path .42s cubic-bezier(.65,0,.35,1)", core)
+        # странные фигуры — равным числом вершин, морфятся интерполяцией
+        for shape in ("sh-tess", "sh-tetra", "sh-blob", "sh-star", "sh-hex", "sh-diamond"):
+            self.assertIn(".ai-core.%s{clip-path:polygon(" % shape, css)
+        # тессеракт — внутренний контур псевдоэлементом
+        self.assertIn(".ai-core.sh-tess::before{opacity:.9;transform:rotate(45deg)}", css)
+        self.assertIn("const DOT_SHAPES = ['sh-tess', 'sh-tetra', 'sh-blob', 'sh-star', 'sh-hex', 'sh-diamond'];", js)
+        self.assertIn("function dotShapePlay(", js)
+        fd = js.split("function finishLiveDot(")[1].split("\nfunction ")[0]
+        self.assertIn("DOT_SHAPES.forEach((sh) => root.classList.remove(sh));", fd)
+
+    def test_az5_tiles_show_title_and_description(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("desc: s[1], prompt: s[2]", js)
+        self.assertIn("esc(s.desc || s.prompt)", js)
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        sp = css.split(".sugg .sp{")[1].split("}")[0]
+        self.assertIn("-webkit-line-clamp:4", sp)
+        src = Path("app/jarvis/ideas.py").read_text(encoding="utf-8")
+        self.assertIn('"desc": "Найду главные новости дня', src)
+        self.assertIn('out.append({"title": title, "desc": desc, "prompt": prompt})', src)
+        self.assertIn("описание из 12-16 слов", src)
 
 
 if __name__ == "__main__":
