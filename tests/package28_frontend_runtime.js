@@ -2423,7 +2423,7 @@ function testIterationAJContracts() {
     'AS: answer avatar is a live core dot; the relay saga is gone for good');
   assert(css.includes('.ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;') &&
     css.includes('animation:coreBreathe 3.4s ease-in-out infinite') &&
-    css.includes('.msg-ai:has(.typing) .ai-core{animation:coreLive .55s ease-in-out infinite}'),
+    css.includes('.msg-ai:has(.typing) .ai-core{animation:coreLive 2.8s ease-in-out infinite}'),
     'AS: the dot breathes at rest and pulses faster while printing (pure CSS)');
 }
 
@@ -2464,6 +2464,30 @@ function testIterationAOContracts() {
     'AO: no click blackout on the toggle, repaint guarded against double-fire');
 }
 
+function testIterationAXContracts() {
+  // AX: скоординированный уход — всё одной длительности 620мс
+  assert(js.includes('function welcomeExit(') &&
+    js.split('function welcomeExit(')[1].split('\nfunction ')[0]
+      .includes('transform .62s cubic-bezier(.4,.1,.3,1), opacity .62s ease') &&
+    js.split('function flyGhost(')[1].split('\nfunction ')[0].includes('const dur = 620;'),
+    'AX: tiles scatter, welcome fades and ghosts fly — all in one 620ms beat');
+  // AX: морф В ПОЛЁТЕ — кольца тают, цвет надписи перетекает
+  assert(js.includes('rings.forEach((r) => { r.style.opacity = String(Math.max(0, 1 - p * 1.7)); });') &&
+    js.includes("'<span class=\"gt-grad\">JARVIS</span><span class=\"gt-solid\">JARVIS</span>'") &&
+    js.includes('(p - .35) / .45'),
+    'AX: the core sheds its rings mid-flight; the title morphs its color mid-flight');
+  // AX: гибкий круглешок — жёлтые вспышки и смена формы
+  const live = css.split('@keyframes coreLive{')[1].split('}}')[0];
+  assert(live.includes('#ffd489') && live.includes('var(--gold)') &&
+    live.includes('border-radius:44% 56% 58% 42%'),
+    'AX: the typing dot is flexible — golden flashes, shape shifts, springs');
+  // AX: плитки фиксированной высоты, описание — три строки с троеточием
+  const sp = css.split('.sugg .sp{')[1].split('}')[0];
+  assert(sp.includes('-webkit-line-clamp:3') &&
+    js.includes("'</span></b><span class=\"sp\">' + esc(s.prompt) + '</span>'"),
+    'AX: fixed-height tiles; long descriptions end with an ellipsis');
+}
+
 function testIterationAWContracts() {
   // AW: мысли не штормят прокрутки (английский теперь течёт — раньше
   // каждый кусок дёргал scrollDown и валил кадры)
@@ -2490,16 +2514,15 @@ function testIterationAUContracts() {
       .includes('const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));'),
     'AV: classic speeds are back; the per-frame cap now follows real frame time');
   // AU: видимый номер сборки — всегда ясно, какой билд на экране
-  assert(html.includes('<span class="ver-chip">b54</span>') &&
+  assert(html.includes('<span class="ver-chip">b55</span>') &&
     css.includes('.ver-chip{align-self:center;'),
     'AU: the build number is visible in the top bar');
   // AU: призрак-надпись физически не может растянуться на весь экран
-  assert(css.includes('width:max-content}') &&
-    css.includes('.ghost-title{font-size:30px;font-weight:200;letter-spacing:16px;'),
+  assert(css.includes('.ghost-title{display:grid;width:max-content}'),
     'AU: the title ghost is clamped to its content');
   // AW: призраки рождаются В МОМЕНТ ОТПРАВКИ, оригиналы прячутся в тот же кадр
-  assert(js.includes("const gc = el('div', 'fly-ghost ghost-core');") &&
-    js.includes("wlCore.style.visibility = 'hidden';") &&
+  assert(js.includes("const gc = el('div', 'fly-ghost ghost-reactor',") &&
+    js.includes("wlReactor.style.visibility = 'hidden';") &&
     js.includes('welcomeFlight = { core: cr, title: tr, ghostCore: gc, ghostTitle: gt };') &&
     !js.includes('}), 320);'),
     'AW: ghosts are born at send time — the welcome never disappears');
@@ -2517,8 +2540,8 @@ function testIterationATContracts() {
     js.includes("name.classList.add('pre-flight')") &&
     css.includes('.ai-core.pre-flight{opacity:0}') &&
     css.includes('.ai-name.pre-flight{opacity:0}') &&
-    js.includes("'fly-ghost ghost-core'") && js.includes("'fly-ghost ghost-title'") &&
-    css.includes('.ghost-title{font-size:30px;font-weight:200;letter-spacing:16px;') &&
+    js.includes("'fly-ghost ghost-reactor'") && js.includes("'fly-ghost ghost-title'") &&
+    css.includes('.ghost-title{display:grid;width:max-content}') &&
     !js.includes("'hello fly-ghost'") && !js.includes("'reactor fly-ghost'"),
     'AT: destinations empty until landing; ghosts styled as themselves');
   // AT: цель меряется в момент старта — призрак не летит мимо
@@ -2538,7 +2561,7 @@ function testIterationARContracts() {
   // AS: рождение ответа — ПЕРЕЛЁТ из приветствия (ядро + надпись JARVIS)
   assert(js.includes('flyWelcomeInto(node, welcomeFlight);') &&
     js.includes('welcomeFlight = { core: cr, title: tr, ghostCore: gc, ghostTitle: gt };') &&
-    js.includes('.welcome .reactor.xl .core') &&
+    js.includes("'.welcome .reactor.xl'") &&
     js.includes('.welcome .hello span'),
     'AS: first request — the big core and the JARVIS title fly into the reply');
   // AS: эстафеты нет — никаких relay- следов ни в JS, ни в CSS
@@ -2546,7 +2569,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.54'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.55'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -2653,8 +2676,8 @@ function testIterationANContracts() {
   // полей сверху/снизу у коротких), заголовок — одна строка с троеточием
   const suggGrid = css.split('.suggestions{')[1].split('}')[0];
   assert(/repeat\(3,minmax\(0,1fr\)\)/.test(suggGrid) &&
-    /grid-auto-rows:1fr/.test(suggGrid),
-    'AN/AR: equal columns AND equal row heights — a perfectly even tile grid');
+    /grid-auto-rows:148px/.test(suggGrid),
+    'AN/AX: equal columns AND a FIXED row height — perfectly even, always');
   const suggB = css.split('.sugg b .st{')[1].split('}')[0];
   assert(/white-space:nowrap/.test(suggB) &&
     /overflow:hidden/.test(suggB) &&
@@ -2662,7 +2685,7 @@ function testIterationANContracts() {
     /min-width:0/.test(suggB),
     'AQ: title lives in an inner span (min-width:0) — the canonical ellipsis pattern');
   assert(css.includes('.sugg b{display:flex;min-width:0;') &&
-    js.includes("'<b><span class=\"st\">' + esc(s.title) + '</span></b>' + esc(s.prompt)") &&
+    js.includes("'</span></b><span class=\"sp\">' + esc(s.prompt) + '</span>'") &&
     !js.includes('fitSuggTitle') && !js.includes('watchSuggTitle'),
     'AQ: JS measuring is gone — pure CSS ellipsis inside the span');
   // AN: НАВЕДЕНИЕ ЧУТЬ МЕДЛЕННЕЕ, вкл/выкл прежние .45с одной кривой
@@ -2846,8 +2869,9 @@ function testIterationABContracts() {
   testIterationATContracts();
   testIterationAUContracts();
   testIterationAWContracts();
+  testIterationAXContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 34 regression groups passed');
+  console.log('package28_frontend_runtime: 35 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

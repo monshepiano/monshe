@@ -1285,7 +1285,7 @@ function fillSuggestions(box) {
   box.innerHTML = '';
   S.ideas.slice(0, 6).forEach((s, i) => {
     const b = el('button', 'sugg',
-      '<b><span class="st">' + esc(s.title) + '</span></b>' + esc(s.prompt));
+      '<b><span class="st">' + esc(s.title) + '</span></b><span class="sp">' + esc(s.prompt) + '</span>');
     b.style.animationDelay = (0.04 * i) + 's';
     b.addEventListener('click', () => { $('#input').value = s.prompt; autoGrow(); send(); });
     box.appendChild(b);
@@ -1671,6 +1671,21 @@ function addUserMsg(text, atts, info, hostOverride) {
    доке живёт своей жизнью и никуда не гаснет. */
 const AVATAR_CORE = '<div class="ai-core" aria-hidden="true"></div>';
 
+function welcomeExit() {
+  /* AX: диалог «открывается» — плитки разъезжаются врозь и растворяются,
+     приветствие мягко тает. Длительность — та же, что у полёта */
+  const w = document.querySelector('.welcome');
+  if (!w) return;
+  $$('.sugg', w).forEach((t, i) => {
+    t.style.transition = 'transform .62s cubic-bezier(.4,.1,.3,1), opacity .62s ease';
+    t.style.transform = 'translateX(' + (i % 2 ? 120 : -120) + 'px) scale(.93)';
+    t.style.opacity = '0';
+  });
+  w.style.transition = 'opacity .62s ease';
+  w.style.opacity = '0';
+  setTimeout(() => { if (w.isConnected) w.remove(); }, 700);
+}
+
 function flyWelcomeInto(node, wf) {
   if (!wf || !node || !node.root) return;
   const core = node.root.querySelector('.ai-core');
@@ -1678,12 +1693,14 @@ function flyWelcomeInto(node, wf) {
   /* AW: до прилёта места назначения ПУСТЫ — круглешка и имени ещё нет */
   if (core && core.classList) core.classList.add('pre-flight');
   if (name && name.classList) name.classList.add('pre-flight');
-  /* полёт стартует СРАЗУ — призраки созданы в момент отправки и висят
-     на местах элементов приветствия; цели отслеживаются ЖИВО, прокрутка
-     не может устареть */
+  /* полёт стартует СРАЗУ — призраки созданы в момент отправки */
   if (core && wf.ghostCore) {
+    const rings = $$('.gr', wf.ghostCore);
     flyGhost(wf.ghostCore, () => core.getBoundingClientRect(), () => {
       core.classList.remove('pre-flight');
+    }, (p) => {
+      /* AX: кольца растворяются В ПОЛЁТЕ — реактор превращается в круглешок */
+      rings.forEach((r) => { r.style.opacity = String(Math.max(0, 1 - p * 1.7)); });
     });
   }
   if (name && wf.ghostTitle) {
@@ -1697,8 +1714,13 @@ function flyWelcomeInto(node, wf) {
       }
       return name.getBoundingClientRect();
     };
+    const solid = wf.ghostTitle.querySelector('.gt-solid');
     flyGhost(wf.ghostTitle, titleTarget, () => {
       name.classList.remove('pre-flight');
+    }, (p) => {
+      /* AX: цвет надписи меняется В ПОЛЁТЕ — градиент уступает место
+         цветному слою во второй половине пути */
+      if (solid) solid.style.opacity = String(Math.max(0, Math.min(1, (p - .35) / .45)));
     });
   }
   /* страховка: в фоновой вкладке анимации замирают — имя и ядро всё
@@ -1709,19 +1731,19 @@ function flyWelcomeInto(node, wf) {
   }, 1600);
 }
 
-/* Полёт с ЖИВЫМ наведением: каждый кадр цель перемеряется (прокрутка
-   ещё едет — и это нормально), позиция и масштаб интерполируются мягкой
-   кривой. Приземление — кроссфейд: призрак растворяется, настоящий
-   элемент проявляется одновременно, без рывка. */
-function flyGhost(g, targetRect, done) {
+/* Полёт с ЖИВЫМ наведением: цель перемеряется каждый кадр, позиция и
+   масштаб идут по мягкой S-кривой, onProgress даёт призраку менять вид
+   В ПОЛЁТЕ (кольца тают, цвет перетекает). Приземление — кроссфейд. */
+function flyGhost(g, targetRect, done, onProgress) {
   const start = g.getBoundingClientRect();
   const t0 = performance.now();
-  const dur = 850;
+  const dur = 620;
   g.dataset.landed = '0';
   const ease = (t) => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
   const tick = () => {
     const p = Math.min(1, (performance.now() - t0) / dur);
     const e = ease(p);
+    if (onProgress) onProgress(p);
     const to = targetRect();
     const k = Math.max(0.06, to.width / Math.max(1, start.width));
     const dx = (to.left + to.width / 2) - (start.left + start.width / 2);
@@ -3893,26 +3915,31 @@ async function send(opts) {
   /* AS: ПЕРВЫЙ ЗАПРОС ДИАЛОГА — пока приветствие на экране, запоминаем,
      где стоят большое ядро и надпись JARVIS: при рождении ответа они
      перелетят на свои места (flyWelcomeInto) */
-  const wlCore = document.querySelector('.welcome .reactor.xl .core');
+  const wlReactor = document.querySelector('.welcome .reactor.xl');
   const wlTitle = document.querySelector('.welcome .hello span');
   let welcomeFlight = null;
-  if (wlCore && wlTitle) {
-    const cr = wlCore.getBoundingClientRect();
+  if (wlReactor && wlTitle) {
+    const cr = wlReactor.getBoundingClientRect();
     const tr = wlTitle.getBoundingClientRect();
-    /* AW: ПРИЗРАКИ РОЖДАЮТСЯ В МОМЕНТ ОТПРАВКИ — прямо на месте элементов
-       приветствия, оригиналы прячем в ТОТ ЖЕ кадр. Надпись и круглешок
-       НЕ исчезают со стартовой страницы ни на миг: они уже летят */
-    const gc = el('div', 'fly-ghost ghost-core');
+    /* AX: ПРИЗРАК-РЕАКТОР — летит ВЕСЬ реактор с кольцами и сбрасывает
+       их В ПОЛЁТЕ, превращаясь в круглешок. Надпись — ДВА СЛОЯ: нижний
+       градиентный (как в приветствии), верхний цветной; цвет меняется
+       В ПОЛЁТЕ, не кадром */
+    const gc = el('div', 'fly-ghost ghost-reactor',
+      '<i class="gr gr1"></i><i class="gr gr2"></i><i class="gcore"></i>');
     gc.style.cssText = 'left:' + cr.left + 'px;top:' + cr.top + 'px;width:' +
       cr.width + 'px;height:' + cr.height + 'px';
-    const gt = el('div', 'fly-ghost ghost-title');
+    const gt = el('div', 'fly-ghost ghost-title',
+      '<span class="gt-grad">JARVIS</span><span class="gt-solid">JARVIS</span>');
     gt.style.cssText = 'left:' + tr.left + 'px;top:' + tr.top + 'px';
-    gt.textContent = 'JARVIS';
     document.body.appendChild(gc);
     document.body.appendChild(gt);
-    wlCore.style.visibility = 'hidden';
+    wlReactor.style.visibility = 'hidden';
     wlTitle.style.visibility = 'hidden';
     welcomeFlight = { core: cr, title: tr, ghostCore: gc, ghostTitle: gt };
+    /* AX: УХОД ПРИВЕТСТВИЯ — плитки разъезжаются в стороны с растворением,
+       страница мягко тает. Всё — одной длительностью с полётом (WELCOME_MS) */
+    welcomeExit();
     /* страховка: отправка сорвалась до рождения ответа — призраки
        не должны висеть вечно */
     setTimeout(() => {

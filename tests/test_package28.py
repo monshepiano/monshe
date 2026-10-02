@@ -3244,7 +3244,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.54", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.55", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3860,7 +3860,7 @@ class IterationAJTests(unittest.TestCase):
         # круглешок живой: дышит в покое, пульсирует при печати (чистый CSS)
         self.assertIn(".ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;", css)
         self.assertIn("animation:coreBreathe 3.4s ease-in-out infinite", css)
-        self.assertIn(".msg-ai:has(.typing) .ai-core{animation:coreLive .55s ease-in-out infinite}", css)
+        self.assertIn(".msg-ai:has(.typing) .ai-core{animation:coreLive 2.8s ease-in-out infinite}", css)
 
     def test_ak_reasoning_lang_injection(self) -> None:
         from jarvis import agent as ag
@@ -4408,8 +4408,8 @@ class IterationAOTests(unittest.TestCase):
         # ядро большого реактора и надпись JARVIS летят в ответ
         self.assertIn("flyWelcomeInto(node, welcomeFlight);", js)
         self.assertIn("let welcomeFlight = null;", js)
-        self.assertIn("if (wlCore && wlTitle) {", js)
-        self.assertIn(".welcome .reactor.xl .core", js)
+        self.assertIn("if (wlReactor && wlTitle) {", js)
+        self.assertIn("'.welcome .reactor.xl'", js)
         self.assertIn(".welcome .hello span", js)
         ghost = js.split("function flyGhost(")[1].split("\nfunction ")[0]
         # AW: полёт на живом наведении (rAF), мягкая кривая easeInOut
@@ -4446,7 +4446,7 @@ class IterationAOTests(unittest.TestCase):
         self.assertIn("white-space:nowrap", st)
         self.assertIn("overflow:hidden", st)
         self.assertIn("text-overflow:ellipsis", st)
-        self.assertIn("'<b><span class=\"st\">' + esc(s.title) + '</span></b>' + esc(s.prompt)", js)
+        self.assertIn("'<b><span class=\"st\">' + esc(s.title) + '</span></b><span class=\"sp\">' + esc(s.prompt) + '</span>'", js)
         # JS-обрезка удалена: три итерации измерений не пережили реальности
         self.assertNotIn("fitSuggTitle", js)
         self.assertNotIn("watchSuggTitle", js)
@@ -4578,14 +4578,14 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.54", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.54", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.55", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.55", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # AR: все плитки ОДНОЙ высоты — ряды не гуляют, сетка ровная
         grid = css.split(".suggestions{")[1].split("}")[0]
-        self.assertIn("grid-auto-rows:1fr", grid)
+        self.assertIn("grid-auto-rows:148px", grid)
         # единый ритм строк
         self.assertIn("line-height:1.55}", css)
         self.assertIn("line-height:1.35}", css)
@@ -4667,10 +4667,12 @@ class IterationATTests(unittest.TestCase):
         self.assertIn("name.classList.add('pre-flight')", js)
         self.assertIn(".ai-core.pre-flight{opacity:0}", css)
         self.assertIn(".ai-name.pre-flight{opacity:0}", css)
-        self.assertIn("'fly-ghost ghost-core'", js)
+        self.assertIn("'fly-ghost ghost-reactor'", js)
         self.assertIn("'fly-ghost ghost-title'", js)
-        self.assertIn(".ghost-core{border-radius:50%;", css)
-        self.assertIn(".ghost-title{font-size:30px;font-weight:200;letter-spacing:16px;", css)
+        self.assertIn(".ghost-reactor .gcore{width:28%;height:28%;", css)
+        # AX: надпись — два слоя (градиент + цвет), меняются В ПОЛЁТЕ
+        self.assertIn(".ghost-title{display:grid;width:max-content}", css)
+        self.assertIn(".gt-grad{background:linear-gradient(90deg,var(--cy2),var(--teal) 40%,var(--violet) 75%,var(--pink));", css)
         self.assertNotIn("'hello fly-ghost'", js)
         self.assertNotIn("'reactor fly-ghost'", js)
         # цель меряется в момент старта (прокрутка утихла) — призрак не мимо
@@ -4711,7 +4713,7 @@ class IterationAUTests(unittest.TestCase):
     def test_au3_version_chip(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b54</span>', html)
+        self.assertIn('<span class="ver-chip">b55</span>', html)
         self.assertIn(".ver-chip{align-self:center;", css)
 
     def test_au4_flight_waits_for_scroll(self) -> None:
@@ -4719,8 +4721,8 @@ class IterationAUTests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # AW: призраки создаются В МОМЕНТ ОТПРАВКИ на местах элементов
         # приветствия, оригиналы прячутся в тот же кадр — исчезновения нет
-        self.assertIn("const gc = el('div', 'fly-ghost ghost-core');", js)
-        self.assertIn("wlCore.style.visibility = 'hidden';", js)
+        self.assertIn("const gc = el('div', 'fly-ghost ghost-reactor',", js)
+        self.assertIn("wlReactor.style.visibility = 'hidden';", js)
         self.assertIn("wlTitle.style.visibility = 'hidden';", js)
         self.assertIn("welcomeFlight = { core: cr, title: tr, ghostCore: gc, ghostTitle: gt };", js)
         # полёт стартует сразу, без ожидания укладки прокрутки
@@ -4759,6 +4761,55 @@ class IterationAWTests(unittest.TestCase):
             'for tc in delta.get("tool_calls")')[0]
         self.assertNotIn("\n                                    continue", block)
         self.assertIn("if think:", block)
+
+
+class IterationAXTests(unittest.TestCase):
+    """AX (beta.55): скоординированный уход приветствия — полёт быстрее
+    (620мс, S-кривая), плитки разъезжаются с растворением, всё одной
+    длительности; надпись меняет цвет В ПОЛЁТЕ (два слоя), ядро сбрасывает
+    кольца В ПОЛЁТЕ; круглешок гибкий (жёлтые вспышки, форма, пружина);
+    плитки фиксированной высоты с троеточием описания."""
+
+    def test_ax1_welcome_exit_choreography(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # уход страницы + разъезд плиток + полёт — одной длительности
+        self.assertIn("function welcomeExit(", js)
+        we = js.split("function welcomeExit(")[1].split("\nfunction ")[0]
+        self.assertIn("transform .62s cubic-bezier(.4,.1,.3,1), opacity .62s ease", we)
+        self.assertIn("w.style.opacity = '0';", we)
+        fly = js.split("function flyGhost(")[1].split("\nfunction ")[0]
+        self.assertIn("const dur = 620;", fly)
+
+    def test_ax2_in_flight_morph(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # ядро сбрасывает кольца В ПОЛЁТЕ
+        self.assertIn("rings.forEach((r) => { r.style.opacity = String(Math.max(0, 1 - p * 1.7)); });", js)
+        # надпись: градиент уступает цвету В ПОЛЁТЕ (два слоя)
+        self.assertIn("'<span class=\"gt-grad\">JARVIS</span><span class=\"gt-solid\">JARVIS</span>'", js)
+        self.assertIn("(p - .35) / .45", js)
+        self.assertIn(".gt-grad{background:linear-gradient(90deg,var(--cy2),var(--teal) 40%,var(--violet) 75%,var(--pink));", css)
+        self.assertIn(".gt-solid{color:var(--cy);opacity:0;", css)
+        # призрак-реактор несёт кольца
+        self.assertIn(".ghost-reactor .gr1{inset:0;", css)
+        self.assertIn(".ghost-reactor .gcore{width:28%;height:28%;", css)
+
+    def test_ax3_flexible_core(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        live = css.split("@keyframes coreLive{")[1].split("}}")[0]
+        # жёлтая вспышка в тон курсору мыслей
+        self.assertIn("#ffd489", live)
+        self.assertIn("var(--gold)", live)
+        # смена формы
+        self.assertIn("border-radius:44% 56% 58% 42%", live)
+
+    def test_ax4_tiles_fixed_ellipsis(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        grid = css.split(".suggestions{")[1].split("}")[0]
+        self.assertIn("grid-auto-rows:148px", grid)
+        sp = css.split(".sugg .sp{")[1].split("}")[0]
+        self.assertIn("-webkit-line-clamp:3", sp)
+        self.assertIn("overflow:hidden", sp)
 
 
 if __name__ == "__main__":

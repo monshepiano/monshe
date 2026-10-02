@@ -516,15 +516,17 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .hello-sub{color:var(--tx2);font-size:13.5px;margin:0 0 26px}
 /* шесть подсказок — две ровные строки по три, без дыр во второй строке */
 .suggestions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;
-  /* AR: РОВНАЯ СЕТКА — все плитки одной высоты: ряды больше не гуляют
-     (в свободном виде второй ряд был выше первого — «текст неровный») */
-  grid-auto-rows:1fr}
+  /* AX: ФИКСИРОВАННАЯ ВЫСОТА — все плитки одинакового размера всегда;
+     длинный текст обрезается троеточием, а не растягивает ряд */
+  grid-auto-rows:148px}
 @media (max-width:900px){.suggestions{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:560px){.suggestions{grid-template-columns:minmax(0,1fr)}}
 .sugg{padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);
   cursor:pointer;text-align:left;transition:.25s;font-size:12.5px;color:var(--tx2);animation:popIn .45s both;
-  /* AR: единый ритм строк во всех плитках */
-  line-height:1.55}
+  line-height:1.55;overflow:hidden}
+/* AX: описание — три строки, дальше троеточие */
+.sugg .sp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+  overflow:hidden;min-width:0}
 /* AN/AQ: ИЗНАЧАЛЬНЫЙ свободный вид — текст целиком, высота ряда по
    самой высокой плитке СВОЕГО ряда. Заголовок — одна строка: он лежит
    в собственном span (min-width:0 внутри flex) — единственный паттерн
@@ -588,24 +590,52 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   /* AV: кроссфейд при посадке призрака — вместо вспышки и рывка */
   transition:opacity .18s ease}
 @keyframes coreBreathe{50%{transform:scale(1.22);box-shadow:0 0 15px rgba(0,212,255,.75),0 0 34px rgba(0,212,255,.35)}}
-.msg-ai:has(.typing) .ai-core{animation:coreLive .55s ease-in-out infinite}
-@keyframes coreLive{50%{transform:scale(1.38);filter:brightness(1.55);
-  box-shadow:0 0 18px var(--cy),0 0 44px rgba(0,212,255,.6)}}
+.msg-ai:has(.typing) .ai-core{animation:coreLive 2.8s ease-in-out infinite}
+/* AX: круглешок ГИБКИЙ: обычный пульс — и РЕДКИЕ живые моменты:
+   жёлтая вспышка (в тон золотому курсору мыслей), приседание-пружина,
+   смена формы. Всё в одном такте 2.8с — никогда не выглядит механикой */
+@keyframes coreLive{
+  0%,24%,100%{transform:scale(1);border-radius:50%;
+    background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
+    box-shadow:0 0 10px rgba(0,212,255,.5),0 0 26px rgba(0,212,255,.22)}
+  8%{transform:scale(1.3);filter:brightness(1.4)}
+  12%{transform:scale(.92)}
+  16%{transform:scale(1.18)}
+  20%{transform:scale(1)}
+  38%{transform:scale(1.32);border-radius:50%;
+    background:radial-gradient(circle,#fff,#ffd489 45%,#a86a12);
+    box-shadow:0 0 16px var(--gold),0 0 40px rgba(217,164,65,.55)}
+  44%{transform:scale(.95);background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8)}
+  50%{transform:scale(1.22)}
+  56%{transform:scale(1)}
+  66%{transform:scale(1.24);border-radius:44% 56% 58% 42%}
+  72%{transform:scale(1.05);border-radius:50%}
+  86%{transform:scale(1.28);filter:brightness(1.3);
+    box-shadow:0 0 16px var(--cy),0 0 40px rgba(0,212,255,.55)}
+  92%{transform:scale(1)}}
 /* AS: ПЕРВЫЙ ЗАПРОС — ядро и надпись JARVIS перелетают из приветствия */
 .fly-ghost{position:fixed;z-index:400;pointer-events:none;margin:0;will-change:transform}
 /* AT: до прилёта места назначения ПУСТЫ — круглешка и имени нет */
 .ai-core.pre-flight{opacity:0}
 .ai-name.pre-flight{opacity:0}
-/* призрак ядра: тот же вид, что большое ядро приветствия */
-.ghost-core{border-radius:50%;
+/* призрак-реактор: летит ВЕСЬ реактор — кольца тают В ПОЛЁТЕ (JS),
+   ядро сжимается и становится круглешком ответа */
+.ghost-reactor{display:grid;place-items:center}
+.ghost-reactor .gr{position:absolute;border-radius:50%;border:1.5px solid rgba(0,212,255,.4);
+  box-shadow:0 0 12px rgba(0,212,255,.35) inset,0 0 14px rgba(0,212,255,.2)}
+.ghost-reactor .gr1{inset:0;border-top-color:transparent;border-left-color:transparent}
+.ghost-reactor .gr2{inset:14%;border-bottom-color:transparent}
+.ghost-reactor .gcore{width:28%;height:28%;border-radius:50%;
   background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
   box-shadow:0 0 18px var(--cy),0 0 45px rgba(0,212,255,.55)}
-/* призрак надписи: та же типографика, что JARVIS в приветствии;
-   fixed-элемент сжимается под содержимое — НЕ растягивается на экран */
-.ghost-title{font-size:30px;font-weight:200;letter-spacing:16px;color:var(--cy);
-  text-shadow:0 0 26px rgba(0,212,255,.7);white-space:nowrap;
-  /* AU: явно под содержимое — ни при каких обстоятельствах не на весь экран */
-  display:block;width:max-content}
+/* призрак надписи — ДВА СЛОЯ: градиент приветствия внизу, цвет имени
+   сверху; верхний проявляется В ПОЛЁТЕ (JS) — цвет меняется в пути,
+   а не кадром */
+.ghost-title{display:grid;width:max-content}
+.ghost-title span{grid-area:1/1;font-size:30px;font-weight:600;letter-spacing:16px;white-space:nowrap}
+.gt-grad{background:linear-gradient(90deg,var(--cy2),var(--teal) 40%,var(--violet) 75%,var(--pink));
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.gt-solid{color:var(--cy);opacity:0;text-shadow:0 0 26px rgba(0,212,255,.7)}
 /* реактор тихнет в неактивных (камера закрыта) ответах */
 .ui-inert .ai-avatar{opacity:.55;filter:saturate(.7)}
 .ai-body{flex:1;min-width:0}
