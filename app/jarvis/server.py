@@ -339,8 +339,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/scenarios":
             return self._json({"ok": True, "scenarios": db.list_scenarios()})
         if path == "/api/ideas":
-            # только готовое: считать здесь нельзя — экран ждать не должен
-            return self._json({"ok": True, "ideas": ideas.current()})
+            # только готовое: считать здесь нельзя — экран ждать не должен.
+            # AY: ИИ-плитки готовятся ФОНОМ (дёшево, nano): клиент заберёт
+            # их повторным запросом, когда они готовы
+            ideas.refresh_async()
+            refreshing = ideas.refresh_ai_async()
+            return self._json({"ok": True, "ideas": ideas.current(),
+                               "refreshing": refreshing})
         if path == "/api/files":
             chat_id = (params.get("chat_id") or params.get("chat") or [""])[0]
             return self._json({"ok": True, "files": sandbox.listing(chat_id),
@@ -488,7 +493,8 @@ class Handler(BaseHTTPRequestHandler):
             # сбой модели честно падает в проактивные шаги по фактам работы —
             # это решает suggest_replies_ai внутри себя.
             items = agent.suggest_replies_ai(asked, last.get("content", ""),
-                                             meta.get("tools") if meta.get("agent") else None)
+                                             meta.get("tools") if meta.get("agent") else None,
+                                             history=msgs)
             meta["replies"] = items
             db.update_message_meta(last["id"], meta)
             return self._json({"ok": True, "items": items})
@@ -1128,7 +1134,11 @@ def _prefetch_replies(msg_id: str, user_text: str, answer: str,
             meta = msg.get("meta") or {}
             if isinstance(meta.get("replies"), list):
                 return          # уже посчитано (перечитали историю и т.п.)
-            items = agent.suggest_replies_ai(user_text, answer, tools_used)
+            # AY: генератор видит ПОСЛЕДНИЕ РЕПЛИКИ переписки — подсказки
+            # стали развитием разговора, а не реакцией на один ответ
+            history = db.get_messages(msg.get("chat_id", ""), limit=8) or []
+            items = agent.suggest_replies_ai(user_text, answer, tools_used,
+                                             history=history)
             if items:
                 meta["replies"] = items
                 db.update_message_meta(msg_id, meta)

@@ -1018,7 +1018,7 @@ function testPendingInteractivePanelAndRouteLifecycle() {
   let typerStarts = 0;
   let metaRefreshes = 0;
   const ctx = loadFunctions(
-    ['deferMountedReplyUi', 'flushPendingReplyUi', 'typeInto', 'clearRunRoute', 'settleVisualDone'],
+    ['deferMountedReplyUi', 'flushPendingReplyUi', 'typeInto', 'clearRunRoute', 'finishLiveDot', 'settleVisualDone'],
     {
       String, el: miniEl, S: { followUi: null },
       parseUiSpec() { return [{ t: 'tiles' }]; },
@@ -2423,8 +2423,8 @@ function testIterationAJContracts() {
     'AS: answer avatar is a live core dot; the relay saga is gone for good');
   assert(css.includes('.ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;') &&
     css.includes('animation:coreBreathe 3.4s ease-in-out infinite') &&
-    css.includes('.msg-ai:has(.typing) .ai-core{animation:coreLive 2.8s ease-in-out infinite}'),
-    'AS: the dot breathes at rest and pulses faster while printing (pure CSS)');
+    css.includes('.msg-ai.live .ai-core{animation:coreLive 2.8s ease-in-out infinite}'),
+    'AS/AY: the dot breathes at rest and lives through the WHOLE answer (pure CSS)');
 }
 
 function testIterationAKContracts() {
@@ -2468,14 +2468,14 @@ function testIterationAXContracts() {
   // AX: скоординированный уход — всё одной длительности 620мс
   assert(js.includes('function welcomeExit(') &&
     js.split('function welcomeExit(')[1].split('\nfunction ')[0]
-      .includes('transform .62s cubic-bezier(.4,.1,.3,1), opacity .62s ease') &&
+      .includes('transform .62s cubic-bezier(.65,0,.35,1), opacity .62s cubic-bezier(.65,0,.35,1)') &&
     js.split('function flyGhost(')[1].split('\nfunction ')[0].includes('const dur = 620;'),
     'AX: tiles scatter, welcome fades and ghosts fly — all in one 620ms beat');
   // AX: морф В ПОЛЁТЕ — кольца тают, цвет надписи перетекает
-  assert(js.includes('rings.forEach((r) => { r.style.opacity = String(Math.max(0, 1 - p * 1.7)); });') &&
+  assert(js.includes('rings.forEach((r) => { r.style.opacity = String(Math.max(0, 1 - e)); });') &&
     js.includes("'<span class=\"gt-grad\">JARVIS</span><span class=\"gt-solid\">JARVIS</span>'") &&
     js.includes('(p - .35) / .45'),
-    'AX: the core sheds its rings mid-flight; the title morphs its color mid-flight');
+    'AX/AY: the core sheds its rings mid-flight (at flight speed); the title morphs mid-flight');
   // AX: гибкий круглешок — жёлтые вспышки и смена формы
   const live = css.split('@keyframes coreLive{')[1].split('}}')[0];
   assert(live.includes('#ffd489') && live.includes('var(--gold)') &&
@@ -2486,6 +2486,37 @@ function testIterationAXContracts() {
   assert(sp.includes('-webkit-line-clamp:3') &&
     js.includes("'</span></b><span class=\"sp\">' + esc(s.prompt) + '</span>'"),
     'AX: fixed-height tiles; long descriptions end with an ellipsis');
+}
+
+function testIterationAYContracts() {
+  // AY: ЕДИНАЯ анимация ухода — killWelcome не режет уходящее приветствие,
+  // входная popIn снята, страница тает и складывается по высоте
+  assert(js.includes("w.dataset.exit = '1';") &&
+    js.includes("w.dataset.exit !== '1'") &&
+    js.split('function welcomeExit(')[1].split('\nfunction ')[0]
+      .includes("t.style.animation = 'none';") &&
+    js.split('function welcomeExit(')[1].split('\nfunction ')[0]
+      .includes("w.style.height = '0px';"),
+    'AY: the welcome leaves as ONE motion — tiles scatter, page fades and folds');
+  // AY: киношное размытие в движении — от скорости, гаснет к посадке
+  const fly = js.split('function flyGhost(')[1].split('\nfunction ')[0];
+  assert(fly.includes('Math.min(2.4, speed * .085)') &&
+    fly.includes("g.style.filter = blur > .25 ? 'blur(' + blur.toFixed(2) + 'px)' : '';"),
+    'AY: ghosts get a cinematic motion blur that dies out at landing');
+  // AY: круглешок живёт весь ответ и в финале оседает кружком
+  assert(js.includes('function finishLiveDot(') &&
+    js.includes("node.root.classList.add('live');") &&
+    css.includes('.msg-ai.settle .ai-core{animation:coreSettle .55s cubic-bezier(.65,0,.35,1) forwards}') &&
+    !css.includes(':has(.typing) .ai-core'),
+    'AY: the dot lives through thinking, tools and typing, then settles into a circle');
+  // AY: плитки компактнее, троеточие — по-человечески (после знака — пробел)
+  const fit = js.split('function fitSuggText(')[1].split('\nfunction ')[0];
+  assert(css.split('.sugg{')[1].split('}')[0].includes('font-size:13px') &&
+    fit.includes('sp.dataset.full') && fit.includes("'\\u00A0…'"),
+    'AY: compact text-forward tiles; ellipsis after punctuation goes after a space');
+  // AY: ИИ ещё придумывает плитки — клиент заберёт живые повторным заходом
+  assert(js.includes('if (r.refreshing && !again) setTimeout(() => { loadIdeas(true); }, 2600);'),
+    'AY: welcome tiles: local set instantly, AI set swaps in when ready');
 }
 
 function testIterationAWContracts() {
@@ -2514,7 +2545,7 @@ function testIterationAUContracts() {
       .includes('const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));'),
     'AV: classic speeds are back; the per-frame cap now follows real frame time');
   // AU: видимый номер сборки — всегда ясно, какой билд на экране
-  assert(html.includes('<span class="ver-chip">b55</span>') &&
+  assert(html.includes('<span class="ver-chip">b56</span>') &&
     css.includes('.ver-chip{align-self:center;'),
     'AU: the build number is visible in the top bar');
   // AU: призрак-надпись физически не может растянуться на весь экран
@@ -2569,7 +2600,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.55'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.56'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -2676,8 +2707,8 @@ function testIterationANContracts() {
   // полей сверху/снизу у коротких), заголовок — одна строка с троеточием
   const suggGrid = css.split('.suggestions{')[1].split('}')[0];
   assert(/repeat\(3,minmax\(0,1fr\)\)/.test(suggGrid) &&
-    /grid-auto-rows:148px/.test(suggGrid),
-    'AN/AX: equal columns AND a FIXED row height — perfectly even, always');
+    /grid-auto-rows:128px/.test(suggGrid),
+    'AN/AX/AY: equal columns AND a fixed compact height — even, text-forward tiles');
   const suggB = css.split('.sugg b .st{')[1].split('}')[0];
   assert(/white-space:nowrap/.test(suggB) &&
     /overflow:hidden/.test(suggB) &&
@@ -2870,8 +2901,9 @@ function testIterationABContracts() {
   testIterationAUContracts();
   testIterationAWContracts();
   testIterationAXContracts();
+  testIterationAYContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 35 regression groups passed');
+  console.log('package28_frontend_runtime: 36 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

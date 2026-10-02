@@ -1179,48 +1179,81 @@ def _suggestion_usable(item: str) -> bool:
         return False                  # «content» и прочая англичанина — мимо
     if _SUGGEST_JUNK.search(clean):
         return False
-    if re.search(r"[A-Za-z]{4,}", clean):
-        return False
+    # AY: латиницу больше не режем altogether: разговор о коде и файлах
+    # («Добавь тесты в game.py») — законное продолжение диалога
     return True
 
 
-def suggest_replies_ai(user_text: str, answer: str,
-                       tools_used: Optional[List[str]] = None) -> List[str]:
-    """Продолжения от ИИ-модели — по сути ответа, а не общие фразы.
+def _dialogue_lines(history: Optional[List[Dict[str, Any]]],
+                    limit: int = 6) -> List[str]:
+    """Живые реплики переписки для генератора подсказок.
 
-    Дешёвая nano-модель видит вопрос и ЖИВОЙ текст ответа (код и JSON
-    вырезаны) и предлагает три конкретных продолжения. Таймаут 3 секунды:
-    подсказки обязаны появиться сразу после печати. Всё, что не похоже на
-    русскую фразу, отсеивается; сбой или мусор честно падает в локальный
-    запас: после AGENT-прогона — проактивные шаги, в разговоре —
-    разговорные продолжения. Пустых строк не бывает.
+    AY: подсказка — не «реакция на последний ответ», а естественное
+    развитие РАЗГОВОРА: модель видит последние реплики обеих сторон."""
+    lines: List[str] = []
+    for m in (history or [])[-(limit * 2):]:
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        text = " ".join(str(m.get("content") or "").split())
+        if not text:
+            continue
+        lines.append("%s: %s" % ("Пользователь" if role == "user" else "JARVIS",
+                                 text[:280]))
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def suggest_replies_ai(user_text: str, answer: str,
+                       tools_used: Optional[List[str]] = None,
+                       history: Optional[List[Dict[str, Any]]] = None) -> List[str]:
+    """Продолжения от ИИ-модели — Джарвис сам ведёт диалог с собой.
+
+    Дешёвая nano-модель видит ПОСЛЕДНИЕ РЕПЛИКИ переписки (а не одну пару
+    вопрос-ответ) и живой текст ответа, и предлагает три следующие реплики
+    пользователя — настолько естественные, что разговор можно вести одними
+    подсказками. Таймаут 5 секунд: подсказки обязаны появиться сразу после
+    печати. Всё, что не похоже на живую фразу, отсеивается; сбой или мусор
+    честно падает в локальный запас: после AGENT-прогона — проактивные
+    шаги, в разговоре — разговорные продолжения. Пустых строк не бывает.
     """
     q = str(user_text or "").strip()
     raw_answer = str(answer or "")
     tail = _nano_context(raw_answer)
-    if len(tail) < 20:
+    lines = _dialogue_lines(history)
+    if len(tail) < 20 and len(lines) < 2:
         # совсем пустому ответу не хватает смысла: nano не платим
         if tools_used:
             return suggest_proactive(q, raw_answer, tools_used)
         return suggest_replies(q, raw_answer)
     span = telemetry.Span("reply_suggestions", source="nano")
     try:
+        parts = []
+        if lines:
+            parts.append("Переписка:\n" + "\n".join(lines))
+        if tools_used:
+            parts.append("JARVIS использовал инструменты: %s." %
+                         ", ".join(str(t) for t in tools_used if t))
+        parts.append("Последний ответ JARVIS (фрагмент): %s" % tail[:1400])
         raw = llm.chat([
             {"role": "system",
-             "content": "Ты генератор коротких кнопок-подсказок для чата с "
-                        "ассистентом. Пользователь только что получил ответ. "
-                        "Предложи ТРИ естественных продолжения ИМЕННО по сути "
-                        "этого ответа: уточнение, следующий шаг или просьбу "
-                        "использовать результат. Фразы ТОЛЬКО на русском "
-                        "языке, без английских и технических слов. Каждая "
-                        "фраза до 5 слов, от первого лица пользователя, без "
-                        "кавычек и номеров. Не повторяй ответ и не задавай "
-                        "пустых мета-вопросов вроде «что ещё?». Ответь "
-                        "ТОЛЬКО JSON-массивом из трёх строк."},
-            {"role": "user",
-             "content": "Вопрос: %s\nОтвет: %s" % (q[:600], tail[:1400])},
+             "content": "Ты придумаешь продолжение переписки пользователя с "
+                        "ИИ-агентом JARVIS. Пользователь только что получил "
+                        "ответ. Предложи ТРИ реплики, которые он отправил бы "
+                        "СЛЕДУЮЩИМИ — настолько естественные, что разговор "
+                        "можно вести одними подсказками: уточнить сказанное, "
+                        "сделать следующий шаг по сути или воспользоваться "
+                        "результатом. Пиши от первого лица пользователя, "
+                        "по-русски, разговорно, каждая реплика до 6 слов, без "
+                        "кавычек и номеров, все три — разные по направлению. "
+                        "Не повторяй уже сказанное и не задавай пустых "
+                        "мета-вопросов вроде «что ещё?». Ответь ТОЛЬКО "
+                        "JSON-массивом из трёх строк."},
+            {"role": "user", "content": "\n\n".join(parts)},
         ], tier="nano", timeout=5, operation="reply_suggestions_ai")
-        items = [x for x in _parse_reply_suggestions(str(raw))
+        content = raw.get("content") if isinstance(raw, dict) else str(raw)
+        items = [x for x in _parse_reply_suggestions(str(content or ""))
                  if _suggestion_usable(x)]
         if len(items) >= 2:
             span.finish("ok", count=len(items))
@@ -2056,12 +2089,11 @@ class Agent:
     def make_plan(self, task: str, starting_tools: Optional[List[str]] = None) -> List[str]:
         """Построить семантический план уже доказанной автономной работы.
 
-        Это намеренно НЕ preflight: ``run`` вызывает планировщик только после
-        того, как основная модель вернула первый разрешённый non-ask_user tool
-        call. Поэтому обычный ответ и уточнение не платят за второй запрос и не
-        получают фиктивный план. Локальные три шаблона удалены: именно они
-        превращали почти любую задачу в один и тот же fallback. Ошибка/пустой
-        ответ означает отсутствие карточки, а не подстановку общих фраз.
+        Это намеренно НЕ preflight: планировщика запускает первый
+        разрешённый non-ask_user tool call (AY: в фоне, параллельно
+        основному ходу). Поэтому обычный ответ и уточнение не платят за
+        второй запрос и не получают фиктивный план. Ошибка/пустой ответ
+        означает локальный предметный план, а не подстановку общих фраз.
         """
         text = re.sub(r"\s+", " ", str(task or "")).strip()
         if not text:
@@ -2295,11 +2327,48 @@ class Agent:
         plan_pending = bool(self.visible_plan and self.agent_mode and user_text
                             and not social_only and plan_worthy)
         plan_box = None      # фоновый планировщик для текстовой работы
-        # ПЕРВЫЙ ХОД AGENT ДЕРЖИТСЯ ДО ЕГО КОНЦА даже когда плана не будет:
-        # пока ход не закончился, нельзя знать, не окажется ли текст повтором
-        # preflight-вопроса или уточнением с ui-панелью. Раньше это держал сам
-        # plan_pending; теперь план строится только для многоэтапных задач,
-        # а придержать первый ход нужно всегда — это и fence, и шлюз вызовов.
+
+        def _start_bg_plan() -> None:
+            """AY: ПЛАНИРОВЩИК БЕЖИТ ПАРАЛЛЕЛЬНО основному ходу.
+
+            Прежде semantic-план был БЛОКИРУЮЩИМ вызовом сразу после первого
+            model turn: nano могла думать 4+7 секунд, и всё это время
+            экран стоял — ни мыслей, ни карточек, ни плана, «агент очень
+            долго думает». Теперь nano планирует В ФОНЕ с первого
+            tool_partial, и к доказательству автономности план обычно
+            уже готов."""
+            nonlocal plan_box
+            if plan_box is not None:
+                return
+            box = {"steps": None}
+
+            def _bg(b=box):
+                try:
+                    b["steps"] = self.make_plan(user_text, [])
+                except Exception:
+                    b["steps"] = []
+            threading.Thread(target=_bg, daemon=True,
+                             name="jarvis-planner").start()
+            plan_box = box
+
+        def flush_ready_plan() -> List[Dict[str, Any]]:
+            """Объявить план, если фоновый планировщик уже ответил."""
+            nonlocal plan_box, plan, plan_pending
+            if plan_box is None or plan_announced:
+                return []
+            steps = plan_box["steps"]
+            if steps is None:
+                return []
+            plan_box = None
+            if not steps:
+                return []
+            plan = steps
+            plan_pending = False
+            return announce_plan()
+        # ПЕРВЫЙ ХОД AGENT: придерживается ТОЛЬКО ТЕКСТ (fence вызовов
+        # инструментов и уточняющих вопросов) — мысли больше не ждут: они
+        # всегда живой поток. Раньше здесь придерживалось всё подряд, и
+        # первый ход модели выглядел мёртвым «думаю».
         intro_hold = bool(self.agent_mode and not social_only)
         # выпущен ли длинный первый текст (порог 260 символов): после выпуска
         # печать идёт живьём, а не придержанной до конца хода
@@ -2408,6 +2477,9 @@ class Agent:
         for step in range(max_steps):
             if self._cancelled():
                 return
+            # AY: фоновый планировщик ответил между ходами — объявляем план
+            for plan_event in flush_ready_plan():
+                yield plan_event
             # AQ: фильтр мыслей живёт один шаг модели: куски копятся до
             # целых предложений, хвост закрывается на смене фазы
             think_filter = _ThinkFilter()
@@ -2479,11 +2551,11 @@ class Agent:
                 # буфере, и настоящий хвост мыслей не закрывался никогда
                 if etype not in ("reasoning", "model") and think_open:
                     think_open = False
+                    # AY: мысли идут ПОТОКОМ немедленно — их придержание
+                    # до конца хода и делало «агент очень долго думает»:
+                    # модель рассуждала, а экран был мёртв
                     for out in think_close_events():
-                        if defer_plan_decision and not text_released:
-                            deferred_work_events.append(out)
-                        else:
-                            yield out
+                        yield out
                 if etype == "model":
                     self.model_used = event.get("model", "")
                     yield {"type": "model", "model": event.get("model"), "tier": tier}
@@ -2492,13 +2564,11 @@ class Agent:
                     # служебная фраза не заслуживает отдельной карточки.
                     if self.show_thinking or self.quiet_thinking:
                         # AQ: сначала куски копятся до ЦЕЛЫХ предложений
-                        # (_ThinkFilter), потом — прежние правила показа
+                        # (_ThinkFilter), потом — прежние правила показа.
+                        # AY: без придержания — живой поток с первого куска
                         for out in think_route(
                                 think_filter.feed(str(event.get("text") or ""))):
-                            if defer_plan_decision and not text_released:
-                                deferred_work_events.append(out)
-                            else:
-                                yield out
+                            yield out
                 elif etype == "delta":
                     acc_text.append(event["text"])
                     # Модель отмечает начало шага строкой [ШАГ N]. Ловим её в
@@ -2527,14 +2597,10 @@ class Agent:
                     # вступления, план всё равно объявится как всегда.
                     # ПЛАН ИЗ ФОНОВОГО ПЛАНИРОВЩИКА ГОТОВ — объявляем его
                     # первым, поверх начавшейся печати: без остановки текста
-                    if (plan_box is not None and not plan_announced
-                            and plan_box["steps"] is not None):
-                        plan_pending = False
-                        if plan_box["steps"]:
-                            plan = plan_box["steps"]
-                            for plan_event in announce_plan():
-                                yield plan_event
-                        plan_box = None
+                    # AY: фоновый планировщик ответил среди печати — план
+                    # выходит первым попавшимся кадром, печать не ждёт
+                    for plan_event in flush_ready_plan():
+                        yield plan_event
                     if not text_released and intro_hold:
                         joined_now = "".join(acc_text)
                         if len(joined_now) > 260 and not tools.looks_like_call_prefix(joined_now):
@@ -2546,15 +2612,7 @@ class Agent:
                             # позже — прямо в поток печати.
                             if plan_pending and not plan_announced:
                                 plan_pending = False
-                                box = {"steps": None}
-
-                                def _bg_plan(b=box):
-                                    try:
-                                        b["steps"] = self.make_plan(user_text, [])
-                                    except Exception:
-                                        b["steps"] = []
-                                threading.Thread(target=_bg_plan, daemon=True).start()
-                                plan_box = box
+                                _start_bg_plan()
                             for held_event in list(deferred_work_events):
                                 yield held_event
                             deferred_work_events.clear()
@@ -2578,6 +2636,11 @@ class Agent:
                     # но статус сразу меняется с абстрактного «Думаю» на честное
                     # «Готовлю поиск/файл». Это убирает длинное ложное ощущение,
                     # будто AGENT всё ещё не решил, что делать.
+                    # AY: автономная работа почти доказана — planning-запрос
+                    # nano уходит В ФОН прямо сейчас, чтобы к концу хода план
+                    # был готов и ничего не блокировало показ
+                    if plan_pending and not plan_announced:
+                        _start_bg_plan()
                     yield {"type": "tool_hint", "name": event.get("name", ""),
                            "group": tools.group_of(event.get("name", ""))}
                 elif etype == "done":
@@ -2607,11 +2670,9 @@ class Agent:
             # недописанное предложение не теряется и не висит обрубком
             if think_open:
                 think_open = False
+                # AY: хвост мыслей закрывается сразу — без отложенной очереди
                 for out in think_close_events():
-                    if defer_plan_decision and not text_released:
-                        deferred_work_events.append(out)
-                    else:
-                        yield out
+                    yield out
             text_piece = _STEP_MARK.sub("", "".join(acc_text))
             from_text = False
 
@@ -2841,13 +2902,15 @@ class Agent:
             # разрешённый non-question tool. Только здесь платим за semantic plan
             # и выпускаем его раньше накопленного reasoning/text/tool_hint.
             elif defer_plan_decision and autonomous_names:
+                # AY: автономность доказана — план объявится, но БЕЗ
+                # блокировки: планировщик бежит в фоне с tool_partial
+                # (или стартует сейчас), а мысли и работа уже идут потоком
                 plan_pending = False
                 intro_hold = False
                 if plan_worthy:
-                    plan = self.make_plan(user_text, autonomous_names)
-                    if plan:
-                        for plan_event in announce_plan():
-                            yield plan_event
+                    _start_bg_plan()
+                    for plan_event in flush_ready_plan():
+                        yield plan_event
                 for work_event in deferred_work_events:
                     yield work_event
                 deferred_work_events.clear()
@@ -3166,11 +3229,10 @@ class Agent:
                                 work_started = [t for t in dict.fromkeys(self.used_tools)
                                                 if t != "ask_user"]
                                 if work_started:
-                                    plan = self.make_plan(user_text, work_started)
+                                    _start_bg_plan()
                                     plan_pending = False
-                                    if plan:
-                                        for plan_event in announce_plan():
-                                            yield plan_event
+                                    for plan_event in flush_ready_plan():
+                                        yield plan_event
                                 else:
                                     # работы ещё не было — план создаст первый
                                     # рабочий вызов этого же прогона (страховка
@@ -3227,11 +3289,11 @@ class Agent:
                     # Строим ровно перед первым настоящим рабочим вызовом.
                     if (plan_pending and not plan_announced
                             and name in allowed_tool_names):
-                        plan = self.make_plan(user_text, [name])
+                        # AY: dispatch не ждёт планировщика — он в фоне
+                        _start_bg_plan()
                         plan_pending = False
-                        if plan:
-                            for plan_event in announce_plan():
-                                yield plan_event
+                        for plan_event in flush_ready_plan():
+                            yield plan_event
 
                     self.used_tools.append(name)
                     yield {"type": "tool_start", "id": call.get("id"), "name": name,

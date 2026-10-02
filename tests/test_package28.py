@@ -207,10 +207,14 @@ class RoutingAndPlanCostTests(unittest.TestCase):
         self.assertTrue(all("напиши игру про космос" in s for s in steps))
         self.assertEqual(ag.local_plan(""), [])
         run_src = inspect.getsource(agent.Agent._run_body)
-        self.assertIn("threading.Thread(target=_bg_plan, daemon=True).start()", run_src)
-        self.assertIn('plan_box["steps"] is not None', run_src)
+        # AY: планировщик — общий фоновый с первого tool_partial; блокирующих
+        # вызовов make_plan из тела прогона больше нет в принципе
+        self.assertIn("def _start_bg_plan()", run_src)
+        self.assertIn("def flush_ready_plan()", run_src)
+        self.assertIn("threading.Thread(target=_bg, daemon=True,", run_src)
         self.assertIn("self.local_plan(user_text)", run_src)
-        self.assertNotIn("plan = self.make_plan(user_text, [])", run_src)
+        self.assertNotIn("plan = self.make_plan(user_text, autonomous_names)", run_src)
+        self.assertNotIn("plan = self.make_plan(user_text, [name])", run_src)
 
     def test_chat_title_is_fast(self) -> None:
         # V: заголовок — самая дешёвая модель, жёсткий лимит 2.5с
@@ -565,7 +569,12 @@ class RoutingAndPlanCostTests(unittest.TestCase):
         shown = "".join(event.get("text", "") for event in events if event.get("type") == "delta")
         self.assertNotIn("Ещё один вопрос", shown)
         self.assertIn("Документ готов", shown)
-        planner.assert_called_once_with("Собери документ, формат: Markdown", ["write_file"])
+        # AY: планировщик ушёл в фон и не ждёт подсказки об инструментах —
+        # план больше не блокирует показ; вызов приходит из фонового потока
+        deadline = time.time() + 2
+        while not planner.called and time.time() < deadline:
+            time.sleep(0.01)
+        planner.assert_called_once_with("Собери документ, формат: Markdown", [])
         dispatch.assert_called_once_with(
             "write_file", {"path": "document.md", "content": "Готово"},
         )
@@ -3244,7 +3253,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.55", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.56", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3860,7 +3869,7 @@ class IterationAJTests(unittest.TestCase):
         # круглешок живой: дышит в покое, пульсирует при печати (чистый CSS)
         self.assertIn(".ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;", css)
         self.assertIn("animation:coreBreathe 3.4s ease-in-out infinite", css)
-        self.assertIn(".msg-ai:has(.typing) .ai-core{animation:coreLive 2.8s ease-in-out infinite}", css)
+        self.assertIn(".msg-ai.live .ai-core{animation:coreLive 2.8s ease-in-out infinite}", css)
 
     def test_ak_reasoning_lang_injection(self) -> None:
         from jarvis import agent as ag
@@ -4412,9 +4421,9 @@ class IterationAOTests(unittest.TestCase):
         self.assertIn("'.welcome .reactor.xl'", js)
         self.assertIn(".welcome .hello span", js)
         ghost = js.split("function flyGhost(")[1].split("\nfunction ")[0]
-        # AW: полёт на живом наведении (rAF), мягкая кривая easeInOut
-        self.assertIn("const ease = (t) => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;", ghost)
-        self.assertIn("g.style.transform = 'translate(' + (dx * e) + 'px,' + (dy * e) + 'px) scale(' +", ghost)
+        # AW: полёт на живом наведении (rAF); AY: кривая — единый cubic-bezier
+        self.assertIn("const ease = cubicBezierEase(.65, 0, .35, 1);", ghost)
+        self.assertIn("g.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' +", ghost)
         # AV: посадка — кроссфейд, без вспышек и мгновенной подмены
         self.assertIn("fade.onfinish = () => g.remove();", js)
         self.assertIn("const titleTarget = () => {", js)
@@ -4562,7 +4571,7 @@ class IterationAQTests(unittest.TestCase):
         # печать больше ничем не управляет: живость круглешка — чистый CSS
         typer = js.split("function typerStart(")[1].split("\nfunction ")[0]
         self.assertNotIn("flyWelcomeInto", typer)
-        self.assertIn(".msg-ai:has(.typing) .ai-core",
+        self.assertIn(".msg-ai.live .ai-core",
                       Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8"))
 
     def test_ar3_relay_survives_interactive(self) -> None:
@@ -4570,7 +4579,7 @@ class IterationAQTests(unittest.TestCase):
         # AS: спроселёживание убрано из JS вовсе — живость круглешка
         # держит класс .typing на тексте ответа, интерактив его не снимает,
         # поэтому «долгий ответ» остаётся живым без всяких стражей
-        self.assertIn(".msg-ai:has(.typing) .ai-core{animation:coreLive", css)
+        self.assertIn(".msg-ai.live .ai-core{animation:coreLive", css)
         self.assertIn("@keyframes coreLive", css)
 
     def test_ar4_static_no_cache(self) -> None:
@@ -4578,14 +4587,14 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.55", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.55", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.56", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.56", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # AR: все плитки ОДНОЙ высоты — ряды не гуляют, сетка ровная
         grid = css.split(".suggestions{")[1].split("}")[0]
-        self.assertIn("grid-auto-rows:148px", grid)
+        self.assertIn("grid-auto-rows:128px", grid)
         # единый ритм строк
         self.assertIn("line-height:1.55}", css)
         self.assertIn("line-height:1.35}", css)
@@ -4713,7 +4722,7 @@ class IterationAUTests(unittest.TestCase):
     def test_au3_version_chip(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b55</span>', html)
+        self.assertIn('<span class="ver-chip">b56</span>', html)
         self.assertIn(".ver-chip{align-self:center;", css)
 
     def test_au4_flight_waits_for_scroll(self) -> None:
@@ -4775,7 +4784,7 @@ class IterationAXTests(unittest.TestCase):
         # уход страницы + разъезд плиток + полёт — одной длительности
         self.assertIn("function welcomeExit(", js)
         we = js.split("function welcomeExit(")[1].split("\nfunction ")[0]
-        self.assertIn("transform .62s cubic-bezier(.4,.1,.3,1), opacity .62s ease", we)
+        self.assertIn("transform .62s cubic-bezier(.65,0,.35,1), opacity .62s cubic-bezier(.65,0,.35,1)", we)
         self.assertIn("w.style.opacity = '0';", we)
         fly = js.split("function flyGhost(")[1].split("\nfunction ")[0]
         self.assertIn("const dur = 620;", fly)
@@ -4784,7 +4793,7 @@ class IterationAXTests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # ядро сбрасывает кольца В ПОЛЁТЕ
-        self.assertIn("rings.forEach((r) => { r.style.opacity = String(Math.max(0, 1 - p * 1.7)); });", js)
+        self.assertIn("rings.forEach((r) => { r.style.opacity = String(Math.max(0, 1 - e)); });", js)
         # надпись: градиент уступает цвету В ПОЛЁТЕ (два слоя)
         self.assertIn("'<span class=\"gt-grad\">JARVIS</span><span class=\"gt-solid\">JARVIS</span>'", js)
         self.assertIn("(p - .35) / .45", js)
@@ -4806,10 +4815,116 @@ class IterationAXTests(unittest.TestCase):
     def test_ax4_tiles_fixed_ellipsis(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         grid = css.split(".suggestions{")[1].split("}")[0]
-        self.assertIn("grid-auto-rows:148px", grid)
+        self.assertIn("grid-auto-rows:128px", grid)
         sp = css.split(".sugg .sp{")[1].split("}")[0]
         self.assertIn("-webkit-line-clamp:3", sp)
         self.assertIn("overflow:hidden", sp)
+
+
+
+class IterationAYTests(unittest.TestCase):
+    """AY (beta.56): подсказки-продолжения от ИИ (Джарвис сам ведёт диалог
+    с собой), единая анимация ухода приветствия с киношным размытием в
+    движении, живой круглешок весь ответ, компактные плитки с человеческим
+    троеточием, живые мысли и параллельный планировщик в AGENT, ИИ-плитки
+    приветствия в фоне."""
+
+    def test_ay1_replies_continue_the_dialogue(self) -> None:
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        # генератор видит ПОСЛЕДНИЕ РЕПЛИКИ переписки, а не одну пару
+        self.assertIn("def _dialogue_lines(history", src)
+        self.assertIn("history: Optional[List[Dict[str, Any]]] = None", src)
+        self.assertIn('"Переписка:\\n" + "\\n".join(lines)', src)
+        self.assertIn("одними подсказками", src)
+        # сервер отдаёт переписку обоим генераторам подсказок
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertIn("history=msgs", srv)
+        self.assertIn("history=history", srv)
+
+    def test_ay2_welcome_exit_is_one_motion(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        we = js.split("function welcomeExit(")[1].split("\nfunction ")[0]
+        # плитки: входная анимация снята, одна кривая на всё
+        self.assertIn("t.style.animation = 'none';", we)
+        self.assertIn(
+            "transform .62s cubic-bezier(.65,0,.35,1), opacity .62s cubic-bezier(.65,0,.35,1)", we)
+        # страница тает И складывается по высоте — диалог «открывается»
+        self.assertIn("w.style.height = '0px';", we)
+        self.assertIn("w.dataset.exit = '1';", we)
+        # addUserMsg больше не убивает уходящее приветствие
+        kw = js.split("function killWelcome(")[1].split("\nfunction ")[0]
+        self.assertIn("w.dataset.exit !== '1'", kw)
+        # полёт — численно та же кривая, что у плиток и страницы
+        fly = js.split("function flyGhost(")[1].split("\nfunction ")[0]
+        self.assertIn("cubicBezierEase(.65, 0, .35, 1)", fly)
+
+    def test_ay3_motion_blur_and_ring_pace(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        fly = js.split("function flyGhost(")[1].split("\nfunction ")[0]
+        # киношное размытие в движении: растёт от скорости, гаснет к посадке
+        self.assertIn("Math.min(2.4, speed * .085)", fly)
+        self.assertIn("g.style.filter = blur > .25 ? 'blur(' + blur.toFixed(2) + 'px)' : '';", fly)
+        self.assertIn("g.style.filter = '';", fly)
+        # кольца тают СО СКОРОСТЬЮ полёта — по eased-прогрессу
+        self.assertIn(
+            "rings.forEach((r) => { r.style.opacity = String(Math.max(0, 1 - e)); });", js)
+
+    def test_ay4_dot_lives_the_whole_answer(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn(".msg-ai.live .ai-core{animation:coreLive 2.8s ease-in-out infinite}", css)
+        self.assertIn(
+            ".msg-ai.settle .ai-core{animation:coreSettle .55s cubic-bezier(.65,0,.35,1) forwards}", css)
+        self.assertIn("@keyframes coreSettle{", css)
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("function finishLiveDot(", js)
+        self.assertIn("node.root.classList.add('live');", js)
+        sv = js.split("function settleVisualDone(")[1].split("\nfunction ")[0]
+        self.assertIn("finishLiveDot(ui.node && ui.node.root);", sv)
+        # живость больше не привязана к печати: класс live — весь ответ
+        self.assertNotIn(":has(.typing) .ai-core", css)
+
+    def test_ay5_tiles_compact_human_ellipsis(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        grid = css.split(".suggestions{")[1].split("}")[0]
+        self.assertIn("grid-auto-rows:128px", grid)
+        sugg = css.split(".sugg{")[1].split("}")[0]
+        self.assertIn("padding:12px 15px", sugg)
+        self.assertIn("font-size:13px", sugg)
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("function fitSuggText(", js)
+        fit = js.split("function fitSuggText(")[1].split("\nfunction ")[0]
+        self.assertIn("sp.dataset.full", fit)
+        # после знака препинания многоточие идёт после пробела
+        self.assertIn("'\\u00A0…'", fit)
+        self.assertIn("function fitSuggTexts(", js)
+
+    def test_ay6_agent_streams_thoughts_and_plans_in_parallel(self) -> None:
+        run_src = inspect.getsource(agent.Agent._run_body)
+        # мысли — живой поток и в AGENT: отложенной очереди больше нет
+        self.assertNotIn("deferred_work_events.append(out)", run_src)
+        # планировщик — фоновый, со времён первого tool_partial
+        self.assertIn("def _start_bg_plan()", run_src)
+        self.assertIn("def flush_ready_plan()", run_src)
+        for banned in ("autonomous_names)", "[name])", "work_started)"):
+            self.assertNotIn("plan = self.make_plan(user_text, " + banned, run_src)
+
+    def test_ay7_welcome_tiles_come_from_ai(self) -> None:
+        src = Path("app/jarvis/ideas.py").read_text(encoding="utf-8")
+        self.assertIn("def _ai_personalized(", src)
+        self.assertIn("def refresh_ai_async(", src)
+        self.assertIn('"source": "ai"', src)
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        handler = srv.split('if path == "/api/ideas":')[1].split("if path ==")[0]
+        self.assertIn("ideas.refresh_ai_async()", handler)
+        self.assertIn('"refreshing": refreshing', handler)
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("if (r.refreshing && !again) setTimeout(() => { loadIdeas(true); }, 2600);", js)
+
+    def test_ay8_suggestions_allow_tech_words(self) -> None:
+        # разговор о коде и файлах — законное продолжение диалога
+        self.assertTrue(agent._suggestion_usable("Добавь тесты в game.py"))
+        self.assertFalse(agent._suggestion_usable("tool_calls"))
+        self.assertFalse(agent._suggestion_usable("Content overview"))
 
 
 if __name__ == "__main__":

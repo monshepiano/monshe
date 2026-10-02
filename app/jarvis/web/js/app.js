@@ -1051,6 +1051,7 @@ function newChat() {
   S.fdir = '';
   $('#stream').innerHTML = '';
   $('#stream').appendChild(buildWelcome());
+  requestAnimationFrame(fitSuggTexts);
   // AA: ПЛАН УХОДИТ ВМЕСТЕ С ДИАЛОГОМ. Панель привязана к своему диалогу
   // (Z), но «новый диалог» её не прятал: пустой экран приветствия с чужим
   // золотым планом наверху выглядел как баг. Прячем ВСЕ доки — свой вернётся
@@ -1261,14 +1262,20 @@ const SUGGESTIONS = [
 ];
 S.ideas = SUGGESTIONS.map((s) => ({ title: s[0], prompt: s[1] }));
 
-async function loadIdeas() {
+async function loadIdeas(again) {
   try {
     const r = await api('/api/ideas');
     if (r.ok && (r.ideas || []).length) {
       S.ideas = r.ideas;
-      // если пустой экран уже открыт — обновим карточки на месте
+      /* если пустой экран уже открыт — обновим карточки на месте,
+         спокойно: без повторного «всплытия» */
       const box = $('.welcome .suggestions');
-      if (box) fillSuggestions(box);
+      if (box) {
+        fillSuggestions(box, true);
+        requestAnimationFrame(fitSuggTexts);
+      }
+      /* AY: ИИ ЕЩЁ ПРИДУМЫВАЕТ ПЛИТКИ — заберём живые повторным заходом */
+      if (r.refreshing && !again) setTimeout(() => { loadIdeas(true); }, 2600);
     }
   } catch (e) { /* останутся встроенные */ }
 }
@@ -1281,15 +1288,42 @@ async function loadIdeas() {
    minmax(0,1fr) — плитки всегда равные, а заголовок лежит в собственном
    span с min-width:0 (канонический паттерн, работает в любом браузере):
    длинный заголовок обрезается с «…» на границе плитки. */
-function fillSuggestions(box) {
+function fillSuggestions(box, calm) {
   box.innerHTML = '';
   S.ideas.slice(0, 6).forEach((s, i) => {
     const b = el('button', 'sugg',
       '<b><span class="st">' + esc(s.title) + '</span></b><span class="sp">' + esc(s.prompt) + '</span>');
     b.style.animationDelay = (0.04 * i) + 's';
+    /* подмена плиток на живом экране — без повторного «всплытия» */
+    if (calm) b.style.animation = 'none';
     b.addEventListener('click', () => { $('#input').value = s.prompt; autoGrow(); send(); });
     box.appendChild(b);
   });
+}
+
+/* AY: ТРОЕТОЧИЕ ПО-ЧЕЛОВЕЧЕСКИ. CSS-обрезка ставит «…» вплотную к знаку
+   препинания («дела,…»). Меряем реальную высоту и подрезаем по словам:
+   если обрезка пришлась после знака препинания, многоточие идёт после
+   пробела. Полный текст хранится в data-full — подрезка идемпотентна. */
+function fitSuggText(sp) {
+  const full = sp.dataset.full || sp.textContent;
+  if (!full) return;
+  sp.dataset.full = full;
+  sp.textContent = full;
+  if (sp.scrollHeight <= sp.clientHeight + 1) return;
+  const words = full.split(' ');
+  let lo = 1, hi = words.length, keep = 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    sp.textContent = words.slice(0, mid).join(' ') + '\u00A0…';
+    if (sp.scrollHeight <= sp.clientHeight + 1) { keep = mid; lo = mid + 1; }
+    else { hi = mid - 1; }
+  }
+  const head = words.slice(0, keep).join(' ').trimEnd();
+  sp.textContent = /[.,;:!?…—)]$/.test(head) ? head + '\u00A0…' : head + '…';
+}
+function fitSuggTexts() {
+  $$('.welcome .sugg .sp').forEach(fitSuggText);
 }
 function buildWelcome() {
   const w = el('div', 'welcome');
@@ -1449,7 +1483,13 @@ function followGrowingPanel(node, duration, owner) {
    отправленное сообщение или включённая камера. Раньше его сносили ещё и
    уведомления от Джарвиса с карточками подтверждения — они приходят сами,
    и подсказки исчезали из пустого диалога, хотя человек ничего не сделал. */
-function killWelcome() { const w = $('.welcome'); if (w) w.remove(); }
+function killWelcome() {
+  /* AY: приветствие, которое уже УХОДИТ своей анимацией, не убиваем —
+     раньше addUserMsg срезал его на первом же кадре, и никакого
+     растворения с разъездом плиток не происходило вовсе */
+  const w = $('.welcome');
+  if (w && w.dataset.exit !== '1') w.remove();
+}
 
 /* История открывается сразу в конечной позиции. Здесь намеренно нет каскада
    rAF/таймеров: он и был видимой поэтапной прокруткой. Поздняя картинка делает
@@ -1672,17 +1712,35 @@ function addUserMsg(text, atts, info, hostOverride) {
 const AVATAR_CORE = '<div class="ai-core" aria-hidden="true"></div>';
 
 function welcomeExit() {
-  /* AX: диалог «открывается» — плитки разъезжаются врозь и растворяются,
-     приветствие мягко тает. Длительность — та же, что у полёта */
+  /* AY: ЕДИНАЯ БОЛЬШАЯ АНИМАЦИЯ ОТКРЫТИЯ ДИАЛОГА. Плитки разъезжаются
+     врозь и растворяются, страница тает И складывается по высоте — всё
+     одной кривой cubic-bezier(.65,0,.35,1) и одной длительностью с
+     полётом призраков. Корни прежнего «плитки не разъезжаются»:
+     (1) входная анимация popIn .45s both держала свои ключевые кадры
+     поверх инлайновых transform/opacity — снимаем её явно;
+     (2) addUserMsg убивал welcome мгновенно — теперь помечаем
+     dataset.exit, и killWelcome даёт анимации доиграть до конца */
   const w = document.querySelector('.welcome');
   if (!w) return;
+  w.dataset.exit = '1';
   $$('.sugg', w).forEach((t, i) => {
-    t.style.transition = 'transform .62s cubic-bezier(.4,.1,.3,1), opacity .62s ease';
+    t.style.animation = 'none';
+    t.style.transition = 'transform .62s cubic-bezier(.65,0,.35,1), opacity .62s cubic-bezier(.65,0,.35,1)';
+    void t.offsetWidth;
     t.style.transform = 'translateX(' + (i % 2 ? 120 : -120) + 'px) scale(.93)';
     t.style.opacity = '0';
   });
-  w.style.transition = 'opacity .62s ease';
+  w.style.animation = 'none';
+  const h = w.offsetHeight;
+  w.style.transition = 'height .62s cubic-bezier(.65,0,.35,1), opacity .62s cubic-bezier(.65,0,.35,1), margin .62s cubic-bezier(.65,0,.35,1)';
+  /* режем по ВЕРТИКАЛЬНОЙ рамке (высота складывается), а по горизонтали
+     даём плиткам выехать за край — как уход за кадр */
+  w.style.clipPath = 'inset(0 -300px 0 -300px)';
+  w.style.height = h + 'px';
+  void w.offsetWidth;
+  w.style.height = '0px';
   w.style.opacity = '0';
+  w.style.marginTop = '0px';
   setTimeout(() => { if (w.isConnected) w.remove(); }, 700);
 }
 
@@ -1698,9 +1756,10 @@ function flyWelcomeInto(node, wf) {
     const rings = $$('.gr', wf.ghostCore);
     flyGhost(wf.ghostCore, () => core.getBoundingClientRect(), () => {
       core.classList.remove('pre-flight');
-    }, (p) => {
-      /* AX: кольца растворяются В ПОЛЁТЕ — реактор превращается в круглешок */
-      rings.forEach((r) => { r.style.opacity = String(Math.max(0, 1 - p * 1.7)); });
+    }, (p, e) => {
+      /* AY: кольца тают СО СКОРОСТЬЮ ПОЛЁТА — по той же кривой, что и
+         движение: не спешат впереди, к посадке остаётся круглешок */
+      rings.forEach((r) => { r.style.opacity = String(Math.max(0, 1 - e)); });
     });
   }
   if (name && wf.ghostTitle) {
@@ -1739,19 +1798,32 @@ function flyGhost(g, targetRect, done, onProgress) {
   const t0 = performance.now();
   const dur = 620;
   g.dataset.landed = '0';
-  const ease = (t) => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  /* AY: ЕДИНАЯ КРИВАЯ всего ухода — численно тот же cubic-bezier
+     (.65,0,.35,1), что ведёт плитки и страницу: полёт, разъезд и
+     растворение — одно движение одним темпом */
+  const ease = cubicBezierEase(.65, 0, .35, 1);
+  let lx = 0, ly = 0;
   const tick = () => {
     const p = Math.min(1, (performance.now() - t0) / dur);
     const e = ease(p);
-    if (onProgress) onProgress(p);
+    if (onProgress) onProgress(p, e);
     const to = targetRect();
     const k = Math.max(0.06, to.width / Math.max(1, start.width));
     const dx = (to.left + to.width / 2) - (start.left + start.width / 2);
     const dy = (to.top + to.height / 2) - (start.top + start.height / 2);
-    g.style.transform = 'translate(' + (dx * e) + 'px,' + (dy * e) + 'px) scale(' +
+    const x = dx * e, y = dy * e;
+    /* AY: КИНОШНОЕ РАЗМЫТИЕ В ДВИЖЕНИИ — радиус растёт от мгновенной
+       скорости и сам гаснет к посадке: на старте и в конце призрак
+       резкий, в разгоне — слегка смазан, как в кино */
+    const speed = Math.hypot(x - lx, y - ly);
+    const blur = p < 1 ? Math.min(2.4, speed * .085) : 0;
+    g.style.filter = blur > .25 ? 'blur(' + blur.toFixed(2) + 'px)' : '';
+    lx = x; ly = y;
+    g.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' +
       (1 + (k - 1) * e) + ')';
     if (p < 1) { requestAnimationFrame(tick); return; }
     g.dataset.landed = '1';
+    g.style.filter = '';
     /* мягкая посадка: кроссфейд 180мс вместо мгновенной подмены */
     const fade = g.animate([{ opacity: 1 }, { opacity: 0 }],
       { duration: 180, fill: 'both' });
@@ -1759,6 +1831,30 @@ function flyGhost(g, targetRect, done, onProgress) {
     done();
   };
   requestAnimationFrame(tick);
+}
+
+/* AY: кубик-безье для JS-анимаций — то же семейство кривых, что и CSS
+   transition cubic-bezier(...): полёт призраков движется строго той же
+   кривой, что растворение страницы (Ньютон по x, значение по y) */
+function cubicBezierEase(x1, y1, x2, y2) {
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
+  const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+  const sampleX = (t) => ((ax * t + bx) * t + cx) * t;
+  const sampleY = (t) => ((ay * t + by) * t + cy) * t;
+  const slopeX = (t) => (3 * ax * t + 2 * bx) * t + cx;
+  return (x) => {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    let t = x;
+    for (let i = 0; i < 7; i++) {
+      const err = sampleX(t) - x;
+      if (Math.abs(err) < 1e-5) break;
+      const d = slopeX(t);
+      if (Math.abs(d) < 1e-6) break;
+      t -= err / d;
+    }
+    return sampleY(t);
+  };
 }
 function addAiMsg(ts, hostOverride) {
   const m = el('div', 'msg msg-ai');
@@ -4016,6 +4112,9 @@ async function send(opts) {
   /* AS: рождение ответа — если это первый запрос диалога, ядро и имя
      прилетают из приветствия и становятся круглешком и заголовком */
   flyWelcomeInto(node, welcomeFlight);
+  /* AY: круглешок живёт С ПЕРВОГО кадра ответа и до конца — мысли,
+     инструменты, печать; в финале finishLiveDot вернёт ему кружок */
+  if (node && node.root) node.root.classList.add('live');
   const runId = ++S.streamRun;
   // Уникальный токен прогона: по нему сервер гасит РАБОТУ при Stop
   // (инструменты, санкции, computer-use), а не только SSE-соединение.
@@ -6045,8 +6144,17 @@ function clearRunRoute(ui) {
   updateResponseMeta(ui);
 }
 
+/* AY: финал ответа — живой круглешок мягко возвращает форму кружка */
+function finishLiveDot(root) {
+  if (!root || !root.classList || !root.classList.contains('live')) return;
+  root.classList.remove('live');
+  root.classList.add('settle');
+  setTimeout(() => { if (root.isConnected) root.classList.remove('settle'); }, 640);
+}
+
 function settleVisualDone(ui) {
   if (!ui || ui.visualDone) return;
+  finishLiveDot(ui.node && ui.node.root);
   clearRunRoute(ui);
   if (S.followUi === ui) S.followUi = null;
   if (ui.stopFollowWatch) ui.stopFollowWatch();
@@ -9752,6 +9860,10 @@ window.addEventListener('keydown', (e) => {
   syncSoundBtn();
   setupScrollDate($('#stream'), $('#scrollDate'));
   $('#stream').appendChild(buildWelcome());
+  requestAnimationFrame(fitSuggTexts);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => fitSuggTexts());
+  }
   // состояние и список диалогов тянем параллельно, а не гуськом.
   // Подсказки не ждём вовсе: экран уже показан со встроенными, а личные
   // подменятся, как только придут.
