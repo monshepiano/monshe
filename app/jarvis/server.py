@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import mimetypes
 import os
@@ -19,10 +18,6 @@ from typing import Any, Dict, List, Optional
 from . import (__version__, agent, auto, billing, db, ideas, llm, orchestrator,
                sandbox, telemetry, tools)
 from .config import CONFIG, WORKSPACE, HOME
-
-# BA: реестр предпрогретых текстов — один текст греем раз в минуту
-_WARM_SEEN: Dict[str, float] = {}
-_WARM_LOCK = threading.Lock()
 from .tools import media
 from .tools import system as system_tools
 
@@ -487,54 +482,31 @@ class Handler(BaseHTTPRequestHandler):
             if not last or last.get("role") != "assistant":
                 return self._json({"ok": True, "items": []})
             meta = last.get("meta") or {}
-            if isinstance(meta.get("replies"), list):
-                return self._json({"ok": True, "items": meta["replies"]})
             asked = ""
             for m in reversed(msgs[:-1]):
                 if m.get("role") == "user":
                     asked = m.get("content", "")
                     break
+            # BD: закэшированная ШАБЛОННАЯ тройка (эра до BD) — не истина:
+            # пересчитываем, чтобы живые подсказки вернулись
+            if (isinstance(meta.get("replies"), list) and meta["replies"]
+                    and meta["replies"] != agent.suggest_replies(
+                        asked, last.get("content", ""))):
+                return self._json({"ok": True, "items": meta["replies"]})
             # Подсказки формирует ИИ-модель по сути ответа. После AGENT-прогона
             # сбой модели честно падает в проактивные шаги по фактам работы —
             # это решает suggest_replies_ai внутри себя.
             items = agent.suggest_replies_ai(asked, last.get("content", ""),
                                              meta.get("tools") if meta.get("agent") else None,
                                              history=msgs)
-            meta["replies"] = items
-            db.update_message_meta(last["id"], meta)
+            # BD: ШАБЛОНЫ НЕ КЭШИРУЮТСЯ. Один сбой nano раньше записывал
+            # шаблонную тройку в meta навсегда — чипы «опять шаблонные».
+            # Кэшируем только живые ИИ-подсказки; шаблон увидим один раз,
+            # при следующем заходе пересчитаем
+            if items and items != agent.suggest_replies(asked, last.get("content", "")):
+                meta["replies"] = items
+                db.update_message_meta(last["id"], meta)
             return self._json({"ok": True, "items": items})
-        if path == "/api/warm":
-            # BA: ПРЕДПРОГРЕВ по наведению (≥0.3с на кнопку/плитку/чип).
-            # Готовим соединение с провайдером и префикс-кэш промпта: реальный
-            # запрос начинается с уже тёплым конвейером. Один текст греем
-            # не чаще раза в минуту — прогрев не должен превращаться в расходы
-            text = str(body.get("text") or "")[:2000]
-            agent_mode = bool(body.get("agent_mode"))
-            key = hashlib.md5(("%d|%s" % (int(agent_mode), text))
-                              .encode("utf-8")).hexdigest()
-            now = time.time()
-            with _WARM_LOCK:
-                if _WARM_SEEN.get(key, 0) > now - 60:
-                    return self._json({"ok": True, "warmed": False})
-                _WARM_SEEN[key] = now
-            if not text.strip() or orchestrator.is_social_only(text):
-                return self._json({"ok": True, "warmed": False})
-            try:
-                # прогрев греет РОВНО тот промпт, что пойдёт в реальном
-                # запросе — иначе префикс-кэш провайдера бесполезен
-                light = orchestrator.is_social_only(text)
-                route = orchestrator.choose_tier(
-                    text, has_image=False, agent_mode=agent_mode,
-                    has_tools=True, computer_use=False)
-                llm.chat([
-                    {"role": "system", "content": agent.build_system_prompt(
-                        agent_mode, False, light=light)},
-                    {"role": "user", "content": text[:1200]},
-                ], tier=route["tier"], max_tokens=1, timeout=5,
-                   operation="warmup")
-            except Exception:
-                pass
-            return self._json({"ok": True, "warmed": True})
         if path == "/api/questions/answer":
             db.answer_question(body.get("id", ""), str(body.get("answer", ""))[:300])
             return self._json({"ok": True})
@@ -1176,7 +1148,8 @@ def _prefetch_replies(msg_id: str, user_text: str, answer: str,
             history = db.get_messages(msg.get("chat_id", ""), limit=8) or []
             items = agent.suggest_replies_ai(user_text, answer, tools_used,
                                              history=history)
-            if items:
+            # BD: шаблоны в meta не пишем — переживём сбой без вечных clichés
+            if items and items != agent.suggest_replies(user_text, answer):
                 meta["replies"] = items
                 db.update_message_meta(msg_id, meta)
         except Exception:

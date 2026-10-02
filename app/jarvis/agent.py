@@ -1272,7 +1272,8 @@ def suggest_replies_ai(user_text: str, answer: str,
                         "примере», «что дальше», «продолжай»). Если в "
                         "переписке нет конкретного предмета разговора "
                         "(только приветствие или вежливость) — верни "
-                        "ПУСТОЙ массив []. Пиши от первого лица "
+                        "ПУСТОЙ массив []. Если предмет ЕСТЬ — обязана "
+                        "вернуть ровно ТРИ живые реплики. Пиши от первого лица "
                         "пользователя, по-русски, разговорно, каждая реплика "
                         "до 6 слов, без кавычек и номеров, все три — разные "
                         "по направлению. Ответь ТОЛЬКО JSON-массивом из "
@@ -1280,8 +1281,14 @@ def suggest_replies_ai(user_text: str, answer: str,
             {"role": "user", "content": "\n\n".join(parts)},
         ], tier="nano", timeout=5, operation="reply_suggestions_ai")
         content = raw.get("content") if isinstance(raw, dict) else str(raw)
-        parsed = [x for x in _parse_reply_suggestions(str(content or ""))
+        raw_text = str(content or "")
+        parsed = [x for x in _parse_reply_suggestions(raw_text)
                   if _suggestion_usable(x)]
+        # BD: модель ЧЕСТНО ответила пустым массивом (предмета нет) —
+        # это не ошибка и не повод для шаблонов: чипов просто не будет
+        if not parsed and re.search(r"\[\s*\]", raw_text):
+            span.finish("empty")
+            return []
         # BA: ТОНКИЙ ДИАЛОГ (приветствие, вежливость — предмета нет) требует
         # от реплики общего значимого слова с перепиской: иначе «умный дом»
         # после «привет». Содержательный диалог достаточно богат предметом —

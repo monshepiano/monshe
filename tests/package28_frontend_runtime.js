@@ -2424,8 +2424,8 @@ function testIterationAJContracts() {
     'AS: answer avatar is a live core dot; the relay saga is gone for good');
   assert(css.includes('.ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;') &&
     !css.includes('coreBreathe') &&
-    css.includes('.msg-ai.live .ai-core{animation:coreLive 3.2s ease-in-out infinite}'),
-    'AS/AY/BC: history cores are STATIC; only the live answer breathes (FPS)');
+    css.includes('animation:coreLive 4.6s ease-in-out infinite}'),
+    'AS/AY/BC/BD: history cores are STATIC and cheap; only the live answer breathes');
 }
 
 function testIterationAKContracts() {
@@ -2477,13 +2477,13 @@ function testIterationAXContracts() {
     js.includes("'<span class=\"gt-grad\">JARVIS</span><span class=\"gt-solid\">JARVIS</span>'") &&
     js.includes('(p - .35) / .45'),
     'AX/AY: the core sheds its rings mid-flight (at flight speed); the title morphs mid-flight');
-  // AX/BB: круглешок — такт чистым transform (FPS), золото во всплеске
+  // AX/BD: круглешок — такт БЕЗ размера (цвет/мерцание), золото во всплеске
   const live = css.split('@keyframes coreLive{')[1].split('}}')[0];
   const burst = css.split('@keyframes coreBurst{')[1].split('}}')[0];
-  assert(live.includes('transform:scale(1.2)') &&
+  assert(!live.includes('transform') && live.includes('#ffd8a8') &&
     burst.includes('#ffd489') && burst.includes('var(--gold)') &&
     css.includes('.ai-core.sh-tess{clip-path:polygon('),
-    'AX/BB: the dot bursts gold; the idle beat is pure transform');
+    'AX/BD: the dot bursts gold; the idle beat changes color, never size');
   // AX: плитки фиксированной высоты, описание — три строки с троеточием
   const sp = css.split('.sugg .sp{')[1].split('}')[0];
   assert(sp.includes('-webkit-line-clamp:5') &&
@@ -2509,7 +2509,7 @@ function testIterationAYContracts() {
   // AY: круглешок живёт весь ответ и в финале оседает кружком
   assert(js.includes('function finishLiveDot(') &&
     js.includes("node.root.classList.add('live');") &&
-    css.includes('.msg-ai.live .ai-core{animation:coreLive 3.2s ease-in-out infinite}') &&
+    css.includes('animation:coreLive 4.6s ease-in-out infinite}') &&
     css.includes('.ai-core.dot-settle{animation:coreSettle .55s cubic-bezier(.65,0,.35,1) forwards}') &&
     !css.includes(':has(.typing) .ai-core'),
     'AY: the dot lives through thinking, tools and typing, then settles into a circle');
@@ -2532,20 +2532,21 @@ function testIterationAZContracts() {
     js.split('async function fetchReplies(')[1].split('\nfunction ')[0]
       .includes('if (activeChatId() !== chat) { showReplies([]); return; }'),
     'AZ: reply chips are per-chat — switching chats clears them at once');
-  // AZ/BA: спокойная база 3.2s, всплеск только на видимых действиях
+  // AZ/BA/BD: спокойная база 4.6s, всплеск только на видимых действиях
   assert(css.includes('.msg-ai.live .ai-core.dot-act{animation:coreBurst 1.15s') &&
     css.includes('@keyframes coreBurst{') &&
     js.includes('function dotAction(') &&
     js.split("case 'tool_start': {")[1].split("case '")[0]
       .includes('dotAction(ui.node && ui.node.root);'),
     'AZ: calm dot at rest; energized burst only on visible actions (tool, plan step)');
-  // AZ: игры с формой — тессеракт, тетраэдр, кривая, звезда… плавные морфы
-  assert(js.includes("'sh-tess', 'sh-tetra', 'sh-cube', 'sh-prism', 'sh-crystal',") &&
-    js.includes("'sh-vortex', 'sh-blob', 'sh-star', 'sh-hex', 'sh-diamond']") &&
+  // AZ/BD: игры с формой — 10 гармоничных фигур, плавные морфы
+  assert(js.includes("'sh-tess', 'sh-cube', 'sh-tetra', 'sh-crystal', 'sh-prism',") &&
+    js.includes("'sh-cyl', 'sh-star', 'sh-hex', 'sh-diamond', 'sh-trefoil']") &&
     js.includes('function dotShapePlay(') &&
     css.includes('.ai-core.sh-tess{clip-path:polygon(') &&
-    css.split('.ai-core{')[1].split('}')[0].includes('clip-path:polygon(50% 0%,75% 6.7%'),
-    'AZ: the dot occasionally plays with its shape — tesseract, tetra, blob, star');
+    css.split('.msg-ai.live .ai-core{')[1].split('}')[0]
+      .includes('clip-path:polygon(50% 0%,75% 6.7%'),
+    'AZ: the dot occasionally plays with its shape — tesseract, cube, crystal, star');
   // AZ: плитка = название + ОПИСАНИЕ, промпт — только по клику
   assert(js.includes('desc: s[1], prompt: s[2]') &&
     js.includes('esc(s.desc || s.prompt)'),
@@ -2559,11 +2560,10 @@ function testIterationBAContracts() {
     act.includes("core.classList.add('dot-act');") &&
     !js.includes("root.classList.add('act')"),
     'BA: dot classes live on the core itself; the .act collision is gone for good');
-  // BA: предпрогрев по наведению — 0.3с на кнопку, плитку, чип
-  assert(js.includes('function warmRequest(') &&
-    js.includes("warmTimer = setTimeout(() => warmRequest(text), 300);") &&
-    js.split("case 'tool_start': {")[0].includes("pointerenter"),
-    'BA: hover 0.3s on send/tile/chip warms the pipeline before the click');
+  // BD: предпрогрев УДАЛЁН — hover больше не делает скрытых LLM-вызовов
+  assert(!js.includes('warmRequest') && !js.includes('warmHover') &&
+    !js.includes('pointerenter') && !pyServer.includes('/api/warm'),
+    'BA/BD: hover warmup is gone for good — no silent LLM calls on hover');
 }
 
 function testIterationBBContracts() {
@@ -2572,15 +2572,16 @@ function testIterationBBContracts() {
   assert(init.indexOf('await loadIdeas();') > -1 &&
     init.indexOf('await loadIdeas();') < init.indexOf('buildWelcome()'),
     'BB: tiles are loaded BEFORE the welcome screen is built');
-  // BC: круглешок — фигуры ×1.5, пружина с золотом, больше 3D/4D-фигур
+  // BC/BD: круглешок — фигуры ×2.1, пружина с золотом, спокойный ритм
   const play = js.split('function dotShapePlay(')[1].split('\nfunction ')[0];
-  assert(js.includes('const DOT_MORPH_MS = 560;') &&
-    js.includes('const DOT_HOLD_MS = 1250;') &&
+  assert(js.includes('const DOT_MORPH_MS = 700;') &&
+    js.includes('const DOT_HOLD_MS = 1500;') &&
     play.includes("core.classList.add(shape, 'shaped', 'sh-in');") &&
-    css.includes('.msg-ai.live .ai-core.shaped{transform:scale(1.5);animation:none}') &&
+    play.includes('8000 + Math.random() * 8000') &&
+    css.includes('.msg-ai.live .ai-core.shaped{transform:scale(2.1);animation:none}') &&
     css.includes('@keyframes dotMorphIn{') && css.includes('@keyframes dotMorphOut{') &&
-    css.includes('transform:scale(1.68)') && css.includes('transform:scale(.88)'),
-    'BC: the dot springs into 1.5x stranger shapes — gold glow only while transforming');
+    css.includes('transform:scale(2.42)') && css.includes('transform:scale(.92)'),
+    'BC/BD: the dot springs into 2.1x shapes — calm pace, gold only in the morph');
   // BC: рамка-вспышка УДАЛЕНА
   assert(!css.includes('flash-done') && !js.includes('flash-done') &&
     !css.includes('doneFlash'),
@@ -2591,13 +2592,46 @@ function testIterationBCContracts() {
   // BC: рамка удалена; история статична; прогрев не на кнопке отправки
   assert(!css.includes('flash-done') && !css.includes('doneFlash') &&
     !css.includes('coreBreathe') &&
-    !js.includes("$('#sendBtn').addEventListener('pointerenter'"),
-    'BC: no done frame; history cores static; send-button warmup removed (FPS roots)');
-  // BC: фигуры ×1.5 с пружиной и золотом в момент морфа
-  assert(css.includes('.msg-ai.live .ai-core.shaped{transform:scale(1.5);animation:none}') &&
-    css.includes('transform:scale(1.68)') && css.includes('transform:scale(.88)') &&
+    !js.includes('pointerenter'),
+    'BC/BD: no done frame; history cores static; hover warmup gone entirely');
+  // BC/BD: фигуры ×2.1 с пружиной и золотом в момент морфа
+  assert(css.includes('.msg-ai.live .ai-core.shaped{transform:scale(2.1);animation:none}') &&
+    css.includes('transform:scale(2.42)') && css.includes('transform:scale(.92)') &&
     css.includes('@keyframes dotMorphIn{') && css.includes('@keyframes dotMorphOut{'),
-    'BC: shapes are 1.5x with a springy gold-lit morph in and out');
+    'BC/BD: shapes are 2.1x with a springy gold-lit morph in and out');
+}
+
+function testIterationBDContracts() {
+  // BD: прогрев убран ПОЛНОСТЬЮ — ни /api/warm на сервере, ни hover-прогрева
+  assert(!pyServer.includes('/api/warm') && !pyServer.includes('_WARM_SEEN') &&
+    !js.includes('warmRequest') && !js.includes('pointerenter'),
+    'BD: warmup is completely gone — server and client');
+  // BD: честный пустой [] — это НЕТ чипов, а не провал в шаблоны
+  const sra = pyAgent.split('def suggest_replies_ai(')[1].split('\ndef ')[0];
+  assert(sra.includes('if not parsed and re.search(r"\\[\\s*\\]", raw_text):') &&
+    sra.includes('span.finish("empty")') && sra.includes('return []'),
+    'BD: an honest empty [] means NO chips — never a template fallback');
+  // BD: шаблонная тройка не кэшируется в meta
+  assert((pyServer.match(/items != agent\.suggest_replies\(/g) || []).length === 2,
+    'BD: template replies are never cached into chat meta');
+  // BD: спокойный круглешок — в покое БЕЗ размера, фигура ×2.1 на 1.5с
+  const coreLive = css.split('@keyframes coreLive{')[1].split('}}')[0];
+  assert(!coreLive.includes('transform') && coreLive.includes('#ffd8a8') &&
+    css.includes('animation:coreLive 4.6s ease-in-out infinite}') &&
+    js.includes('const DOT_MORPH_MS = 700;') &&
+    js.includes('const DOT_MORPH_OUT_MS = 650;') &&
+    js.includes('const DOT_HOLD_MS = 1500;'),
+    'BD: calm dot at rest (no size change) — gold shimmer only');
+  // BD: история дешёвая — базовое ядро без полигонов и фильтров
+  const baseCore = css.split('.ai-core{')[1].split('}')[0];
+  assert(!baseCore.includes('animation:') && !baseCore.includes('clip-path') &&
+    !baseCore.includes('filter') && baseCore.includes('box-shadow:') &&
+    css.split('.msg-ai.live .ai-core{')[1].split('}')[0].includes('clip-path:polygon('),
+    'BD: history cores are cheap — all morph magic lives on .live only');
+  // BD: круглешок реагирует и на файлы
+  assert(js.split("case 'file': {")[1].split("case '")[0]
+      .includes('dotAction(ui.node && ui.node.root);'),
+    'BD: the dot pulses on file events too');
 }
 
 function testIterationAWContracts() {
@@ -2626,7 +2660,7 @@ function testIterationAUContracts() {
       .includes('const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));'),
     'AV: classic speeds are back; the per-frame cap now follows real frame time');
   // AU: видимый номер сборки — всегда ясно, какой билд на экране
-  assert(html.includes('<span class="ver-chip">b60</span>') &&
+  assert(html.includes('<span class="ver-chip">b61</span>') &&
     css.includes('.ver-chip{align-self:center;'),
     'AU: the build number is visible in the top bar');
   // AU: призрак-надпись физически не может растянуться на весь экран
@@ -2681,7 +2715,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.60'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.61'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -2986,8 +3020,9 @@ function testIterationABContracts() {
   testIterationBAContracts();
   testIterationBBContracts();
   testIterationBCContracts();
+  testIterationBDContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 40 regression groups passed');
+  console.log('package28_frontend_runtime: 41 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

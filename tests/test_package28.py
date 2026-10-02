@@ -3253,7 +3253,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.60", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.61", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3868,9 +3868,9 @@ class IterationAJTests(unittest.TestCase):
         self.assertNotIn("relay", css)
         # круглешок живой: дышит в покое, пульсирует при печати (чистый CSS)
         self.assertIn(".ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;", css)
-        # BC: история статична (FPS), дышит только текущий ответ
+        # BD: история статична И дешёвая; дышит только текущий ответ
         self.assertNotIn("coreBreathe", css)
-        self.assertIn(".msg-ai.live .ai-core{animation:coreLive 3.2s ease-in-out infinite}", css)
+        self.assertIn("animation:coreLive 4.6s ease-in-out infinite}", css)
 
     def test_ak_reasoning_lang_injection(self) -> None:
         from jarvis import agent as ag
@@ -4580,7 +4580,8 @@ class IterationAQTests(unittest.TestCase):
         # AS: спроселёживание убрано из JS вовсе — живость круглешка
         # держит класс .typing на тексте ответа, интерактив его не снимает,
         # поэтому «долгий ответ» остаётся живым без всяких стражей
-        self.assertIn(".msg-ai.live .ai-core{animation:coreLive", css)
+        # BD: живой блок многострочный — такт ищем по кадру анимации
+        self.assertIn("animation:coreLive 4.6s ease-in-out infinite}", css)
         self.assertIn("@keyframes coreLive", css)
 
     def test_ar4_static_no_cache(self) -> None:
@@ -4588,8 +4589,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.60", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.60", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.61", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.61", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4723,7 +4724,7 @@ class IterationAUTests(unittest.TestCase):
     def test_au3_version_chip(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b60</span>', html)
+        self.assertIn('<span class="ver-chip">b61</span>', html)
         self.assertIn(".ver-chip{align-self:center;", css)
 
     def test_au4_flight_waits_for_scroll(self) -> None:
@@ -4807,8 +4808,9 @@ class IterationAXTests(unittest.TestCase):
     def test_ax3_flexible_core(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         live = css.split("@keyframes coreLive{")[1].split("}}")[0]
-        # BB: базовый такт — чистый transform (FPS); золото живёт во всплеске
-        self.assertIn("transform:scale(1.2)", live)
+        # BD: покой БЕЗ изменения размера — только цвет, золото, мерцание
+        self.assertNotIn("transform", live)
+        self.assertIn("#ffd8a8", live)
         burst = css.split("@keyframes coreBurst{")[1].split("}}")[0]
         self.assertIn("#ffd489", burst)
         self.assertIn("var(--gold)", burst)
@@ -4875,7 +4877,7 @@ class IterationAYTests(unittest.TestCase):
 
     def test_ay4_dot_lives_the_whole_answer(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn(".msg-ai.live .ai-core{animation:coreLive 3.2s ease-in-out infinite}", css)
+        self.assertIn("animation:coreLive 4.6s ease-in-out infinite}", css)
         self.assertIn(
             ".ai-core.dot-settle{animation:coreSettle .55s cubic-bezier(.65,0,.35,1) forwards}", css)
         self.assertIn("@keyframes coreSettle{", css)
@@ -4960,7 +4962,7 @@ class IterationAZTests(unittest.TestCase):
 
     def test_az3_dot_calm_base_action_burst(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn(".msg-ai.live .ai-core{animation:coreLive 3.2s ease-in-out infinite}", css)
+        self.assertIn("animation:coreLive 4.6s ease-in-out infinite}", css)
         self.assertIn(".msg-ai.live .ai-core.dot-act{animation:coreBurst 1.15s cubic-bezier(.65,0,.35,1)}", css)
         self.assertIn("@keyframes coreBurst{", css)
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -4973,18 +4975,22 @@ class IterationAZTests(unittest.TestCase):
     def test_az4_dot_plays_with_shapes(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # база — 12-точечный «круг», переход clip-path плавный
+        # BD: база истории — ПРОСТОЙ круг (дешёвый); 12-точечный «круг»
+        # и плавный переход переехали в live-блок
         core = css.split(".ai-core{")[1].split("}")[0]
-        self.assertIn("clip-path:polygon(50% 0%,75% 6.7%", core)
-        self.assertIn("clip-path .26s cubic-bezier(.65,0,.35,1)", core)
+        self.assertNotIn("clip-path", core)
+        self.assertNotIn("filter", core)
+        live_core = css.split(".msg-ai.live .ai-core{")[1].split("}")[0]
+        self.assertIn("clip-path:polygon(50% 0%,75% 6.7%", live_core)
+        self.assertIn("clip-path .3s cubic-bezier(.65,0,.35,1)", live_core)
         # странные фигуры — равным числом вершин, морфятся интерполяцией
-        for shape in ("sh-tess", "sh-tetra", "sh-cube", "sh-prism", "sh-crystal",
-                      "sh-vortex", "sh-blob", "sh-star", "sh-hex", "sh-diamond"):
+        for shape in ("sh-tess", "sh-cube", "sh-tetra", "sh-crystal", "sh-prism",
+                      "sh-cyl", "sh-star", "sh-hex", "sh-diamond", "sh-trefoil"):
             self.assertIn(".ai-core.%s{clip-path:polygon(" % shape, css)
         # тессеракт — внутренний контур псевдоэлементом
         self.assertIn(".ai-core.sh-tess::before{opacity:.9;transform:rotate(45deg)}", css)
-        self.assertIn("'sh-tess', 'sh-tetra', 'sh-cube', 'sh-prism', 'sh-crystal',", js)
-        self.assertIn("'sh-vortex', 'sh-blob', 'sh-star', 'sh-hex', 'sh-diamond']", js)
+        self.assertIn("'sh-tess', 'sh-cube', 'sh-tetra', 'sh-crystal', 'sh-prism',", js)
+        self.assertIn("'sh-cyl', 'sh-star', 'sh-hex', 'sh-diamond', 'sh-trefoil']", js)
         self.assertIn("function dotShapePlay(", js)
         fd = js.split("function finishLiveDot(")[1].split("\nfunction ")[0]
         # BA: все классы круглешка живут на САМОМ .ai-core — коллизия имён
@@ -5061,19 +5067,16 @@ class IterationBATests(unittest.TestCase):
         self.assertIn('yield {"type": "delta", "text": piece}', run_src)
 
     def test_ba6_warmup_on_hover(self) -> None:
+        # BD: ПРОГРЕВ УДАЛЁН ПОЛНОСТЬЮ — каждый hover над чипом/плиткой
+        # превращался в реальный LLM-вызов на машине пользователя
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        self.assertIn("function warmRequest(", js)
-        self.assertIn("warmTimer = setTimeout(() => warmRequest(text), 300);", js)
-        # BC: с кнопки отправки прогрев СНЯТ — живой текст превращал
-        # каждый hover в реальный LLM-вызов и грузил машину
-        self.assertNotIn("$('#sendBtn').addEventListener('pointerenter'", js)
-        # плитки и чипы — фиксированный текст, прогрев остался на них
-        self.assertIn("b.addEventListener('pointerenter', () => warmHover(s.prompt));", js)
-        self.assertIn("chip.addEventListener('pointerenter', () => warmHover(t));", js)
         srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
-        warm = srv.split('if path == "/api/warm":')[1].split('if path ==')[0]
-        self.assertIn("_WARM_SEEN", warm)
-        self.assertIn('operation="warmup"', warm)
+        self.assertNotIn("warmRequest", js)
+        self.assertNotIn("warmHover", js)
+        self.assertNotIn("pointerenter", js)
+        self.assertNotIn("/api/warm", srv)
+        self.assertNotIn("_WARM_SEEN", srv)
+        self.assertNotIn('operation="warmup"', srv)
 
 
 
@@ -5098,31 +5101,34 @@ class IterationBBTests(unittest.TestCase):
 
     def test_bb2_dot_fps_and_glow(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        # такт живости — ТОЛЬКО transform (композит, без перерисовок)
+        # BD: такт живости — БЕЗ размера (только цвет, золото, мерцание)
         live = css.split("@keyframes coreLive{")[1].split("}}")[0]
-        for prop in ("background", "box-shadow", "filter"):
-            self.assertNotIn(prop, live)
-        # BC: КОРЕНЬ ЛАГОВ — бесконечная анимация на каждом .ai-core
-        # истории; теперь история статична, живёт только .live
+        self.assertNotIn("transform", live)
+        self.assertIn("background", live)
+        self.assertIn("drop-shadow", live)
+        # BD: ВТОРОЙ FPS-КОРЕНЬ — полигоны и свечение на КАЖДОМ
+        # историческом ядре; история теперь простой круг
         core = css.split(".ai-core{")[1].split("}")[0]
         self.assertNotIn("animation:", core)
-        self.assertIn("filter:drop-shadow(", core)
+        self.assertNotIn("clip-path", core)
+        self.assertNotIn("filter", core)
+        self.assertIn("box-shadow:", core)
 
     def test_bb3_shape_play_faster_with_glow(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("const DOT_MORPH_MS = 560;", js)
-        self.assertIn("const DOT_MORPH_OUT_MS = 500;", js)
-        self.assertIn("const DOT_HOLD_MS = 1250;", js)
+        self.assertIn("const DOT_MORPH_MS = 700;", js)
+        self.assertIn("const DOT_MORPH_OUT_MS = 650;", js)
+        self.assertIn("const DOT_HOLD_MS = 1500;", js)
         play = js.split("function dotShapePlay(")[1].split("\nfunction ")[0]
-        self.assertIn("3200 + Math.random() * 3800", play)
-        # BC: фигура ×1.5, пружина туда-обратно, золото в кадрах морфа
+        self.assertIn("8000 + Math.random() * 8000", play)
+        # BD: фигура ×2.1, пружина туда-обратно, золото в кадрах морфа
         self.assertIn("core.classList.add(shape, 'shaped', 'sh-in');", play)
-        self.assertIn(".msg-ai.live .ai-core.shaped{transform:scale(1.5);animation:none}", css)
+        self.assertIn(".msg-ai.live .ai-core.shaped{transform:scale(2.1);animation:none}", css)
         self.assertIn("@keyframes dotMorphIn{", css)
         self.assertIn("@keyframes dotMorphOut{", css)
-        self.assertIn("transform:scale(1.68)", css)
-        self.assertIn("transform:scale(.88)", css)
+        self.assertIn("transform:scale(2.42)", css)
+        self.assertIn("transform:scale(.92)", css)
 
     def test_bb4_thinking_only_for_work(self) -> None:
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
@@ -5159,25 +5165,27 @@ class IterationBCTests(unittest.TestCase):
         core = css.split(".ai-core{")[1].split("}")[0]
         self.assertNotIn("animation:", core)
         # живёт только текущий ответ
-        self.assertIn(".msg-ai.live .ai-core{animation:coreLive 3.2s ease-in-out infinite}", css)
+        self.assertIn("animation:coreLive 4.6s ease-in-out infinite}", css)
 
     def test_bc3_warmup_off_send_button(self) -> None:
+        # BD: прогрев удалён ЦЕЛИКОМ — и с кнопки, и с плиток, и с чипов
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        self.assertNotIn("$('#sendBtn').addEventListener('pointerenter'", js)
-        # фиксированные тексты (плитки, чипы) прогревают по-прежнему
-        self.assertIn("b.addEventListener('pointerenter', () => warmHover(s.prompt));", js)
-        self.assertIn("chip.addEventListener('pointerenter', () => warmHover(t));", js)
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertNotIn("warmHover", js)
+        self.assertNotIn("pointerenter", js)
+        self.assertNotIn("/api/warm", srv)
 
     def test_bc4_shapes_bigger_spring_gold(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("const DOT_MORPH_MS = 560;", js)
-        self.assertIn("const DOT_MORPH_OUT_MS = 500;", js)
-        # фигура в полтора раза больше круга
-        self.assertIn(".msg-ai.live .ai-core.shaped{transform:scale(1.5);animation:none}", css)
-        # пружина: перелёт 1.68 -> 1.5; обратно присел 0.88 -> 1
-        self.assertIn("transform:scale(1.68)", css)
-        self.assertIn("transform:scale(.88)", css)
+        self.assertIn("const DOT_MORPH_MS = 700;", js)
+        self.assertIn("const DOT_MORPH_OUT_MS = 650;", js)
+        self.assertIn("const DOT_HOLD_MS = 1500;", js)
+        # BD: фигура заметно больше круга (×2.1)
+        self.assertIn(".msg-ai.live .ai-core.shaped{transform:scale(2.1);animation:none}", css)
+        # пружина: перелёт 2.42 -> 2.1; обратно присел 0.92 -> 1
+        self.assertIn("transform:scale(2.42)", css)
+        self.assertIn("transform:scale(.92)", css)
         # золото — ровно в кадрах трансформации
         morph_in = css.split("@keyframes dotMorphIn{")[1].split("}}")[0]
         self.assertIn("#ffd489", morph_in)
@@ -5188,14 +5196,84 @@ class IterationBCTests(unittest.TestCase):
     def test_bc5_more_3d_4d_shapes(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        for shape in ("sh-tess", "sh-tetra", "sh-cube", "sh-prism",
-                      "sh-crystal", "sh-vortex"):
+        for shape in ("sh-tess", "sh-cube", "sh-tetra", "sh-crystal",
+                      "sh-prism", "sh-cyl"):
             self.assertIn(".ai-core.%s{clip-path:polygon(" % shape, css)
-        # 3D/4D-фигур больше, чем плоских
-        d34 = ("sh-tess", "sh-tetra", "sh-cube", "sh-prism", "sh-crystal", "sh-vortex")
-        flat = ("sh-blob", "sh-star", "sh-hex", "sh-diamond")
+        # BD: 3D-фигур больше, чем плоских; все — гармоничные 12-вершинные
+        d34 = ("sh-tess", "sh-cube", "sh-tetra", "sh-crystal", "sh-prism", "sh-cyl")
+        flat = ("sh-star", "sh-hex", "sh-diamond", "sh-trefoil")
         self.assertGreater(len(d34), len(flat))
-        self.assertIn("'sh-vortex', 'sh-blob'", js)
+        self.assertIn("'sh-cyl'", js)
+        self.assertIn("'sh-trefoil']", js)
+        self.assertNotIn("sh-vortex", js + css)
+        self.assertNotIn("sh-blob", js + css)
+
+
+class IterationBDTests(unittest.TestCase):
+    """BD (beta.61): прогрев убран ПОЛНОСТЬЮ; лаги вылечены — история
+    круглешков дешёвая (вся магия только на текущем ответе); круглешок
+    в покое не меняет размер, фигуры сильнее (×2.1) и держатся 1.5с;
+    честный пустой [] от модели = чипов НЕТ, а не шаблоны."""
+
+    def test_bd1_warmup_gone_completely(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertNotIn("/api/warm", srv)
+        self.assertNotIn("_WARM_SEEN", srv)
+        self.assertNotIn("hashlib", srv)
+        self.assertNotIn("warmRequest", js)
+        self.assertNotIn("warmHover", js)
+        self.assertNotIn("pointerenter", js)
+
+    def test_bd2_empty_replies_are_not_templates(self) -> None:
+        ag = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        fn = ag.split("def suggest_replies_ai(")[1].split("\ndef ")[0]
+        # честный пустой [] — это «подсказок нет», а не ошибка провала
+        self.assertIn('if not parsed and re.search(r"\\[\\s*\\]", raw_text):', fn)
+        self.assertIn('span.finish("empty")', fn)
+        self.assertIn('return []', fn)
+        # шаблоны НЕ пишутся в meta и не кэшируются навсегда
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertEqual(srv.count("items != agent.suggest_replies("), 2)
+
+    def test_bd3_dot_calm_no_size_change(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # покой — только лёгкое желтение/свечение/мерцание, БЕЗ размера
+        live = css.split("@keyframes coreLive{")[1].split("}}")[0]
+        self.assertNotIn("transform", live)
+        self.assertIn("#ffd8a8", live)
+        self.assertIn("drop-shadow", live)
+        self.assertIn("animation:coreLive 4.6s ease-in-out infinite}", css)
+
+    def test_bd4_history_cores_cheap(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        core = css.split(".ai-core{")[1].split("}")[0]
+        for prop in ("animation:", "clip-path", "filter"):
+            self.assertNotIn(prop, core)
+        self.assertIn("box-shadow:", core)
+        # вся магия — только на текущем ответе
+        live_core = css.split(".msg-ai.live .ai-core{")[1].split("}")[0]
+        self.assertIn("clip-path:polygon(", live_core)
+        self.assertIn("filter:drop-shadow(", live_core)
+        self.assertIn(".msg-ai.live .ai-core::before{", css)
+
+    def test_bd5_shapes_harmonic_and_recognizable(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        for shape in ("sh-tess", "sh-cube", "sh-tetra", "sh-crystal", "sh-prism",
+                      "sh-cyl", "sh-star", "sh-hex", "sh-diamond", "sh-trefoil"):
+            self.assertIn(".ai-core.%s{clip-path:polygon(" % shape, css)
+        # призма — ПЯТИугольник, а не дубль шестиугольника (баг BC)
+        prism = css.split(".ai-core.sh-prism{")[1].split("}")[0]
+        hexag = css.split(".ai-core.sh-hex{")[1].split("}")[0]
+        self.assertNotEqual(prism, hexag)
+        self.assertNotIn("sh-vortex", js + css)
+        self.assertNotIn("sh-blob", js + css)
+
+    def test_bd6_dot_reacts_to_files(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        f = js.split("case 'file': {")[1].split("case '")[0]
+        self.assertIn("dotAction(ui.node && ui.node.root);", f)
 
 
 if __name__ == "__main__":

@@ -1311,8 +1311,6 @@ function fillSuggestions(box, calm) {
     b.style.animationDelay = (0.04 * i) + 's';
     /* подмена плиток на живом экране — без повторного «всплытия» */
     if (calm) b.style.animation = 'none';
-    b.addEventListener('pointerenter', () => warmHover(s.prompt));
-    b.addEventListener('pointerleave', warmHoverCancel);
     b.addEventListener('click', () => { $('#input').value = s.prompt; autoGrow(); send(); });
     box.appendChild(b);
   });
@@ -6191,23 +6189,21 @@ function dotAction(root) {
   }, 1150);
 }
 
-/* AZ: КРУГЛЕШОК ИГРАЕТ С ФОРМОЙ. Изредка, будто балуется: плавно
-   перетекает в странную фигуру на полсекунды — тессеракт, тетраэдр,
-   кривая капля, звезда — и так же плавно возвращается кружком */
-/* BC: БОЛЬШЕ СТРАННЫХ ФИГУР — 3D/4D больше, чем плоских: тессеракт,
-   тетраэдр, куб, призма, кристалл, вихрь; плоские — капля, звезда,
-   шестиугольник, ромб */
-const DOT_SHAPES = ['sh-tess', 'sh-tetra', 'sh-cube', 'sh-prism', 'sh-crystal',
-  'sh-vortex', 'sh-blob', 'sh-star', 'sh-hex', 'sh-diamond'];
-const DOT_MORPH_MS = 560;      // BC: пружинная трансформация туда
-const DOT_MORPH_OUT_MS = 500;  // BC: упругий возврат обратно
-const DOT_HOLD_MS = 1250;      // BC: повисел секунду-полторы
+/* BD: ГАРМОНИЧНЫЕ УЗНАВАЕМЫЕ ФИГУРЫ (все 12-вершинные, морфятся
+   интерполяцией): 3D — тессеракт, куб, тетраэдр, кристалл, призма,
+   цилиндр; плоские — звезда, шестиугольник, ромб, трилистник */
+const DOT_SHAPES = ['sh-tess', 'sh-cube', 'sh-tetra', 'sh-crystal', 'sh-prism',
+  'sh-cyl', 'sh-star', 'sh-hex', 'sh-diamond', 'sh-trefoil'];
+const DOT_MORPH_MS = 700;      // BD: пружинисто расширяется до фигуры
+const DOT_MORPH_OUT_MS = 650;  // BD: упруго сжимается обратно в круг
+const DOT_HOLD_MS = 1500;      // BD: полторы секунды в фигуре
 function dotShapePlay(root) {
   const core = root && root.querySelector ? root.querySelector('.ai-core') : null;
   if (!core) return;
   clearTimeout(core._shapeTimer);
   const schedule = () => {
-    core._shapeTimer = setTimeout(play, 3200 + Math.random() * 3800);
+    /* BD: гораздо реже — каждые 8–16 секунд, без суеты */
+    core._shapeTimer = setTimeout(play, 8000 + Math.random() * 8000);
   };
   const play = () => {
     if (!core.isConnected || !root.classList.contains('live') ||
@@ -6232,29 +6228,6 @@ function dotShapePlay(root) {
   };
   schedule();
 }
-
-/* BA: ПРЕДПРОГРЕВ. Наведение ≥0.3с на кнопку отправки, плитку или чип —
-   сервер греет соединение с моделью и префикс-кэш промпта: клик будет
-   стартовать мгновеннее. Один текст — один прогрев */
-let warmLast = '';
-let warmTimer = null;
-function warmRequest(text) {
-  text = String(text || '').trim();
-  if (!text || text === warmLast || S.streaming) return;
-  warmLast = text;
-  try {
-    fetch('/api/warm', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text, agent_mode: !!S.agentMode }),
-    }).catch(() => {});
-  } catch (e) { /* прогрев не должен никому мешать */ }
-}
-function warmHover(text) {
-  clearTimeout(warmTimer);
-  warmTimer = setTimeout(() => warmRequest(text), 300);
-}
-function warmHoverCancel() { clearTimeout(warmTimer); }
 
 /* AY: финал ответа — живой круглешок мягко возвращает форму кружка */
 function finishLiveDot(root) {
@@ -7047,6 +7020,7 @@ function handleEvent(ev, ui) {
     }
 
     case 'file': {
+      dotAction(ui.node && ui.node.root);
       ui.files.push(ev);
       const wrap = ui.filesBox || (ui.filesBox = el('div', ''));
       if (!wrap.parentNode) node.body.insertBefore(wrap, ui.statusEl);
@@ -8212,8 +8186,6 @@ function showReplies(items) {
     const go = el('button', 'rc-go', esc(t));
     const ed = el('button', 'rc-ed', '✎');
     ed.title = 'Вставить в поле ввода и дописать';
-    chip.addEventListener('pointerenter', () => warmHover(t));
-    chip.addEventListener('pointerleave', warmHoverCancel);
     go.addEventListener('click', () => {
       box.hidden = true;
       $('#input').value = t;
