@@ -626,6 +626,8 @@ def build_system_prompt(agent_mode: bool = False, computer_use: bool = False,
         return f"""Ты — JARVIS, личный ИИ-агент пользователя (как у Тони Старка).
 Сегодня {_now_str()}. Кратко, по делу, с лёгкой ноткой уверенного дворецкого-инженера.
 ЯЗЫК — РУССКИЙ ВЕЗДЕ И ВСЕГДА. Дружелюбно на «ты»; на «вы» — только если он сам так пишет.
+БЕСЕДА УЖЕ ИДЁТ: если в истории есть прошлые реплики — не здоровайся снова
+и не представляйся, просто продолжай разговор с того места, где он остановился.
 
 {' '.join(who)}
 
@@ -668,6 +670,9 @@ ui. Если вариантов нет, но ответ человека всё 
     base = f"""ДУМАЙ ПО-РУССКИ: внутренние рассуждения (reasoning) веди на русском языке всегда.
 Ты — JARVIS, личный ИИ-агент пользователя (как у Тони Старка).
 Сегодня {_now_str()}. Кратко, по делу, с лёгкой ноткой уверенного дворецкого-инженера.
+БЕСЕДА УЖЕ ИДЁТ: если в истории есть прошлые реплики — не здоровайся снова
+и не представляйся, продолжай разговор с того места, где он остановился.
+Это ОДИН непрерывный диалог, даже если сменилась модель или режим.
 ЯЗЫК — РУССКИЙ ВЕЗДЕ И ВСЕГДА: ответ, ход мыслей (reasoning), планы, названия шагов,
 пояснения к действиям, заголовки и тексты уведомлений. Даже размышляя «про себя»,
 думай по-русски. Английский допустим только внутри кода, команд, путей и имён файлов.
@@ -1205,6 +1210,19 @@ def _dialogue_lines(history: Optional[List[Dict[str, Any]]],
     return lines
 
 
+_SUGGEST_STOPWORDS = set(
+    "и в не на что как это мне тебя тебе я ты он она оно мы вы они же бы ли если "
+    "для про по из за то всё все очень есть был была быть были с а о у к до от "
+    "об ко чтобы когда даже ещё еще просто могу можно нужно надо хочу давай "
+    "спасибо благодарю пока привет hello thanks".split())
+
+
+def _topic_words(text: str) -> set:
+    """Значимые слова фразы (короткие основы) — для проверки «по теме ли»."""
+    return {w[:5] for w in re.findall(r"[а-яёa-z0-9]{4,}", str(text or "").lower())
+            if w not in _SUGGEST_STOPWORDS}
+
+
 def suggest_replies_ai(user_text: str, answer: str,
                        tools_used: Optional[List[str]] = None,
                        history: Optional[List[Dict[str, Any]]] = None) -> List[str]:
@@ -1247,9 +1265,14 @@ def suggest_replies_ai(user_text: str, answer: str,
                         "сообщения: углубить деталь, уточнить конкретное "
                         "сказанное, следующий шаг именно этой темы или "
                         "воспользоваться именно этим результатом. Запрещено "
-                        "уходить в другую тему и запрещены пустые общие "
-                        "фразы («расскажи подробнее», «покажи на примере», "
-                        "«что дальше», «продолжай»). Пиши от первого лица "
+                        "уходить в другую тему, придумывать новые предметы "
+                        "разговора и предлагать вежливые завершения "
+                        "(«спасибо», «получил», «понял»). Запрещены пустые "
+                        "общие фразы («расскажи подробнее», «покажи на "
+                        "примере», «что дальше», «продолжай»). Если в "
+                        "переписке нет конкретного предмета разговора "
+                        "(только приветствие или вежливость) — верни "
+                        "ПУСТОЙ массив []. Пиши от первого лица "
                         "пользователя, по-русски, разговорно, каждая реплика "
                         "до 6 слов, без кавычек и номеров, все три — разные "
                         "по направлению. Ответь ТОЛЬКО JSON-массивом из "
@@ -1257,19 +1280,35 @@ def suggest_replies_ai(user_text: str, answer: str,
             {"role": "user", "content": "\n\n".join(parts)},
         ], tier="nano", timeout=5, operation="reply_suggestions_ai")
         content = raw.get("content") if isinstance(raw, dict) else str(raw)
-        items = [x for x in _parse_reply_suggestions(str(content or ""))
-                 if _suggestion_usable(x)]
-        if len(items) >= 2:
+        parsed = [x for x in _parse_reply_suggestions(str(content or ""))
+                  if _suggestion_usable(x)]
+        # BA: ТОНКИЙ ДИАЛОГ (приветствие, вежливость — предмета нет) требует
+        # от реплики общего значимого слова с перепиской: иначе «умный дом»
+        # после «привет». Содержательный диалог достаточно богат предметом —
+        # верим промпту и не режем живые продолжения
+        topic = _topic_words("\n".join(lines) + "\n" + tail + "\n" + q)
+        if len(topic) < 3:
+            items = [x for x in parsed if _topic_words(x) & topic]
+        else:
+            items = parsed
+        if items:
             span.finish("ok", count=len(items))
             return items[:3]
+        # модель ушла в сторону или мусор — лучше НИЧЕГО, чем чужая тема
+        if parsed:
+            span.finish("off_topic")
+            return []
     except Exception:
         pass
     span.finish("fallback")
-    # сбой или мусор — честный локальный запас: у AGENT-прогона это
-    # проактивные шаги по фактам работы, у разговора — разговорные продолжения
+    # СБОЙ или пустая тема. Шаблоны — самый противный случай: только когда
+    # nano реально упала на содержательном ответе. У AGENT-прогона —
+    # проактивные шаги по фактам работы. Болтовне без предмета — пусто.
     if tools_used:
         return suggest_proactive(q, raw_answer, tools_used)
-    return suggest_replies(q, raw_answer)
+    if len(tail) >= 20:
+        return suggest_replies(q, raw_answer)
+    return []
 
 
 def _parse_reply_suggestions(raw: str) -> List[str]:
@@ -1300,7 +1339,10 @@ def _parse_reply_suggestions(raw: str) -> List[str]:
         if 2 <= len(clean) <= 60 and clean.lower() not in \
                 ("что ещё", "что-то ещё", "ещё", "продолжай", "что дальше",
                  "расскажи подробнее", "расскажи больше", "покажи на примере",
-                 "покажи пример", "объясни подробнее", "и что?", "ну и что?"):
+                 "покажи пример", "объясни подробнее", "и что?", "ну и что?",
+                 "получил, спасибо", "спасибо, понял", "спасибо большое",
+                 "отлично, спасибо", "хорошо, спасибо", "понял, спасибо",
+                 "принято", "окей, спасибо", "ясно", "угу", "благодарю"):
             items.append(clean)
         if len(items) == 3:
             break
@@ -3447,15 +3489,35 @@ class Agent:
                 for progress in self._advance_plan(self.plan_len):
                     yield progress
             yield {"type": "status", "text": "Формулирую ответ"}
+            # BA: СВОДКА ПЕЧАТАЕТСЯ ЖИВЫМ ПОТОКОМ. Прежде финал был одним
+            # нестримовым вызовом: после инструмента экран показывал статичную
+            # строку, пока модель молча писала весь ответ, — «просто молча
+            # думает». Теперь каждое слово сводки выходит сразу.
             try:
-                closing = llm.chat(_closing_convo(convo, tier), tier=tier,
-                                   max_tokens=1400,
-                                   operation="auto_final" if self.task_id else "foreground_final")
-
-                final_text = closing.get("content", "")
-            except Exception as exc:
-                yield {"type": "error", "error": str(exc)}
-                return
+                closing_text = ""
+                for c_ev in llm.chat_stream(
+                        _closing_convo(convo, tier), tier=tier, max_tokens=1400,
+                        operation="auto_final" if self.task_id else "foreground_final"):
+                    if self._cancelled():
+                        return
+                    if c_ev.get("type") == "delta":
+                        piece = str(c_ev.get("text") or "")
+                        closing_text += piece
+                        if piece:
+                            yield {"type": "delta", "text": piece}
+                if not closing_text.strip():
+                    raise llm.LLMError("пустая сводка")
+                final_text = closing_text
+            except Exception:
+                # стрим не пошёл — честный запасной нестримовый вызов
+                try:
+                    closing = llm.chat(_closing_convo(convo, tier), tier=tier,
+                                       max_tokens=1400,
+                                       operation="auto_final" if self.task_id else "foreground_final")
+                    final_text = closing.get("content", "")
+                except Exception as exc:
+                    yield {"type": "error", "error": str(exc)}
+                    return
             # итог тоже может прийти с напечатанным вызовом — вычищаем
             if final_text:
                 final_text = tools.parse_text_calls(final_text)[0]

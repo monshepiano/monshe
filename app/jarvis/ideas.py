@@ -29,22 +29,22 @@ _AI_RUNNING = False
 # пользователь увидит в поле ввода уже после клика по плитке.
 FALLBACK: List[Dict[str, str]] = [
     {"title": "Что нового?",
-     "desc": "Найду главные новости дня в интернете и соберу короткую сводку",
+     "desc": "Пройдусь по новостным сайтам, отберу самые важные события дня и соберу их в короткую сводку со ссылками",
      "prompt": "Найди в интернете 5 главных новостей за сегодня и сделай короткую сводку"},
     {"title": "Собери таблицу",
-     "desc": "Пройду по магазинам, соберу цены в ровную таблицу и сохраню её в Excel",
+     "desc": "Найду в интернете цены на товар в разных магазинах, сведу их в ровную таблицу и сохраню файлом в Excel",
      "prompt": "Собери таблицу цен на интересующий меня товар в российских магазинах и сохрани в Excel"},
     {"title": "Каждое утро",
-     "desc": "Настрою расписанное задание: погода и курс доллара будут приходить к 9:00",
+     "desc": "Настрою расписанное задание: каждое утро ровно в девять я буду присылать погоду и курс доллара",
      "prompt": "Каждый день в 9:00 присылай мне погоду и курс доллара в Telegram"},
-    {"title": "Нарисую",
-     "desc": "Придумаю и нарисую картинку по описанию — покажу, что получилось",
+    {"title": "Нарисую картинку",
+     "desc": "Придумаю несколько вариантов по описанию, нарисую самый удачный и покажу — можно сразу сохранить",
      "prompt": "Нарисуй логотип для кофейни в стиле неон-минимализм"},
     {"title": "Разберу файл",
-     "desc": "Прочитаю присланный документ, вытащу главное и соберу выжимку по пунктам",
+     "desc": "Прочитаю присланный документ целиком, вытащу главное из каждого раздела и соберу выжимку по пунктам",
      "prompt": "Я пришлю документ — вытащи из него главное и сделай выжимку по пунктам"},
     {"title": "Наведу порядок",
-     "desc": "Загляну в песочницу, разложу файлы по папкам и подскажу, что можно удалить",
+     "desc": "Загляну в твою песочницу, разложу файлы по папкам, покажу структуру и подскажу, что можно удалить",
      "prompt": "Загляни в мою песочницу, разложи файлы по папкам и скажи, что можно удалить"},
 ]
 
@@ -73,7 +73,7 @@ def _clean(items: Any) -> List[Dict[str, str]]:
         title = " ".join(str(it.get("title") or "").split())[:26]
         # AZ: описание — что БУДЕТ ПРОИСХОДИТЬ; старым записям без него
         # на плитке останется сам запрос
-        desc = " ".join(str(it.get("desc") or "").split())[:140]
+        desc = " ".join(str(it.get("desc") or "").split())[:220]
         prompt = " ".join(str(it.get("prompt") or "").split())[:150]
         if title and len(prompt) > 12:
             out.append({"title": title, "desc": desc, "prompt": prompt})
@@ -105,12 +105,15 @@ def _local_personalized() -> List[Dict[str, str]]:
 def current() -> List[Dict[str, str]]:
     """Готовые подсказки — мгновенно, без обращения к модели."""
     data = _read()
+    # BA: кэш версии 2 несёт описания; записи без desc (формат AY) —
+    # устаревшие, их показывать нельзя: на плитке оказался бы промпт
+    stale = data.get("v") != 2
     fresh = _local_personalized()
-    saved = _clean(data.get("items"))
+    saved = [] if stale else _clean(data.get("items"))
     # AY: ИИ-придуманные плитки идут первыми — это живые продолжения
     # тем пользователя, а не встроенный запас
-    combined = (saved + fresh + FALLBACK) if data.get("source") == "ai" \
-        else (fresh + saved + FALLBACK)
+    combined = (saved + fresh + FALLBACK) if (data.get("source") == "ai" and not stale) \
+        else (fresh + FALLBACK)
     out: List[Dict[str, str]] = []
     seen = set()
     for item in combined:
@@ -129,7 +132,7 @@ def refresh(force: bool = False) -> List[Dict[str, str]]:
     if not force and time.time() - float(data.get("at") or 0) < _REFRESH:
         return current()
     items = (_local_personalized() + FALLBACK)[:COUNT]
-    _write({"at": time.time(), "items": items, "source": "local"})
+    _write({"at": time.time(), "items": items, "source": "local", "v": 2})
     return current()
 
 
@@ -164,11 +167,12 @@ def _ai_personalized() -> List[Dict[str, str]]:
                     "живое продолжение недавних тем, остальные — новые "
                     "полезные дела (поиск в интернете, файлы, картинки, "
                     "расписание). Для каждой — от первого лица, по-русски: "
-                    "заголовок до 3 слов, описание из 12-16 слов о том, что "
-                    "именно произойдёт (без общих слов), и полный запрос "
-                    "одной фразой до 14 слов. Ответь ТОЛЬКО JSON-массивом из "
-                    "шести объектов {\"title\": \"...\", \"desc\": \"...\", "
-                    "\"prompt\": \"...\"}."},
+                    "заголовок до 3 слов, РАЗВЁРНУТОЕ описание из 18-24 слов "
+                    "о том, что именно произойдёт, шаг за шагом (без общих "
+                    "слов — описание должно заполнить карточку), и полный "
+                    "запрос одной фразой до 14 слов. Ответь ТОЛЬКО "
+                    "JSON-массивом из шести объектов {\"title\": \"...\", "
+                    "\"desc\": \"...\", \"prompt\": \"...\"}."},
         {"role": "user",
          "content": "Недавние темы: %s" % ("; ".join(topics) or "нет данных")},
     ], tier="nano", max_tokens=500, temperature=0.8, timeout=8,
@@ -189,8 +193,8 @@ def refresh_ai_async() -> bool:
     запросом клиента, как только готовы. Кэш живёт _AI_REFRESH часов."""
     global _AI_RUNNING
     data = _read()
-    if data.get("source") == "ai" and \
-            time.time() - float(data.get("at") or 0) < _AI_REFRESH:
+    if (data.get("v") == 2 and data.get("source") == "ai" and
+            time.time() - float(data.get("at") or 0) < _AI_REFRESH):
         return False
 
     def work() -> None:
@@ -198,7 +202,7 @@ def refresh_ai_async() -> bool:
         try:
             items = _ai_personalized()
             if items:
-                _write({"at": time.time(), "items": items, "source": "ai"})
+                _write({"at": time.time(), "items": items, "source": "ai", "v": 2})
         except Exception:
             pass
         finally:

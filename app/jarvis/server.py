@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import mimetypes
 import os
@@ -18,6 +19,10 @@ from typing import Any, Dict, List, Optional
 from . import (__version__, agent, auto, billing, db, ideas, llm, orchestrator,
                sandbox, telemetry, tools)
 from .config import CONFIG, WORKSPACE, HOME
+
+# BA: реестр предпрогретых текстов — один текст греем раз в минуту
+_WARM_SEEN: Dict[str, float] = {}
+_WARM_LOCK = threading.Lock()
 from .tools import media
 from .tools import system as system_tools
 
@@ -498,6 +503,38 @@ class Handler(BaseHTTPRequestHandler):
             meta["replies"] = items
             db.update_message_meta(last["id"], meta)
             return self._json({"ok": True, "items": items})
+        if path == "/api/warm":
+            # BA: ПРЕДПРОГРЕВ по наведению (≥0.3с на кнопку/плитку/чип).
+            # Готовим соединение с провайдером и префикс-кэш промпта: реальный
+            # запрос начинается с уже тёплым конвейером. Один текст греем
+            # не чаще раза в минуту — прогрев не должен превращаться в расходы
+            text = str(body.get("text") or "")[:2000]
+            agent_mode = bool(body.get("agent_mode"))
+            key = hashlib.md5(("%d|%s" % (int(agent_mode), text))
+                              .encode("utf-8")).hexdigest()
+            now = time.time()
+            with _WARM_LOCK:
+                if _WARM_SEEN.get(key, 0) > now - 60:
+                    return self._json({"ok": True, "warmed": False})
+                _WARM_SEEN[key] = now
+            if not text.strip() or orchestrator.is_social_only(text):
+                return self._json({"ok": True, "warmed": False})
+            try:
+                # прогрев греет РОВНО тот промпт, что пойдёт в реальном
+                # запросе — иначе префикс-кэш провайдера бесполезен
+                light = orchestrator.is_social_only(text)
+                route = orchestrator.choose_tier(
+                    text, has_image=False, agent_mode=agent_mode,
+                    has_tools=True, computer_use=False)
+                llm.chat([
+                    {"role": "system", "content": agent.build_system_prompt(
+                        agent_mode, False, light=light)},
+                    {"role": "user", "content": text[:1200]},
+                ], tier=route["tier"], max_tokens=1, timeout=5,
+                   operation="warmup")
+            except Exception:
+                pass
+            return self._json({"ok": True, "warmed": True})
         if path == "/api/questions/answer":
             db.answer_question(body.get("id", ""), str(body.get("answer", ""))[:300])
             return self._json({"ok": True})

@@ -1262,17 +1262,17 @@ function appendFreshMessages(msgs) {
 /* AZ: ПЛИТКА = НАЗВАНИЕ + ОПИСАНИЕ, что произойдёт. Сам запрос (промпт)
    пользователь не читает заранее — он введётся в поле по клику */
 const SUGGESTIONS = [
-  ['Что нового?', 'Найду главные новости дня в интернете и соберу из них короткую сводку',
+  ['Что нового?', 'Пройдусь по новостным сайтам, отберу самые важные события дня и соберу их в короткую сводку со ссылками',
    'Найди в интернете 5 главных новостей за сегодня и сделай сводку'],
-  ['Собери отчёт', 'Пройду по магазинам, соберу цены в таблицу и сохраню её в Excel',
+  ['Собери таблицу', 'Найду в интернете цены на товар в разных магазинах, сведу их в ровную таблицу и сохраню файлом в Excel',
    'Собери таблицу с ценами на iPhone 17 в российских магазинах и сохрани в Excel'],
-  ['Каждое утро', 'Настрою расписанное задание: погода и курс доллара в Telegram к 9:00',
+  ['Каждое утро', 'Настрою расписанное задание: каждое утро ровно в девять я буду присылать погоду и курс доллара',
    'Каждый день в 9:00 присылай мне погоду и курс доллара в Telegram'],
-  ['Сделаю картинку', 'Придумаю и нарисую логотип в неон-минимализме — покажу варианты',
+  ['Нарисую картинку', 'Придумаю несколько вариантов по описанию, нарисую самый удачный и покажу — можно сразу сохранить',
    'Нарисуй логотип для кофейни в стиле неон-минимализм'],
-  ['Разберу файл', 'Прочитаю присланный документ, вытащу главное и соберу выжимку по пунктам',
+  ['Разберу файл', 'Прочитаю присланный документ целиком, вытащу главное из каждого раздела и соберу выжимку по пунктам',
    'Я пришлю документ — вытащи из него главное и сделай выжимку по пунктам'],
-  ['Наведу порядок', 'Загляну в песочницу, разложу файлы по папкам и подскажу, что можно удалить',
+  ['Наведу порядок', 'Загляну в твою песочницу, разложу файлы по папкам, покажу структуру и подскажу, что можно удалить',
    'Загляни в мою песочницу, разложи файлы по папкам и скажи, что можно удалить'],
 ];
 S.ideas = SUGGESTIONS.map((s) => ({ title: s[0], desc: s[1], prompt: s[2] }));
@@ -1311,6 +1311,8 @@ function fillSuggestions(box, calm) {
     b.style.animationDelay = (0.04 * i) + 's';
     /* подмена плиток на живом экране — без повторного «всплытия» */
     if (calm) b.style.animation = 'none';
+    b.addEventListener('pointerenter', () => warmHover(s.prompt));
+    b.addEventListener('pointerleave', warmHoverCancel);
     b.addEventListener('click', () => { $('#input').value = s.prompt; autoGrow(); send(); });
     box.appendChild(b);
   });
@@ -3874,6 +3876,11 @@ function loadDraft() {
 }
 $('#input').addEventListener('input', saveDraft);
 loadDraft();
+$('#sendBtn').addEventListener('pointerenter', () => {
+  const v = $('#input').value.trim();
+  if (v) warmHover(v);
+});
+$('#sendBtn').addEventListener('pointerleave', warmHoverCancel);
 $('#sendBtn').addEventListener('click', () => {
   // стоп — только когда поле пустое; если текст набран, отправляем (прервав старый поток)
   if (S.streaming && !$('#input').value.trim() && !S.attachments.length) {
@@ -6164,15 +6171,19 @@ function clearRunRoute(ui) {
   updateResponseMeta(ui);
 }
 
-/* AZ: ВСПЛЕСК НА ДЕЙСТВИИ. База круглешка спокойная; оживает он только
+/* AZ/BA: ВСПЛЕСК НА ДЕЙСТВИИ. База круглешка спокойная; оживает он только
    когда пользовательу есть что увидеть: открылся новый инструмент, шаг
-   плана, готов файл. Короткий энергичный такт — и обратно к дыханию */
+   плана, готов файл. Класс вешается на САМО ядро (.ai-core): прежний
+   вариант с классом 'act' на карточке ответа попадал в CSS-правило кнопок
+   .act{display:inline-flex;border:...} — ответ на секунду обрастал рамкой
+   и уезжал влево. Имя dot-act коллизий не имеет */
 function dotAction(root) {
-  if (!root || !root.classList || !root.classList.contains('live')) return;
-  root.classList.add('act');
-  clearTimeout(root._actTimer);
-  root._actTimer = setTimeout(() => {
-    if (root.classList) root.classList.remove('act');
+  const core = root && root.querySelector ? root.querySelector('.ai-core') : null;
+  if (!core || !root.classList.contains('live')) return;
+  core.classList.add('dot-act');
+  clearTimeout(core._actTimer);
+  core._actTimer = setTimeout(() => {
+    if (core.classList) core.classList.remove('dot-act');
   }, 1150);
 }
 
@@ -6181,33 +6192,63 @@ function dotAction(root) {
    кривая капля, звезда — и так же плавно возвращается кружком */
 const DOT_SHAPES = ['sh-tess', 'sh-tetra', 'sh-blob', 'sh-star', 'sh-hex', 'sh-diamond'];
 function dotShapePlay(root) {
-  if (!root || !root.classList) return;
-  clearTimeout(root._shapeTimer);
+  const core = root && root.querySelector ? root.querySelector('.ai-core') : null;
+  if (!core) return;
+  clearTimeout(core._shapeTimer);
   const schedule = () => {
-    root._shapeTimer = setTimeout(play, 6000 + Math.random() * 9000);
+    core._shapeTimer = setTimeout(play, 6000 + Math.random() * 9000);
   };
   const play = () => {
-    if (!root.isConnected || !root.classList.contains('live') ||
-        root.classList.contains('settle')) { return; }
+    if (!core.isConnected || !root.classList.contains('live') ||
+        core.classList.contains('dot-settle')) { return; }
     const shape = DOT_SHAPES[Math.floor(Math.random() * DOT_SHAPES.length)];
-    root.classList.add(shape);
+    core.classList.add(shape);
     setTimeout(() => {
-      if (root.classList) root.classList.remove(shape);
+      if (core.classList) core.classList.remove(shape);
       schedule();
     }, 720);
   };
   schedule();
 }
 
+/* BA: ПРЕДПРОГРЕВ. Наведение ≥0.3с на кнопку отправки, плитку или чип —
+   сервер греет соединение с моделью и префикс-кэш промпта: клик будет
+   стартовать мгновеннее. Один текст — один прогрев */
+let warmLast = '';
+let warmTimer = null;
+function warmRequest(text) {
+  text = String(text || '').trim();
+  if (!text || text === warmLast || S.streaming) return;
+  warmLast = text;
+  try {
+    fetch('/api/warm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text, agent_mode: !!S.agentMode }),
+    }).catch(() => {});
+  } catch (e) { /* прогрев не должен никому мешать */ }
+}
+function warmHover(text) {
+  clearTimeout(warmTimer);
+  warmTimer = setTimeout(() => warmRequest(text), 300);
+}
+function warmHoverCancel() { clearTimeout(warmTimer); }
+
 /* AY: финал ответа — живой круглешок мягко возвращает форму кружка */
 function finishLiveDot(root) {
   if (!root || !root.classList || !root.classList.contains('live')) return;
-  clearTimeout(root._actTimer);
-  clearTimeout(root._shapeTimer);
-  DOT_SHAPES.forEach((sh) => root.classList.remove(sh));
+  const core = root.querySelector('.ai-core');
+  if (core) {
+    clearTimeout(core._actTimer);
+    clearTimeout(core._shapeTimer);
+    DOT_SHAPES.forEach((sh) => core.classList.remove(sh));
+    core.classList.remove('dot-act');
+    core.classList.add('dot-settle');
+    setTimeout(() => {
+      if (core.classList) core.classList.remove('dot-settle');
+    }, 640);
+  }
   root.classList.remove('live');
-  root.classList.add('settle');
-  setTimeout(() => { if (root.isConnected) root.classList.remove('settle'); }, 640);
 }
 
 function settleVisualDone(ui) {
@@ -8149,6 +8190,8 @@ function showReplies(items) {
     const go = el('button', 'rc-go', esc(t));
     const ed = el('button', 'rc-ed', '✎');
     ed.title = 'Вставить в поле ввода и дописать';
+    chip.addEventListener('pointerenter', () => warmHover(t));
+    chip.addEventListener('pointerleave', warmHoverCancel);
     go.addEventListener('click', () => {
       box.hidden = true;
       $('#input').value = t;

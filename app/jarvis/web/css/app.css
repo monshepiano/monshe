@@ -516,16 +516,16 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .hello-sub{color:var(--tx2);font-size:13.5px;margin:0 0 26px}
 /* шесть подсказок — две ровные строки по три, без дыр во второй строке */
 .suggestions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;
-  /* AY: высота чуть компактнее — текст занимает большую часть карточки,
-     а не воздух сверху и снизу; длинный текст режет умное троеточие */
-  grid-auto-rows:128px}
+  /* BA: высота под ПЯТЬ строк описания — карточку заполняет текст,
+     а не воздух; длинное описание режет умное троеточие */
+  grid-auto-rows:142px}
 @media (max-width:900px){.suggestions{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:560px){.suggestions{grid-template-columns:minmax(0,1fr)}}
 .sugg{padding:12px 15px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);
-  cursor:pointer;text-align:left;transition:.25s;font-size:13px;color:var(--tx2);animation:popIn .45s both;
+  cursor:pointer;text-align:left;transition:.25s;font-size:12.5px;color:var(--tx2);animation:popIn .45s both;
   line-height:1.55;overflow:hidden}
-/* AZ: описание — почти вся карточка (4 строки), дальше троеточие */
-.sugg .sp{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;
+/* BA: описание — почти вся карточка (5 строк), дальше троеточие */
+.sugg .sp{display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;
   overflow:hidden;min-width:0}
 /* AN/AQ: ИЗНАЧАЛЬНЫЙ свободный вид — текст целиком, высота ряда по
    самой высокой плитке СВОЕГО ряда. Заголовок — одна строка: он лежит
@@ -616,21 +616,23 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    круглешок активен и пока агент ДУМАЕТ, и пока ходит по инструментам,
    а не только при печати. AZ: база — СПОКОЙНОЕ ПЛАВНОЕ ДЫХАНИЕ 4.2с;
    оживает только всплеском на видимых действиях (.act) */
-.msg-ai.live .ai-core{animation:coreLive 4.2s ease-in-out infinite}
-.msg-ai.live .ai-core.act{animation:coreBurst 1.15s cubic-bezier(.65,0,.35,1)}
-.msg-ai.settle .ai-core{animation:coreSettle .55s cubic-bezier(.65,0,.35,1) forwards}
+.msg-ai.live .ai-core{animation:coreLive 3.2s ease-in-out infinite}
+.msg-ai.live .ai-core.dot-act{animation:coreBurst 1.15s cubic-bezier(.65,0,.35,1)}
+.ai-core.dot-settle{animation:coreSettle .55s cubic-bezier(.65,0,.35,1) forwards}
 /* AZ: СПОКОЙНЫЙ круглешок: медленное дыхание, лёгкое покачивание формы,
    изредка мягкая золотая волна — в тон курсору мыслей */
 @keyframes coreLive{
-  0%,34%,100%{transform:scale(1);
+  0%,100%{transform:scale(1);
     background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
     box-shadow:0 0 10px rgba(0,212,255,.5),0 0 26px rgba(0,212,255,.22)}
-  17%{transform:scale(1.12)}
-  52%{transform:scale(1.07);filter:brightness(1.12)}
-  70%{transform:scale(1.13);
+  14%{transform:scale(1.2)}
+  26%{transform:scale(1.04)}
+  38%{transform:scale(1.16);filter:brightness(1.18)}
+  58%{transform:scale(1.08);
     background:radial-gradient(circle,#fff,#ffd489 45%,#a86a12);
-    box-shadow:0 0 14px var(--gold),0 0 36px rgba(217,164,65,.5)}
-  86%{transform:scale(1.05);background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8)}}
+    box-shadow:0 0 14px var(--gold),0 0 36px rgba(217,164,65,.55)}
+  74%{transform:scale(1.19);background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8)}
+  88%{transform:scale(1.06)}}
 /* AZ: ВСПЛЕСК НА ДЕЙСТВИИ — открылся инструмент, шаг плана, файл:
    короткий энергичный такт с золотой искрой, затем снова покой */
 @keyframes coreBurst{
