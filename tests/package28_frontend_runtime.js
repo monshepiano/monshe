@@ -2428,16 +2428,54 @@ function testIterationAKContracts() {
     'AK: reasoning-language system note rides next to the last message');
 }
 
+function testIterationAOContracts() {
+  // AO: РАБОЧАЯ ОБЛАСТЬ ЖИВЁТ В ТАКТ ДОКУ — та же кривая дока в каждую
+  // сторону, отступ вида скользит, а не прыгает
+  assert(css.includes('.app.collapsed{grid-template-columns:0px 1fr;') &&
+    css.includes('grid-template-columns .6s cubic-bezier(.5,.35,.15,1)}') &&
+    css.includes('.main .view{transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}') &&
+    css.includes('transition:width .6s cubic-bezier(.22,.68,.18,1)') &&
+    css.includes('transition:width .6s cubic-bezier(.5,.35,.15,1)'),
+    'AO: work area resizes with the DOCK curve in both directions');
+  // AO: ВОЛНА СИГИЛА — печать развязывает фигуру в линию волн (жёлтая,
+  // яркий пульс), конец печати медленно замеряет её в последней позе
+  const flowD = extractFunction(js, 'sigilFlowD');
+  assert(/2 \* Math\.PI/.test(flowD) && flowD.includes('toFixed(1)') &&
+    typeof extractFunction(js, 'sigilFlowStart') === 'string' &&
+    typeof extractFunction(js, 'sigilFlowStop') === 'string' &&
+    typeof extractFunction(js, 'sigilTyping') === 'string' &&
+    extractFunction(js, 'sigilFlowStart').includes("sg.classList.add('flow-on')") &&
+    extractFunction(js, 'sigilFlowStart').includes('Math.exp(-dt / 1.05)') &&
+    extractFunction(js, 'sigilFlowStop').includes('st.decay = true'),
+    'AO: wave engine — sine path, smooth rise, slow exponential freeze');
+  const typingTick = js.split("ui.mdEl.classList.add('typing');")[1].slice(0, 300);
+  assert(typingTick.includes('sigilTyping(ui, true)') &&
+    js.includes('sigilTyping(ui, false)'),
+    'AO: typing start launches the wave, typing end freezes it');
+  assert(css.includes('.msg-ai:has(.typing) .sigil-flow{color:#fff0a6;') &&
+    css.includes('animation:sigilPulseHot .8s ease-in-out infinite') &&
+    css.includes('.ai-sigil.flow-on .sigil-flow{opacity:.92}') &&
+    css.includes('.ai-sigil.flow-on .sigil-shape{opacity:0}') &&
+    css.includes('.ai-sigil.flow-on .sigil-sweep{opacity:0}'),
+    'AO: wave is yellow + hot pulse while printing, blob hidden, stays frozen');
+  // AO: ТУМБЛЕР — клики не блокируются, двойная пересадка защищена
+  assert(!css.includes('.agent-switch.ag-switching .agent-switch-track{pointer-events:none}') &&
+    extractFunction(js, 'agentPaint').includes('agentPaint._busy') &&
+    js.includes('agentPaint._busy = false'),
+    'AO: no click blackout on the toggle, repaint guarded against double-fire');
+}
+
 function testIterationANContracts() {
   // AN: СИГИЛ ЖИВ. В AL/AM вставка kick съела закрывающий `Z"/>` главного
   // morph-animate: парсер склеивал обе анимации в одну мусорную с
   // begin="indefinite" — фигура стояла намертво, селектор .sigil-kick
   // ничего не находил. Структура проверяется явно, не только значения.
-  assert(js.includes('5.5Z"/><animate class="sigil-kick"') &&
-    (js.match(/<animate/g) || []).length === 3 &&
+  assert(js.includes('5.5Z"/></path>') &&
+    (js.match(/<animate/g) || []).length === 2 &&
     (js.match(/dur="9s"/g) || []).length === 2 &&
-    (js.match(/dur="0.9s"/g) || []).length === 1,
-    'AN: sigil main morph is CLOSED, kick is its sibling tag, 2x9s cycle + 0.9s kick');
+    js.includes('class="sigil-flow"') &&
+    !js.includes('sigil-kick') && !js.includes('sigilKick'),
+    'AN/AO: sigil morph is CLOSED, flow-wave path added, kick removed completely');
   // AN: ТУМБЛЕР ИГРАЕТ ВСЕГДА — даже если клик пришёлся на живую резинку.
   // Круглёшок ведёт WAAPI от его текущего положения, той же кривой .45с.
   const ch = js.split("$('#tgAgent').addEventListener('change'")[1].split('\n});')[0];
@@ -2450,17 +2488,19 @@ function testIterationANContracts() {
     'AN: toggle on/off always animates — WAAPI leads the knob over the rubber');
   // AN: ХОД МЫСЛЕЙ — ЖИВОЙ ФОРМАТ: исполняем thinkFormat и сверяем строки
   const fmt = loadFunctions(['thinkFormat'], {});
-  assert(fmt.thinkFormat('Хм... так... надо сделать. Проверю.') === 'Хм …\nтак …\nнадо сделать.\nПроверю.' &&
+  assert(fmt.thinkFormat('Хм... так... надо сделать. Проверю.') === 'Хм\nтак\nнадо сделать.\nПроверю.' &&
     fmt.thinkFormat('Ищу новости. Читаю источники.') === 'Ищу новости.\nЧитаю источники.' &&
     fmt.thinkFormat('т. д. и т. п. без изменений') === 'т. д. и т. п. без изменений' &&
-    fmt.thinkFormat('...........') === '…' &&
-    fmt.thinkFormat('') === '',
-    'AN: reasoning — one thought per line, dot-runs collapse to a single ellipsis');
+    fmt.thinkFormat('...........') === '' &&
+    fmt.thinkFormat('') === '' &&
+    !fmt.thinkFormat('думаю... ищу... читаю').includes('…') &&
+    !fmt.thinkFormat('думаю... ищу... читаю').includes('..'),
+    'AN/AO: reasoning — one thought per line, NO ellipses on screen at all');
   const thinkType = extractFunction(js, 'thinkType');
   assert(/el\._raw/.test(thinkType) && /thinkFormat\(el\._raw\)/.test(thinkType) &&
     /thinkFormat\(el\._raw\)/.test(extractFunction(js, 'thinkFlush')) &&
     /thinkFormat\(think\)/.test(extractFunction(js, 'restoreTrace')) &&
-    extractFunction(js, 'qtThinkFeed').includes('(?:\\.\\s*){2,}'),
+    extractFunction(js, 'qtThinkFeed').includes('(?:\\s*\\.\\s*){2,}'),
     'AN: thinkType/thinkFlush/restoreTrace/qtThinkFeed all render through the live format');
   // AN: ПЛИТКИ — ИЗНАЧАЛЬНЫЙ ВИД: строки не принудительно равны (не было
   // полей сверху/снизу у коротких), заголовок — одна строка с троеточием
@@ -2472,6 +2512,14 @@ function testIterationANContracts() {
     /overflow:hidden/.test(suggB) &&
     /text-overflow:ellipsis/.test(suggB),
     'AN: suggestion title — single line, ellipsis instead of a mid-word cut');
+  // AO: троеточие ставит и JS — text-overflow внутри <button> капризен
+  assert(typeof extractFunction(js, 'fitSuggTitle') === 'string' &&
+    /b\.dataset\.t/.test(extractFunction(js, 'fitSuggTitle')) &&
+    extractFunction(js, 'fitSuggTitle').includes('\\' + 'u2026') &&
+    extractFunction(js, 'fillSuggestions').includes("fitSuggTitle(b.querySelector('b'))") &&
+    /window\.addEventListener\('resize'/.test(js) &&
+    /document\.fonts\.ready/.test(js),
+    'AO: suggestion title ellipsis is enforced in JS too, refit on resize/font-load');
   // AN: НАВЕДЕНИЕ ЧУТЬ МЕДЛЕННЕЕ, вкл/выкл прежние .45с одной кривой
   assert(/animation:agKnobRubber 1s cubic-bezier\(\.3,\.7,\.3,1\) both/.test(css) &&
     /animation:agEmberRun \.9s cubic-bezier\(\.3,\.5,\.35,1\) both/.test(css) &&
@@ -2491,7 +2539,7 @@ function testIterationAHContracts() {
     /setKeyframes\(flyKeys\(aim\)\)/.test(foldFn),
     'AG3: dimming keys travel inside the flight, homing keeps them');
   // AH: свёрнутое меню — плавающий док, контент на всю ширину
-  assert(/\.app\.collapsed\{grid-template-columns:0px 1fr\}/.test(css) &&
+  assert(/\.app\.collapsed\{grid-template-columns:0px 1fr;/.test(css) &&
     /\.main\{grid-column:2\}/.test(css),
     'AH: content spans full width when collapsed; topbar reaches the left edge');
   const dock = css.split('/* ---- свёрнутый режим: панель превращается в плавающий DOCK')[1].split('/* подпись иконки')[0];
@@ -2635,6 +2683,7 @@ function testIterationABContracts() {
   testBudgetScenariosDraftsAndTailRaceContracts();
   testProactiveModesBudgetAndAbortContracts();
   testQuietToolsBoostAskStylesAndAgentTheme();
+  testIterationAOContracts();
   testIterationXContracts();
   testIterationYContracts();
   testIterationZContracts();
@@ -2647,7 +2696,8 @@ function testIterationABContracts() {
   testIterationAJContracts();
   testIterationAKContracts();
   testIterationANContracts();
-  console.log('package28_frontend_runtime: 27 regression groups passed');
+  testIterationAOContracts();
+  console.log('package28_frontend_runtime: 28 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
