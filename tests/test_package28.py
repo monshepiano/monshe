@@ -3240,7 +3240,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.49", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.50", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3846,66 +3846,17 @@ class IterationAJTests(unittest.TestCase):
     def test_aj_sigil_replaces_reactor(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        # AP: у ответов снова РЕАКТОР — тот же, что в доке. Вся морфинг-
-        # сага (формы, kick, волна, жёлтая печать) удалена целиком
-        self.assertIn("const AVATAR_REACTOR =", js)
-        self.assertIn('class="reactor sm"', js)
-        self.assertIn('class="ring r1"', js)
-        self.assertIn('class="ring r2"', js)
-        self.assertIn('class="core"', js)
-        self.assertEqual(js.count("AVATAR_REACTOR +"), 4)
-        # SMIL-анимаций в приложении больше нет вообще
-        self.assertEqual(js.count("<animate"), 0)
-        for gone in ("sigil", "SIGIL", "sigilPulse", "sigilSweep", "sigil-flow"):
-            self.assertNotIn(gone, js)
-            self.assertNotIn(gone, css)
-        # эстафета: мигания-телепорт между доком и ответом
-        self.assertIn("function relayFlick(", js)
-        self.assertIn("function relayTyping(", js)
-        # AR: дуга зажигается в момент ПОЯВЛЕНИЯ ответа, не с первой буквы
-        self.assertIn("relayTyping({ node }, true);", js)
-        self.assertIn("relayTyping(ui, false);", js)
-        self.assertIn(".reactor.relay-in{animation:relayBurn .8s linear both reverse!important}", css)
-        self.assertIn(".reactor.relay-out{animation:relayBurn .8s linear both!important}", css)
-        self.assertIn("@keyframes relayBurn{", css)
-        # печать: реактор ответа горит ярко, кольца летят
-        self.assertIn(".ai-avatar .reactor.relay-in .r1{animation:spin .9s linear infinite}", css)
-        self.assertIn(".ai-avatar .reactor.relay-in .core{animation:pulse .62s ease-in-out infinite", css)
-        self.assertIn("#brandReactor.relay-out .ring,#brandReactor.relay-out .core{animation:none!important}", css)
-        # AQ: покой ответного реактора — ТЁМНЫЙ: контуры видны, света нет
-        # AR: покой — СТАЛЬНОЙ (обесцвечен, чуть светлее) и НЕПОДВИЖНЫЙ
-        self.assertIn(".ai-avatar .reactor{filter:grayscale(.88) brightness(1.32)}", css)
-        self.assertIn(
-            ".ai-avatar .reactor .ring,.ai-avatar .reactor .core{animation:none}", css)
-        self.assertIn(".ai-avatar .reactor.relay-in{filter:none}", css)
-        # неактивный ответ: реактор тихнет
-        self.assertIn(".ui-inert .ai-avatar{opacity:.55;filter:saturate(.7)}", css)
-
-
-class IterationAKTests(unittest.TestCase):
-    """AK (beta.42): reasoning по-русски, геометрия дока, стрелка-SVG."""
-
-    def test_al_suggestion_tiles(self) -> None:
-        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # AR: РОВНАЯ сетка — колонки minmax(0,1fr) (равная ширина, заголовок
-        # не распирает) + grid-auto-rows:1fr (все плитки одной высоты —
-        # ряды больше не гуляют, текст стоит ровно)
-        sugg_grid = css.split(".suggestions{")[1].split("}")[0]
-        self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", sugg_grid)
-        self.assertIn("grid-auto-rows:1fr", sugg_grid)
-        # AQ: заголовок — одна строка во внутреннем span (min-width:0):
-        # колонки minmax(0,1fr) не дают плиткам разъехаться, «…» работает
-        self.assertIn(".sugg b{display:flex;min-width:0;color:var(--cy);font-size:12px;margin-bottom:4px;font-weight:600}", css)
-        sugg_b = css.split(".sugg b .st{")[1].split("}")[0]
-        self.assertIn("white-space:nowrap", sugg_b)
-        self.assertIn("overflow:hidden", sugg_b)
-        self.assertIn("text-overflow:ellipsis", sugg_b)
-        self.assertIn("min-width:0", sugg_b)
-        # текст подсказки — целиком, без зажимов
-        sugg_block = css.split(".sugg{")[1].split(".sugg:hover")[0]
-        self.assertNotIn("line-clamp", sugg_block)
-        self.assertNotIn("sugg-p", css)
+        # AS: эстафета ОТМЕНЕНА — реактор только в доке, у ответа круглешок.
+        # Ни relay-функций, ни relay-правил, ни миганий: док живёт всегда
+        self.assertIn("function flyWelcomeInto(", js)
+        self.assertIn("function flyGhost(", js)
+        self.assertNotIn("relayTyping", js)
+        self.assertNotIn("relayFlick", js)
+        self.assertNotIn("relay", css)
+        # круглешок живой: дышит в покое, пульсирует при печати (чистый CSS)
+        self.assertIn(".ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;", css)
+        self.assertIn("animation:coreBreathe 3.4s ease-in-out infinite", css)
+        self.assertIn(".msg-ai:has(.typing) .ai-core{animation:coreLive .55s ease-in-out infinite}", css)
 
     def test_ak_reasoning_lang_injection(self) -> None:
         from jarvis import agent as ag
@@ -4376,11 +4327,12 @@ class IterationANTests(unittest.TestCase):
 
     def test_an1_sigil_structure_alive(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # AP: сигил заменён реактором; SMIL-тегов нет вообще — склеек быть не может
+        # AS: у ответа КРУГЛЕШОК (ядро без колец); SMIL-тегов нет вообще
         self.assertEqual(js.count('<animate'), 0)
-        self.assertIn('const AVATAR_REACTOR =', js)
-        self.assertIn('class="reactor sm"', js)
+        self.assertIn('const AVATAR_CORE =', js)
+        self.assertIn('class="ai-core"', js)
         self.assertNotIn('sigil', js.lower())
+        self.assertNotIn('AVATAR_REACTOR', js)
 
     def test_an2_toggle_always_plays(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -4448,26 +4400,17 @@ class IterationAOTests(unittest.TestCase):
         self.assertIn("padding-top:56px}", css)
     def test_ao2_relay_engine(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        # эстафета: печать началась — док гаснет, ответ загорается
-        for marker in ("function relayFlick(", "function relayTyping(",
-                       "relayFlick(brand, 'relay-out')", "relayFlick(av, 'relay-in')",
-                       "relayFlick(av, 'relay-out')", "relayFlick(brand, 'relay-in')"):
-            self.assertIn(marker, js)
-        # мигание не перезапускается, пока играет (нет лишних вспышек)
-        rf = js.split("function relayFlick(")[1].split("\nfunction ")[0]
-        self.assertIn("el.classList.contains(cls)", rf)
-        self.assertIn("void el.offsetWidth", rf)
-        # печатающий ответ: реактор у ответа горит, у дока гаснет
-        typer = js.split("ui.mdEl.classList.add('typing');")[1][:220]
-        # AR: печать больше не зажигает — дуга стоит с рождения ответа
-        self.assertNotIn("relayTyping(ui, true)", typer)
-        # AQ: осушение потока НЕ гасит реактор — только настоящий конец
-        self.assertEqual(js.count("relayTyping(ui, false);"), 2)
-        # AQ: перегорание — одна анимация, загорание — та же наоборот
-        self.assertIn("@keyframes relayBurn{", css)
-        self.assertIn(".reactor.relay-in{animation:relayBurn .8s linear both reverse!important}", css)
-        self.assertIn(".reactor.relay-out{animation:relayBurn .8s linear both!important}", css)
+        # AS: эстафеты нет. Рождение ответа — перелёт из приветствия:
+        # ядро большого реактора и надпись JARVIS летят в ответ
+        self.assertIn("flyWelcomeInto(node, welcomeFlight);", js)
+        self.assertIn("welcomeFlight = (wlCore && wlTitle)", js)
+        self.assertIn(".welcome .reactor.xl .core", js)
+        self.assertIn(".welcome .hello span", js)
+        ghost = js.split("function flyGhost(")[1].split("\nfunction ")[0]
+        self.assertIn("g.animate([", ghost)
+        self.assertIn("'cubic-bezier(.3,.75,.25,1)'", ghost)
+        self.assertIn("core.classList.add('arrived')", js)
+        self.assertIn("name.classList.add('arrived')", js)
 
     def test_ao3_reasoning_no_ellipsis(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -4530,7 +4473,7 @@ class IterationAQTests(unittest.TestCase):
         # контент — ниже полосы
         self.assertIn("padding-top:56px}", css)
         # AR: элементы панели едут за доком на новую площадь (кривые дока)
-        self.assertIn("transition:padding-left .6s cubic-bezier(.22,.68,.18,.2)}", css)
+        self.assertIn("transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}", css)
         self.assertIn(".app.collapsed .topbar{padding-left:18px;", css)
         self.assertIn("transition:padding-left .6s cubic-bezier(.5,.35,.15,1)}", css)
         # мобильная полоса: отступ узкой полосы иконок (62+18)
@@ -4580,29 +4523,16 @@ class IterationAQTests(unittest.TestCase):
 
     def test_aq4_relay_burnout(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        # AR: покой — стальной, светлее, неподвижный
-        self.assertIn(".ai-avatar .reactor{filter:grayscale(.88) brightness(1.32)}", css)
-        self.assertIn(".ai-avatar .reactor .ring,.ai-avatar .reactor .core{animation:none}", css)
-        # горит — класс дуги от рождения ответа до настоящего финала
-        self.assertIn(".ai-avatar .reactor.relay-in{filter:none}", css)
-        self.assertIn(".ai-avatar .reactor.relay-in .r1{animation:spin .9s linear infinite}", css)
-        # перегорание и загорание — ОДНА анимация, вторая наоборот;
-        # !important перекрывает ID-правила реактора дока (coreHalo)
-        self.assertIn(".reactor.relay-out{animation:relayBurn .8s linear both!important}", css)
-        self.assertIn(".reactor.relay-in{animation:relayBurn .8s linear both reverse!important}", css)
-        self.assertIn("100%{filter:grayscale(.88) brightness(1.32)}}", css)   # финал: сталь
-        self.assertIn("0%{filter:none}", css)
-        # старых раздельных миганий нет
-        self.assertNotIn("relayIn", css)
-        self.assertNotIn("relayOut", css)
-
-
-class IterationARTests(unittest.TestCase):
-    """AR (beta.49): контент верхней панели скользит за доком и
-    перераспределяется; статика без кэша (браузер больше не держит
-    старый CSS/JS); мысли — повтор потока склеивается обратно в чистый
-    текст (llm-дедуп + скраб); реактор зажигается при рождении ответа,
-    держит дугу через интерактив, потухший — стальной и неподвижный."""
+        # AS: эстафета отменена — никаких relay-анимаций и миганий
+        self.assertNotIn("relayBurn", css)
+        self.assertNotIn("relay-in", css)
+        self.assertNotIn("relay-out", css)
+        # докский реактор никто не гасит: его правила без relay-классов
+        self.assertIn("body.jv-busy #brandReactor .core{animation-duration:.62s;", css)
+        # вспышки прилёта: ядро и имя мигают при посадке призраков
+        self.assertIn(".ai-core.arrived{animation:arriveCore .6s ease-out}", css)
+        self.assertIn(".ai-name.arrived{animation:arriveName .7s ease-out}", css)
+        self.assertIn(".fly-ghost{position:fixed;z-index:400;pointer-events:none;margin:0", css)
 
     def test_ar1_llm_reasoning_dedup(self) -> None:
         from jarvis.llm import _reasoning_increment
@@ -4619,29 +4549,28 @@ class IterationARTests(unittest.TestCase):
 
     def test_ar2_relay_lights_at_birth(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # дуга зажигается в момент ПОЯВЛЕНИЯ ответа
-        self.assertIn("relayTyping({ node }, true);", js)
-        # печать больше не дёргает эстафету
+        # AS: вместо эстафеты — ПЕРЛЁЁТ при рождении ответа (см. ao2);
+        # печать больше ничем не управляет: живость круглешка — чистый CSS
         typer = js.split("function typerStart(")[1].split("\nfunction ")[0]
-        self.assertNotIn("relayTyping", typer)
-        # электричество — в одном месте: новый ответ гасит прочие дуги
-        self.assertIn(".reactor.relay-in').forEach((r) => {", js)
+        self.assertNotIn("flyWelcomeInto", typer)
+        self.assertIn(".msg-ai:has(.typing) .ai-core",
+                      Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8"))
 
     def test_ar3_relay_survives_interactive(self) -> None:
-        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # typerStop (смена диалога): ask в сообщении — дугу не гасим
-        stop = js.split("function typerStop(")[1].split("\nfunction ")[0]
-        self.assertIn("querySelector('.ask-card')", stop)
-        # финал печати: ОТКРЫТЫЙ ask — не финал
-        self.assertIn("querySelector('.ask-card:not([data-done])')", js)
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # AS: спроселёживание убрано из JS вовсе — живость круглешка
+        # держит класс .typing на тексте ответа, интерактив его не снимает,
+        # поэтому «долгий ответ» остаётся живым без всяких стражей
+        self.assertIn(".msg-ai:has(.typing) .ai-core{animation:coreLive", css)
+        self.assertIn("@keyframes coreLive", css)
 
     def test_ar4_static_no_cache(self) -> None:
         src = Path("app/jarvis/server.py").read_text(encoding="utf-8")
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.49", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.49", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.50", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.50", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4654,14 +4583,42 @@ class IterationARTests(unittest.TestCase):
 
     def test_ar5_steel_dark_reactor(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn(".ai-avatar .reactor{filter:grayscale(.88) brightness(1.32)}", css)
-        self.assertIn(
-            ".ai-avatar .reactor .ring,.ai-avatar .reactor .core{animation:none}", css)
-        self.assertIn("#brandReactor.relay-out .ring,#brandReactor.relay-out "
-                      ".core{animation:none!important}", css)
-        burn = css.split("@keyframes relayBurn{")[1].split("}}")[0]
-        self.assertIn("100%{filter:grayscale(.88) brightness(1.32)", burn)
-        self.assertIn("0%{filter:none}", burn)
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # AS: стальной покой и relayBurn снесены вместе с эстафетой
+        self.assertNotIn("grayscale(.88) brightness(1.32)", css)
+        self.assertNotIn("relayBurn", css)
+        self.assertIn("radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8)", css)
+        # неактивная карточка по-прежнему приглушена
+        self.assertIn(".ui-inert .ai-avatar{opacity:.55;filter:saturate(.7)}", css)
+
+    def test_as1_think_translate_fallback(self) -> None:
+        from jarvis import agent as ag
+        # английские предложения копятся и достаются одним куском
+        tf = ag._ThinkFilter()
+        for piece in ["Let me check the news. ", "First I search sources. "]:
+            tf.feed(piece)
+        tf.close()
+        en = tf.pop_hidden()
+        self.assertIn("Let me check the news", en)
+        self.assertIn("First I search sources", en)
+        self.assertEqual(tf.pop_hidden(), "")
+        # переводчик существует и ходит в nano-уровень с жёстким таймаутом
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        self.assertIn("def _translate_think(", src)
+        self.assertIn('tier="nano", timeout=45', src)
+        self.assertIn("def think_close_events(", src)
+        self.assertIn("outs.extend(think_route([ru]))", src)
+
+    def test_as2_flight_and_curve(self) -> None:
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # кривая разворачивания панели исправлена (была .2 — рывок в конце)
+        self.assertIn("transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}", css)
+        self.assertNotIn("cubic-bezier(.22,.68,.18,.2)", css)
+
+    def test_as3_web_search_paced(self) -> None:
+        src = Path("app/jarvis/tools/__init__.py").read_text(encoding="utf-8")
+        # AS: модель больше не перебирает все ссылки — сниппетов хватает
+        self.assertIn("открывай не больше двух ссылок", src)
 
 
 if __name__ == "__main__":

@@ -984,7 +984,8 @@ async function testCameraLifecycleOwnershipAndLateResults() {
     ICO: {}, fmtSize() { return ''; },
     queueResponseFinish() { throw new Error('aborted upload must not finalize as a response'); },
     loadChats() {}, refreshState() {}, fetchReplies() {},
-    relayTyping() {},
+    flyWelcomeInto() {},
+    document: { querySelector: () => null },
   });
   const pendingSend = sendCtx.send();
   await uploadStarted;
@@ -2405,18 +2406,19 @@ function testIterationADContracts() {
 }
 
 function testIterationAJContracts() {
-  // AJ→AP: у ответов снова РЕАКТОР, тот же, что в доке. Морфинг-фигура
-  // со всеми превращениями удалена целиком — SMIL-тегов в коде нет
-  assert(js.includes('const AVATAR_REACTOR =') &&
-    js.includes('class="reactor sm"') &&
+  // AS: у ответов КРУГЛЕШОК (ядро без колец). Эстафета отменена целиком:
+  // ни relay-функций в JS, ни relay-правил в CSS — док живёт всегда
+  assert(js.includes('const AVATAR_CORE =') &&
+    js.includes('class="ai-core"') &&
+    !js.includes('relayTyping') && !js.includes('relayFlick') &&
+    !css.includes('relay') &&
     (js.match(/<animate/g) || []).length === 0 &&
     !/sigil/i.test(js) && !/sigil/i.test(css),
-    'AP: answer avatar is the DOCK REACTOR; the whole sigil saga is gone');
-  // эстафета: телепорт электричества миганиями между доком и ответом
-  assert(css.includes('.reactor.relay-in{animation:relayBurn .8s linear both reverse!important}') &&
-    css.includes('.reactor.relay-out{animation:relayBurn .8s linear both!important}') &&
-    css.includes('@keyframes relayBurn{'),
-    'AP/AQ: one burnout animation, ignition is the same reversed');
+    'AS: answer avatar is a live core dot; the relay saga is gone for good');
+  assert(css.includes('.ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;') &&
+    css.includes('animation:coreBreathe 3.4s ease-in-out infinite') &&
+    css.includes('.msg-ai:has(.typing) .ai-core{animation:coreLive .55s ease-in-out infinite}'),
+    'AS: the dot breathes at rest and pulses faster while printing (pure CSS)');
 }
 
 function testIterationAKContracts() {
@@ -2441,16 +2443,13 @@ function testIterationAOContracts() {
     'AO/AP: work area slides with the DOCK curve in both directions (margin, Safari-proof)');
   // AO: ВОЛНА СИГИЛА — печать развязывает фигуру в линию волн (жёлтая,
   // яркий пульс), конец печати медленно замеряет её в последней позе
-  assert(css.includes('.reactor.relay-in{animation:relayBurn .8s linear both reverse!important}') &&
-    css.includes('.reactor.relay-out{animation:relayBurn .8s linear both!important}') &&
-    css.includes('@keyframes relayBurn{') &&
-    css.includes('.ai-avatar .reactor.relay-in .r1{animation:spin .9s linear infinite}') &&
-    css.includes('.ai-avatar .reactor.relay-in .core{animation:pulse .62s ease-in-out infinite'),
-    'AO/AR: ONE burnout animation, ignition is the same reversed, !important beats dock ID rules');
+  assert(css.includes('.ai-core.arrived{animation:arriveCore .6s ease-out}') &&
+    css.includes('.ai-name.arrived{animation:arriveName .7s ease-out}') &&
+    css.includes('.fly-ghost{position:fixed;z-index:400;pointer-events:none;margin:0'),
+    'AO/AS: welcome ghosts land with a flash on the real elements');
   const typingTick = js.split("ui.mdEl.classList.add('typing');")[1].slice(0, 300);
-  assert(!typingTick.includes('relayTyping') &&
-    (js.match(/relayTyping\(ui, false\);/g) || []).length === 2,
-    'AO/AR: typing does not drive the relay — the arc is lit from message birth');
+  assert(!typingTick.includes('flyWelcomeInto') && !js.includes('relayTyping'),
+    'AO/AS: typing drives nothing — the dot livenes is pure CSS');
   // AO: ТУМБЛЕР — клики не блокируются, двойная пересадка защищена
   assert(!css.includes('.agent-switch.ag-switching .agent-switch-track{pointer-events:none}') &&
     extractFunction(js, 'agentPaint').includes('agentPaint._busy') &&
@@ -2459,24 +2458,18 @@ function testIterationAOContracts() {
 }
 
 function testIterationARContracts() {
-  // AR: дуга зажигается В МОМЕНТ ПОЯВЛЕНИЯ ответа — не с первой буквы
-  assert(js.includes('relayTyping({ node }, true);'),
-    'AR: the arc lights the instant the reply is born (thinking/tools included)');
-  // AR: электричество в одном месте — новый ответ гасит прочие дуги
-  assert(js.includes(".reactor.relay-in').forEach((r) => {"),
-    'AR: only one live reactor on the stage — the new reply takes the arc');
-  // AR: интерактив — не конец: ask держит дугу до настоящего финала
-  assert(js.includes("querySelector('.ask-card:not([data-done])')") &&
-    js.split('function typerStop(')[1].split('\nfunction ')[0].includes("querySelector('.ask-card')"),
-    'AR: interactive asks never kill the arc — one long answer stays lit');
-  // AR: потухший реактор — стальной корпус, чуть светлее, без движения
-  assert(css.includes('.ai-avatar .reactor{filter:grayscale(.88) brightness(1.32)}') &&
-    css.includes('.ai-avatar .reactor .ring,.ai-avatar .reactor .core{animation:none}') &&
-    css.includes('#brandReactor.relay-out .ring,#brandReactor.relay-out .core{animation:none!important}'),
-    'AR: burnt out = steel shell, slightly lighter, motionless');
+  // AS: рождение ответа — ПЕРЕЛЁТ из приветствия (ядро + надпись JARVIS)
+  assert(js.includes('flyWelcomeInto(node, welcomeFlight);') &&
+    js.includes('welcomeFlight = (wlCore && wlTitle)') &&
+    js.includes('.welcome .reactor.xl .core') &&
+    js.includes('.welcome .hello span'),
+    'AS: first request — the big core and the JARVIS title fly into the reply');
+  // AS: эстафеты нет — никаких relay- следов ни в JS, ни в CSS
+  assert(!js.includes('relay') && !css.includes('relay'),
+    'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.49'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.50'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -2498,7 +2491,7 @@ function testIterationAQContracts() {
     css.includes('.topbar{padding-left:80px}'),
     'AQ: content starts below the band; mobile band clears the icon strip');
   // AR: элементы панели едут на новую площадь кривыми дока
-  assert(css.includes('transition:padding-left .6s cubic-bezier(.22,.68,.18,.2)}') &&
+  assert(css.includes('transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}') &&
     css.includes('.app.collapsed .topbar{padding-left:18px;') &&
     css.includes('transition:padding-left .6s cubic-bezier(.5,.35,.15,1)}'),
     'AR: band content slides with the dock and redistributes');
@@ -2514,12 +2507,12 @@ function testIterationAQContracts() {
     thinkCase.includes('node.body.insertBefore(ui.thinkCard, node.body.firstChild)') &&
     thinkCase.includes('node.body.insertBefore(qn, node.body.firstChild)'),
     'AQ: whenever the thought appears, it opens the answer — never hides at the bottom');
-  // AR: покой — СТАЛЬНОЙ и неподвижный; горит — класс дуги с рождения
-  assert(css.includes('.ai-avatar .reactor{filter:grayscale(.88) brightness(1.32)}') &&
-    css.includes('.ai-avatar .reactor .ring,.ai-avatar .reactor .core{animation:none}') &&
-    css.includes('.ai-avatar .reactor.relay-in{filter:none}') &&
-    css.includes('.ai-avatar .reactor.relay-in .r1{animation:spin .9s linear infinite}'),
-    'AR: spent avatar is steel and still; the arc class spins it up');
+  // AS: покой — живое дыхание круглешка (эстафеты и стали больше нет)
+  assert(css.includes('.ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;') &&
+    css.includes('@keyframes coreBreathe{') &&
+    css.includes('@keyframes coreLive{') &&
+    !css.includes('grayscale(.88) brightness(1.32)'),
+    'AS: the core dot is alive — breathe at rest, pulse while printing');
 }
 
 function testIterationAPContracts() {
@@ -2542,16 +2535,16 @@ function testIterationAPContracts() {
 }
 
 function testIterationANContracts() {
-  // AN/AP: СИГИЛ ЗАМЕНЁН РЕАКТОРОМ (как в доке) — вся SMIL-сага удалена;
-  // мигания-телепорт между доком и ответом делает CSS relayIn/relayOut
-  assert(js.includes('const AVATAR_REACTOR =') &&
-    js.includes('class="reactor sm"') &&
-    (js.match(/AVATAR_REACTOR \+/g) || []).length === 4 &&
+  // AN/AS: СИГИЛ ЗАМЕНЁН КРУГЛЕШКОМ (ядро без колец) — вся SMIL-сага
+  // и эстафета удалены; перелёт из приветствия делает flyWelcomeInto
+  assert(js.includes('const AVATAR_CORE =') &&
+    js.includes('class="ai-core"') &&
+    (js.match(/AVATAR_CORE \+/g) || []).length === 4 &&
     (js.match(/<animate/g) || []).length === 0 &&
     !/sigil/i.test(js) && !/sigil/i.test(css) &&
-    typeof extractFunction(js, 'relayFlick') === 'string' &&
-    typeof extractFunction(js, 'relayTyping') === 'string',
-    'AN/AP: avatar is the DOCK REACTOR, zero SMIL tags, relay engine present');
+    typeof extractFunction(js, 'flyWelcomeInto') === 'string' &&
+    typeof extractFunction(js, 'flyGhost') === 'string',
+    'AN/AS: avatar is the live core dot, zero SMIL tags, flight engine present');
   // AN: ТУМБЛЕР ИГРАЕТ ВСЕГДА — даже если клик пришёлся на живую резинку.
   // Круглёшок ведёт WAAPI от его текущего положения, той же кривой .45с.
   const ch = js.split("$('#tgAgent').addEventListener('change'")[1].split('\n});')[0];

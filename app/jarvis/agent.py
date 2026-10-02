@@ -1654,6 +1654,29 @@ def _reasoning_ru_visible(text: str) -> bool:
     return cyr >= 4 and cyr >= lat
 
 
+# AS: живые латинские слова — признак английской мысли: прячем и переводим
+_HAS_LATIN_RE = re.compile(r"[A-Za-z]{3,}")
+
+
+def _translate_think(text: str) -> str:
+    """AS: ход мыслей должен быть ВСЕГДА — и всегда по-русски. Если модель
+    думает по-английски, накопленный английский кусок переводится ОДНИМ
+    дешёвым вызовом nano-уровня. Любая ошибка — пустая строка: лучше
+    пауза в мыслях, чем мусор или зависание."""
+    try:
+        r = llm.chat(
+            [{"role": "system",
+              "content": "Ты — переводчик внутренних мыслей ИИ-ассистента. "
+                         "Переведи текст на русский язык живым разговорным "
+                         "языком. Выведи ТОЛЬКО перевод, без пояснений "
+                         "и кавычек."},
+             {"role": "user", "content": text[:4000]}],
+            tier="nano", timeout=45, operation="think_translate")
+        return str(r.get("content") or "").strip()
+    except Exception:
+        return ""
+
+
 # AQ: мгновенный дубль — признак вырожденного потока рассуждений:
 # модель повторяет кусок текста сразу за собой («…октябряости октября…»).
 # В живой речи повтор 8+ символов ПОДРЯД не встречается — такие
@@ -1674,6 +1697,13 @@ class _ThinkFilter:
 
     def __init__(self) -> None:
         self.buf = ""
+        # AS: английские предложения не выбрасываем — копим для перевода
+        self.hidden: List[str] = []
+
+    def pop_hidden(self) -> str:
+        h = " ".join(self.hidden)
+        self.hidden = []
+        return h
 
     def feed(self, piece: str) -> List[str]:
         self.buf += str(piece or "")
@@ -1713,11 +1743,15 @@ class _ThinkFilter:
             sent = self._clean(sent)
             if self._ok(sent):
                 out.append(sent)
+            elif _HAS_LATIN_RE.search(sent):
+                self.hidden.append(sent)
         if final:
             tail, self.buf = self.buf, ""
             tail = self._clean(tail)
             if self._ok(tail):
                 out.append(tail)
+            elif _HAS_LATIN_RE.search(tail):
+                self.hidden.append(tail)
         return out
 
 
@@ -2396,6 +2430,17 @@ class Agent:
             # целых предложений, хвост закрывается на смене фазы
             think_filter = _ThinkFilter()
             think_open = True
+
+            def think_close_events() -> List[Dict[str, Any]]:
+                # AS: закрываем фазу мыслей; если модель думала
+                # по-английски — переводим накопленное одним вызовом
+                outs = think_route(think_filter.close())
+                en = think_filter.pop_hidden()
+                if len(en) >= 120:
+                    ru = _translate_think(en)
+                    if ru:
+                        outs.extend(think_route([ru]))
+                return outs
             # Лимит рублей: проверка ДО следующего платного хода. Исчерпан —
             # агент спрашивает: увеличить, отключить или остановиться.
             if self.budget_rub and self._spent_rub >= self.budget_rub:
@@ -2456,7 +2501,7 @@ class Agent:
                 # недописанное слово никогда не остаётся висеть в буфере
                 if etype != "reasoning" and think_open:
                     think_open = False
-                    for out in think_route(think_filter.close()):
+                    for out in think_close_events():
                         if defer_plan_decision and not text_released:
                             deferred_work_events.append(out)
                         else:
@@ -2584,7 +2629,7 @@ class Agent:
             # недописанное предложение не теряется и не висит обрубком
             if think_open:
                 think_open = False
-                for out in think_route(think_filter.close()):
+                for out in think_close_events():
                     if defer_plan_decision and not text_released:
                         deferred_work_events.append(out)
                     else:

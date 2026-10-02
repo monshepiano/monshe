@@ -1665,53 +1665,54 @@ function addUserMsg(text, atts, info, hostOverride) {
   return m;
 }
 
-/* AP: ФИГУРКА ДЖАРВИСА — РЕАКТОР, КАК В ДОКЕ. Прежняя морфинг-фигура
-   со всей историей превращений ушла: теперь у ответа стоит ТОТ ЖЕ
-   реактор, что в боковом меню. Начал отвечать — реактор в доке ГАСНЕТ
-   частыми миганиями, как перегоревшая лампочка, а фигурка у ответа
-   теми же миганиями ЗАГОРАЕТСЯ: электричество телепортируется из
-   одного коллайдера в другой. Ответ допечатан — фигурка ответа гаснет,
-   реактор в доке загорается снова. Эстафета. */
-const AVATAR_REACTOR =
-    '<div class="reactor sm" aria-hidden="true">' +
-      '<div class="ring r1"></div><div class="ring r2"></div><div class="core"></div>' +
-    '</div>';
+/* AS: у ответа — КРУГЛЕШОК, ядро реактора без колец. Живой: дышит в покое,
+   разгорается при печати. Рождается перелётом из большого ядра приветствия
+   (первый запрос диалога). Электрической эстафеты больше нет: реактор в
+   доке живёт своей жизнью и никуда не гаснет. */
+const AVATAR_CORE = '<div class="ai-core" aria-hidden="true"></div>';
 
-/* AP: ЭСТАФЕТА РЕАКТОРА. Печать началась — реактор в доке гаснет
-   миганиями (relay-out), реактор у ответа загорается (relay-in) и живёт
-   ярко (кольца крутит body.jv-busy). Печать кончилась — фигурка ответа
-   гаснет теми же миганиями, доковая загорается снова. Класс не
-   перезапускается, пока мигание играет, — чтобы не было лишней вспышки. */
-function relayFlick(el, cls) {
-  if (!el || el.classList.contains(cls)) return;   // уже в этом состоянии
-  el.classList.remove('relay-in', 'relay-out');
-  void el.offsetWidth;                             // перезапуск с нуля
-  el.classList.add(cls);
-}
-
-function relayTyping(ui, on) {
-  const brand = $('#brandReactor');
-  const root = ui && ui.node && ui.node.root;
-  const av = (root && root.querySelector('.ai-avatar .reactor')) ||
-    document.querySelector('.msg-ai:last-of-type .ai-avatar .reactor');
-  if (on) {
-    /* AR: электричество живёт в ОДНОМ месте — новый ответ забирает дугу,
-       все прочие реакторы ленты перегорают (забытый интерактив и т.п.) */
-    document.querySelectorAll('.msg-ai .ai-avatar .reactor.relay-in').forEach((r) => {
-      if (r !== av) relayFlick(r, 'relay-out');
+function flyWelcomeInto(node, wf) {
+  if (!wf || !node || !node.root) return;
+  const core = node.root.querySelector('.ai-core');
+  const name = node.root.querySelector('.ai-name');
+  if (wf.core && core) {
+    const g = el('div', 'reactor fly-ghost');
+    g.style.cssText = 'left:' + wf.core.left + 'px;top:' + wf.core.top + 'px;width:' +
+      wf.core.width + 'px;height:' + wf.core.height + 'px';
+    g.innerHTML = '<div class="core" style="width:100%;height:100%"></div>';
+    document.body.appendChild(g);
+    flyGhost(g, core.getBoundingClientRect(), () => {
+      g.remove(); core.classList.add('arrived');
     });
-    relayFlick(brand, 'relay-out');   // док гаснет — электричество уходит
-    relayFlick(av, 'relay-in');       // ...и вспыхивает у ответа
-  } else {
-    relayFlick(av, 'relay-out');      // ответ допечатан — фигурка гаснет
-    relayFlick(brand, 'relay-in');    // ...доковая загорается снова
+  }
+  if (wf.title && name) {
+    const g = el('h1', 'hello fly-ghost');
+    g.style.cssText = 'left:' + wf.title.left + 'px;top:' + wf.title.top + 'px';
+    g.innerHTML = '<span>JARVIS</span>';
+    document.body.appendChild(g);
+    flyGhost(g, name.getBoundingClientRect(), () => {
+      g.remove(); name.classList.add('arrived');
+    });
   }
 }
 
+/* Полёт-призрак: от исходного прямоугольника к цели, сжатие по ширине,
+   мягкая кривая перелёта. По прибытии — вспышка на настоящем элементе. */
+function flyGhost(g, to, done) {
+  const r = g.getBoundingClientRect();
+  const k = Math.max(0.05, to.width / Math.max(1, r.width));
+  const dx = (to.left + to.width / 2) - (r.left + r.width / 2);
+  const dy = (to.top + to.height / 2) - (r.top + r.height / 2);
+  const anim = g.animate([
+    { transform: 'translate(0,0) scale(1)', opacity: 1 },
+    { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(' + k + ')', opacity: .95 },
+  ], { duration: 850, easing: 'cubic-bezier(.3,.75,.25,1)', fill: 'both' });
+  anim.onfinish = done;
+}
 function addAiMsg(ts, hostOverride) {
   const m = el('div', 'msg msg-ai');
   m.innerHTML =
-    '<div class="ai-avatar">' + AVATAR_REACTOR + '</div>' +
+    '<div class="ai-avatar">' + AVATAR_CORE + '</div>' +
     '<div class="ai-body"><div class="ai-name">JARVIS<span class="ai-model"></span></div>' +
     '<div class="ai-content"></div></div>';
   stampTime(m, ts);
@@ -2264,7 +2265,7 @@ function collapseToThumb(node, opts) {
   if (asMsg) {
     holder = el('div', 'msg msg-ai thumb-msg');
     holder.innerHTML =
-      '<div class="ai-avatar">' + AVATAR_REACTOR + '</div>' +
+      '<div class="ai-avatar">' + AVATAR_CORE + '</div>' +
       '<div class="ai-body"></div>';
     holder.querySelector('.ai-body').appendChild(thumb);
   }
@@ -3860,6 +3861,15 @@ async function send(opts) {
     maybeOfferScenario(text);
   }
 
+  /* AS: ПЕРВЫЙ ЗАПРОС ДИАЛОГА — пока приветствие на экране, запоминаем,
+     где стоят большое ядро и надпись JARVIS: при рождении ответа они
+     перелетят на свои места (flyWelcomeInto) */
+  const wlCore = document.querySelector('.welcome .reactor.xl .core');
+  const wlTitle = document.querySelector('.welcome .hello span');
+  const welcomeFlight = (wlCore && wlTitle)
+    ? { core: wlCore.getBoundingClientRect(), title: wlTitle.getBoundingClientRect() }
+    : null;
+
   // правка: подменяем текст на месте и убираем устаревший ответ ниже
   let userMsgNode = null;
   if (editing && editing.node && editing.node.isConnected) {
@@ -3925,11 +3935,9 @@ async function send(opts) {
     node.root.classList.add('voice-run');
     VOICE.nodes.push(node.root);
   }
-  /* AR: ЭСТАФЕТА ЗАЖИГАЕТСЯ В МОМЕНТ ПОЯВЛЕНИЯ ответа, а не с первой
-     буквы: пока Джарвис думает и зовёт инструменты, реактор ответа уже
-     горит — электричество уходит из дока сразу. Интерактив-продолжение
-     приходит в ТОТ ЖЕ узел — вызов безвреден, дуга уже стоит */
-  relayTyping({ node }, true);
+  /* AS: рождение ответа — если это первый запрос диалога, ядро и имя
+     прилетают из приветствия и становятся круглешком и заголовком */
+  flyWelcomeInto(node, welcomeFlight);
   const runId = ++S.streamRun;
   // Уникальный токен прогона: по нему сервер гасит РАБОТУ при Stop
   // (инструменты, санкции, computer-use), а не только SSE-соединение.
@@ -5810,11 +5818,6 @@ function typerStop(ui) {
   if (ui.typer) { clearInterval(ui.typer); ui.typer = null; }
   if (ui.mdEl) {
     ui.mdEl.classList.remove('typing');
-    /* AR: смена диалога гасит дугу — но НЕ у сообщения с интерактивом:
-       отвеченный ask значит, что это сообщение сейчас продолжится, это
-       всё ещё один долгий ответ */
-    const sb = ui.node && ui.node.body;
-    if (!sb || !sb.querySelector('.ask-card')) relayTyping(ui, false);
     clearTypingDecorations(ui.mdEl);
   }
   ui.cps = 0;
@@ -6001,10 +6004,6 @@ function queueResponseFinish(ui, content, success) {
     if (ui.visualDone) return;
     try {
       ui.mdEl.classList.remove('typing');
-      /* AR: открытый ask — НЕ финал: клик продолжит это же сообщение,
-         реактор держит дугу до настоящего конца длинного ответа */
-      const ab = ui.node && ui.node.body;
-      if (!ab || !ab.querySelector('.ask-card:not([data-done])')) relayTyping(ui, false);
       clearTypingDecorations(ui.mdEl);
       ui.floor = 0;
       ui.mdEl.style.minHeight = '';
@@ -7019,7 +7018,7 @@ function voiceSetPhase(p) {
 function buildVoiceCard() {
   const card = el('div', 'msg msg-ai voice-msg');
   card.innerHTML =
-    '<div class="ai-avatar">' + AVATAR_REACTOR + '</div>' +
+    '<div class="ai-avatar">' + AVATAR_CORE + '</div>' +
     '<div class="ai-body"><div class="ai-name">JARVIS<span class="ai-model"> · разговор</span></div>' +
     '<div class="ai-content"><div class="voice-live"></div></div></div>';
   return card;
@@ -7385,7 +7384,7 @@ function applySilentTools(list) {
 function buildCamCard() {
   const card = el('div', 'msg msg-ai cam-msg');
   card.innerHTML =
-    '<div class="ai-avatar">' + AVATAR_REACTOR + '</div>' +
+    '<div class="ai-avatar">' + AVATAR_CORE + '</div>' +
     '<div class="ai-body"><div class="ai-name">JARVIS<span class="ai-model"> · зрение</span></div>' +
     '<div class="ai-content">' +
       '<div class="cam-live">' +

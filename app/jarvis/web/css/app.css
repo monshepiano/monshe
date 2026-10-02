@@ -386,7 +386,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   background:rgba(5,11,20,.6);backdrop-filter:blur(16px);
   /* AR: элементы панели едут за доком на новую площадь и flex сам
      распределяет их равномерно; кривые — те же, что у дока */
-  transition:padding-left .6s cubic-bezier(.22,.68,.18,.2)}
+  transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}
 .app.collapsed .topbar{padding-left:18px;
   transition:padding-left .6s cubic-bezier(.5,.35,.15,1)}
 
@@ -575,42 +575,23 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   white-space:pre-wrap;word-break:break-word}
 .msg-ai{display:flex;gap:13px}
 .ai-avatar{flex-shrink:0;width:34px;height:34px;position:relative}
-/* AP→AQ: ЭСТАФЕТА РЕАКТОРОВ. У ответа — тот же реактор, что в доке.
-   ПОКОЙ ответного реактора — ТЁМНЫЙ: контуры и форма видны, свечения
-   нет (электричество сейчас в доке). Печать началась — реактор дока
-   ПЕРЕГОРАЕТ (жёсткие умирающие мигания, как лампочка), ответный —
-   ТА ЖЕ анимация в обратную сторону ЗАГОРАЕТСЯ: телепорт электричества
-   из коллайдера в коллайдер. Кончил отвечать — наоборот. !important
-   обязателен: у реактора дока есть ID-правила (coreHalo при body.jv-busy),
-   которые иначе перекрывали бы затухание — боковой реактор тогда
-   вообще не гас. */
-.ai-avatar .reactor{filter:grayscale(.88) brightness(1.32)}
-.ai-avatar .reactor .ring,.ai-avatar .reactor .core{animation:none}
-/* AR: ГОРЯЩЕЕ состояние — класс дуги стоит от рождения ответа до
-   настоящего финала (печать, инструменты, интерактив — всё это один
-   долгий ответ): кольца летят, ядро пульсирует */
-.ai-avatar .reactor.relay-in{filter:none}
-.ai-avatar .reactor.relay-in .ring{border-color:rgba(0,220,255,.75)}
-.ai-avatar .reactor.relay-in .r1{animation:spin .9s linear infinite}
-.ai-avatar .reactor.relay-in .r2{animation:spin .62s linear infinite reverse}
-.ai-avatar .reactor.relay-in .core{animation:pulse .62s ease-in-out infinite;
-  box-shadow:0 0 16px var(--cy),0 0 40px rgba(0,212,255,.75)}
-/* док, отдавший электричество, — тоже мёртвый стальной: ID-правила
-   jv-busy (coreHalo) перебивались — отсюда !important */
-#brandReactor.relay-out .ring,#brandReactor.relay-out .core{animation:none!important}
-.reactor.relay-out{animation:relayBurn .8s linear both!important}
-.reactor.relay-in{animation:relayBurn .8s linear both reverse!important}
-/* перегорание: жёсткие умирающие мигания, финал — стальной корпус */
-@keyframes relayBurn{
-  0%{filter:none}
-  6%{filter:grayscale(.9) brightness(.22)}
-  11%{filter:none}
-  20%{filter:grayscale(.95) brightness(.12)}
-  32%{filter:brightness(.85) saturate(.55)}
-  46%{filter:grayscale(1) brightness(.08)}
-  62%{filter:grayscale(.7) brightness(.45)}
-  78%{filter:grayscale(1) brightness(.16)}
-  100%{filter:grayscale(.88) brightness(1.32)}}
+/* AS: КРУГЛЕШОК ОТВЕТА — ядро реактора без колец, живое: в покое дышит,
+   при печати разгорается и пульсирует быстрее. Электрической эстафеты
+   больше нет — реактор в доке живёт всегда и никуда не гаснет. */
+.ai-core{position:absolute;left:50%;top:50%;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;
+  border-radius:50%;background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
+  box-shadow:0 0 10px rgba(0,212,255,.5),0 0 26px rgba(0,212,255,.22);
+  animation:coreBreathe 3.4s ease-in-out infinite}
+@keyframes coreBreathe{50%{transform:scale(1.22);box-shadow:0 0 15px rgba(0,212,255,.75),0 0 34px rgba(0,212,255,.35)}}
+.msg-ai:has(.typing) .ai-core{animation:coreLive .55s ease-in-out infinite}
+@keyframes coreLive{50%{transform:scale(1.38);filter:brightness(1.55);
+  box-shadow:0 0 18px var(--cy),0 0 44px rgba(0,212,255,.6)}}
+/* AS: ПЕРВЫЙ ЗАПРОС — ядро и надпись JARVIS перелетают из приветствия */
+.fly-ghost{position:fixed;z-index:400;pointer-events:none;margin:0;will-change:transform}
+.ai-core.arrived{animation:arriveCore .6s ease-out}
+@keyframes arriveCore{0%{filter:brightness(2.4);box-shadow:0 0 26px var(--cy)}}
+.ai-name.arrived{animation:arriveName .7s ease-out}
+@keyframes arriveName{0%{text-shadow:0 0 20px var(--cy);color:#fff}}
 /* реактор тихнет в неактивных (камера закрыта) ответах */
 .ui-inert .ai-avatar{opacity:.55;filter:saturate(.7)}
 .ai-body{flex:1;min-width:0}
