@@ -103,7 +103,7 @@
     rows.forEach(function (row) {
       var cells = row.split('&');
       h += '<span class="mrow">';
-      cells.forEach(function (c) { h += '<span class="mcell">' + mathRender(c.trim()) + '</span>'; });
+      cells.forEach(function (c) { h += '<span class="mcell">' + mathRender(c.trim(), true) + '</span>'; });
       h += '</span>';
     });
     h += '</span>';
@@ -138,17 +138,30 @@
     return { text: src.slice(i, i + 1), next: i + 1 };
   }
 
-  function mathRender(src) {
+  function mathRender(src, inline) {
     var out = '', i = 0, s = String(src || '');
     var bigPend = null;   // большой оператор ждёт свои пределы ^/_
+    var flushBig = function () {
+      /* BI: в ИНЛАЙН-строке большие операторы печатаются ТЕКСТОВЫМ стилем —
+         пределы сносками сбоку (как настоящий LaTeX): стопка над/под знаком
+         раздувала межстрочный интервал и «проваливала» переменные ниже */
+      if (!bigPend) return;
+      if (inline) {
+        out += '<span class="msym">' + bigPend.sym + '</span>' +
+          (bigPend.sub != null ? '<sub class="msub">' + bigPend.sub + '</sub>' : '') +
+          (bigPend.sup != null ? '<sup class="msup">' + bigPend.sup + '</sup>' : '');
+      } else {
+        out += bigStack(bigPend);
+      }
+      bigPend = null;
+    };
     while (i < s.length) {
       var ch = s[i];
       /* большой оператор без пределов (или с уже собранными) — выдать в поток,
          кроме случая, когда дальше идут его пределы или \limits */
       if (bigPend && ch !== '^' && ch !== '_' &&
           !(ch === '\\' && /^(?:\\limits|\\nolimits)/.test(s.slice(i)))) {
-        out += bigStack(bigPend);
-        bigPend = null;
+        flushBig();
       }
       if (ch === '\\') {
         var cmd = /^\\([a-zA-Z]+|\\|,|;|!| )/.exec(s.slice(i));
@@ -170,7 +183,7 @@
         if (name === 'end') { var eg = groupAt(s, i); i = eg.next; continue; }
         if (name === 'boxed') {
           var bx = groupAt(s, i); i = bx.next;
-          out += '<span class="mboxed">' + mathRender(bx.text) + '</span>';
+          out += '<span class="mboxed">' + mathRender(bx.text, inline) + '</span>';
           continue;
         }
         if (name === 'overset' || name === 'underset' || name === 'stackrel') {
@@ -195,8 +208,8 @@
         if (name === 'frac' || name === 'tfrac' || name === 'dfrac') {
           var a = groupAt(s, i); i = a.next;
           var b = groupAt(s, i); i = b.next;
-          out += '<span class="mfrac"><span class="mfr-n">' + mathRender(a.text) +
-            '</span><span class="mfr-d">' + mathRender(b.text) + '</span></span>';
+          out += '<span class="mfrac"><span class="mfr-n">' + mathRender(a.text, inline) +
+            '</span><span class="mfr-d">' + mathRender(b.text, inline) + '</span></span>';
           continue;
         }
         if (name === 'sqrt') {
@@ -206,8 +219,12 @@
             root = s.slice(i + 1, close); i = close + 1;
           }
           var g = groupAt(s, i); i = g.next;
+          /* BI: ЗНАК КОРНЯ — настоящий, из штриха-диагонали и хвоста (SVG
+             path): юникодный \u221a не дотягивался чертой до выражения, и
+             сверху висела прямая «не из корня» */
           out += '<span class="msqrt">' + (root ? '<span class="msq-i">' + mesc(root) + '</span>' : '') +
-            '<span class="msq-s">\u221a</span><span class="msq-r">' + mathRender(g.text) + '</span></span>';
+            '<svg class="msq-svg" viewBox="0 0 12 24" preserveAspectRatio="none"><path d="M1.2 16.2 L4.4 17.8 L7.9 3.2 L12 .9" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+            '<span class="msq-r">' + mathRender(g.text, inline) + '</span></span>';
           continue;
         }
         if (name === 'text' || name === 'mathrm' || name === 'operatorname') {
@@ -241,7 +258,16 @@
         if (/^(big|Big|bigl|bigr|Bigl|Bigr|biggl|biggr|displaystyle|limits|nolimits|left|right)$/.test(name)) { continue; }
         if (FUNCS.indexOf(name) >= 0) { out += '<span class="mfn">' + name + '</span>'; continue; }
         if (GREEK[name]) { out += GREEK[name]; continue; }
-        if (SYM[name]) { out += name === 'lim' ? '<span class="mfn">lim</span>' : SYM[name]; continue; }
+        if (SYM[name]) {
+          /* BI: СТРЕЛКИ-СЛЕДОВАНИЯ — с настоящим воздухом вокруг: прежний
+             общий паддинг прижимал ⇒ к словам, и знак читался неряшливо */
+          if (/[←-⇿⟴-⟿↦]/.test(SYM[name])) {
+            out += '<span class="mrel">' + SYM[name] + '</span>';
+          } else {
+            out += SYM[name];
+          }
+          continue;
+        }
         /* неизвестная команда: показываем без слэша — текст остаётся читаемым */
         out += mesc(name);
         continue;
@@ -268,7 +294,7 @@
       out += mesc(ch);
       i += 1;
     }
-    if (bigPend) out += bigStack(bigPend);
+    flushBig();
     return out;
   }
 
@@ -305,12 +331,12 @@
           src2 += '\n\u0003' + idx + '\u0003\n';
         } else {
           pieces.push('<span class="math-inline' + (closed ? '' : ' math-live') + '">' +
-            mathRender(body.trim()) + '</span>');
+            mathRender(body.trim(), true) + '</span>');
           src2 += '\u0001' + idx + '\u0002';
         }
       } else {
         pieces.push('<span class="math-inline' + (m[4] ? '' : ' math-live') + '">' +
-          mathRender((m[3] || '').trim()) + '</span>');
+          mathRender((m[3] || '').trim(), true) + '</span>');
         src2 += '\u0001' + idx + '\u0002';
       }
       last = MATH_RE.lastIndex;

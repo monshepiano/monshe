@@ -633,21 +633,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   38%{opacity:1;transform:scale(1.03);filter:drop-shadow(0 0 5px rgba(0,212,255,.5)) brightness(1.04)}
   62%{opacity:.92;transform:scale(.94);filter:drop-shadow(0 0 3px rgba(0,212,255,.45))}
   100%{opacity:0;transform:scale(.26);filter:drop-shadow(0 0 2px rgba(0,212,255,.35))}}
-/* BG: ВРАЩЕНИЕ — медленный плавный доворот (~125-140° за полторы
-   секунды, ease-in-out), каждый раз в другой плоскости: экрана (Z),
-   перпендикулярная (X), под углом (диагональ), вокруг вертикали (Y) */
-.dot-shape-svg .rot-g{transform-box:fill-box;transform-origin:center}
-.dot-shape-svg .rot-g.rot-z{animation:spinZ 1.5s ease-in-out forwards}
-.dot-shape-svg .rot-g.rot-x{animation:spinX 1.5s ease-in-out forwards}
-.dot-shape-svg .rot-g.rot-y{animation:spinY 1.5s ease-in-out forwards}
-.dot-shape-svg .rot-g.rot-d{animation:spinD 1.5s ease-in-out forwards}
-@keyframes spinZ{from{transform:rotate(0deg)}to{transform:rotate(140deg)}}
-@keyframes spinX{from{transform:perspective(150px) rotateX(0deg)}
-  to{transform:perspective(150px) rotateX(-125deg)}}
-@keyframes spinY{from{transform:perspective(150px) rotateY(0deg)}
-  to{transform:perspective(150px) rotateY(125deg)}}
-@keyframes spinD{from{transform:perspective(150px) rotate3d(.5,1,.35,0deg)}
-  to{transform:perspective(150px) rotate3d(.5,1,.35,125deg)}}
+/* BI: ВРАЩЕНИЕ ФИГУР — БОЛЬШЕ НЕ CSS. Вращает JS-движок: 3D-тела
+   кувыркаются осью-углом с пересортировкой граней, 4D — в плоскостях
+   XW/ZW (тессеракт выворачивается). .rot-g — контейнер кадров */
 /* BD: всплеск на видимых действиях (инструмент, шаг, файл) */
 .msg-ai.live .ai-core.dot-act{animation:coreBurst 1.15s cubic-bezier(.65,0,.35,1)}
 .ai-core.dot-settle{animation:coreSettle .55s cubic-bezier(.65,0,.35,1) forwards}
@@ -1135,10 +1123,20 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   vertical-align:-0.5em;margin:0 2px;line-height:1.15}
 .mfrac .mfr-n{padding:0 4px;border-bottom:1.4px solid rgba(190,235,255,.85)}
 .mfrac .mfr-d{padding:0 4px}
+/* BI: ИНЛАЙН-ДРОБЬ — текстовый стиль (как \tfrac в LaTeX): мельче и не
+   проваливается ниже строки — раньше дробь раздувала строку и её хвост
+   «уходил под текст», казалось, что переменные пишутся ниже */
+.math-inline .mfrac{font-size:.84em;vertical-align:-.38em;margin:0 1px}
+.math-inline .mfrac .mfr-n,.math-inline .mfrac .mfr-d{padding:0 3px}
 .msqrt{display:inline-flex;align-items:stretch;margin:0 1px}
 .msqrt .msq-i{font-size:.62em;align-self:flex-start;margin-right:-2px;opacity:.85}
-.msqrt .msq-s{font-size:1.18em;line-height:1}
-.msqrt .msq-r{border-top:1.4px solid rgba(190,235,255,.85);padding:0 3px 0 2px}
+/* BI: ЗНАК КОРНЯ — SVG-штрих, растянутый на высоту выражения: диагональ
+   длинная и короткая + хвост, черта содержания продолжается из хвоста
+   (раньше юникодный √ не доставал до черты — «прямая не из корня») */
+.msqrt .msq-svg{width:.5em;flex:0 0 auto;display:block;align-self:stretch;
+  color:#bfe6f8;overflow:visible}
+.msqrt .msq-r{border-top:1.4px solid rgba(190,235,255,.85);
+  padding:0 3px 0 2px;margin-left:-1px}
 .math-block .mop,.math-inline .mop{padding:0 3px;color:#9fd8f2}
 .mfn{font-style:normal;padding:0 2px 0 4px}
 .mtext{font-style:normal}
@@ -1149,6 +1147,10 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .msp1{display:inline-block;width:.9em}
 .msp2{display:inline-block;width:2.1em}
 sup.msup,sub.msub{font-size:.72em}
+/* BI: СТРЕЛКИ-СЛЕДОВАНИЯ (⇒ ⟹ ⇐) — с воздухом: щедрые поля по бокам,
+   чуть компактнее сам знак — читается как «следовательно», а не как
+   прилипшая к словам черта */
+.mrel{display:inline-block;padding:0 8px;font-size:.95em;color:#a8dcf5}
 /* BH: БОЛЬШИЕ ОПЕРАТОРЫ — пределы НАД и ПОД знаком (\int_a^b, \sum,
    \lim). Раньше пределы лепились сзади сносками: нижняя граница
    проваливалась ниже строки и казалась «числом ниже знака равно» */

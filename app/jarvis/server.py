@@ -489,7 +489,7 @@ class Handler(BaseHTTPRequestHandler):
             # сохраняются в сообщение, чтобы при возврате в диалог не считать
             # их заново и не платить второй раз.
             chat_id = body.get("chat_id", "")
-            msgs = db.get_messages(chat_id, limit=6) if chat_id else []
+            msgs = db.get_recent_messages(chat_id, limit=6) if chat_id else []
             last = msgs[-1] if msgs else None
             if not last or last.get("role") != "assistant":
                 return self._json({"ok": True, "items": []})
@@ -861,7 +861,7 @@ class Handler(BaseHTTPRequestHandler):
             ctx_chat = str(body.get("voice_context") or "")
             if ctx_chat and ctx_chat != chat_id:
                 try:
-                    ctx_rows = _hist_rows(db.get_messages(ctx_chat, limit=16))
+                    ctx_rows = _hist_rows(db.get_recent_messages(ctx_chat, limit=16))
                     if ctx_rows:
                         messages.append({"role": "system", "content":
                             "[Система] Контекст текущего диалога пользователя "
@@ -1157,7 +1157,7 @@ def _prefetch_replies(msg_id: str, user_text: str, answer: str,
                 return          # уже посчитано (перечитали историю и т.п.)
             # AY: генератор видит ПОСЛЕДНИЕ РЕПЛИКИ переписки — подсказки
             # стали развитием разговора, а не реакцией на один ответ
-            history = db.get_messages(msg.get("chat_id", ""), limit=8) or []
+            history = db.get_recent_messages(msg.get("chat_id", ""), limit=8) or []
             items = agent.suggest_replies_ai(user_text, answer, tools_used,
                                              history=history)
             # BD: шаблоны в meta не пишем — переживём сбой без вечных clichés

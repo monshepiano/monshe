@@ -218,6 +218,25 @@ def get_messages(chat_id: str, limit: int = 200) -> List[Dict[str, Any]]:
     return rows
 
 
+def get_recent_messages(chat_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """ПОСЛЕДНИЕ N сообщений диалога — от старых к новым.
+
+    BI: КОРЕНЬ «подсказки от прошлых ответов». get_messages с LIMIT берёт
+    ПЕРВЫЕ (самые древние) сообщения чата: /api/replies читал meta первого
+    ответа и вечно показывал его протухшие чипы. Здесь берём хвост."""
+    rows = query(
+        "SELECT * FROM (SELECT * FROM messages WHERE chat_id=? "
+        "ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC",
+        (chat_id, limit),
+    )
+    for row in rows:
+        try:
+            row["meta"] = json.loads(row.get("meta") or "{}")
+        except Exception:
+            row["meta"] = {}
+    return rows
+
+
 # ---------------------------------------------------------------- tasks
 def get_message(msg_id: str) -> Optional[Dict[str, Any]]:
     row = query_one("SELECT * FROM messages WHERE id=?", (msg_id,))

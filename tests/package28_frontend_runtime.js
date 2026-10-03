@@ -2441,6 +2441,47 @@ function testIterationAKContracts() {
     'AK: reasoning-language system note rides next to the last message');
 }
 
+function testIterationBIContracts() {
+  // BI: ДЖАРВИС ОТКРЫВАЕТСЯ С ДОКОМ — залипший 'open' сброшен сменой ключа
+  assert(js.includes("localStorage.getItem('jarvis.sidebar2')") &&
+    !js.includes("localStorage.getItem('jarvis.sidebar')") &&
+    html.includes('b66</span>'),
+    'BI: the dock opens with the doc by default; the stale sidebar key is retired');
+  // BI: чипы — только хвост чата, без протухших сообщений
+  const pyAgent = fs.readFileSync(path.join(root, 'app/jarvis/agent.py'), 'utf8');
+  const pyDb = fs.readFileSync(path.join(root, 'app/jarvis/db.py'), 'utf8');
+  assert(pyDb.includes('def get_recent_messages(') &&
+    pyDb.includes('ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC') &&
+    !pyAgent.includes('get_messages(') &&
+    pyAgent.includes('_SUGGEST_VERB') &&
+    pyAgent.includes('(?:ить|ать|ять|еть)(?:ся|сь)?'),
+    'BI: reply chips come from the freshest messages; bare names never pass');
+  // BI: 6 объёмных фигур; 4D выворачивается в плоскостях XW/ZW
+  assert(js.includes('function dotShapeFrame(') &&
+    js.includes('function dotRotAxis(') &&
+    js.includes('const a = t * 0.85, b = t * 0.5;') &&
+    js.includes('k = 3.1 / (3.1 - w2 * 1.5)') &&
+    js.includes('core._shapeRaf = requestAnimationFrame(rot);') &&
+    !css.includes('@keyframes spinZ') && !css.includes('.rot-g.rot-z') &&
+    !js.includes('DOT_SPINS'),
+    'BI: 6 volumetric shapes; the tesseract turns inside out like a real 4D body');
+  // BI: математика — дроби не топят переменные, корень честный, стрелки дышат
+  assert(markdown.includes('function mathRender(src, inline)') &&
+    markdown.includes('class="msq-svg"') &&
+    css.includes('.mrel{') && css.includes('.math-inline .mfrac{'),
+    'BI: inline math stays in the line; the radical grows its own stroke');
+  // BI: графики — мат-соотношения, засечки с подписями, пан везде
+  assert(js.includes('const ASPECTS = [') &&
+    js.includes("{ r: Math.SQRT2, label: '1:√2' }") &&
+    js.includes('const niceStep = (span, target) => {') &&
+    js.includes('const aimDomain = () => {') &&
+    js.includes('panX -= e.deltaX;') && js.includes('panY -= e.deltaY;'),
+    'BI: plots use mathematicians\' aspect ratios; axes carry real ticks');
+  // BI: агент всегда пишет поверхности в ключе z — правило 11
+  assert(pyAgent.includes('ОБЯЗАТЕЛЬНО в ключе "z"'),
+    'BI: rule 11 forces surfaces through the z key');
+}
+
 function testIterationAOContracts() {
   // AO: РАБОЧАЯ ОБЛАСТЬ ЖИВЁТ В ТАКТ ДОКУ — та же кривая дока в каждую
   // сторону, отступ вида скользит, а не прыгает
@@ -2486,7 +2527,7 @@ function testIterationAXContracts() {
   const burst = css.split('@keyframes coreBurst{')[1].split('}}')[0];
   assert(!live.includes('transform') && live.includes('#ffd8a8') &&
     burst.includes('#ffd489') && burst.includes('var(--gold)') &&
-    css.includes('.dot-shape-svg .rot-g.rot-z{animation:spinZ 1.5s ease-in-out forwards}'),
+    js.includes('function dotShapeFrame('),
     'AX/BD: the dot bursts gold; the idle beat changes color, never size');
   // AX: плитки фиксированной высоты, описание — три строки с троеточием
   const sp = css.split('.sugg .sp{')[1].split('}')[0];
@@ -2547,9 +2588,10 @@ function testIterationAZContracts() {
   assert(js.includes('function dotShapePlay(') &&
     js.includes('const DOT_SHAPE_KEYS = Object.keys(DOT_SHAPES);') &&
     js.includes('<radialGradient id="gF') &&
-    ['tess', 'penta', 'cube', 'tetra', 'crystal',
-     'line', 'wave', 'zig'].every((k) => js.includes('  ' + k + ': {')) &&
-    ['star', 'hex', 'cross'].every((k) => !js.includes('  ' + k + ': {')) &&
+    ['tess', 'penta', 'cube', 'octa', 'tetra', 'crystal']
+      .every((k) => js.includes('  ' + k + ': {')) &&
+    ['star', 'hex', 'cross', 'line', 'wave', 'zig']
+      .every((k) => !js.includes('  ' + k + ': {')) &&
     css.includes('.dot-shape-svg{') && css.includes('width:30px;height:30px;') &&
     !css.includes('clip-path:polygon('),
     'AZ: the dot occasionally plays with its shape — tesseract, cube, crystal, star');
@@ -2582,7 +2624,7 @@ function testIterationBBContracts() {
   const play = js.split('function dotShapePlay(')[1].split('\nfunction ')[0];
   assert(js.includes('const DOT_MORPH_MS = 700;') &&
     js.includes('const DOT_HOLD_MS = 1500;') &&
-    play.includes("g.innerHTML = DOT_SHAPES[key].draw(svg._gradL);") &&
+    play.includes("g.innerHTML = dotShapeFrame(key, t, svg._gradL);") &&
     play.includes("core.classList.add('shape-on');") &&
     play.includes('3500 + Math.random() * 4500') &&
     css.includes('.msg-ai.live .dot-shape-svg.sh-in{animation:dotSvgIn .7s') &&
@@ -2663,26 +2705,23 @@ function testIterationBEContracts() {
   const sr = js.split('function showReplies(')[1].split('\nfunction ')[0];
   assert(sr.includes("el('button', 'rc-ed', '↵');") && !sr.includes('✎'),
     'BE: chips carry an Enter glyph, not a pencil');
-  // BE/BG: 11 понятных фигур — SVG-чертежи с рёбрами, светом и стеклом
+  // BI: 6 объёмных фигур — стекло, свет по нормали, задние рёбра приглушены
   assert(js.includes('<radialGradient id="gF') &&
-    js.includes('stroke="url(#gE') && js.includes('stroke="url(#gB') &&
-    js.includes('fill-opacity=".8"') &&
-    js.includes('stroke="#8fd9ff" stroke-width="2.6" stroke-linecap="round"') &&
-    ['tess', 'penta', 'cube', 'tetra', 'crystal',
-     'line', 'wave', 'zig'].every((k) => js.includes('  ' + k + ': {')) &&
-    ['star', 'hex', 'cross'].every((k) => !js.includes('  ' + k + ': {')),
+    js.includes("'url(#gE' + L") && js.includes("'url(#gB' + L") &&
+    js.includes('(0.13 + 0.22 * bright)') &&
+    ['tess', 'penta', 'cube', 'octa', 'tetra', 'crystal']
+      .every((k) => js.includes('  ' + k + ': {')) &&
+    ['star', 'hex', 'cross', 'line', 'wave', 'zig']
+      .every((k) => !js.includes('  ' + k + ': {')),
     'BE: shapes are few but readable — edges, glass surface, back edges');
   // BE: вращение во время показа — 4 плоскости, часто (3.5–8с)
-  assert(js.includes("const DOT_SPINS = ['rot-z', 'rot-x', 'rot-y', 'rot-d'];") &&
-    css.includes('.dot-shape-svg .rot-g.rot-z{animation:spinZ 1.5s ease-in-out forwards}') &&
-    css.includes('@keyframes spinZ{') && css.includes('@keyframes spinX{') &&
-    css.includes('@keyframes spinY{') && css.includes('@keyframes spinD{') &&
+  assert(!js.includes('DOT_SPINS') &&
+    !css.includes('@keyframes spinZ{') && !css.includes('.rot-g.rot-z') &&
+    js.includes('core._shapeRaf = requestAnimationFrame(rot);') &&
     js.split('function dotShapePlay(')[1].split('\nfunction ')[0]
       .includes('3500 + Math.random() * 4500') &&
-    js.split('function dotShapePlay(')[1].split('\nfunction ')[0]
-      .includes("g.setAttribute('class', 'rot-g' + (spin ? ' ' + spin : ''));") &&
-    js.includes('const spin = DOT_SHAPES[key].d > 1'),
-    'BE: only 3D+ shapes spin — a different plane every time; 1D lines rest');
+    js.includes('const a = t * 0.85, b = t * 0.5;'),
+    'BE: the JS engine rotates shapes — 4D figures turn inside out in XW/ZW planes');
   // BE/BG: скролл — плавный догон; прилипание у дна — ПЕРВЫМ делом
   assert(js.includes('function chaseBottom(') &&
     js.includes('Math.max(3, Math.ceil(gap * 0.26))') &&
@@ -2726,8 +2765,8 @@ function testIterationBFContracts() {
   assert(css.includes('.ai-core{position:absolute;left:50%;top:8px;width:13px;height:13px;') &&
     css.includes('.msg-ai.live .ai-avatar{position:sticky;top:8px;z-index:2}') &&
     js.includes('<radialGradient id="gF') &&
-    css.includes('.dot-shape-svg .rot-g.rot-z{animation:spinZ 1.5s ease-in-out forwards}') &&
-    css.includes('rotate(140deg)'),
+    js.includes('function dotShapeFrame(') &&
+    js.includes('const a = t * 0.85, b = t * 0.5;'),
     'BF: the dot sits level with the JARVIS label, sticks while reading, shapes are solid bodies');
   // BF: строка инструмента — робот с предлагашек, меньше и тише
   const tl = js.split('function toolLine(')[1].split('\nfunction ')[0];
@@ -2776,7 +2815,7 @@ function testIterationAUContracts() {
       .includes('const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));'),
     'AV: classic speeds are back; the per-frame cap now follows real frame time');
   // AU: видимый номер сборки — всегда ясно, какой билд на экране
-  assert(html.includes('<span class="ver-chip">b65</span>') &&
+  assert(html.includes('<span class="ver-chip">b66</span>') &&
     css.includes('.ver-chip{align-self:center;'),
     'AU: the build number is visible in the top bar');
   // AU: призрак-надпись физически не может растянуться на весь экран
@@ -2831,7 +2870,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.65'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.66'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -3123,7 +3162,7 @@ function testIterationBGContracts() {
   // BG: круглешок — полноценный SVG со светом, без clip-path-полигонов
   assert(js.includes('<radialGradient id="gF') &&
     js.includes('<linearGradient id="gE') && js.includes('<linearGradient id="gB') &&
-    js.includes('stroke="url(#gE') && js.includes('fill-opacity=".8"') &&
+    js.includes("'url(#gE' + L") && js.includes('(0.13 + 0.22 * bright)') &&
     !css.includes('clip-path:polygon(') &&
     css.includes('.msg-ai.live .ai-core.shape-on{opacity:0}') &&
     css.includes('@keyframes dotSvgIn{') && css.includes('@keyframes dotSvgOut{') &&
@@ -3156,14 +3195,19 @@ function testIterationBHContracts() {
   // BH: агентский скролл — непрерывный живой догон + разгон догона
   assert(js.includes('function followLiveStream(') &&
     js.includes("box.querySelector('.msg-ai.live')") &&
-    js.includes('Math.max(2, Math.ceil(gap * 0.16))') &&
     js.includes('followLiveStream(box);') &&
+    !js.includes('Math.max(2, Math.ceil(gap * 0.16))') &&
+    js.split('function followLiveStream(')[1].split('\nfunction ')[0]
+      .includes('chaseBottom(box, run);') &&
+    js.split('function followGrowingPanel(')[1].split('\nfunction ')[0]
+      .includes('chaseBottom(box, run);') &&
     js.split('function chaseBottom(')[1].split('\nfunction ')[0]
       .includes('st.v = Math.min(want, (st.v || 0) * 1.22 + 5);'),
-    'BH: agent scroll chases every frame like quiet typing, with a soft ramp');
+    'BI: agent and panel scroll share one chaseBottom engine — no separate steps');
   // BH: уведомление режима остаётся ПОСЕРЕДИНЕ ответа
   const tl = js.split('function toolLine(')[1].split('\nfunction ')[0];
-  assert(tl.includes('const liveUi = (S.followUi') &&
+  assert(tl.includes('let liveUi = (S.followUi') &&
+    tl.includes('const cand = S.liveUi;') &&
     tl.includes('liveUi.frozen = { src: shown, html: MD.render(stripSteps(shown)) };') &&
     tl.includes("liveUi.marksEl = el('div', 'md-marks');") &&
     tl.includes('if (markHost) markHost.appendChild(row);') &&
@@ -3172,10 +3216,12 @@ function testIterationBHContracts() {
     !css.includes('.mc-actions>.mc-switch'),
     'BH: a mode note enabled mid-answer stays at its place in the stream');
   // BH: круглешок — только объёмные фигуры; 1D не крутятся; свет виден
-  assert(['tess', 'penta', 'cube', 'tetra', 'crystal', 'line', 'wave', 'zig']
+  assert(['tess', 'penta', 'cube', 'octa', 'tetra', 'crystal']
       .every((k) => js.includes('  ' + k + ': {')) &&
-    ['star', 'hex', 'cross'].every((k) => !js.includes('  ' + k + ': {')) &&
-    js.includes('const spin = DOT_SHAPES[key].d > 1') &&
+    ['star', 'hex', 'cross', 'line', 'wave', 'zig']
+      .every((k) => !js.includes('  ' + k + ': {')) &&
+    js.includes('core._shapeRaf = requestAnimationFrame(rot);') &&
+    js.includes('const a = t * 0.85, b = t * 0.5;') &&
     css.includes('width:30px;height:30px;') &&
     css.split('@keyframes coreLive{')[1].split('}}')[0].indexOf('background') < 0 &&
     css.includes('hue-rotate(-138deg)') &&
@@ -3267,13 +3313,10 @@ function testIterationBHContracts() {
   testIterationBFContracts();
   testIterationBGContracts();
   testIterationBHContracts();
+  testIterationBIContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 45 regression groups passed');
+  console.log('package28_frontend_runtime: 46 regression groups passed');
 })().catch((error) => {
-  console.error(error.stack || error);
-  process.exitCode = 1;
-});
-((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
 });
