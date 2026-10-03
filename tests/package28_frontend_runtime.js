@@ -764,7 +764,7 @@ function testRepeatedPlanEventReplacesOwnership() {
     clearPlanTimers() { clears += 1; },
     dropStrayDocks(keep) { removedDocks.push(keep); oldDock.remove(); },
     makeCard, markBorn() {}, el: miniEl,
-    pinToBottom() {}, stream() { return body; },
+    pinToBottom() {}, chaseBottom() {}, stream() { return body; },
     planLater(_ui, fn, ms) { scheduled.push({ fn, ms }); },
     revealPlanItems() {}, sfx() {},
     dropStatus() { completionOrder.push('status'); },
@@ -2442,11 +2442,13 @@ function testIterationAKContracts() {
 }
 
 function testIterationBIContracts() {
-  // BI: ДЖАРВИС ОТКРЫВАЕТСЯ С ДОКОМ — залипший 'open' сброшен сменой ключа
-  assert(js.includes("localStorage.getItem('jarvis.sidebar2')") &&
+  // BK: ДЖАРВИС ВСЕГДА ОТКРЫВАЕТСЯ С ДОКОМ — состояние панели не переживает
+  // перезапуск: сохранённого 'open' больше не читаем и не восстанавливаем
+  assert(js.includes("localStorage.removeItem('jarvis.sidebar2')") &&
+    !js.includes("localStorage.getItem('jarvis.sidebar2')") &&
     !js.includes("localStorage.getItem('jarvis.sidebar')") &&
-    html.includes('b67</span>'),
-    'BI: the dock opens with the doc by default; the stale sidebar key is retired');
+    html.includes('b68</span>'),
+    'BK: the dock opens with the doc on EVERY launch; the stored open state is retired');
   // BI: чипы — только хвост чата, без протухших сообщений
   const pyAgent = fs.readFileSync(path.join(root, 'app/jarvis/agent.py'), 'utf8');
   const pyDb = fs.readFileSync(path.join(root, 'app/jarvis/db.py'), 'utf8');
@@ -2504,7 +2506,7 @@ function testIterationBJContracts() {
   const play = js.split('function dotShapePlay(')[1].split('\nfunction ')[0];
   const fd = js.split('function finishLiveDot(')[1].split('\nfunction ')[0];
   assert(css.includes('width:40px;height:40px;') &&
-    css.includes('.dot-shape-svg.sh-in{animation:dotSvgIn .9s') &&
+    css.includes('.dot-shape-svg.sh-in{animation:dotSvgIn .45s') &&
     js.includes('(0.18 + 0.34 * bright)') &&
     js.includes('stroke-width=".4"') &&
     fd.includes("sg.classList.add('sh-out');") &&
@@ -2526,16 +2528,18 @@ function testIterationBJContracts() {
     }
   }
   // BJ: математика — обычный корень с носиком, пределы над/под и в строке
-  assert(markdown.includes('M.8 13.9 L3.3 16 L5.9 .9 H11') &&
+  assert(markdown.includes('M.8 13.9 L3.3 16 L5.9 0 H11') &&
     markdown.includes("out += (inline ? '<span class=\"mbi-in\">' : '')") &&
     markdown.includes('(?![a-zA-Z])') &&
     css.includes('vertical-align:middle;margin:0 2px;line-height:1.15') &&
     css.includes('.math-inline .mfrac{font-size:.82em;vertical-align:middle') &&
     css.includes('.mbi-in{display:inline-block;vertical-align:middle'),
     'BJ: a clean typographic radical; inline big operators carry limits over/under');
-  // BJ: таблицы — фиксированная раскладка, длинные не растягивают ответ
-  assert(css.includes('table-layout:fixed;max-height:62vh') &&
-    css.includes('overflow-wrap:anywhere;word-break:break-word'),
+  // BK: таблицы — естественные пропорции закрепляет colgroup (fixTables)
+  assert(css.includes('overflow:auto;max-height:62vh') &&
+    css.includes('overflow-wrap:anywhere;word-break:break-word') &&
+    js.includes('function fixTables(') &&
+    js.includes("t.style.tableLayout = 'fixed';"),
     'BJ: tables stop jumping while streaming; long ones scroll in their own window');
   // BJ: график-интерпретатор понимает любую разумную запись
   assert(js.includes('function plotParseSpec(') &&
@@ -2548,6 +2552,58 @@ function testIterationBJContracts() {
   assert(pyAgent.includes('СТРОГО в ДВОЙНЫХ') &&
     pyAgent.includes("график-интерпретатор читает только чистый JSON"),
     'BJ: the prompt demands strict double-quoted JSON for plot blocks');
+}
+
+function testIterationBKContracts() {
+  // BK: ДЖАРВИС ВСЕГДА ОТКРЫВАЕТСЯ С ДОКОМ — сохранённое 'open' не читается
+  assert(js.includes("localStorage.removeItem('jarvis.sidebar2');") &&
+    !js.includes("localStorage.getItem('jarvis.sidebar2')") &&
+    !js.includes("localStorage.setItem('jarvis.sidebar2'"),
+    'BK: every launch starts with the dock; the open state never survives a reload');
+  // BK: ПЛАН ЕДЕТ ПЛАВНО — вот была разница режимов: пункты плана дёргали
+  // ленту мгновенным pinToBottom, теперь тот же разгоняющийся догон
+  const reveal = js.split('function revealPlanItems(')[1].split('\nfunction ')[0];
+  assert(reveal.includes('chaseBottom(msgHost(), ui);') &&
+    !reveal.includes('pinToBottom') &&
+    js.split("case 'plan':")[1].split('\n    case ')[0]
+      .includes('chaseBottom(stream(), ui);'),
+    'BK: the plan scrolls with the same smooth chase as quiet typing — no one-frame jumps');
+  // BK: НАСТОЯЩАЯ ТРАНСФОРМАЦИЯ круглешка: вершины вырастают из обода
+  const frame = js.split('function dotShapeFrame(')[1].split('\nfunction ')[0];
+  assert(js.includes('const DOT_CIRCLE_R = 5.2;') &&
+    frame.includes('DOT_CIRCLE_R + (r - DOT_CIRCLE_R) * m') &&
+    frame.includes('(1 - m) * .96') &&
+    js.includes('const DOT_HOLD_MS = 4200;') &&
+    frame.includes('m = 1 - smooth(') &&
+    !frame.includes('lastDraw'),
+    'BK: the dot truly morphs — vertices grow out of the rim and melt back; 60fps, long hold');
+  // BK: УВЕДОМЛЕНИЕ МЕЖДУ ПРЕДЛОЖЕНИЯМИ — граница ждёт точку
+  const tl2 = js.split('function toolLine(')[1].split('\nfunction ')[0];
+  const rt2 = js.split('function renderTyped(')[1].split('\nfunction ')[0];
+  assert(js.includes('function lastSentenceEnd(') &&
+    tl2.includes('liveUi.freezePending = true;') &&
+    tl2.includes("liveUi.marksEl.style.display = liveUi.freezePending ? 'none' : '';") &&
+    rt2.includes('if (ui.freezePending && !ui.freezeLocked)') &&
+    rt2.includes('const k = lastSentenceEnd(text, src.length);'),
+    'BK: a mid-sentence mode note waits for the sentence to end — never cuts words');
+  // BK: КОРЕНЬ — черта и носик совпадают (одна линия 1.4px тем же цветом)
+  assert(markdown.includes('M.8 13.9 L3.3 16 L5.9 0 H11') &&
+    markdown.includes('stroke="rgba(190,235,255,.85)"') &&
+    css.includes('.msqrt .msq-r::before{') &&
+    css.includes('height:1.4px;background:rgba(190,235,255,.85)') &&
+    css.includes('.msqrt .msq-i{font-size:.62em;align-self:flex-start;margin:0 0 0 -.1em'),
+    'BK: the radical bar and the nose are one continuous line; the index clears the sign');
+  // BK: ГРАФИК-ИНТЕРПРЕТАТОР — z(x,y)=, юникод-математика, спасение формул
+  assert(js.includes("src.replace(/(^|[^\\w])([a-zA-Z])\\s*\\(([^)]*)\\)\\s*=/g,") &&
+    js.includes(".replace(/[·×]/g, '*')") &&
+    js.includes('.replace(/−|–|—/g, '-')') &&
+    js.includes("if (tk.length === 1) { out.push('x');") &&
+    js.includes('const cand = Array.isArray(v) ? v.find((s) => typeof s === \'string\') : v;'),
+    'BK: the plot interpreter reads f(x,y)= definitions, unicode math, and salvages formulas');
+  // BK: ПАН ПЕРЕЖИВАЕТ ПЕЧАТЬ — пересборка хвоста возвращает pointer capture
+  assert((js.match(/panel\._recapture = \(\) =>/g) || []).length === 3 &&
+    js.includes('savedPlots.forEach((p) => { if (p._recapture) p._recapture(); });'),
+    'BK: dragging a plot survives the streaming tail rebuild — capture is restored');
 }
 
 function testIterationAOContracts() {
@@ -2691,18 +2747,18 @@ function testIterationBBContracts() {
   // BC/BD: круглешок — фигуры ×2.1, пружина с золотом, спокойный ритм
   const play = js.split('function dotShapePlay(')[1].split('\nfunction ')[0];
   assert(js.includes('const DOT_MORPH_MS = 700;') &&
-    js.includes('const DOT_HOLD_MS = 1500;') &&
+    js.includes('const DOT_HOLD_MS = 4200;') &&
     play.includes("g.innerHTML = dotShapeFrame(key, t, svg._gradL);") &&
     play.includes("core.classList.add('shape-on');") &&
     play.includes('3500 + Math.random() * 4500') &&
-    css.includes('.dot-shape-svg.sh-in{animation:dotSvgIn .9s') &&
-    css.includes('.dot-shape-svg.sh-out{animation:dotSvgOut .75s') &&
+    css.includes('.dot-shape-svg.sh-in{animation:dotSvgIn .45s') &&
+    css.includes('.dot-shape-svg.sh-out{animation:dotSvgOut .4s') &&
     css.includes('@keyframes dotSvgIn{') && css.includes('@keyframes dotSvgOut{') &&
     css.includes('width:40px;height:40px;') &&
     css.includes('100%{opacity:1;transform:scale(1);') &&
     css.split('@keyframes dotSvgIn{')[1].split('}}')[0]
-      .includes('rgba(217,164,65,.75)'),
-    'BC/BD: the dot springs into a big 30px SVG shape — calm pace, gold only in the morph');
+      .includes('rgba(217,164,65,.8)'),
+    'BC/BD: the dot morphs into a big 40px SVG shape — calm pace, gold only in the morph');
   // BC: рамка-вспышка УДАЛЕНА
   assert(!css.includes('flash-done') && !js.includes('flash-done') &&
     !css.includes('doneFlash'),
@@ -2716,13 +2772,11 @@ function testIterationBCContracts() {
     !js.includes('pointerenter'),
     'BC/BD: no done frame; history cores static; hover warmup gone entirely');
   // BC/BD/BG: фигуры ×2.1 — SVG с пружиной; золото ПЛАВНО в кадрах морфа
-  assert(css.includes('.dot-shape-svg.sh-in{animation:dotSvgIn .9s') &&
+  assert(css.includes('.dot-shape-svg.sh-in{animation:dotSvgIn .45s') &&
     css.includes('width:40px;height:40px;') &&
     css.includes('100%{opacity:1;transform:scale(1);') &&
     css.split('@keyframes dotSvgIn{')[1].split('}}')[0]
-      .includes('rgba(217,164,65,.75)') &&
-    css.split('@keyframes dotSvgOut{')[1].split('}}')[0]
-      .includes('rgba(217,164,65,.7)') &&
+      .includes('rgba(217,164,65,.8)') &&
     css.includes('transition:opacity .45s ease') &&
     js.includes('<radialGradient id="gF') && js.includes('<linearGradient id="gE'),
     'BC/BD: shapes are big 40px SVGs with a soft gold-lit morph and a dot crossfade');
@@ -2748,7 +2802,8 @@ function testIterationBDContracts() {
     css.includes('animation:coreLive 4.6s ease-in-out infinite}') &&
     js.includes('const DOT_MORPH_MS = 700;') &&
     js.includes('const DOT_MORPH_OUT_MS = 650;') &&
-    js.includes('const DOT_HOLD_MS = 1500;'),
+    js.includes('const DOT_HOLD_MS = 4200;') &&
+    js.includes('const DOT_CIRCLE_R = 5.2;'),
     'BD: calm dot at rest (no size change) — gold shimmer only');
   // BD: история дешёвая — базовое ядро без полигонов и фильтров
   const baseCore = css.split('.ai-core{')[1].split('}')[0];
@@ -2883,7 +2938,7 @@ function testIterationAUContracts() {
       .includes('const frameCap = Math.max(baseCap, Math.ceil((ui.cps * elapsed) / 1000));'),
     'AV: classic speeds are back; the per-frame cap now follows real frame time');
   // AU: видимый номер сборки — всегда ясно, какой билд на экране
-  assert(html.includes('<span class="ver-chip">b67</span>') &&
+  assert(html.includes('<span class="ver-chip">b68</span>') &&
     css.includes('.ver-chip{align-self:center;'),
     'AU: the build number is visible in the top bar');
   // AU: призрак-надпись физически не может растянуться на весь экран
@@ -2938,7 +2993,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.67'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.68'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -3096,7 +3151,7 @@ function testIterationAHContracts() {
     /app\.classList\.toggle\('side-folding', collapsing\);/.test(js) &&
     !/SIDE_FADE/.test(js) && !/SIDE_MORPH/.test(js) &&
     /cubic-bezier\(\.5,\.35,\.15,1\)/.test(dock) &&
-    /\(pref === 'collapsed' \|\| pref === null\)/.test(js),
+    /localStorage\.removeItem\('jarvis\.sidebar2'\)/.test(js),
     'AJ: simultaneous mirrored choreography, default opens with dock');
 }
 
@@ -3235,7 +3290,7 @@ function testIterationBGContracts() {
     css.includes('.msg-ai.live .ai-core.shape-on{opacity:0}') &&
     css.includes('@keyframes dotSvgIn{') && css.includes('@keyframes dotSvgOut{') &&
     css.split('@keyframes dotSvgIn{')[1].split('}}')[0]
-      .includes('rgba(217,164,65,.75)') &&
+      .includes('rgba(217,164,65,.8)') &&
     css.includes('width:40px;height:40px;'),
     'BG: the dot is a real SVG with light and edges; gold fades in smoothly');
   // BG: скролл — дно первым, свёртка панели догоняется плавно
@@ -3277,7 +3332,8 @@ function testIterationBHContracts() {
   const tl = js.split('function toolLine(')[1].split('\nfunction ')[0];
   assert(tl.includes('let liveUi = (S.followUi') &&
     tl.includes('const cand = (S.liveUi && S.liveUi !== S.followUi)') &&
-    tl.includes('liveUi.frozen = { src: shown, html: MD.render(stripSteps(shown)) };') &&
+    tl.includes('const k = lastSentenceEnd(shown, curLen);') &&
+    tl.includes('liveUi.frozen = { src: head, html: MD.render(stripSteps(head)) };') &&
     tl.includes("liveUi.marksEl = el('div', 'md-marks');") &&
     tl.includes('if (markHost) markHost.appendChild(row);') &&
     js.split('function renderTyped(')[1].split('\nfunction ')[0].includes('md-marks') &&
@@ -3385,8 +3441,9 @@ function testIterationBHContracts() {
   testIterationBHContracts();
   testIterationBIContracts();
   testIterationBJContracts();
+  testIterationBKContracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 47 regression groups passed');
+  console.log('package28_frontend_runtime: 48 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

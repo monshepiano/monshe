@@ -615,36 +615,29 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    полупрозрачные грани со ВИДНЫМИ задними ребрами, свечение. Морф —
    пружинный: кружок уступает место фигуре (масштаб 2.1×), золото
    НАРАСТАЕТ И УХОДИТ ПЛАВНО (интерполяция filter, без резких скачков) */
-/* BJ: ФИГУРЫ КРУПНЕЕ (40px вместо 30) и МЯГЧЕ: без пружинного перелёта —
-   плавный вход .9s и такой же плавный выход; анимации больше не
-   привязаны к классу .live, поэтому конец ответа НЕ обрывает фигуру
-   на полобороте — она мягко сворачивается и после снятия live */
-.dot-shape-svg{position:absolute;left:50%;top:14px;width:40px;height:40px;
+/* BK: ФИГУРЫ КРУПНЕЕ (40px) и МОРФ ЧЕСТНЫЙ: круглешок не исчезает —
+   его вершины вырастают в фигуру и сжимаются обратно (JS-морф в
+   dotShapeFrame). CSS здесь только растворяет svg в начале/конце:
+   кроссфейд двух одинаковых кругов, без масштабных прыжков.
+   top:14.5px — центр svg ТОЧНО в центре круглешка (8px + 6.5px) */
+.dot-shape-svg{position:absolute;left:50%;top:14.5px;width:40px;height:40px;
   margin:-20px 0 0 -20px;opacity:0;pointer-events:none;overflow:visible;z-index:3;
   filter:brightness(1) drop-shadow(0 0 5px rgba(0,195,255,.5))}
-.dot-shape-svg.sh-in{animation:dotSvgIn .9s cubic-bezier(.25,.85,.3,1) forwards}
-.dot-shape-svg.sh-out{animation:dotSvgOut .75s cubic-bezier(.55,.06,.45,1) forwards}
-/* BJ: ЗОЛОТО БЕЗ СКАЧКОВ. У CSS фильтры интерполируются ТОЛЬКО при
-   одинаковой структуре списка (те же функции в том же порядке): раньше
-   кадры с drop-shadow против drop-shadow+brightness переключались
-   ДИСКРЕТНО — «пожелтение» мгновенно щёлкало. Теперь в каждом кадре
-   один и тот же список brightness+drop-shadow, меняются только
-   значения — золото нарастает и уходит непрерывно */
+.dot-shape-svg.sh-in{animation:dotSvgIn .45s ease-out forwards}
+.dot-shape-svg.sh-out{animation:dotSvgOut .4s ease-in forwards}
+/* BK: ЗОЛОТО БЕЗ СКАЧКОВ — в каждом кадре одна и та же структура
+   фильтров (brightness + drop-shadow), меняются только значения */
 @keyframes dotSvgIn{
-  0%{opacity:0;transform:scale(.3);
-    filter:brightness(1) drop-shadow(0 0 2px rgba(0,212,255,.35))}
-  35%{opacity:.9;
-    filter:brightness(1.06) drop-shadow(0 0 6px rgba(0,212,255,.55))}
-  62%{opacity:1;transform:scale(1.015);
-    filter:brightness(1.16) drop-shadow(0 0 9px rgba(217,164,65,.75))}
+  0%{opacity:0;transform:scale(1);
+    filter:brightness(1) drop-shadow(0 0 5px rgba(0,212,255,.55))}
+  45%{opacity:1;transform:scale(1);
+    filter:brightness(1.18) drop-shadow(0 0 8px rgba(217,164,65,.8))}
   100%{opacity:1;transform:scale(1);
     filter:brightness(1) drop-shadow(0 0 5px rgba(0,195,255,.55))}}
 @keyframes dotSvgOut{
   0%{opacity:1;transform:scale(1);
-    filter:brightness(1.12) drop-shadow(0 0 8px rgba(217,164,65,.7))}
-  45%{opacity:1;transform:scale(1.015);
-    filter:brightness(1.04) drop-shadow(0 0 5px rgba(0,212,255,.5))}
-  100%{opacity:0;transform:scale(.32);
+    filter:brightness(1) drop-shadow(0 0 5px rgba(0,212,255,.55))}
+  100%{opacity:0;transform:scale(1);
     filter:brightness(1) drop-shadow(0 0 2px rgba(0,212,255,.35))}}
 /* BI: ВРАЩЕНИЕ ФИГУР — БОЛЬШЕ НЕ CSS. Вращает JS-движок: 3D-тела
    кувыркаются осью-углом с пересортировкой граней, 4D — в плоскостях
@@ -1029,14 +1022,12 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    (свёртка блоков убрана: код всегда полноразмерный, живёт в live-code) */
 .md blockquote{margin:10px 0;padding:8px 14px;border-left:2.5px solid var(--cy);background:rgba(0,212,255,.06);
   border-radius:0 9px 9px 0;color:var(--tx2)}
-/* BJ: СПОКОЙНЫЕ ТАБЛИЦЫ. Во время печати таблица росла рывками: auto-
-   раскладка пересчитывала ширину колонок на каждой новой строке, а длинные
-   ячейки раздували её во все стороны. Теперь: фиксированная раскладка
-   (колонки равные — ширина не прыгает), длинные слова переносятся, а не
-   растягивают колонку, и очень длинные таблицы живут в своём окне со
-   скроллом (до 62vh), не растягивая сообщение на несколько экранов */
+/* BK: СПОКОЙНЫЕ ТАБЛИЦЫ. Auto-раскладку больше не фиксируем правилом:
+     естественные пропорции колонок закрепляет JS (fixTables) — colgroup
+     в процентах от реального контента в момент появления первой строки.
+     До этого таблица живёт auto-раскладкой, а длинные слова переносятся */
 .md table{width:100%;border-collapse:collapse;margin:11px 0;font-size:12.5px;display:block;
-  overflow:auto;table-layout:fixed;max-height:62vh}
+  overflow:auto;max-height:62vh}
 .md th,.md td{border:1px solid var(--line);padding:7px 11px;text-align:left;
   overflow-wrap:anywhere;word-break:break-word}
 .md th{background:rgba(0,212,255,.1);color:var(--cy);font-weight:600}
@@ -1159,14 +1150,17 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
 .math-inline .mfrac{font-size:.82em;vertical-align:middle;margin:0 1px}
 .math-inline .mfrac .mfr-n,.math-inline .mfrac .mfr-d{padding:0 3px}
 .msqrt{display:inline-flex;align-items:stretch;margin:0 1px}
-.msqrt .msq-i{font-size:.62em;align-self:flex-start;margin-right:-2px;opacity:.85}
-/* BJ: ОБЫЧНЫЙ КОРЕНЬ: короткий штрих + одна диагональ + носик, который
-   срастается с чертой над содержимым; SVG растягивается по высоте
-   выражения — длинный корень честно растит черту на всю длину */
+/* BK: СТЕПЕНЬ КОРНЯ не залезает на знак: раньше отрицательный отступ
+   тянул SVG прямо на цифру */
+.msqrt .msq-i{font-size:.62em;align-self:flex-start;margin:0 0 0 -.1em;opacity:.85}
+/* BK: ОБЫЧНЫЙ КОРЕНЬ: диагональ до самого верха (y=0) + носик, а черта
+   над содержимым — та же линия 1.4px тем же цветом (::before),
+   состыкованная с носиком внахлёст: совпадают и положение, и толщина */
 .msqrt .msq-svg{width:.46em;flex:0 0 auto;display:block;align-self:stretch;
-  color:#bfe6f8;overflow:visible}
-.msqrt .msq-r{border-top:1.4px solid rgba(190,235,255,.85);
-  padding:0 3px 0 2px;margin-left:-1px}
+  overflow:visible}
+.msqrt .msq-r{position:relative;padding:1px 3px 0 2px;margin-left:-1px}
+.msqrt .msq-r::before{content:'';position:absolute;top:-.7px;left:-3px;right:0;
+  height:1.4px;background:rgba(190,235,255,.85)}
 .math-block .mop,.math-inline .mop{padding:0 3px;color:#9fd8f2}
 .mfn{font-style:normal;padding:0 2px 0 4px}
 .mtext{font-style:normal}

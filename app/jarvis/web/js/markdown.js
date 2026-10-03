@@ -215,13 +215,14 @@
             root = s.slice(i + 1, close); i = close + 1;
           }
           var g = groupAt(s, i); i = g.next;
-          /* BJ: ОБЫЧНЫЙ ЗНАК КОРНЯ — аккуратный типографский: короткий
-             штрих, одна ровная диагональ до верха и горизонтальный
-             носик, который СРАСТАЕТСЯ с чертой над содержимым (она
-             растёт на всю длину выражения). Прежний «двойной излом»
-             выглядел рукописно; юникодный √ не дотягивался до черты */
+          /* BK: ОБЫЧНЫЙ КОРЕНЬ, собранный по-честному: штрих + одна
+             диагональ, упирающаяся РОВНО в верхнюю линию (y=0), и носик,
+             который ПЕРЕТЕКАЕТ в черту над содержимым (она рисуется тем
+             же цветом и той же толщиной 1.4px, что и штрих — см. CSS
+             .msq-r::before: раньше черта была border-top и не совпадала
+             с носиком ни положением, ни толщиной) */
           out += '<span class="msqrt">' + (root ? '<span class="msq-i">' + mesc(root) + '</span>' : '') +
-            '<svg class="msq-svg" viewBox="0 0 11 24" preserveAspectRatio="none"><path d="M.8 13.9 L3.3 16 L5.9 .9 H11" fill="none" stroke="currentColor" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+            '<svg class="msq-svg" viewBox="0 0 11 24" preserveAspectRatio="none"><path d="M.8 13.9 L3.3 16 L5.9 0 H11" fill="none" stroke="rgba(190,235,255,.85)" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
             '<span class="msq-r">' + mathRender(g.text, inline) + '</span></span>';
           continue;
         }

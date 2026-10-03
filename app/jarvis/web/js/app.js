@@ -258,6 +258,22 @@ function toast(text, kind, title) {
    его сняли. Иконка режима + название + состояние, без времени.
    (Камера и микрофон уже отображаются своими карточками/областью —
    здесь только агент и компьютер.) */
+/* BK: КОНЕЦ ПРЕДЛОЖЕНИЯ — граница для метки режима. Ищем последнюю
+   точку/вопрос/восклицание, ЗА которой идёт пробел или конец текста
+   (цифры «3.14» и сокращения без пробела не считаются). Возврат —
+   индекс среза: всё до него — законченные предложения */
+function lastSentenceEnd(text, from) {
+  const t = String(text || '');
+  const re = /[.!?…]+["'»)]*(?=\s|$)/g;
+  let last = -1, m;
+  while ((m = re.exec(t))) {
+    if (m.index + m[0].length <= from) continue;   // уже в замороженной части
+    last = m.index + m[0].length;
+    re.lastIndex = m.index + m[0].length;
+  }
+  return last;
+}
+
 function toolLine(kind, on) {
   const box = stream();
   if (!box) return;
@@ -304,19 +320,32 @@ function toolLine(kind, on) {
     }
     markHost = liveUi.marksEl;
   } else if (liveUi) {
+    /* BK: МЕТКА МЕЖДУ ПРЕДЛОЖЕНИЯМИ. Граница не имеет права разрезать
+       слово или предложение: ищем последний ЗАВЕРШЁННОЕ предложение в
+       напечатанном; если первое ещё не дописано — метка ждёт (скрыта),
+       и renderTyped поставит её сразу после точки */
+    const curLen = liveUi.frozen ? liveUi.frozen.src.length : 0;
+    const shown = String(liveUi.shown || '');
+    const k = lastSentenceEnd(shown, curLen);
     try {
-      const shown = String(liveUi.shown || '');
-      const mathOk = (shown.match(/\\\[/g) || []).length ===
-                     (shown.match(/\\\]/g) || []).length;
-      if (shown && !inCodeBlock(shown) && mathOk) {
-        liveUi.frozen = { src: shown, html: MD.render(stripSteps(shown)) };
-        liveUi._frozenSrc = null;   // заставить renderTyped перелить границу
-        /* BI: граница ЗАМОРАЖИВАЕТСЯ НАВСЕГДА: весь будущий текст будет
-           хвостом ПОСЛЕ метки — метка не сползает вниз с новой печатью */
-        liveUi.freezeLocked = true;
+      if (k > curLen) {
+        const head = shown.slice(0, k);
+        const mathOk = (head.match(/\\\[/g) || []).length ===
+                       (head.match(/\\\]/g) || []).length;
+        if (!inCodeBlock(head) && mathOk) {
+          liveUi.frozen = { src: head, html: MD.render(stripSteps(head)) };
+          liveUi._frozenSrc = null;   // заставить renderTyped перелить границу
+          /* BI: граница ЗАМОРАЖИВАЕТСЯ НАВСЕГДА: весь будущий текст будет
+             хвостом ПОСЛЕ метки — метка не сползает вниз с новой печатью */
+          liveUi.freezeLocked = true;
+          liveUi.freezePending = false;
+        }
+      } else {
+        /* предложение ещё не закончено — ждём точку, метку прячем */
+        liveUi.freezePending = true;
       }
     } catch (e) { /* не смогли заморозить — метка просто встанет после границы */ }
-    if (!liveUi.marksEl || !liveUi.mdEl.contains(liveUi.marksEl)) {
+    if (!liveUi.marksEl || (liveUi.mdEl && !liveUi.mdEl.contains(liveUi.marksEl))) {
       liveUi.marksEl = el('div', 'md-marks');
       const frozen = liveUi.mdEl.querySelector('.md-frozen');
       const tail = liveUi.mdEl.querySelector('.md-tail');
@@ -328,6 +357,8 @@ function toolLine(kind, on) {
         liveUi.mdEl.appendChild(liveUi.marksEl);
       }
     }
+    /* пока граница ждёт конца предложения — метки не видно */
+    liveUi.marksEl.style.display = liveUi.freezePending ? 'none' : '';
     markHost = liveUi.marksEl;
   }
   /* BF: иконка агента — РОБОТ, как в проактивном предложении о включении;
@@ -651,19 +682,16 @@ function toggleSidebar() {
   // диалоги уезжают/возвращаются РАЗОМ с превращением — один такт
   app.classList.toggle('side-folding', collapsing);
   dockY(collapsing);
-  try {
-    localStorage.setItem('jarvis.sidebar2', collapsing ? 'collapsed' : 'open');
-  } catch (e) {}
+  /* BK: состояние панели больше не хранится: каждый запуск — с доком */
 }
 $('#collapseBtn').addEventListener('click', toggleSidebar);
 try {
-  // AJ: ПО УМОЛЧАНИЮ ДЖАРВИС ОТКРЫВАЕТСЯ С ДОКОМ — панель свёрнута,
-  // пока пользователь впервые не развернёт её сам.
-  // BI: КЛЮЧ СМЕНИЛИ (v2): у тех, кто раскрыл панель ещё до правила
-  // «док по умолчанию», в localStorage навсегда залипло 'open' —
-  // новый ключ даёт всем свежий старт с доком
-  const pref = localStorage.getItem('jarvis.sidebar2');
-  if ((pref === 'collapsed' || pref === null) && !isNarrow()) {
+  /* BK: ДЖАРВИС ВСЕГДА ОТКРЫВАЕТСЯ С ДОКОМ. Раньше из localStorage
+     восстанавливалось 'open' — достаточно было один раз раскрыть панель,
+     и все следующие запуски открывались с боковым меню. Панель — решение
+     на ТЕКУЩУЮ сессию: перезапуск всегда возвращает док */
+  localStorage.removeItem('jarvis.sidebar2');
+  if (!isNarrow()) {
     $('#app').classList.add('collapsed');
     // восстановление БЕЗ анимации: пилюля сразу в центре высоты
     const dock = document.querySelector('.dock');
@@ -1272,6 +1300,7 @@ function renderMessages(host, messages) {
   }
   msgs.forEach((m) => renderMessageInto(host, m, m.role === 'assistant' && m.id === lastAiId));
   S.forceHost = prevHost;
+  fixTables(host);
   // Варианты продолжения принадлежат последнему ответу Джарвиса. Возвращаясь
   // в диалог, пользователь должен видеть их снова — иначе они выглядели бы
   // как одноразовая мелочь, исчезающая при любом переключении.
@@ -2915,7 +2944,12 @@ function revealPlanItems(ui, at) {
   const li = ui.planItems[at];
   if (!li.parentNode) ui.planList.appendChild(li);
   requestAnimationFrame(() => li.classList.remove('plan-pending'));
-  pinToBottom(msgHost());
+  /* BK: ПЛАН ЕДЕТ ПЛАВНО, КАК ТИХАЯ ПЕЧАТЬ. Вот она, разница режимов:
+     каждый пункт плана раньше дёргал ленту мгновенным прыжком scrollTop
+     к дну (скачок одним кадром), а в тихом режиме всё росло плавным
+     догоном. Теперь план — тем же догоном: карточка растёт, лента
+     плавно доедает остаток каждый кадр */
+  chaseBottom(msgHost(), ui);
   typePlanItem(ui, li, () => {
     planLater(ui, () => revealPlanItems(ui, at + 1), PLAN_ITEM_PAUSE);
   });
@@ -3512,7 +3546,18 @@ function mathParseExpr(src) {
     exp: Math.exp, log: Math.log10, ln: Math.log, sinh: Math.sinh,
     cosh: Math.cosh, tanh: Math.tanh, floor: Math.floor, round: Math.round,
     sign: Math.sign };
-  const text = String(src || '').replace(/\s+/g, '').replace(/,(?=\d{3}\b)/g, '');
+  /* BK: модель любит типографские знаки — · × − ÷ π √ и ** для степени.
+     Раньше они молча выбрасывались из формулы: график «не строился» или
+     врал. Нормализуем всё в обычную запись ДО разбора */
+  const text = String(src || '')
+    .replace(/\s+/g, '')
+    .replace(/[,;](?=\d{3}\b)/g, '')
+    .replace(/[·×]/g, '*')
+    .replace(/[−–—]/g, '-')
+    .replace(/÷/g, '/')
+    .replace(/\*\*/g, '^')
+    .replace(/π/g, 'pi')
+    .replace(/√/g, 'sqrt');
   const toks = [];
   const re = /\d+\.?\d*(?:e[+-]?\d+)?|[a-zA-Z]+|[()+\-*/^,]/g;
   let m;
@@ -3530,6 +3575,9 @@ function mathParseExpr(src) {
       if (low === 'e') { out.push(Math.E); prev = 'n'; continue; }
       if (FUN[low]) { ops.push(low + '('); prev = 'f'; continue; }
       if (tk === 'x' || tk === 'y') { out.push(tk); prev = 'n'; continue; }
+      /* BK: одиночная буква (t, n, u…) — это параметр: считаем её x,
+         иначе «sin(t)» валил график целиком */
+      if (tk.length === 1) { out.push('x'); prev = 'n'; continue; }
       throw new Error('неизвестное имя: ' + tk);
     }
     if (tk === '(') { if (prev === 'n') ops.push('*'); ops.push('('); prev = '('; continue; }
@@ -3602,6 +3650,34 @@ function plotFmt(v) {
 }
 
 /* панель графика/чертежа: canvas + тулбар; один раз оживляется */
+/* BK: СПОКОЙНЫЕ ТАБЛИЦЫ. Пока ответ печатается, авто-раскладка заново
+   делит ширину между колонками на каждом такте печати — таблица «резко
+   масштабируется» в обе стороны. Лечение: как только у таблицы появилась
+   первая строка, фиксируем ЕСТЕСТВЕННЫЕ пропорции колонок (colgroup в
+   процентах от реальных ширин контента) — масштаб не «ровный казённый»,
+   а ровно такой, как просится у контента, и больше не прыгает: новые
+   строки наливаются в стабильную сетку */
+function fixTables(root) {
+  $$('table', root).forEach((t) => {
+    if (t.dataset.cols === '1' || !t.isConnected) return;
+    const ths = $$('thead th', t);
+    if (!ths.length) return;
+    const row = $$('tbody tr:first-child td', t);
+    if (!row.length) return;            // header-only ещё не честен в пропорциях
+    const ws = ths.map((th, i) => Math.max(th.offsetWidth, row[i] ? row[i].offsetWidth : 0) + 1);
+    const total = ws.reduce((a, b) => a + b, 0) || 1;
+    const cg = el('colgroup');
+    ws.forEach((w) => {
+      const c = el('col');
+      c.style.width = (w / total * 100).toFixed(2) + '%';
+      cg.appendChild(c);
+    });
+    t.insertBefore(cg, t.firstChild);
+    t.style.tableLayout = 'fixed';
+    t.dataset.cols = '1';
+  });
+}
+
 /* BJ: ГРАФИК-ИНТЕРПРЕТАТОР ПОНИМАЕТ ЛЮБУЮ разумную запись. Модель иногда
    пишет plot-спеку с одинарными кавычками, голыми ключами, висячими
    запятыми, комментариями или просто парами «f=sin(x)» — раньше это
@@ -3610,9 +3686,15 @@ function plotFmt(v) {
    запятые, // комментарии) → пары ключ=значение → голая формула.
    Плюс синонимы ключей: y/func/formula → f (кривая), поверхность — z */
 function plotParseSpec(raw) {
-  const src = String(raw || '').trim()
+  let src = String(raw || '').trim()
     .replace(/^```[a-zа-яё]*\s*/i, '').replace(/```\s*$/, '');
   if (!src) return {};
+  /* BK: запись вида z(x,y) = sin(x)·cos(y) или f(x) = x^2 — модель так
+     любит объявлять функции. Превращаем в пару «ключ = значение»:
+     аргументы с y → поверхность z, иначе кривая f (граница — не буква,
+     чтобы не разрезать sin(x) и т.п.) */
+  src = src.replace(/(^|[^\w])([a-zA-Z])\s*\(([^)]*)\)\s*=/g,
+    (mm, pre, name, args) => pre + (args.indexOf('y') >= 0 ? 'z' : 'f') + '= ');
   try { return JSON.parse(src); } catch (e) { /* дальше мягкий разбор */ }
   let s = src
     .replace(/\/\/[^\n]*/g, '')
@@ -3672,6 +3754,25 @@ function mountPlotPanels(root) {
     }
     if (!spec.f && (spec.func || spec.formula || spec.fn)) {
       spec.f = spec.func || spec.formula || spec.fn;
+    }
+    /* BK: СПАСЕНИЕ ФОРМУЛЫ. Ключи могут быть совсем нестандартными
+       (equation, expr, surface…). Если f/z так и не нашлись — ищем
+       среди ВСЕХ строковых значений первую, что компилируется: с y —
+       поверхность, без — кривая. Раньше это валилось в «нет формул» */
+    if (!spec.f && !spec.z) {
+      for (const key of Object.keys(spec)) {
+        const v = spec[key];
+        const cand = Array.isArray(v) ? v.find((s) => typeof s === 'string') : v;
+        if (typeof cand !== 'string' || !/[a-zA-Z]/.test(cand)) continue;
+        try {
+          const fn = mathCompile(cand);
+          let ok = false;
+          for (let i = 0; i <= 8 && !ok; i++) ok = isFinite(fn(-3 + i, -2 + i * .5));
+          if (!ok) continue;
+          if (/y/.test(cand)) spec.z = cand; else spec.f = [cand];
+          break;
+        } catch (e) { /* не формула — идём дальше */ }
+      }
     }
     const kind = panel.dataset.kind || (spec.z ? 'plot3' : 'plot');
     try {
@@ -3951,6 +4052,11 @@ function buildPlot2Panel(panel, spec) {
     pop.classList.remove('open');
     drag = { x: e.clientX, y: e.clientY, x0, x1, y0, y1 };
     cv.setPointerCapture(e.pointerId);
+    /* BK: печать пересобирает хвост и рвёт захват — после возврата панели
+       вернём захват тому же пальцу, пан не сорвётся */
+    panel._recapture = () => {
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { panel._recapture = null; }
+    };
   });
   cv.addEventListener('pointermove', (e) => {
     const r = cv.getBoundingClientRect();
@@ -3970,7 +4076,8 @@ function buildPlot2Panel(panel, spec) {
     y1 = drag.y1 + dy;
     draw();
   });
-  cv.addEventListener('pointerup', () => { drag = null; });
+  cv.addEventListener('pointerup', () => { drag = null; panel._recapture = null; });
+  cv.addEventListener('pointercancel', () => { drag = null; panel._recapture = null; });
   cv.addEventListener('pointerleave', () => { hover = null; draw(); });
   cv.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -4108,6 +4215,10 @@ function buildPlot3Panel(panel, spec) {
   cv.addEventListener('pointerdown', (e) => {
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     cv.setPointerCapture(e.pointerId);
+    /* BK: пересборка хвоста печатью рвёт захват — вернём его панели */
+    panel._recapture = () => {
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { panel._recapture = null; }
+    };
     if (pts.size === 2) {
       const arr = Array.from(pts.values());
       lastMid = { x: (arr[0].x + arr[1].x) / 2, y: (arr[0].y + arr[1].y) / 2 };
@@ -4136,6 +4247,7 @@ function buildPlot3Panel(panel, spec) {
   const lift = (e) => {
     pts.delete(e.pointerId);
     if (pts.size < 2) lastMid = null;
+    if (!pts.size) panel._recapture = null;
   };
   cv.addEventListener('pointerup', lift);
   cv.addEventListener('pointercancel', lift);
@@ -4226,7 +4338,14 @@ function buildGeoPanel(panel, spec) {
   };
   panel._reset = () => { view.xmin = xmin - 1; view.xmax = xmax + 1; view.ymin = ymin - 1; view.ymax = ymax + 1; draw(); };
   let drag = null;
-  cv.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, v: { ...view } }; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointerdown', (e) => {
+    drag = { x: e.clientX, y: e.clientY, v: { ...view } };
+    cv.setPointerCapture(e.pointerId);
+    /* BK: пересборка хвоста печатью рвёт захват — вернём его панели */
+    panel._recapture = () => {
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { panel._recapture = null; }
+    };
+  });
   cv.addEventListener('pointermove', (e) => {
     if (!drag) return;
     const r = cv.getBoundingClientRect();
@@ -4236,7 +4355,8 @@ function buildGeoPanel(panel, spec) {
     view.ymin = drag.v.ymin + dy; view.ymax = drag.v.ymax + dy;
     draw();
   });
-  cv.addEventListener('pointerup', () => { drag = null; });
+  cv.addEventListener('pointerup', () => { drag = null; panel._recapture = null; });
+  cv.addEventListener('pointercancel', () => { drag = null; panel._recapture = null; });
   cv.addEventListener('wheel', (e) => {
     e.preventDefault();
     panel._zoom(e.deltaY < 0 ? 1.15 : 1 / 1.15);
@@ -5277,7 +5397,26 @@ async function send(opts) {
       typerStop(ui);
       if (ui.mdEl) {
         ui.mdEl.classList.remove('typing');
-        ui.mdEl.innerHTML = MD.render(stripSteps(ui.shown || ui.buffer));
+        const full = String(ui.shown || ui.buffer || '');
+        if (ui.marksEl && ui.frozen && ui.freezeLocked) {
+          /* BK: метка стоит МЕЖДУ замороженной головой и хвостом —
+             пересборка ответа не имеет права её терять */
+          ui.mdEl.innerHTML = '';
+          const fr = el('div', 'md-frozen');
+          fr.innerHTML = ui.frozen.html;
+          const tl = el('div', 'md-tail');
+          tl.innerHTML = MD.render(stripSteps(full.slice(ui.frozen.src.length)));
+          ui.mdEl.appendChild(fr);
+          ui.mdEl.appendChild(ui.marksEl);
+          ui.mdEl.appendChild(tl);
+          ui.marksEl.style.display = '';
+        } else {
+          ui.mdEl.innerHTML = MD.render(stripSteps(full));
+          if (ui.marksEl && !ui.mdEl.contains(ui.marksEl) &&
+              ui.marksEl.parentNode !== ui.node.body) ui.mdEl.appendChild(ui.marksEl);
+          if (ui.marksEl) ui.marksEl.style.display = '';
+        }
+        fixTables(ui.mdEl);
       }
       dropStatus(ui);
       discardPlan(ui);
@@ -6602,6 +6741,23 @@ function renderTyped(ui) {
   let src = ui.frozen ? ui.frozen.src : '';
   let html = ui.frozen ? ui.frozen.html : '';
   const idx = text.lastIndexOf('\n\n');
+  /* BK: метка режима ЖДЁТ конца предложения: как только в печати
+     появилась точка после текущей границы — замораживаем ровно на ней */
+  if (ui.freezePending && !ui.freezeLocked) {
+    const k = lastSentenceEnd(text, src.length);
+    if (k > src.length) {
+      const head = text.slice(0, k);
+      const mathOk = (head.match(/\\\[/g) || []).length ===
+                     (head.match(/\\\]/g) || []).length;
+      if (!inCodeBlock(head) && mathOk) {
+        ui.frozen = { src: head, html: MD.render(stripSteps(head)) };
+        ui._frozenSrc = null;
+        ui.freezeLocked = true;
+        ui.freezePending = false;
+        if (ui.marksEl) ui.marksEl.style.display = '';
+      }
+    }
+  }
   /* BI: после уведомления о режиме граница ЗАКРЕПЛЕНА: весь текст после
      метки остаётся хвостом и печатается ПОД ней (метка на месте включения) */
   if (ui.freezeLocked) {
@@ -6692,6 +6848,11 @@ function renderTyped(ui) {
     if (savedPlots[i]) n.replaceWith(savedPlots[i]);
   });
   mountPlotPanels(tailEl);
+  /* BK: график ДЕРЖАЛИ пальцем, пока печать пересобирала хвост — панель
+     вернулась та же, но пересборка рвала pointer capture и пан СБРАСЫВАЛСЯ.
+     Возвращаем захват тому же указателю — жест живёт дальше */
+  savedPlots.forEach((p) => { if (p._recapture) p._recapture(); });
+  fixTables(ui.mdEl);
   markImportantThought(ui.mdEl);
   placeCaret(ui.mdEl);
   // Незаконченный длинный code fence живёт в ограниченном окне и следует за
@@ -7300,9 +7461,10 @@ const DOT_SHAPES = {
 };
 Object.keys(DOT_SHAPES).forEach((k) => DOT_SHAPES[k].init());
 const DOT_SHAPE_KEYS = Object.keys(DOT_SHAPES);
-const DOT_MORPH_MS = 700;      // пружинисто расширяется до фигуры
-const DOT_MORPH_OUT_MS = 650;  // упруго сжимается обратно в круг
-const DOT_HOLD_MS = 1500;      // полторы секунды в фигуре
+const DOT_MORPH_MS = 700;      // BK: круглешок ВЫРАСТАЕТ в фигуру (морф)
+const DOT_MORPH_OUT_MS = 650;  // BK: фигура ПЛАВНО СЖИМАЕТСЯ обратно в круг
+const DOT_HOLD_MS = 4200;      // BK: фигура держится долго — успеваешь рассмотреть
+const DOT_CIRCLE_R = 5.2;      // радиус круглешка в единицах viewBox (13px)
 let DOT_SVG_N = 0;
 
 /* вращение точки вокруг оси (формула Родрига) */
@@ -7324,10 +7486,21 @@ function dotFaceNormal(pts) {
   return [nx / L, ny / L, nz / L];
 }
 
-/* один кадр фигуры: t — секунды с начала показа */
+/* один кадр фигуры: t — секунды с начала показа.
+   BK: НАСТОЯЩАЯ ТРАНСФОРМАЦИЯ, а не подмена. m — фаза морфа (0 = круг,
+   1 = фигура): вершины ВЫРАСТАЮТ радиально из обода круглешка в свои
+   3D-позиции, грани наливаются стеклом, а сам круг тает — и в обратную
+   сторону при уходе. Круг и фигура — одно тело, ничего не «появляется
+   поверх» */
 function dotShapeFrame(key, t, L) {
   const sh = DOT_SHAPES[key];
   const SC = sh.d === 4 ? 8.6 : 10.4;
+  const smooth = (k) => k * k * (3 - 2 * k);
+  const mt = t * 1000;
+  let m;
+  if (mt < DOT_MORPH_MS) m = smooth(mt / DOT_MORPH_MS);
+  else if (mt < DOT_MORPH_MS + DOT_HOLD_MS) m = 1;
+  else m = 1 - smooth(Math.min(1, (mt - DOT_MORPH_MS - DOT_HOLD_MS) / DOT_MORPH_OUT_MS));
   let pts3;
   if (sh.d === 4) {
     /* ВРАЩЕНИЕ В 4D: две плоскости (XW и ZW) с разными скоростями —
@@ -7352,40 +7525,49 @@ function dotShapeFrame(key, t, L) {
     const k = 5.6 / (5.6 - p[2] * 1.1);
     return [p[0] * k * SC, p[1] * k * SC, p[2]];
   });
-  const px = (i) => P[i][0].toFixed(2) + ',' + P[i][1].toFixed(2);
+  /* МОРФ: каждая вершина едет по своему лучу из обода круга (r = R0)
+     в её проекцию. В нуле все вершины на ободе — фигура и ЕСТЬ круг */
+  const Q = P.map((p) => {
+    const r = Math.hypot(p[0], p[1]);
+    if (r < 1e-9) return [p[0] * m, p[1] * m, p[2]];
+    const rr = DOT_CIRCLE_R + (r - DOT_CIRCLE_R) * m;
+    const k = rr / r;
+    return [p[0] * k, p[1] * k, p[2]];
+  });
+  const px = (i) => Q[i][0].toFixed(2) + ',' + Q[i][1].toFixed(2);
   /* грани-стекло: художник по глубине, свет по нормали.
-     BJ: стекло стало ЗАМЕТНЕЕ (0.18+0.34·свет — раньше 0.13+0.22, на
-     светлых экранах грани казались «не прорисованными»), плюс тонкая
-     обводка той же заливкой запаивает щели-швы между соседними
-     полигонами (антиалиасные просветы сквозь фигуру) */
+     BE: стекло видимое (0.18+0.34·свет), обводка запаивает швы.
+     BK: грани НАЛИВАЮТСЯ по мере морфа (opacity × m) */
   const faces = sh.F.map((f) => {
-    const ps = f.map((i) => P[i]);
+    const ps = f.map((i) => Q[i]);
     let depth = 0;
     ps.forEach((q) => { depth += q[2]; });
     depth /= ps.length;
     const n = dotFaceNormal(ps);
     const bright = Math.abs(n[2] * .62 - n[1] * .5 + n[0] * .36);
+    const op = (0.18 + 0.34 * bright) * m;
     return {
       depth,
       html: '<polygon points="' + f.map((i) => px(i)).join(' ') +
-        '" fill="url(#gF' + L + ')" fill-opacity="' +
-        (0.18 + 0.34 * bright).toFixed(3) + '" stroke="url(#gF' + L +
-        ')" stroke-width=".4" stroke-opacity="' +
-        (0.18 + 0.34 * bright).toFixed(3) + '"/>',
+        '" fill="url(#gF' + L + ')" fill-opacity="' + op.toFixed(3) +
+        '" stroke="url(#gF' + L + ')" stroke-width=".4" stroke-opacity="' + op.toFixed(3) + '"/>',
     };
   }).sort((a, b) => a.depth - b.depth);
-  /* рёбра: передние яркие, задние приглушённые */
+  /* рёбра: передние яркие, задние приглушённые; вырастают вместе с морфом */
   let edges = '';
   sh.E.forEach((e) => {
-    const back = (P[e[0]][2] + P[e[1]][2]) / 2 < 0;
-    edges += '<line x1="' + P[e[0]][0].toFixed(2) + '" y1="' + P[e[0]][1].toFixed(2) +
-      '" x2="' + P[e[1]][0].toFixed(2) + '" y2="' + P[e[1]][1].toFixed(2) +
+    const back = (Q[e[0]][2] + Q[e[1]][2]) / 2 < 0;
+    edges += '<line x1="' + Q[e[0]][0].toFixed(2) + '" y1="' + Q[e[0]][1].toFixed(2) +
+      '" x2="' + Q[e[1]][0].toFixed(2) + '" y2="' + Q[e[1]][1].toFixed(2) +
       '" stroke="' + (back ? 'url(#gB' + L + ')"' : 'url(#gE' + L + ')"') +
-      ' stroke-width="' + (back ? '.75' : '1.05') + '" opacity="' + (back ? '.55' : '.95') + '"/>';
+      ' stroke-width="' + (back ? '.75' : '1.05') + '" opacity="' +
+      ((back ? .55 : .95) * m).toFixed(3) + '"/>';
   });
-  return faces.map((f) => f.html).join('') +
-    '<g>' + edges + '</g>' +
-    '<circle cx="' + (-SC * .18) + '" cy="' + (-SC * .3) + '" r="1.7" fill="#fff" opacity=".4"/>';
+  /* ТЕЛО КРУГЛЕШКА: тает по мере роста фигуры (и возвращается при сжатии) */
+  const core = '<circle cx="0" cy="0" r="' + (DOT_CIRCLE_R + 2.4 * m).toFixed(2) +
+    '" fill="url(#gF' + L + ')" opacity="' + ((1 - m) * .96).toFixed(3) + '"/>';
+  return core + faces.map((f) => f.html).join('') +
+    '<g>' + edges + '</g>';
 }
 
 function dotShapeSvg(core) {
@@ -7436,44 +7618,42 @@ function dotShapePlay(root) {
     const svg = dotShapeSvg(core);
     const g = svg.querySelector('.rot-g');
     g.setAttribute('class', 'rot-g');
-    /* BI: вращает САМ ДВИЖОК (JS): 3D — ось-угол, 4D — плоскости XW/ZW.
-       CSS-спины больше не нужны: перспектива и пересортировка граней
-       каждый кадр — это и есть настоящее вращение */
+    /* BK: вращает САМ ДВИЖОК (JS) и НЕ ПРЕРЫВАЕТСЯ до конца показа:
+       кадр рисуется на каждом rAF (60fps — фигура маленькая, это дёшево),
+       морф туда и обратно считается внутри dotShapeFrame по t. Прежний
+       пропуск кадров (33мс) давал рывки «одним кадром» */
     const t0 = performance.now();
-    let lastDraw = -99;
+    let finished = false;
     const rot = () => {
       core._shapeRaf = null;
       if (!svg.isConnected || !g) return;
-      const now = performance.now();
-      const t = (now - t0) / 1000;
-      if (now - lastDraw >= 33) {          // ~30 кадров/с — глазу довольно
-        g.innerHTML = dotShapeFrame(key, t, svg._gradL);
-        lastDraw = now;
-      }
+      const t = (performance.now() - t0) / 1000;
+      g.innerHTML = dotShapeFrame(key, t, svg._gradL);
       if (svg.classList.contains('sh-out')) return;   // сворачиваемся — стоп
-      core._shapeRaf = requestAnimationFrame(rot);
+      if (!finished && t * 1000 >= DOT_MORPH_MS + DOT_HOLD_MS + DOT_MORPH_OUT_MS) {
+        /* морф завершился: фигура снова СТАЛА кругом — мягко уступить
+           место настоящему круглешку (перекрёстное растворение) */
+        finished = true;
+        stopRot();
+        svg.classList.remove('sh-in');
+        svg.classList.add('sh-out');
+        core.classList.remove('shape-on');
+        setTimeout(() => {
+          if (!svg.classList) return;
+          svg.classList.remove('sh-out');
+          g.setAttribute('class', 'rot-g');
+          g.innerHTML = '';
+          schedule();
+        }, 420);
+        return;
+      }
+      if (!finished) core._shapeRaf = requestAnimationFrame(rot);
     };
     g.innerHTML = dotShapeFrame(key, 0, svg._gradL);
-    lastDraw = performance.now();
     core._shapeRaf = requestAnimationFrame(rot);
     svg.classList.remove('sh-out');
     svg.classList.add('sh-in');
     core.classList.add('shape-on');
-    setTimeout(() => {
-      if (!svg.classList) return;
-      /* доворот завершился вместе с показом — сжимаемся без рывка */
-      stopRot();
-      svg.classList.remove('sh-in');
-      svg.classList.add('sh-out');
-      core.classList.remove('shape-on');
-      setTimeout(() => {
-        if (!svg.classList) return;
-        svg.classList.remove('sh-out');
-        g.setAttribute('class', 'rot-g');
-        g.innerHTML = '';
-        schedule();
-      }, DOT_MORPH_OUT_MS);
-    }, DOT_MORPH_MS + DOT_HOLD_MS);
   };
   schedule();
 }
@@ -7589,6 +7769,7 @@ function queueResponseFinish(ui, content, success) {
       foldCodeBlocks(ui.mdEl, true);
       mountUiPanels(ui.mdEl);
       mountPlotPanels(ui.mdEl);
+      fixTables(ui.mdEl);
       if (ui.replyLive && ui.replyLive.isConnected) mountPlotPanels(ui.replyLive);
       $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click',
         () => openPreview({ name: im.alt || 'изображение', url: im.src })));
@@ -7886,10 +8067,11 @@ function handleEvent(ev, ui) {
       // ПОЧЕМУ ЭКРАН НЕ ЕХАЛ ВНИЗ ЗА ПЛАНОМ.
       // Одного scrollDown() мало: в этот момент карточка только вставлена, её
       // высота ещё не посчитана (пункты появляются с анимацией, шрифт может
-      // дорисовываться). Прокрутка происходила до того, как лента выросла, и
-      // промахивалась. Держим низ несколько кадров — тем же приёмом, что и при
-      // открытии диалога.
-      pinToBottom(stream());
+      // дорисовываться). Но и мгновенный pinToBottom не годится — это и был
+      // резкий «скачок одним кадром». ChaseBottom сам держит низ столько
+      // кадров, сколько нужно: он каждый кадр замеряет остаток и доедает его
+      // плавным ходом — карточка растёт, лента догоняет как при тихой печати.
+      chaseBottom(stream(), ui);
       // Пункты идут строго последовательно: быстрая печать и короткие 300 мс.
       // Сеть читается дальше, но события ответа лежат в gate-очереди.
       planLater(ui, () => revealPlanItems(ui, 0), 100);
