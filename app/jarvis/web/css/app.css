@@ -588,7 +588,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    ВЕСЬ ответ (мысли, инструменты, печать) живёт по-настоящему — меняет
    форму и размер, вспыхивает золотом в тон курсору, светится; в финале
    coreSettle мягко оседает в идеальный кружок. */
-.ai-core{position:absolute;left:50%;top:8px;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;
+.ai-core{position:absolute;left:50%;top:8px;width:19.5px;height:19.5px;margin:-9.75px 0 0 -9.75px;
   border-radius:50%;background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
   box-shadow:0 0 10px rgba(0,212,255,.5),0 0 26px rgba(0,212,255,.22);
   /* BD: ВТОРОЙ FPS-КОРЕНЬ «комп лагает» (эра BB): на КАЖДОМ историческом
@@ -615,13 +615,14 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    полупрозрачные грани со ВИДНЫМИ задними ребрами, свечение. Морф —
    пружинный: кружок уступает место фигуре (масштаб 2.1×), золото
    НАРАСТАЕТ И УХОДИТ ПЛАВНО (интерполяция filter, без резких скачков) */
-/* BK: ФИГУРЫ КРУПНЕЕ (40px) и МОРФ ЧЕСТНЫЙ: круглешок не исчезает —
-   его вершины вырастают в фигуру и сжимаются обратно (JS-морф в
-   dotShapeFrame). CSS здесь только растворяет svg в начале/конце:
-   кроссфейд двух одинаковых кругов, без масштабных прыжков.
-   top:14.5px — центр svg ТОЧНО в центре круглешка (8px + 6.5px) */
-.dot-shape-svg{position:absolute;left:50%;top:14.5px;width:40px;height:40px;
-  margin:-20px 0 0 -20px;opacity:0;pointer-events:none;overflow:visible;z-index:3;
+/* BL: ФИГУРЫ И КРУГЛЕШОК В ПОЛТОРА РАЗА КРУПНЕЕ (svg 60px, точка 19.5px)
+   и МОРФ ИЗ ЦЕНТРА САМОЙ ТОЧКИ: раньше svg висел на 6.5px НИЖЕ центра
+   круглешка (top отсчитывался от края минус запас — и в первый кадр
+   морфа фигура «прыгала» вниз). Центр точки = top:8px + половина её
+   высоты; svg стоит тем же центром. Кроссфейд двух одинаковых кругов,
+   без масштабных прыжков */
+.dot-shape-svg{position:absolute;left:50%;top:8px;width:60px;height:60px;
+  margin:-30px 0 0 -30px;opacity:0;pointer-events:none;overflow:visible;z-index:3;
   filter:brightness(1) drop-shadow(0 0 5px rgba(0,195,255,.5))}
 .dot-shape-svg.sh-in{animation:dotSvgIn .45s ease-out forwards}
 .dot-shape-svg.sh-out{animation:dotSvgOut .4s ease-in forwards}
@@ -1149,18 +1150,19 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    строки: черта дроби на уровне «=», переменные не тонут */
 .math-inline .mfrac{font-size:.82em;vertical-align:middle;margin:0 1px}
 .math-inline .mfrac .mfr-n,.math-inline .mfrac .mfr-d{padding:0 3px}
-.msqrt{display:inline-flex;align-items:stretch;margin:0 1px}
-/* BK: СТЕПЕНЬ КОРНЯ не залезает на знак: раньше отрицательный отступ
-   тянул SVG прямо на цифру */
-.msqrt .msq-i{font-size:.62em;align-self:flex-start;margin:0 0 0 -.1em;opacity:.85}
-/* BK: ОБЫЧНЫЙ КОРЕНЬ: диагональ до самого верха (y=0) + носик, а черта
-   над содержимым — та же линия 1.4px тем же цветом (::before),
-   состыкованная с носиком внахлёст: совпадают и положение, и толщина */
-.msqrt .msq-svg{width:.46em;flex:0 0 auto;display:block;align-self:stretch;
-  overflow:visible}
+.msqrt{display:inline-flex;align-items:stretch;margin:0 1px;
+  overflow:hidden;padding-top:1px}
+/* BL: ПУСТОЙ STRUT — базовая линия контейнера. inline-flex брал базу у
+   svg (нижний край!), и корень уезжал вверх/вниз от высоты содержимого.
+   Строка-невидимка ставит базу на уровень первой строки подкоренного */
+.msqrt .msq-b{flex:0 0 0px;width:0;padding-top:1px;overflow:hidden}
+/* BL: СТЕПЕНЬ КОРНЯ живёт слева от знака, не залезая на него */
+.msqrt .msq-i{font-size:.62em;align-self:flex-start;margin:0 .08em 0 0;opacity:.85}
+/* BL: ЗНАК ХРАНИТ ПРОПОРЦИИ при любой высоте (aspect-ratio 11:24), а
+   черта — продолжение того же штриха (H1400 clipped by .msqrt) */
+.msqrt .msq-svg{width:auto;aspect-ratio:11/24;flex:0 0 auto;display:block;
+  align-self:stretch;overflow:visible}
 .msqrt .msq-r{position:relative;padding:1px 3px 0 2px;margin-left:-1px}
-.msqrt .msq-r::before{content:'';position:absolute;top:-.7px;left:-3px;right:0;
-  height:1.4px;background:rgba(190,235,255,.85)}
 .math-block .mop,.math-inline .mop{padding:0 3px;color:#9fd8f2}
 .mfn{font-style:normal;padding:0 2px 0 4px}
 .mtext{font-style:normal}

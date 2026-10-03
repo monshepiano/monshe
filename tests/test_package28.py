@@ -3253,7 +3253,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.68", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.69", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3867,7 +3867,7 @@ class IterationAJTests(unittest.TestCase):
         self.assertNotIn("relayFlick", js)
         self.assertNotIn("relay", css)
         # круглешок живой: дышит в покое, пульсирует при печати (чистый CSS)
-        self.assertIn(".ai-core{position:absolute;left:50%;top:8px;width:13px;height:13px;", css)
+        self.assertIn(".ai-core{position:absolute;left:50%;top:8px;width:19.5px;height:19.5px;", css)
         # BD: история статична И дешёвая; дышит только текущий ответ
         self.assertNotIn("coreBreathe", css)
         self.assertIn("animation:coreLive 4.6s ease-in-out infinite}", css)
@@ -4589,8 +4589,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.68", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.68", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.69", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.69", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4724,7 +4724,7 @@ class IterationAUTests(unittest.TestCase):
     def test_au3_version_chip(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b68</span>', html)
+        self.assertIn('<span class="ver-chip">b69</span>', html)
         self.assertIn(".ver-chip{align-self:center;", css)
 
     def test_au4_flight_waits_for_scroll(self) -> None:
@@ -5128,7 +5128,7 @@ class IterationBBTests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         self.assertIn("const DOT_MORPH_MS = 700;", js)
         self.assertIn("const DOT_MORPH_OUT_MS = 650;", js)
-        self.assertIn("const DOT_HOLD_MS = 4200;", js)
+        self.assertIn("const DOT_HOLD_MS = 4000;", js)
         play = js.split("function dotShapePlay(")[1].split("\nfunction ")[0]
         self.assertIn("3500 + Math.random() * 4500", play)
         # BG: фигура ×2.1 — SVG с пружиной туда-обратно; золото НАРАСТАЕТ
@@ -5140,7 +5140,7 @@ class IterationBBTests(unittest.TestCase):
         self.assertIn("@keyframes dotSvgIn{", css)
         self.assertIn("@keyframes dotSvgOut{", css)
         # BH: холст 30px (13px душил градиенты), пик — масштаб 1
-        self.assertIn("width:40px;height:40px;", css)
+        self.assertIn("width:60px;height:60px;", css)
         self.assertIn("100%{opacity:1;transform:scale(1);", css)
         self.assertIn("45%{opacity:1;transform:scale(1);", css)
 
@@ -5194,11 +5194,11 @@ class IterationBCTests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         self.assertIn("const DOT_MORPH_MS = 700;", js)
         self.assertIn("const DOT_MORPH_OUT_MS = 650;", js)
-        self.assertIn("const DOT_HOLD_MS = 4200;", js)
+        self.assertIn("const DOT_HOLD_MS = 4000;", js)
         # BH: фигура — 30px SVG, пружина до масштаба 1 (30px ≈ 2.3 круга)
         self.assertIn(".dot-shape-svg.sh-in{animation:dotSvgIn .45s", css)
         self.assertIn("100%{opacity:1;transform:scale(1);", css)
-        self.assertIn("width:40px;height:40px;", css)
+        self.assertIn("width:60px;height:60px;", css)
         # золото в кадрах морфа — плавное (интерполяция filter)
         self.assertIn("filter:brightness(1.18) drop-shadow(0 0 8px rgba(217,164,65,.8))", css)
         self.assertIn("filter:brightness(1) drop-shadow(0 0 5px rgba(0,212,255,.55))", css)
@@ -5331,8 +5331,9 @@ class IterationBETests(unittest.TestCase):
                 self.assertIn("  %s: {" % shape, js)
         # свет и рёбра — SVG-градиенты и штрихи в JS-чертежах
         self.assertIn('<radialGradient id="gF', js)
-        self.assertIn("'url(#gE' + L", js)
-        self.assertIn("'url(#gB' + L", js)
+        self.assertIn("url(#gE' + L", js)
+        # BL: рёбра — один градиент, стиль непрерывен по глубине
+        self.assertNotIn("url(#gB' + L", js)
         # стекло: полупрозрачные грани с сортировкой по глубине
         self.assertIn("(0.18 + 0.34 * bright)", js)
         self.assertIn("function dotRotAxis(", js)
@@ -5351,7 +5352,7 @@ class IterationBETests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         # догоняющий скролл вместо мгновенных прыжков
         self.assertIn("function chaseBottom(", js)
-        self.assertIn("Math.min(24, Math.max(1.6, gap * 0.11))", js)
+        self.assertIn("Math.min(11, Math.max(1.2, gap * 0.16))", js)
         # уход вверх ЛЮБЫМ способом (скроллбар, клавиши) снимает прилипание:
         # наш догоняющий кадр scrollTop уменьшить не может
         self.assertIn("if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }", js)
@@ -5425,7 +5426,7 @@ class IterationBFTests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         # круглешок на уровне надписи JARVIS
-        self.assertIn(".ai-core{position:absolute;left:50%;top:8px;width:13px;height:13px;", css)
+        self.assertIn(".ai-core{position:absolute;left:50%;top:8px;width:19.5px;height:19.5px;", css)
         # длинный ответ: аватар прилипает к верху — круглешок всегда в кадре
         self.assertIn(".msg-ai.live .ai-avatar{position:sticky;top:8px;z-index:2}", css)
         # фигура — ОБЪЁМНОЕ ТЕЛО: свет и блик несут SVG-градиенты
@@ -5530,13 +5531,14 @@ class IterationBGTests(unittest.TestCase):
         self.assertIn('<radialGradient id="gF', js)
         self.assertIn('<linearGradient id="gE', js)
         self.assertIn('<linearGradient id="gB', js)
-        self.assertIn("'url(#gE' + L", js)
-        self.assertIn("'url(#gB' + L", js)
+        self.assertIn("url(#gE' + L", js)
+        # BL: рёбра больше не делятся на «задние/передние» одним кадром
+        self.assertNotIn("url(#gB' + L", js)
         for shape in ("tess", "penta", "cube", "octa", "tetra", "crystal"):
             self.assertIn("  %s: {" % shape, js)
         for gone in ("star", "hex", "cross", "line", "wave", "zig"):
             self.assertNotIn("  %s: {" % gone, js)
-        self.assertIn("width:40px;height:40px;", css)
+        self.assertIn("width:60px;height:60px;", css)
         self.assertIn("d: 4,", js)
         # полигональные clip-path-фигуры ушли из CSS навсегда
         self.assertNotIn("clip-path:polygon(", css)
@@ -5556,7 +5558,7 @@ class IterationBGTests(unittest.TestCase):
         self.assertIn("st.autoPend = 0;", js)
         # свёртка панели — плавный догон, без резких прыжков
         self.assertIn("function followGrowingPanel(", js)
-        self.assertIn("Math.min(24, Math.max(1.6, gap * 0.11))", js)
+        self.assertIn("Math.min(11, Math.max(1.2, gap * 0.16))", js)
 
     def test_bg6_math_latex_and_live_panels(self) -> None:
         with mock.patch.object(agent.db, "recall", return_value=[]), \
@@ -5611,7 +5613,7 @@ class IterationBHTests(unittest.TestCase):
         # BJ: РОВНЫЙ ХОД — скорость пропорциональна остатку, без разгона:
         # большая карточка догоняется постоянным ходом, у дна плавно замирает
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const v = Math.min(24, Math.max(1.6, gap * 0.11));", chase)
+        self.assertIn("const v = Math.min(11, Math.max(1.2, gap * 0.16));", chase)
         self.assertNotIn("st.v", chase)
 
     def test_bh2_mode_note_stays_mid_answer(self) -> None:
@@ -5650,7 +5652,7 @@ class IterationBHTests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # 30px холст: 13px душил градиенты и штрихи
-        self.assertIn("width:40px;height:40px;", css)
+        self.assertIn("width:60px;height:60px;", css)
         self.assertIn("filter:brightness(1) drop-shadow(0 0 5px rgba(0,195,255,.5))", css)
         # градиенты background НЕ анимируются — золото только через
         # интерполируемые фильтры; точка гаснет кроссфейдом, не мгновенно
@@ -5730,7 +5732,7 @@ class IterationBJTests(unittest.TestCase):
         # скорость пропорциональна остатку и ограничена сверху — ни разгона,
         # ни ступенек: одна кривая для печати, карточек и панелей
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const v = Math.min(24, Math.max(1.6, gap * 0.11));", chase)
+        self.assertIn("const v = Math.min(11, Math.max(1.2, gap * 0.16));", chase)
         self.assertNotIn("st.v", js)
 
     def test_bj2_mode_note_before_any_text(self) -> None:
@@ -5753,7 +5755,7 @@ class IterationBJTests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         fd = js.split("function finishLiveDot(")[1].split("\nfunction ")[0]
         # фигуры крупнее (40px), вход/ход без пружинного перелёта
-        self.assertIn("width:40px;height:40px;", css)
+        self.assertIn("width:60px;height:60px;", css)
         self.assertIn(".dot-shape-svg.sh-in{animation:dotSvgIn .45s", css)
         self.assertIn(".dot-shape-svg.sh-out{animation:dotSvgOut .4s", css)
         # грани заметнее + обводка запаивает швы между полигонами
@@ -5785,7 +5787,7 @@ class IterationBJTests(unittest.TestCase):
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # обычный корень: штрих + одна диагональ + носик, срастается с чертой
-        self.assertIn("M.8 13.9 L3.3 16 L5.9 0 H11", md)
+        self.assertIn("M.8 13.9 L3.3 16 L5.9 0 H1400", md)
         # дробь центрируется на строке (baseline числителя больше не топит её)
         self.assertIn("vertical-align:middle;margin:0 2px;line-height:1.15", css)
         self.assertIn(".math-inline .mfrac{font-size:.82em;vertical-align:middle", css)
@@ -5824,8 +5826,8 @@ class IterationBJTests(unittest.TestCase):
 
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b68</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.68", html)
+        self.assertIn('<span class="ver-chip">b69</span>', html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.69", html)
 
 
 
@@ -5860,7 +5862,7 @@ class IterationBKTests(unittest.TestCase):
         self.assertIn("DOT_CIRCLE_R + (r - DOT_CIRCLE_R) * m", frame)
         self.assertIn("(1 - m) * .96", frame)
         self.assertIn("m = 1 - smooth(", frame)
-        self.assertIn("const DOT_HOLD_MS = 4200;", js)
+        self.assertIn("const DOT_HOLD_MS = 4000;", js)
         # кадр на каждом rAF — без троттлинга, рывков «одним кадром» нет
         self.assertNotIn("lastDraw", frame)
         play = js.split("function dotShapePlay(")[1].split("\nfunction ")[0]
@@ -5879,12 +5881,15 @@ class IterationBKTests(unittest.TestCase):
     def test_bk5_radical_bar_matches_nose(self) -> None:
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        # носик до y=0 + черта той же толщины/цвета (::before), степень левее
-        self.assertIn("M.8 13.9 L3.3 16 L5.9 0 H11", md)
+        # BL: черта — продолжение того же штриха (H1400, клип .msqrt),
+        # strut держит базовую линию, знак хранит пропорции
+        self.assertIn("M.8 13.9 L3.3 16 L5.9 0 H1400", md)
         self.assertIn('stroke="rgba(190,235,255,.85)"', md)
-        self.assertIn(".msqrt .msq-r::before{", css)
-        self.assertIn("height:1.4px;background:rgba(190,235,255,.85)", css)
-        self.assertIn("margin:0 0 0 -.1em", css)
+        self.assertIn('<span class="msq-b">&nbsp;</span>', md)
+        self.assertIn("aspect-ratio:11/24", css)
+        self.assertIn(".msqrt .msq-b{", css)
+        self.assertNotIn(".msq-r::before", css)
+        self.assertIn("margin:0 .08em 0 0", css)
 
     def test_bk6_plot_interpreter_unicode_and_defs(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -5909,8 +5914,104 @@ class IterationBKTests(unittest.TestCase):
 
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b68</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.68", html)
+        self.assertIn('<span class="ver-chip">b69</span>', html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.69", html)
+
+
+class IterationBLTests(unittest.TestCase):
+    """Итерация BL (beta.69): граница уведомления сразу после знака,
+    таблица не режется, круглешок из центра и 1.5×, умный старт графиков
+    с нулём в кадре, плавный зум, 3D-жесты по кнопкам, оси до конца."""
+
+    def test_bl1_note_boundary_right_after_punct(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # граница — сразу после знака (перевод строки тоже граница),
+        # «3.14» — не граница: за знаком не должно быть буквы/цифры
+        lse = js.split("function lastSentenceEnd(")[1].split("\nfunction ")[0]
+        self.assertIn("(?![0-9A-Za-zА-Яа-яЁё])", lse)
+        self.assertNotIn("?=\\s", lse)
+        # таблица и подобные объекты не режутся — ждём закрытия
+        self.assertIn("function endsInOpenTable(", js)
+        tl = js.split("function toolLine(")[1].split("\nfunction ")[0]
+        rt = js.split("function renderTyped(")[1].split("\nfunction ")[0]
+        self.assertIn("!endsInOpenTable(head)", tl)
+        self.assertIn("!endsInOpenTable(head)", rt)
+        # метка, не дождавшаяся конца, показывается в конце ответа
+        qrf = js.split("function queueResponseFinish(")[1].split("\nfunction ")[0]
+        self.assertIn("ui.marksEl.style.display = '';", qrf)
+
+    def test_bl2_tables_and_scroll_smooth(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # колонки доехали плавно — состояние анимации переживает пересборку
+        self.assertIn("const TABLE_COL_ANIM = new Map();", js)
+        self.assertIn("v + d * 0.22", js)
+        self.assertIn("host._tblStamp = ++TABLE_HOST_STAMP;", js)
+        # потолок скролла ниже — карточки входят одним куском высоты
+        chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
+        self.assertIn("const v = Math.min(11, Math.max(1.2, gap * 0.16));", chase)
+        self.assertNotIn("Math.min(24,", js)
+
+    def test_bl3_dot_centered_and_bigger(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # морф растёт из центра точки: svg и ядро в одном центре
+        self.assertIn(
+            ".dot-shape-svg{position:absolute;left:50%;top:8px;width:60px;height:60px;",
+            css)
+        self.assertIn(
+            ".ai-core{position:absolute;left:50%;top:8px;width:19.5px;height:19.5px;",
+            css)
+        self.assertIn("const DOT_HOLD_MS = 4000;", js)
+        # рёбра стилизуются непрерывно по глубине — без градиентных щелчков
+        frame = js.split("function dotShapeFrame(")[1].split("\nfunction ")[0]
+        self.assertIn("(0.5 + 0.45 * t) * m", frame)
+        self.assertIn("(0.7 + 0.4 * t)", frame)
+        # наложение показов не рвёт предыдущий оборот
+        play = js.split("function dotShapePlay(")[1].split("\nfunction ")[0]
+        self.assertIn("if (core._shapeRaf) { schedule(); return; }", play)
+
+    def test_bl4_smart_start_and_smooth_zoom(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        p2 = js.split("function buildPlot2Panel(")[1].split("\nfunction ")[0]
+        self.assertIn("const featureXs = () => {", p2)
+        self.assertIn("const smartInit = () => {", p2)
+        # ноль всегда в кадре — ось не уезжает за край
+        self.assertIn("if (a > 0) a = 0;", p2)
+        self.assertIn("const margin = Math.min(0.5, span0 * 0.06);", p2)
+        # ± плавные: smoothstep в трёх панелях (2D, 3D, geo)
+        self.assertEqual(
+            js.count("const ease = (p) => p * p * (3 - 2 * p);"), 3)
+        self.assertIn("mkBtn('+', () => { panel._zoom(1.3); });", js)
+
+    def test_bl5_axes_full_and_3d_gestures(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # ось не обрезается пополам: цикл засечек идёт до конца окна
+        self.assertIn("const x0t = Math.ceil(x0 / sx) * sx, x1t = Math.floor(x1 / sx) * sx;",
+                      js)
+        # 3D: вращение вокруг центра данных, старт по фактическим габаритам
+        p3 = js.split("function buildPlot3Panel(")[1].split("\nfunction ")[0]
+        self.assertIn("const fitZoom = (w, h) => {", p3)
+        self.assertIn("project(x1 - mcx, y1 - mcy, c00 - mcz)", p3)
+        # жесты: колесо/пинч = зум, СКМ/два пальца = пан, ЛКМ = вращение
+        self.assertIn("mode = e.button === 1 ? 'pan' : (e.button === 0 ? 'rot' : null);", p3)
+        self.assertIn("mode = pts.size >= 2 ? 'pan' : 'rot';", p3)
+        self.assertIn("zoomBy(dist / lastDist);", p3)
+        self.assertIn("zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12);", p3)
+
+    def test_bl6_close_mirrors_open(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # закрытие инструмента в группе — анимация, обратная открытию
+        qtg = js.split("function qlRowToggle(")[1].split("\nfunction ")[0]
+        self.assertIn("det.animate(", qtg)
+        self.assertIn("duration: 440", qtg)
+        self.assertIn("duration: 380", qtg)
+        self.assertIn(
+            "then(() => { row.classList.remove('open'); det.style.overflow = ''; })", qtg)
+        # и живая группа, и история ходят через один тогглер
+        self.assertIn("qlRowToggle(row);", js.split("function flushAgentGroup(")[1]
+                      .split("\nfunction ")[0])
+        self.assertIn("() => qlRowToggle(row)", js.split("function renderAgentTraceGroups(")[1]
+                      .split("\nfunction ")[0])
 
 
 if __name__ == "__main__":

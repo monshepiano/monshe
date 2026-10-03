@@ -215,14 +215,18 @@
             root = s.slice(i + 1, close); i = close + 1;
           }
           var g = groupAt(s, i); i = g.next;
-          /* BK: ОБЫЧНЫЙ КОРЕНЬ, собранный по-честному: штрих + одна
-             диагональ, упирающаяся РОВНО в верхнюю линию (y=0), и носик,
-             который ПЕРЕТЕКАЕТ в черту над содержимым (она рисуется тем
-             же цветом и той же толщиной 1.4px, что и штрих — см. CSS
-             .msq-r::before: раньше черта была border-top и не совпадала
-             с носиком ни положением, ни толщиной) */
-          out += '<span class="msqrt">' + (root ? '<span class="msq-i">' + mesc(root) + '</span>' : '') +
-            '<svg class="msq-svg" viewBox="0 0 11 24" preserveAspectRatio="none"><path d="M.8 13.9 L3.3 16 L5.9 0 H11" fill="none" stroke="rgba(190,235,255,.85)" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+          /* BL: КОРЕНЬ ОДНОЙ ЛИНИЕЙ. Черта над содержимым — продолжение
+             ТОГО ЖЕ svg-штриха, что и носик (H1400 уходит за правый край
+             и обрезается .msqrt): одна толщина, один цвет, один рисунок —
+             нет стыка двух разных отрисовок (раньше черта была отдельным
+             ::before-блоком и отличалась от штриха толщиной/сглаживанием).
+             Пустой .msq-b держит базовую линию: подкоренное стоит на базе
+             строки при любой высоте содержимого — корень не уезжает
+             вверх/вниз. svg хранит пропорции знака (aspect-ratio), а не
+             растягивается */
+          out += '<span class="msqrt"><span class="msq-b">&nbsp;</span>' +
+            (root ? '<span class="msq-i">' + mesc(root) + '</span>' : '') +
+            '<svg class="msq-svg" viewBox="0 0 11 24" preserveAspectRatio="none"><path d="M.8 13.9 L3.3 16 L5.9 0 H1400" fill="none" stroke="rgba(190,235,255,.85)" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
             '<span class="msq-r">' + mathRender(g.text, inline) + '</span></span>';
           continue;
         }

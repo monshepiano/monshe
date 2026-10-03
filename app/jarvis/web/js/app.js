@@ -258,13 +258,14 @@ function toast(text, kind, title) {
    его сняли. Иконка режима + название + состояние, без времени.
    (Камера и микрофон уже отображаются своими карточками/областью —
    здесь только агент и компьютер.) */
-/* BK: КОНЕЦ ПРЕДЛОЖЕНИЯ — граница для метки режима. Ищем последнюю
-   точку/вопрос/восклицание, ЗА которой идёт пробел или конец текста
-   (цифры «3.14» и сокращения без пробела не считаются). Возврат —
-   индекс среза: всё до него — законченные предложения */
+/* BL: ГРАНИЦА — СРАЗУ ПОСЛЕ ЗНАКА ПРЕПИНАНИЯ. Пробел после точки больше
+   не требуется: конец абзаца (Enter) и конец текста — точно такие же
+   границы, как пробел. Единственное исключение — знак «прилип» к букве
+   или цифре: «3.14» и «т.д.» границами не считаются. Возврат — индекс
+   среза: всё до него — законченные предложения */
 function lastSentenceEnd(text, from) {
   const t = String(text || '');
-  const re = /[.!?…]+["'»)]*(?=\s|$)/g;
+  const re = /[.!?…]+["'»)]*(?![0-9A-Za-zА-Яа-яЁё])/g;
   let last = -1, m;
   while ((m = re.exec(t))) {
     if (m.index + m[0].length <= from) continue;   // уже в замороженной части
@@ -272,6 +273,19 @@ function lastSentenceEnd(text, from) {
     re.lastIndex = m.index + m[0].length;
   }
   return last;
+}
+
+/* BL: ТАБЛИЦА — ТОЖЕ «ПРЕДЛОЖЕНИЕ». Метка не имеет права разрезать
+   объект, который сейчас печатается: таблицу, блок кода, формулу.
+   Если последняя строка текста — ещё живая строка таблицы (в ней есть
+   |, и пустая строка её пока не закрыла), граница ждёт: метка встанет
+   сразу ПОСЛЕ готовой таблицы, а не посреди строк */
+function endsInOpenTable(text) {
+  const src = String(text || '');
+  const stripped = src.replace(/\n+$/, '');
+  if (src.length - stripped.length >= 2) return false;  // пустая строка закрыла таблицу
+  const line = stripped.slice(stripped.lastIndexOf('\n') + 1);
+  return line.indexOf('|') >= 0;
 }
 
 function toolLine(kind, on) {
@@ -327,21 +341,27 @@ function toolLine(kind, on) {
     const curLen = liveUi.frozen ? liveUi.frozen.src.length : 0;
     const shown = String(liveUi.shown || '');
     const k = lastSentenceEnd(shown, curLen);
+    /* BL: граница имеет право встать, только если после неё — «чистый»
+       разрез: не внутри блока кода, не внутри открытой формулы и не
+       внутри ДОПИСЫВАЕМОЙ ТАБЛИЦЫ (метка ждёт конца объекта). Иначе —
+       предложение/объект ещё не закончены, метка спрятана */
+    let canFreeze = false, head = '';
+    if (k > curLen) {
+      head = shown.slice(0, k);
+      const mathOk = (head.match(/\\\[/g) || []).length ===
+                     (head.match(/\\\]/g) || []).length;
+      canFreeze = !inCodeBlock(head) && mathOk && !endsInOpenTable(head);
+    }
     try {
-      if (k > curLen) {
-        const head = shown.slice(0, k);
-        const mathOk = (head.match(/\\\[/g) || []).length ===
-                       (head.match(/\\\]/g) || []).length;
-        if (!inCodeBlock(head) && mathOk) {
-          liveUi.frozen = { src: head, html: MD.render(stripSteps(head)) };
-          liveUi._frozenSrc = null;   // заставить renderTyped перелить границу
-          /* BI: граница ЗАМОРАЖИВАЕТСЯ НАВСЕГДА: весь будущий текст будет
-             хвостом ПОСЛЕ метки — метка не сползает вниз с новой печатью */
-          liveUi.freezeLocked = true;
-          liveUi.freezePending = false;
-        }
+      if (canFreeze) {
+        liveUi.frozen = { src: head, html: MD.render(stripSteps(head)) };
+        liveUi._frozenSrc = null;   // заставить renderTyped перелить границу
+        /* BI: граница ЗАМОРАЖИВАЕТСЯ НАВСЕГДА: весь будущий текст будет
+           хвостом ПОСЛЕ метки — метка не сползает вниз с новой печатью */
+        liveUi.freezeLocked = true;
+        liveUi.freezePending = false;
       } else {
-        /* предложение ещё не закончено — ждём точку, метку прячем */
+        /* предложение или объект ещё пишется — ждём его конца, метку прячем */
         liveUi.freezePending = true;
       }
     } catch (e) { /* не смогли заморозить — метка просто встанет после границы */ }
@@ -1613,21 +1633,21 @@ function chaseBottom(box, run) {
   if (st.chasing) return;
   st.chasing = true;
   box.classList.add('pin-instant');
-  /* BJ: РОВНЫЙ ХОД БЕЗ РЫВКОВ. Прежняя кривая «разгонялась» к доле остатка
-     (×1.22 за кадр): у большой агентской карточки скорость долетала до
-     26% остатка за один-два кадра — глаз ловил бросок. Теперь скорость
-     ПРЯМО ПРОПОРЦИОНАЛЬНА остатку и просто ограничена сверху: большое
-     окно догоняется быстрым, но постоянным ходом, у дна ход плавно
-     замирает (экспоненциальное затухание — как инерция у iOS). Ни
-     разгона, ни ступенек: одна и та же плавная кривая у печати, у
-     карточек и у панелей */
+  /* BL: ХОД КАК У ПЛАВНОГО СКРОЛЛА — БЕЗ СКОЛЬЖЕНИЙ. Агентская карточка
+     входит в ленту трансформацией (cardIn): вёрстка получает ВСЮ её
+     высоту одним кадром, остаток у дна взлетает на сотни пикселей — и
+     прежний потолок 24px/кадр превращал каждый такой рывок высоты в
+     короткое скольжение-прыжок. Теперь потолок 11px/кадр (660px/с —
+     быстрее любого принтера ответов), а доля остатка чуть круче, чтобы
+     большие окна догонялись без запаздывания. У дна ход затухает
+     экспоненциально — та же кривая у печати, карточек и панелей */
   const frame = () => {
     st.chasing = false;
     if (run && run.followOutput === false) { box.classList.remove('pin-instant'); return; }
     const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
     if (gap <= 1) { box.classList.remove('pin-instant'); return; }
     st.autoPend += 1;
-    const v = Math.min(24, Math.max(1.6, gap * 0.11));
+    const v = Math.min(11, Math.max(1.2, gap * 0.16));
     box.scrollTop = box.scrollTop + v;
     if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) {
       st.chasing = true;
@@ -2256,6 +2276,37 @@ function renderToolKitchen(node, traces) {
   });
 }
 
+/* BL: РАСКРЫТИЕ/СВЁРТКА СТРОКИ-ИНСТРУМЕНТА — одна функция для живого
+   ответа и истории. Прежде свёртка щёлкала мгновенно: класс 'open'
+   снимался ДО анимации, display:none обнулял высоту и весь кадр
+   проигрывался в пустоту. Теперь высота меряется, пока деталь ещё
+   отображается, анимация едет ВНИЗ честно, и только потом класс
+   уходит — закрытие зеркально открытию */
+function qlRowToggle(row) {
+  const det = row.querySelector('.ql-detail');
+  const willOpen = !row.classList.contains('open');
+  if (!det || !det.animate) { row.classList.toggle('open', willOpen); return; }
+  if (willOpen) {
+    row.classList.add('open');
+    const h = det.scrollHeight;
+    det.style.overflow = 'hidden';
+    det.animate(
+      [{ height: '0px', opacity: '0' }, { height: h + 'px', opacity: '1' }],
+      { duration: 440, easing: 'cubic-bezier(.22,.8,.3,1)' })
+      .finished.then(() => { det.style.overflow = ''; })
+      .catch(() => { det.style.overflow = ''; });
+  } else {
+    const h = det.scrollHeight;          // меряем ДО — иначе display:none
+    det.style.overflow = 'hidden';
+    det.animate(
+      [{ height: h + 'px', opacity: '1' }, { height: '0px', opacity: '0' }],
+      { duration: 380, easing: 'cubic-bezier(.3,.6,.3,1)' })
+      .finished.then(() => { row.classList.remove('open'); det.style.overflow = ''; })
+      .catch(() => { row.classList.remove('open'); det.style.overflow = ''; });
+  }
+  followGrowingPanel(row, 520);
+}
+
 /* Y: ПРОШЛЫЕ ИНСТРУМЕНТЫ АГЕНТСКОГО ОТВЕТА — АГЕНТСКИМ ДИЗАЙНОМ: одна
    групповая карточка на семейство, свёрнутая в строку. Дизайн истории
    повторяет дизайн ЖИВОГО ответа (meta.agent), а не текущий режим:
@@ -2283,22 +2334,7 @@ function renderAgentTraceGroups(node, traces) {
           '<span class="qs-state">✓</span>' +
         '</span>' +
         '<pre class="ql-detail">' + esc(qtDetail(t.args || {}, t.result || {})) + '</pre>';
-      row.addEventListener('click', () => {
-        const det = row.querySelector('.ql-detail');
-        const willOpen = !row.classList.contains('open');
-        row.classList.toggle('open', willOpen);
-        if (det && det.animate) {
-          const h = det.scrollHeight;
-          det.style.overflow = 'hidden';
-          const anim = det.animate(
-            willOpen
-              ? [{ height: '0px', opacity: '0' }, { height: h + 'px', opacity: '1' }]
-              : [{ height: h + 'px', opacity: '1' }, { height: '0px', opacity: '0' }],
-            { duration: willOpen ? 440 : 380,
-              easing: willOpen ? 'cubic-bezier(.22,.8,.3,1)' : 'cubic-bezier(.3,.6,.3,1)' });
-          anim.finished.then(() => { det.style.overflow = ''; }).catch(() => { det.style.overflow = ''; });
-        }
-      });
+      row.addEventListener('click', () => qlRowToggle(row));
       rows.appendChild(row);
     });
     card.inner.appendChild(rows);
@@ -3657,6 +3693,13 @@ function plotFmt(v) {
    процентах от реальных ширин контента) — масштаб не «ровный казённый»,
    а ровно такой, как просится у контента, и больше не прыгает: новые
    строки наливаются в стабильную сетку */
+/* BL: КОЛОНКИ МЕНЯЮТ ШИРИНУ ПЛАВНО — как скролл. Пропорции остаются
+   честными (от контента), но пока таблица печатается и строки растут,
+   проценты колонок ДОГОНЯЮТ новые цели мягкой экспонентой, а не
+   прыгают каждым тактом печати. Состояние переживает пересборку хвоста:
+   ключ — позиция таблицы в своём .md (подписи шапки ещё дописываются) */
+const TABLE_COL_ANIM = new Map();
+let TABLE_HOST_STAMP = 0;
 function fixTables(root) {
   $$('table', root).forEach((t) => {
     if (t.dataset.cols === '1' || !t.isConnected) return;
@@ -3666,15 +3709,50 @@ function fixTables(root) {
     if (!row.length) return;            // header-only ещё не честен в пропорциях
     const ws = ths.map((th, i) => Math.max(th.offsetWidth, row[i] ? row[i].offsetWidth : 0) + 1);
     const total = ws.reduce((a, b) => a + b, 0) || 1;
+    const pct = ws.map((w) => w / total * 100);
     const cg = el('colgroup');
-    ws.forEach((w) => {
-      const c = el('col');
-      c.style.width = (w / total * 100).toFixed(2) + '%';
-      cg.appendChild(c);
-    });
+    const cols = pct.map(() => { const c = el('col'); cg.appendChild(c); return c; });
     t.insertBefore(cg, t.firstChild);
     t.style.tableLayout = 'fixed';
     t.dataset.cols = '1';
+    const host = t.closest('.msg-ai') || t.closest('.md') || root;
+    if (!host._tblStamp) host._tblStamp = ++TABLE_HOST_STAMP;
+    const key = host._tblStamp + '#' +
+      Array.prototype.indexOf.call($$('table', t.closest('.md') || root), t) +
+      '#' + ths.length;
+    const apply = (vals) => cols.forEach((c, i) => {
+      c.style.width = (vals[i] != null ? vals[i] : pct[i]).toFixed(2) + '%';
+    });
+    const prev = TABLE_COL_ANIM.get(key);
+    if (!prev || prev.length !== pct.length ||
+        typeof requestAnimationFrame !== 'function') {
+      apply(pct);
+      TABLE_COL_ANIM.set(key, pct.slice());
+    } else {
+      /* плавный догон тем же ходом, что и лента: четверть остатка */
+      let cur = prev.slice();
+      apply(cur);
+      let raf = 0;
+      const step = () => {
+        raf = 0;
+        if (!t.isConnected) return;
+        let done = true;
+        cur = cur.map((v, i) => {
+          const d = pct[i] - v;
+          if (Math.abs(d) > 0.02) done = false;
+          return v + d * 0.22;
+        });
+        apply(cur);
+        TABLE_COL_ANIM.set(key, cur);
+        if (!done) raf = requestAnimationFrame(step);
+      };
+      raf = requestAnimationFrame(step);
+      if (t._colRaf) cancelAnimationFrame(t._colRaf);
+      t._colRaf = raf;
+    }
+    if (TABLE_COL_ANIM.size > 80) {
+      TABLE_COL_ANIM.delete(TABLE_COL_ANIM.keys().next().value);
+    }
   });
 }
 
@@ -3887,9 +3965,78 @@ function buildPlot2Panel(panel, spec) {
     }
     return false;
   };
+  /* BL: УМНЫЙ СТАРТ. Прежнее окно собиралось из диапазона спеки, а потом
+     соотношение осей ПЕРЕДРАЗМЕРИВАЛО X под высоту кривой — график
+     открывался «в странном положении». Теперь: (1) X остаётся честным —
+     диапазон спеки, расширенный так, чтобы центр координат (0) был
+     виден ВСЕГДА; без спеки — окно ищет само важные точки: корни каждой
+     кривой и пересечения пар (ближайшие к нулю), и охватывает их;
+     (2) Y подгоняется соотношением осей, но тоже обязан включать ноль —
+     прижавшись к данным, окно всё равно показывает оси */
+  const featureXs = () => {
+    const A = Math.max(-60, Math.min(X0(), -8)), B = Math.min(60, Math.max(X1(), 8));
+    const N = 200, xs = [0];
+    const val = (f, x) => {
+      let v = null;
+      try { v = f(x); } catch (e) { v = null; }
+      return (typeof v === 'number' && isFinite(v)) ? v : null;
+    };
+    const bisect = (f, a, b) => {
+      let va = val(f, a);
+      for (let k = 0; k < 22; k++) {
+        const m = (a + b) / 2, vm = val(f, m);
+        if (vm == null) break;
+        if ((va < 0) === (vm < 0)) { a = m; va = vm; } else b = m;
+      }
+      return (a + b) / 2;
+    };
+    const grid = [];
+    for (let i = 0; i <= N; i++) grid.push(A + (B - A) * i / N);
+    const cross = (f) => {
+      let pv = val(f, grid[0]);
+      for (let i = 1; i <= N; i++) {
+        const v = val(f, grid[i]);
+        if (pv != null && v != null && (pv < 0) !== (v < 0)) {
+          xs.push(bisect(f, grid[i - 1], grid[i]));
+        }
+        pv = v;
+      }
+    };
+    fns.forEach((f) => cross(f));
+    for (let i = 0; i < fns.length; i++) {
+      for (let j = i + 1; j < fns.length; j++) {
+        cross((x) => {
+          const a = val(fns[i], x), b = val(fns[j], x);
+          return a != null && b != null ? a - b : null;
+        });
+      }
+    }
+    return xs;
+  };
+  const smartInit = () => {
+    let a = X0(), b = X1();
+    if (spec.x == null) {
+      const xs = featureXs().filter((x) => Math.abs(x) <= 32).sort((p, q) => p - q);
+      let picked = null;
+      for (const r of [4, 8, 16, 32]) {
+        const w = xs.filter((x) => Math.abs(x) <= r);
+        if (w.length >= 3) { picked = w; break; }
+      }
+      if (picked) { a = picked[0]; b = picked[picked.length - 1]; }
+      else { a = -6.28; b = 6.28; }
+    }
+    if (a > 0) a = 0;                        // центр координат — всегда в кадре
+    if (b < 0) b = 0;
+    if (b - a < 2.5) { const c = (a + b) / 2; a = c - 1.25; b = c + 1.25; }
+    const padX = (b - a) * 0.08 + 0.1;
+    x0 = a - padX; x1 = b + padX;
+    y0 = y1 = null;
+  };
 
   const draw = () => {
     let { w, h } = plotHiDpi(cv, ctx);
+    /* BL: первый кадр — умное окно (важные точки + центр координат) */
+    if (!panel._smartInit) { panel._smartInit = true; smartInit(); }
     /* первый кадр: если функции нигде не определены — наводим окно */
     if (y0 === null && !fns.some((f) => {
       for (let i = 0; i <= 40; i++) {
@@ -3900,17 +4047,18 @@ function buildPlot2Panel(panel, spec) {
     if (y0 === null) { const a = autoY(); y0 = a[0]; y1 = a[1]; }
     if (aspect.r) {
       /* фиксированное соотношение: пикселей на единицу X и Y совпадают.
-         На СТАРТЕ окно X подгоняется под высоту кривой — иначе на широкой
-         области (±100) кривая сжималась в невидимую линию (»пустая
-         плоскость«). Дальше соотношение держит только форму */
-      if (!panel._aspectInit) {
-        panel._aspectInit = true;
-        const [ya, yb] = autoY();
-        const spanX = (yb - ya) * (w / h) * aspect.r;
-        const xc = (x0 + x1) / 2;
-        x0 = xc - spanX / 2; x1 = xc + spanX / 2;
-        const [na, nb] = autoY();
-        y0 = na; y1 = nb;
+         BL: X больше НЕ подгоняется под высоту кривой (это и уводило
+         окно «в странное положение»); при старте окно Y прижимается к
+         данным, но обязано включать ноль — оси видны всегда */
+      if (!panel._aspYInit) {
+        panel._aspYInit = true;
+        const span0 = (x1 - x0) * h / (w * aspect.r);
+        const [da, db] = autoY();
+        let yc = (da + db) / 2;
+        if (!isFinite(yc)) yc = 0;
+        const margin = Math.min(0.5, span0 * 0.06);
+        yc = Math.max(-span0 / 2 + margin, Math.min(span0 / 2 - margin, yc));
+        y0 = yc - span0 / 2; y1 = yc + span0 / 2;
       }
       const yc = (y0 + y1) / 2;
       const span = (x1 - x0) * h / (w * aspect.r);
@@ -3935,13 +4083,17 @@ function buildPlot2Panel(panel, spec) {
     const sy = niceStep(y1 - y0, Math.round(h / 70));
     ctx.lineWidth = 1;
     ctx.font = '10px ui-monospace,monospace';
-    const x0t = Math.ceil(x0 / sx) * sx, x1t = Math.floor(x1 / sx);
+    /* BL: ОСЬ ОБРЕЗАЛАСЬ ПОПОЛАМ. x1t считался как floor(x1/sx) БЕЗ
+       умножения на шаг — цикл засечек сравнивал ЗНАЧЕНИЕ с ИНДЕКСОМ и
+       останавливался на середине оси: правая/верхняя половина графика
+       жила без сетки и подписей. Граница — тоже значение */
+    const x0t = Math.ceil(x0 / sx) * sx, x1t = Math.floor(x1 / sx) * sx;
     for (let t = x0t; t <= x1t + 1e-9; t += sx) {
       const px = X(t);
       ctx.strokeStyle = Math.abs(t) < sx / 1e6 ? 'rgba(150,215,245,.5)' : 'rgba(120,200,235,.11)';
       ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
     }
-    const y0t = Math.ceil(y0 / sy) * sy, y1t = Math.floor(y1 / sy);
+    const y0t = Math.ceil(y0 / sy) * sy, y1t = Math.floor(y1 / sy) * sy;
     for (let t = y0t; t <= y1t + 1e-9; t += sy) {
       const py = Y(t);
       ctx.strokeStyle = Math.abs(t) < sy / 1e6 ? 'rgba(150,215,245,.5)' : 'rgba(120,200,235,.11)';
@@ -4017,13 +4169,38 @@ function buildPlot2Panel(panel, spec) {
       read.textContent = 'тащи — двигать · колесо — масштаб';
     }
   };
-  panel._zoom = (k) => {
+  /* BL: КНОПКИ ± МАСШТАБИРУЮТ ПЛАВНО — окно едет к цели мягкой кривой
+     (260мс, ease-out), а не прыгает на 1.3× одним кадром. Повторные
+     клики перенацеливаются от текущего положения — масштаб «течёт» */
+  panel._zoom = (k, instant) => {
+    if (panel._zRaf) { cancelAnimationFrame(panel._zRaf); panel._zRaf = 0; }
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-    x0 = cx - (cx - x0) / k; x1 = cx + (x1 - cx) / k;
-    y0 = cy - (cy - y0) / k; y1 = cy + (y1 - cy) / k;
+    const tx0 = cx - (cx - x0) / k, tx1 = cx + (x1 - cx) / k;
+    const ty0 = cy - (cy - y0) / k, ty1 = cy + (y1 - cy) / k;
+    if (instant) {
+      x0 = tx0; x1 = tx1; y0 = ty0; y1 = ty1;
+      draw();
+      return;
+    }
+    const fx0 = x0, fx1 = x1, fy0 = y0, fy1 = y1;
+    const t0 = performance.now(), dur = 260;
+    const ease = (p) => p * p * (3 - 2 * p);   // smoothstep: без резкого старта
+    const step = (now) => {
+      const p = ease(Math.min(1, (now - t0) / dur));
+      x0 = fx0 + (tx0 - fx0) * p; x1 = fx1 + (tx1 - fx1) * p;
+      y0 = fy0 + (ty0 - fy0) * p; y1 = fy1 + (ty1 - fy1) * p;
+      draw();
+      if (now - t0 < dur) panel._zRaf = requestAnimationFrame(step);
+      else panel._zRaf = 0;
+    };
+    panel._zRaf = requestAnimationFrame(step);
+  };
+  panel._reset = () => {
+    x0 = X0(); x1 = X1(); y0 = y1 = null;
+    aspect = ASPECTS[0]; syncAspect();
+    panel._smartInit = false; panel._aspYInit = false;
     draw();
   };
-  panel._reset = () => { x0 = X0(); x1 = X1(); y0 = y1 = null; aspect = ASPECTS[0]; syncAspect(); draw(); };
   /* кнопка соотношения осей + выезжающие параметры */
   const aspBtn = el('button', '', '1:1');
   aspBtn.title = 'Соотношение осей';
@@ -4159,8 +4336,44 @@ function buildPlot3Panel(panel, spec) {
       throw new Error('поверхность пуста: не удалось нацелиться на область определения');
     }
   }
+  /* BL: ВРАЩЕНИЕ ВОКРУГ ЦЕНТРА ДАННЫХ. Прежде тело крутилось вокруг
+     нуля мировых координат: стоило диапазону быть [5, 15] — и вся
+     поверхность летала орбитой вокруг пустого центра. Центрируем сами
+     данные, а стартовый масштаб подгоняем под фактический размер
+     проекции: поверхность сразу в кадре и по центру */
+  const mcx = (xr[0] + xr[1]) / 2, mcy = (yr[0] + yr[1]) / 2;
+  const mcz = (sampled.zmin + sampled.zmax) / 2;
+  let fitted = false;
+  const fitZoom = (w, h) => {
+    const ca = Math.cos(alpha), sa = Math.sin(alpha);
+    const cb = Math.cos(beta), sb = Math.sin(beta);
+    let xa = Infinity, xb = -Infinity, ya = Infinity, yb = -Infinity;
+    const step = Math.max(1, Math.floor(N / 10));
+    for (let i = 0; i <= N; i += step) {
+      for (let j = 0; j <= N; j += step) {
+        const z = sampled.grid[i][j];
+        if (!isFinite(z)) continue;
+        const x = xr[0] + (xr[1] - xr[0]) * i / N - mcx;
+        const y = yr[0] + (yr[1] - yr[0]) * j / N - mcy;
+        const X = x * ca - y * sa;
+        const Y0 = x * sa + y * ca;
+        const Y = Y0 * sb - (z - mcz) * cb;
+        xa = Math.min(xa, X); xb = Math.max(xb, X);
+        ya = Math.min(ya, Y); yb = Math.max(yb, Y);
+      }
+    }
+    if (!isFinite(xa) || !isFinite(ya)) return;
+    const S = Math.min(w, h) / 3.4;
+    const bw = Math.max(1e-6, xb - xa), bh = Math.max(1e-6, yb - ya);
+    zoom = Math.max(0.05, Math.min(60, Math.min(w * 0.8 / (bw * S), h * 0.8 / (bh * S))));
+    /* асимметричную поверхность ставим ровно в центр кадра — компенсируем
+       смещение её собственного bbox (проекция несимметрична) */
+    panX = -((xa + xb) / 2) * S * zoom;
+    panY = -((ya + yb) / 2) * S * zoom;
+  };
   const draw = () => {
     const { w, h } = plotHiDpi(cv, ctx);
+    if (!fitted) { fitted = true; fitZoom(w, h); }
     ctx.clearRect(0, 0, w, h);
     const cx = w / 2 + panX, cy = h / 2 + 14 + panY;
     const ca = Math.cos(alpha), sa = Math.sin(alpha);
@@ -4185,8 +4398,8 @@ function buildPlot3Panel(panel, spec) {
         if (!isFinite(c00) || !isFinite(c10) || !isFinite(c11) || !isFinite(c01)) continue;
         const x1 = xr[0] + (xr[1] - xr[0]) * i / N, x2 = xr[0] + (xr[1] - xr[0]) * (i + 1) / N;
         const y1 = yr[0] + (yr[1] - yr[0]) * j / N, y2 = yr[0] + (yr[1] - yr[0]) * (j + 1) / N;
-        const c = [project(x1, y1, c00), project(x2, y1, c10),
-          project(x2, y2, c11), project(x1, y2, c01)];
+        const c = [project(x1 - mcx, y1 - mcy, c00 - mcz), project(x2 - mcx, y1 - mcy, c10 - mcz),
+          project(x2 - mcx, y2 - mcy, c11 - mcz), project(x1 - mcx, y2 - mcy, c01 - mcz)];
         const zm = (c00 + c10 + c11 + c01) / 4;
         quads.push({ c, zm });
       }
@@ -4205,13 +4418,38 @@ function buildPlot3Panel(panel, spec) {
       ctx.lineWidth = .5;
       ctx.stroke();
     }
-    read.textContent = 'вращай — мышью · сдвиг — колесом или двумя пальцами · ± — масштаб';
+    read.textContent = 'вращай — левой кнопкой · сдвиг — средней или двумя пальцами · масштаб — колесом или ±';
   };
-  panel._zoom = (k) => { zoom *= k; draw(); };
-  panel._reset = () => { alpha = -0.65; beta = 0.6; zoom = 1; panX = panY = 0; draw(); };
-  /* мультитач: один указатель — вращение, два — панорамирование */
+  /* BL: ± МАСШТАБИРУЮТ ПЛАВНО (как в 2D) — мягкая кривая 260мс */
+  panel._zoom = (k, instant) => {
+    if (panel._zRaf) { cancelAnimationFrame(panel._zRaf); panel._zRaf = 0; }
+    const from = zoom, to = Math.max(0.05, Math.min(60, zoom * k));
+    if (instant) { zoom = to; draw(); return; }
+    const t0 = performance.now(), dur = 260;
+    const ease = (p) => p * p * (3 - 2 * p);   // smoothstep: без резкого старта
+    const step = (now) => {
+      const p = ease(Math.min(1, (now - t0) / dur));
+      zoom = from + (to - from) * p;
+      draw();
+      if (now - t0 < dur) panel._zRaf = requestAnimationFrame(step);
+      else panel._zRaf = 0;
+    };
+    panel._zRaf = requestAnimationFrame(step);
+  };
+  panel._reset = () => {
+    alpha = -0.65; beta = 0.6; panX = panY = 0; fitted = false; draw();
+  };
+  /* BL: ЖЕСТЫ КАК В 3D-РЕДАКТОРАХ — и каждое действие на своём месте:
+     ЛЕВАЯ кнопка (или один палец) — ВРАЩЕНИЕ, СРЕДНЯЯ кнопка или два
+     пальца — ПАНорамирование, колесо / щипок — МАСШТАБ. Прежде колесо
+     панило, и вращение терялось среди жестов */
   const pts = new Map();
-  let lastMid = null;
+  let lastMid = null, lastDist = 0;
+  let mode = null;            // 'rot' | 'pan' | null
+  const zoomBy = (k) => {
+    zoom = Math.max(0.05, Math.min(60, zoom * k));
+    draw();
+  };
   cv.addEventListener('pointerdown', (e) => {
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     cv.setPointerCapture(e.pointerId);
@@ -4219,44 +4457,57 @@ function buildPlot3Panel(panel, spec) {
     panel._recapture = () => {
       try { cv.setPointerCapture(e.pointerId); } catch (err) { panel._recapture = null; }
     };
+    if (e.pointerType === 'touch') {
+      mode = pts.size >= 2 ? 'pan' : 'rot';
+    } else {
+      mode = e.button === 1 ? 'pan' : (e.button === 0 ? 'rot' : null);
+    }
+    if (e.button === 1) e.preventDefault();     // без автоскролла средней кнопкой
     if (pts.size === 2) {
       const arr = Array.from(pts.values());
       lastMid = { x: (arr[0].x + arr[1].x) / 2, y: (arr[0].y + arr[1].y) / 2 };
+      lastDist = Math.hypot(arr[0].x - arr[1].x, arr[0].y - arr[1].y) || 1;
     }
   });
   cv.addEventListener('pointermove', (e) => {
     if (!pts.has(e.pointerId)) return;
+    const prev = pts.get(e.pointerId);
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pts.size >= 2 && lastMid) {
+    if (pts.size >= 2) {
+      /* два пальца: середина едет — ПАН, расстояние меняется — МАСШТАБ */
       const arr = Array.from(pts.values());
       const mid = { x: (arr[0].x + arr[1].x) / 2, y: (arr[0].y + arr[1].y) / 2 };
-      panX += mid.x - lastMid.x;
-      panY += mid.y - lastMid.y;
-      lastMid = mid;
+      const dist = Math.hypot(arr[0].x - arr[1].x, arr[0].y - arr[1].y) || 1;
+      if (lastMid) { panX += mid.x - lastMid.x; panY += mid.y - lastMid.y; }
+      if (lastDist && Math.abs(dist - lastDist) > 0.5) zoomBy(dist / lastDist);
+      lastMid = mid; lastDist = dist;
       draw();
       return;
     }
-    if (pts.size !== 1) return;
-    const p = pts.get(e.pointerId);
-    const dx = e.clientX - p.x, dy = e.clientY - p.y;
-    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    alpha -= dx * 0.011;
-    beta = Math.max(-1.35, Math.min(1.35, beta + dy * 0.011));
+    if (mode !== 'rot' && mode !== 'pan') return;
+    const dx = e.clientX - prev.x, dy = e.clientY - prev.y;
+    if (mode === 'pan') {
+      panX += dx;
+      panY += dy;
+    } else {
+      alpha -= dx * 0.011;
+      beta = Math.max(-1.35, Math.min(1.35, beta + dy * 0.011));
+    }
     draw();
   });
   const lift = (e) => {
     pts.delete(e.pointerId);
-    if (pts.size < 2) lastMid = null;
-    if (!pts.size) panel._recapture = null;
+    if (pts.size < 2) { lastMid = null; lastDist = 0; }
+    if (pts.size === 1) mode = 'rot';
+    if (!pts.size) { panel._recapture = null; mode = null; }
   };
   cv.addEventListener('pointerup', lift);
   cv.addEventListener('pointercancel', lift);
-  /* колесо — ПАН (масштаб остаётся на кнопках ±): так удобнее на тачпаде */
+  /* колесо — МАСШТАБ (пан — средней кнопкой или двумя пальцами) */
   cv.addEventListener('wheel', (e) => {
     e.preventDefault();
-    panX -= e.deltaX;
-    panY -= e.deltaY;
-    draw();
+    if (panel._zRaf) { cancelAnimationFrame(panel._zRaf); panel._zRaf = 0; }
+    zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12);
   }, { passive: false });
   draw();
 }
@@ -4330,11 +4581,29 @@ function buildGeoPanel(panel, spec) {
     }
     read.textContent = 'перетаскивай · колесо — масштаб';
   };
-  panel._zoom = (k) => {
+  /* BL: ± МАСШТАБИРУЮТ ПЛАВНО — как в 2D/3D (колесо — по-прежнему сразу) */
+  panel._zoom = (k, instant) => {
+    if (panel._zRaf) { cancelAnimationFrame(panel._zRaf); panel._zRaf = 0; }
     const cx = (view.xmin + view.xmax) / 2, cy = (view.ymin + view.ymax) / 2;
-    view.xmin = cx - (cx - view.xmin) / k; view.xmax = cx + (view.xmax - cx) / k;
-    view.ymin = cy - (cy - view.ymin) / k; view.ymax = cy + (view.ymax - cy) / k;
-    draw();
+    const txmin = cx - (cx - view.xmin) / k, txmax = cx + (view.xmax - cx) / k;
+    const tymin = cy - (cy - view.ymin) / k, tymax = cy + (view.ymax - cy) / k;
+    if (instant) {
+      view.xmin = txmin; view.xmax = txmax; view.ymin = tymin; view.ymax = tymax;
+      draw();
+      return;
+    }
+    const f = { ...view };
+    const t0 = performance.now(), dur = 260;
+    const ease = (p) => p * p * (3 - 2 * p);   // smoothstep: без резкого старта
+    const step = (now) => {
+      const p = ease(Math.min(1, (now - t0) / dur));
+      view.xmin = f.xmin + (txmin - f.xmin) * p; view.xmax = f.xmax + (txmax - f.xmax) * p;
+      view.ymin = f.ymin + (tymin - f.ymin) * p; view.ymax = f.ymax + (tymax - f.ymax) * p;
+      draw();
+      if (now - t0 < dur) panel._zRaf = requestAnimationFrame(step);
+      else panel._zRaf = 0;
+    };
+    panel._zRaf = requestAnimationFrame(step);
   };
   panel._reset = () => { view.xmin = xmin - 1; view.xmax = xmax + 1; view.ymin = ymin - 1; view.ymax = ymax + 1; draw(); };
   let drag = null;
@@ -4359,7 +4628,7 @@ function buildGeoPanel(panel, spec) {
   cv.addEventListener('pointercancel', () => { drag = null; panel._recapture = null; });
   cv.addEventListener('wheel', (e) => {
     e.preventDefault();
-    panel._zoom(e.deltaY < 0 ? 1.15 : 1 / 1.15);
+    panel._zoom(e.deltaY < 0 ? 1.15 : 1 / 1.15, true);
   }, { passive: false });
   draw();
 }
@@ -6413,34 +6682,7 @@ function flushAgentGroup(ui) {
       // пользователь разбирает группу — авто-сворачивание отменяется,
       // группа не «проглатывает» раскрытый инструмент через секунду
       cancelFoldSoon(card);
-      // РАСКРЫТИЕ С АНИМАЦИЕЙ — той же, что у обычных инструментов кухни:
-      // деталь вырастает по высоте от нуля, а не щёлкает мгновенно
-      const det = row.querySelector('.ql-detail');
-      const willOpen = !row.classList.contains('open');
-      let h = 0;
-      if (det) {
-        if (willOpen) {
-          row.classList.add('open');
-          h = det.scrollHeight;
-        } else {
-          h = det.scrollHeight;
-          row.classList.remove('open');
-        }
-      } else {
-        row.classList.toggle('open');
-      }
-      if (det && h > 0) {
-        det.style.overflow = 'hidden';
-        const anim = det.animate(
-          willOpen
-            ? [{ height: '0px', opacity: '0' }, { height: h + 'px', opacity: '1' }]
-            : [{ height: h + 'px', opacity: '1' }, { height: '0px', opacity: '0' }],
-          { duration: willOpen ? 440 : 380,
-            easing: willOpen ? 'cubic-bezier(.22,.8,.3,1)' : 'cubic-bezier(.3,.6,.3,1)' });
-        anim.finished.then(() => { det.style.overflow = ''; }).catch(() => {
-          det.style.overflow = '';
-        });
-      }
+      qlRowToggle(row);
     });
     rows.appendChild(row);
   });
@@ -6749,7 +6991,8 @@ function renderTyped(ui) {
       const head = text.slice(0, k);
       const mathOk = (head.match(/\\\[/g) || []).length ===
                      (head.match(/\\\]/g) || []).length;
-      if (!inCodeBlock(head) && mathOk) {
+      /* BL: таблица ещё пишется — граница ждёт её конца (см. toolLine) */
+      if (!inCodeBlock(head) && mathOk && !endsInOpenTable(head)) {
         ui.frozen = { src: head, html: MD.render(stripSteps(head)) };
         ui._frozenSrc = null;
         ui.freezeLocked = true;
@@ -7463,8 +7706,8 @@ Object.keys(DOT_SHAPES).forEach((k) => DOT_SHAPES[k].init());
 const DOT_SHAPE_KEYS = Object.keys(DOT_SHAPES);
 const DOT_MORPH_MS = 700;      // BK: круглешок ВЫРАСТАЕТ в фигуру (морф)
 const DOT_MORPH_OUT_MS = 650;  // BK: фигура ПЛАВНО СЖИМАЕТСЯ обратно в круг
-const DOT_HOLD_MS = 4200;      // BK: фигура держится долго — успеваешь рассмотреть
-const DOT_CIRCLE_R = 5.2;      // радиус круглешка в единицах viewBox (13px)
+const DOT_HOLD_MS = 4000;      // BL: фигура держится ровно 4 секунды
+const DOT_CIRCLE_R = 5.2;      // радиус круглешка в единицах viewBox (19.5px при svg 60px)
 let DOT_SVG_N = 0;
 
 /* вращение точки вокруг оси (формула Родрига) */
@@ -7553,15 +7796,21 @@ function dotShapeFrame(key, t, L) {
         '" stroke="url(#gF' + L + ')" stroke-width=".4" stroke-opacity="' + op.toFixed(3) + '"/>',
     };
   }).sort((a, b) => a.depth - b.depth);
-  /* рёбра: передние яркие, задние приглушённые; вырастают вместе с морфом */
+  /* BL: РЁБРА БЕЗ ОДНОКАДРОВЫХ ЩЕЛЧКОВ. Раньше каждое ребро в момент,
+     когда его глубина пересекала ноль, одним кадром переключалось
+     «заднее ↔ переднее»: другой градиент, другая толщина и прозрачность
+     — глаз ловил щелчок по граням. Теперь стиль ребра — НЕПРЕРЫВНАЯ
+     функция глубины: толщина и прозрачность плавно перетекают из
+     приглушённых задних в яркие передние, один градиент на все рёбра */
   let edges = '';
   sh.E.forEach((e) => {
-    const back = (Q[e[0]][2] + Q[e[1]][2]) / 2 < 0;
+    const d = (Q[e[0]][2] + Q[e[1]][2]) / 2;
+    const t = Math.max(0, Math.min(1, (d + 1.3) / 2.6));
     edges += '<line x1="' + Q[e[0]][0].toFixed(2) + '" y1="' + Q[e[0]][1].toFixed(2) +
       '" x2="' + Q[e[1]][0].toFixed(2) + '" y2="' + Q[e[1]][1].toFixed(2) +
-      '" stroke="' + (back ? 'url(#gB' + L + ')"' : 'url(#gE' + L + ')"') +
-      ' stroke-width="' + (back ? '.75' : '1.05') + '" opacity="' +
-      ((back ? .55 : .95) * m).toFixed(3) + '"/>';
+      '" stroke="url(#gE' + L + ')"' +
+      ' stroke-width="' + (0.7 + 0.4 * t).toFixed(2) + '" opacity="' +
+      ((0.5 + 0.45 * t) * m).toFixed(3) + '"/>';
   });
   /* ТЕЛО КРУГЛЕШКА: тает по мере роста фигуры (и возвращается при сжатии) */
   const core = '<circle cx="0" cy="0" r="' + (DOT_CIRCLE_R + 2.4 * m).toFixed(2) +
@@ -7614,6 +7863,9 @@ function dotShapePlay(root) {
   const play = () => {
     if (!core.isConnected || !root.classList.contains('live') ||
         core.classList.contains('dot-settle')) { return; }
+    /* BL: не начинаем второй показ поверх живого: перезапуск сбрасывал
+       фазу морфа одним кадром посреди вращения */
+    if (core._shapeRaf) { schedule(); return; }
     const key = DOT_SHAPE_KEYS[Math.floor(Math.random() * DOT_SHAPE_KEYS.length)];
     const svg = dotShapeSvg(core);
     const g = svg.querySelector('.rot-g');
@@ -7770,6 +8022,14 @@ function queueResponseFinish(ui, content, success) {
       mountUiPanels(ui.mdEl);
       mountPlotPanels(ui.mdEl);
       fixTables(ui.mdEl);
+      /* BL: метка, так и не дождавшаяся «своего» конца предложения
+         (ответ кончился таблицей или без точки), всё равно показывается —
+         в самом конце, после всего объекта, который она ждала */
+      if (ui.marksEl && ui.freezePending && !ui.freezeLocked) {
+        if (ui.marksEl.parentNode !== ui.node.body) ui.mdEl.appendChild(ui.marksEl);
+        ui.marksEl.style.display = '';
+        ui.freezePending = false;
+      }
       if (ui.replyLive && ui.replyLive.isConnected) mountPlotPanels(ui.replyLive);
       $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click',
         () => openPreview({ name: im.alt || 'изображение', url: im.src })));
