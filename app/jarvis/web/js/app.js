@@ -958,6 +958,7 @@ async function syncChatTail() {
     typeAutoReply(node, m.content, (ui) => {
       foldCodeBlocks(node.body);
       mountUiPanels(node.body);
+      mountPlotPanels(node.body);
       (meta.files || []).forEach((f) => attachFileChip(node.body, f));
       addMsgActions(node, m.content);
       scrollDown(false, ui);
@@ -1182,6 +1183,7 @@ function renderMessageInto(host, m, activePanel) {
     // AD: панели прошлого законсервированы; кликабельна только панель
     // ПОСЛЕДНЕГО ответа — старый интерактивчик больше не принимает ответы
     mountUiPanels(node.body, { inert: !activePanel });
+    mountPlotPanels(node.body);
     (meta.files || []).forEach((f) => attachFileChip(node.body, f));
     addMsgActions(node, m.content);
   }
@@ -1280,7 +1282,11 @@ function appendFreshMessages(msgs) {
   });
   const lastAi = fresh[fresh.length - 1];
   if (lastAi && lastAi.role === 'assistant') {
-    showReplies(((lastAi.meta || {}).replies) || []);
+    const cachedReplies = ((lastAi.meta || {}).replies) || [];
+    showReplies(cachedReplies);
+    /* BG: у последнего ответа нет сохранённых подсказок (nano не успела
+       или сбой) — посчитаем фоном, чтобы чипы были после каждого ответа */
+    if (!cachedReplies.length && !S.streaming) fetchReplies();
   }
   pinToBottom(host);
 }
@@ -1480,11 +1486,16 @@ function watchRunFollow(ui) {
     // это человек (клавиши, скроллбар, инерция) — прилипание снимаем
     if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }
     st.lastTop = top;
-    if (st.autoPend > 0) { st.autoPend -= 1; return; }
     const run = active();
-    if (!run) return;
-    // вернулся до упора вниз — прилипание снова включается
-    if (h - top - box.clientHeight < 24) run.followOutput = true;
+    /* BG: ПРИЛИПАНИЕ У ДНА — ПРОВЕРЯЕМ ПЕРВЫМ: раньше кадр собственного
+       догона (autoPend) съедал событие «читатель доехал до низа», и
+       прилипание не включалось. Доехал до низа — включаем всегда */
+    if (run && h - top - box.clientHeight < 48) {
+      run.followOutput = true;
+      st.autoPend = 0;
+      return;
+    }
+    if (st.autoPend > 0) { st.autoPend -= 1; return; }
   }, { passive: true });
 }
 
@@ -1546,6 +1557,8 @@ function followGrowingPanel(node, duration, owner) {
   const box = node.closest('.cam-chat') || stream();
   const run = owner || (S.followUi && runScrollBox(S.followUi) === box ? S.followUi : null);
   if (!run && (!box || box.scrollHeight - box.scrollTop - box.clientHeight >= 220)) return;
+  const st = (box.__jarvisScroll = box.__jarvisScroll ||
+    { lastTop: box.scrollTop, lastH: box.scrollHeight, autoPend: 0, chasing: false });
   let cancelled = false;
   const cancel = () => { if (run) run.followOutput = false; else cancelled = true; cleanup(); };
   const cleanup = () => {
@@ -1555,14 +1568,21 @@ function followGrowingPanel(node, duration, owner) {
   box.addEventListener('wheel', cancel, { passive: true });
   box.addEventListener('touchstart', cancel, { passive: true });
   const until = performance.now() + (duration || 900);
+  box.classList.add('pin-instant');
   const frame = (now) => {
     if (cancelled || (run && run.followOutput === false) || !node.isConnected || now >= until) {
-      cleanup(); return;
+      box.classList.remove('pin-instant'); cleanup(); return;
     }
-    box.scrollTop = box.scrollHeight;
+    /* BG: панели растут — идём за ними ПЛАВНЫМ ДОГОНОМ (четверть остатка),
+       а не резким прыжком в полосу */
+    const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
+    if (gap > 1) {
+      st.autoPend += 1;
+      box.scrollTop = box.scrollTop + Math.max(3, Math.ceil(gap * 0.26));
+    }
     requestAnimationFrame(frame);
   };
-  if (!run || run.followOutput !== false) box.scrollTop = box.scrollHeight;
+  if (!run || run.followOutput !== false) chaseBottom(box, run);
   requestAnimationFrame(frame);
 }
 /* Приветствие с подсказками убирает ТОЛЬКО действие самого пользователя:
@@ -3364,6 +3384,436 @@ function stripMirroredChoiceList(box, items) {
   }
 }
 
+/* ================== BG: ВСТРОЕННЫЙ МАТЕМАТИЧЕСКИЙ РЕЖИМ ==================
+   Живые графики и чертежи прямо в диалоге: ```plot (функции 2D и
+   поверхности 3D) и ```geo (геометрия). Панель панорамируется
+   перетаскиванием, масштабируется колесом и кнопками, 3D вращается.
+   Выражения парсятся локально (без eval): + - * / ^, скобки, sin cos
+   tan asin acos atan sqrt abs exp log ln, pi, e, переменные x и y. */
+
+/* Безопасный разбор математического выражения -> RPN -> функция */
+function mathParseExpr(src) {
+  const FUN = { sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin,
+    acos: Math.acos, atan: Math.atan, sqrt: Math.sqrt, abs: Math.abs,
+    exp: Math.exp, log: Math.log10, ln: Math.log, sinh: Math.sinh,
+    cosh: Math.cosh, tanh: Math.tanh, floor: Math.floor, round: Math.round,
+    sign: Math.sign };
+  const text = String(src || '').replace(/\s+/g, '').replace(/,(?=\d{3}\b)/g, '');
+  const toks = [];
+  const re = /\d+\.?\d*(?:e[+-]?\d+)?|[a-zA-Z]+|[()+\-*/^,]/g;
+  let m;
+  while ((m = re.exec(text))) toks.push(m[0]);
+  const out = [], ops = [];
+  const prec = (o) => (o === '+' || o === '-') ? 1 : (o === '*' || o === '/') ? 2 :
+    (o === 'u-') ? 2.2 : (o === '^') ? 3 : 0;
+  const right = (o) => o === '^';
+  let prev = null;
+  for (const tk of toks) {
+    if (/^\d/.test(tk)) { out.push(parseFloat(tk)); prev = 'n'; continue; }
+    if (/^[a-zA-Z]+$/.test(tk)) {
+      const low = tk.toLowerCase();
+      if (low === 'pi') { out.push(Math.PI); prev = 'n'; continue; }
+      if (low === 'e') { out.push(Math.E); prev = 'n'; continue; }
+      if (FUN[low]) { ops.push(low + '('); prev = 'f'; continue; }
+      if (tk === 'x' || tk === 'y') { out.push(tk); prev = 'n'; continue; }
+      throw new Error('неизвестное имя: ' + tk);
+    }
+    if (tk === '(') { if (prev === 'n') ops.push('*'); ops.push('('); prev = '('; continue; }
+    if (tk === ')') {
+      while (ops.length && ops[ops.length - 1] !== '(') out.push(ops.pop());
+      if (!ops.length) throw new Error('скобки');
+      ops.pop();
+      if (ops.length && FUN[ops[ops.length - 1].slice(0, -1)]) out.push(ops.pop());
+      prev = 'n'; continue;
+    }
+    if (tk === ',') {
+      while (ops.length && ops[ops.length - 1] !== '(') out.push(ops.pop());
+      prev = ','; continue;
+    }
+    if ('+-*/^'.includes(tk)) {
+      if (tk === '-' && (prev === null || prev === 'o' || prev === '(' || prev === ',')) {
+        ops.push('u-'); prev = 'n'; continue;
+      }
+      while (ops.length) {
+        const top = ops[ops.length - 1];
+        if (top === '(' || !prec(top)) break;
+        if (prec(top) > prec(tk) || (prec(top) === prec(tk) && !right(tk))) out.push(ops.pop());
+        else break;
+      }
+      ops.push(tk); prev = 'o'; continue;
+    }
+    throw new Error('символ: ' + tk);
+  }
+  while (ops.length) {
+    const o = ops.pop();
+    if (o === '(') throw new Error('скобки');
+    out.push(o);
+  }
+  return out;
+}
+
+function mathCompile(src) {
+  const rpn = mathParseExpr(src);
+  return function (x, y) {
+    const st = [];
+    for (const tk of rpn) {
+      if (typeof tk === 'number') { st.push(tk); continue; }
+      if (tk === 'x') { st.push(x); continue; }
+      if (tk === 'y') { st.push(y); continue; }
+      if (tk === 'u-') { st.push(-st.pop()); continue; }
+      if (typeof tk === 'string' && '+-*/^'.includes(tk) && tk.length === 1) {
+        const b = st.pop(), a = st.pop();
+        st.push(tk === '+' ? a + b : tk === '-' ? a - b : tk === '*' ? a * b :
+          tk === '/' ? a / b : Math.pow(a, b));
+        continue;
+      }
+      const arg = st.pop();
+      const fn = { sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin,
+        acos: Math.acos, atan: Math.atan, sqrt: Math.sqrt, abs: Math.abs,
+        exp: Math.exp, log: Math.log10, ln: Math.log, sinh: Math.sinh,
+        cosh: Math.cosh, tanh: Math.tanh, floor: Math.floor, round: Math.round,
+        sign: Math.sign }[tk.slice(0, -1)];
+      if (!fn) throw new Error('оператор: ' + tk);
+      st.push(fn(arg));
+    }
+    const v = st.pop();
+    if (st.length || typeof v !== 'number' || !isFinite(v)) return NaN;
+    return v;
+  };
+}
+
+function plotFmt(v) {
+  if (Math.abs(v) >= 1000 || (Math.abs(v) < 0.01 && v !== 0)) return v.toExponential(1);
+  return String(Math.round(v * 100) / 100);
+}
+
+/* панель графика/чертежа: canvas + тулбар; один раз оживляется */
+function mountPlotPanels(root) {
+  $$('.plot-panel', root).forEach((panel) => {
+    if (panel.dataset.live === '1') return;
+    panel.dataset.live = '1';
+    let spec;
+    try { spec = JSON.parse(panel.dataset.plot || '{}'); }
+    catch (e) { panel.innerHTML = '<div class="plot-err">Не разобрать JSON: ' + esc(e.message) + '</div>'; return; }
+    const kind = panel.dataset.kind || (spec.z ? 'plot3' : 'plot');
+    try {
+      if (kind === 'geo') buildGeoPanel(panel, spec);
+      else if (spec.z) buildPlot3Panel(panel, spec);
+      else buildPlot2Panel(panel, spec);
+    } catch (e) {
+      panel.innerHTML = '<div class="plot-err">' + esc(e.message || String(e)) + '</div>';
+    }
+  });
+}
+
+function plotShell(panel, title) {
+  panel.innerHTML = '';
+  const cv = el('canvas');
+  const bar = el('div', 'plot-bar');
+  const mkBtn = (label, fn) => {
+    const b = el('button', '', label);
+    b.addEventListener('click', fn);
+    bar.appendChild(b);
+    return b;
+  };
+  mkBtn('+', () => { panel._zoom(1.3); });
+  mkBtn('\u2212', () => { panel._zoom(1 / 1.3); });
+  mkBtn('\u27f2', () => { panel._reset(); });
+  const read = el('div', 'plot-read');
+  if (title) {
+    const t = el('div', 'plot-title', esc(title));
+    panel.appendChild(t);
+  }
+  panel.appendChild(cv);
+  panel.appendChild(bar);
+  panel.appendChild(read);
+  const ctx = cv.getContext('2d');
+  return { cv, ctx, read, bar };
+}
+
+function plotHiDpi(cv, ctx) {
+  const r = cv.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.max(80, Math.round(r.width * dpr));
+  cv.height = Math.max(80, Math.round(300 * dpr));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { w: r.width, h: 300 };
+}
+
+/* ---------- 2D: функции y = f(x) ---------- */
+function buildPlot2Panel(panel, spec) {
+  const fns = (Array.isArray(spec.f) ? spec.f : (spec.f ? [spec.f] : [])).map((e) => mathCompile(e));
+  if (!fns.length) throw new Error('нет функций: нужен ключ "f"');
+  const { cv, ctx, read } = plotShell(panel, spec.title);
+  let x0 = (spec.x && spec.x[0] != null) ? spec.x[0] : -6.28;
+  let x1 = (spec.x && spec.x[1] != null) ? spec.x[1] : 6.28;
+  let y0 = null, y1 = null;
+  const draw = () => {
+    const { w, h } = plotHiDpi(cv, ctx);
+    const yAuto = y0 === null;
+    let ya = Infinity, yb = -Infinity;
+    if (yAuto) {
+      for (let i = 0; i <= 120; i++) {
+        const x = x0 + (x1 - x0) * i / 120;
+        for (const f of fns) {
+          const v = f(x);
+          if (isFinite(v)) { ya = Math.min(ya, v); yb = Math.max(yb, v); }
+        }
+      }
+      if (!isFinite(ya) || !isFinite(yb)) { ya = -1; yb = 1; }
+      const pad = (yb - ya) * 0.12 + 0.5;
+      ya -= pad; yb += pad;
+    } else { ya = y0; yb = y1; }
+    const X = (x) => (x - x0) / (x1 - x0) * w;
+    const Y = (y) => h - (y - ya) / (yb - ya) * h;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(4,12,22,0)';
+    // сетка и оси
+    ctx.strokeStyle = 'rgba(0,190,255,.08)';
+    ctx.lineWidth = 1;
+    const gx = Math.max(4, Math.round(w / 90));
+    for (let i = 0; i <= gx; i++) {
+      const px = i * w / gx;
+      ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
+    }
+    for (let i = 0; i <= Math.round(h / 60); i++) {
+      const py = i * h / Math.max(1, Math.round(h / 60));
+      ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(w, py); ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(140,210,240,.5)';
+    if (ya < 0 && yb > 0) { ctx.beginPath(); ctx.moveTo(0, Y(0)); ctx.lineTo(w, Y(0)); ctx.stroke(); }
+    if (x0 < 0 && x1 > 0) { ctx.beginPath(); ctx.moveTo(X(0), 0); ctx.lineTo(X(0), h); ctx.stroke(); }
+    ctx.fillStyle = 'rgba(154,202,219,.75)';
+    ctx.font = '10px ui-monospace,monospace';
+    ctx.fillText(plotFmt(x0), 4, h - 5);
+    ctx.fillText(plotFmt(x1), w - 34, h - 5);
+    ctx.fillText(plotFmt(yAuto ? ya : ya), 4, 12);
+    // кривые
+    const colors = ['#37d3ff', '#ffd489', '#8f86cf', '#3fbf95', '#e3798d'];
+    fns.forEach((f, fi) => {
+      ctx.strokeStyle = colors[fi % colors.length];
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      let pen = false;
+      for (let px = 0; px <= w; px += 1) {
+        const x = x0 + (x1 - x0) * px / w;
+        const y = f(x);
+        if (!isFinite(y) || y < ya - (yb - ya) * 2 || y > yb + (yb - ya) * 2) { pen = false; continue; }
+        const py = Y(y);
+        if (!pen) { ctx.moveTo(px, py); pen = true; } else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    panel._view = () => read.textContent = 'x: ' + plotFmt(panel._mx) + '  y: ' + plotFmt(fns[0](panel._mx));
+  };
+  panel._zoom = (k) => {
+    const cx = (x0 + x1) / 2;
+    x0 = cx - (cx - x0) / k; x1 = cx + (x1 - cx) / k;
+    draw();
+  };
+  panel._reset = () => { x0 = (spec.x && spec.x[0] != null) ? spec.x[0] : -6.28;
+    x1 = (spec.x && spec.x[1] != null) ? spec.x[1] : 6.28; y0 = y1 = null; draw(); };
+  let drag = null;
+  cv.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, x0, x1 }; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', (e) => {
+    const r = cv.getBoundingClientRect();
+    panel._mx = x0 + (e.clientX - r.left) / r.width * (x1 - x0);
+    if (panel._view) panel._view();
+    if (!drag) return;
+    const dx = (drag.x - e.clientX) / r.width * (drag.x1 - drag.x0);
+    x0 = drag.x0 + dx; x1 = drag.x1 + dx;
+    draw();
+  });
+  cv.addEventListener('pointerup', () => { drag = null; });
+  cv.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = cv.getBoundingClientRect();
+    const mx = x0 + (e.clientX - r.left) / r.width * (x1 - x0);
+    const k = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    x0 = mx - (mx - x0) / k; x1 = mx + (x1 - mx) / k;
+    draw();
+  }, { passive: false });
+  draw();
+}
+
+/* ---------- 3D: поверхность z = f(x,y), вращение мышью ---------- */
+function buildPlot3Panel(panel, spec) {
+  const fz = mathCompile(spec.z);
+  const xr = (spec.x && spec.x.length === 2) ? spec.x : [-3, 3];
+  const yr = (spec.y && spec.y.length === 2) ? spec.y : [-3, 3];
+  const { cv, ctx, read } = plotShell(panel, spec.title);
+  let alpha = -0.65, beta = 0.6, zoom = 1;
+  const N = 42;
+  const draw = () => {
+    const { w, h } = plotHiDpi(cv, ctx);
+    ctx.clearRect(0, 0, w, h);
+    const cx = w / 2, cy = h / 2 + 14;
+    const ca = Math.cos(alpha), sa = Math.sin(alpha);
+    const cb = Math.cos(beta), sb = Math.sin(beta);
+    const scale = Math.min(w, h) / 3.4 * zoom;
+    const project = (x, y, z) => {
+      const X = x * ca - y * sa;
+      const Y0 = x * sa + y * ca;
+      const Y = Y0 * sb - z * cb;
+      const depth = Y0 * cb + z * sb;
+      return { px: cx + X * scale, py: cy - Y * scale, depth };
+    };
+    const quads = [];
+    const zs = [];
+    for (let i = 0; i <= N; i++) {
+      zs.push(fz(xr[0] + (xr[1] - xr[0]) * i / N, yr[0]));
+    }
+    let zmin = Infinity, zmax = -Infinity;
+    const grid = [];
+    for (let i = 0; i <= N; i++) {
+      const row = [];
+      const x = xr[0] + (xr[1] - xr[0]) * i / N;
+      for (let j = 0; j <= N; j++) {
+        const y = yr[0] + (yr[1] - yr[0]) * j / N;
+        const z = fz(x, y);
+        if (isFinite(z)) { zmin = Math.min(zmin, z); zmax = Math.max(zmax, z); }
+        row.push(z);
+      }
+      grid.push(row);
+    }
+    if (!isFinite(zmin) || !isFinite(zmax)) throw new Error('поверхность пуста');
+    const zr = Math.max(1e-6, zmax - zmin);
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        const x1 = xr[0] + (xr[1] - xr[0]) * i / N, x2 = xr[0] + (xr[1] - xr[0]) * (i + 1) / N;
+        const y1 = yr[0] + (yr[1] - yr[0]) * j / N, y2 = yr[0] + (yr[1] - yr[0]) * (j + 1) / N;
+        const c = [project(x1, y1, grid[i][j]), project(x2, y1, grid[i + 1][j]),
+          project(x2, y2, grid[i + 1][j + 1]), project(x1, y2, grid[i][j + 1])];
+        const zm = (grid[i][j] + grid[i + 1][j] + grid[i + 1][j + 1] + grid[i][j + 1]) / 4;
+        quads.push({ c, zm });
+      }
+    }
+    quads.sort((a, b) => b.c[0].depth + b.c[2].depth - (a.c[0].depth + a.c[2].depth));
+    for (const q of quads) {
+      const t = (q.zm - zmin) / zr;
+      const light = 0.35 + 0.65 * Math.max(0, Math.min(1, t));
+      ctx.fillStyle = 'rgba(' + Math.round(40 + 120 * light) + ',' +
+        Math.round(120 + 110 * light) + ',' + Math.round(190 + 60 * light) + ',.92)';
+      ctx.beginPath();
+      ctx.moveTo(q.c[0].px, q.c[0].py);
+      for (let k = 1; k < 4; k++) ctx.lineTo(q.c[k].px, q.c[k].py);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(230,250,255,.10)';
+      ctx.lineWidth = .5;
+      ctx.stroke();
+    }
+    read.textContent = 'вращай мышью · колесо — масштаб';
+  };
+  panel._zoom = (k) => { zoom *= k; draw(); };
+  panel._reset = () => { alpha = -0.65; beta = 0.6; zoom = 1; draw(); };
+  let drag = null;
+  cv.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, a: alpha, b: beta }; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    alpha = drag.a - (e.clientX - drag.x) * 0.011;
+    beta = Math.max(-1.35, Math.min(1.35, drag.b + (e.clientY - drag.y) * 0.011));
+    draw();
+  });
+  cv.addEventListener('pointerup', () => { drag = null; });
+  cv.addEventListener('wheel', (e) => { e.preventDefault(); zoom *= e.deltaY < 0 ? 1.12 : 1 / 1.12; draw(); }, { passive: false });
+  draw();
+}
+
+/* ---------- Геометрия: точки, отрезки, многоугольники, окружности ---------- */
+function buildGeoPanel(panel, spec) {
+  const { cv, ctx, read } = plotShell(panel, spec.title);
+  const pts = spec.points || {};
+  const names = Object.keys(pts);
+  if (!names.length) throw new Error('нет точек: нужен ключ "points"');
+  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+  for (const n of names) {
+    const [x, y] = pts[n];
+    xmin = Math.min(xmin, x); xmax = Math.max(xmax, x);
+    ymin = Math.min(ymin, y); ymax = Math.max(ymax, y);
+  }
+  for (const c of (spec.circles || [])) {
+    const [, r] = c;
+    const [cx, cy] = pts[c[0]] || [0, 0];
+    xmin = Math.min(xmin, cx - r); xmax = Math.max(xmax, cx + r);
+    ymin = Math.min(ymin, cy - r); ymax = Math.max(ymax, cy + r);
+  }
+  const view = { xmin: xmin - 1, xmax: xmax + 1, ymin: ymin - 1, ymax: ymax + 1 };
+  const draw = () => {
+    const { w, h } = plotHiDpi(cv, ctx);
+    const sx = w / (view.xmax - view.xmin), sy = h / (view.ymax - view.ymin);
+    const s = Math.min(sx, sy);
+    const ox = (w - s * (view.xmax - view.xmin)) / 2;
+    const oy = (h - s * (view.ymax - view.ymin)) / 2;
+    const X = (x) => ox + (x - view.xmin) * s;
+    const Y = (y) => h - oy - (y - view.ymin) * s;
+    ctx.clearRect(0, 0, w, h);
+    ctx.strokeStyle = 'rgba(0,190,255,.08)';
+    for (let i = 0; i <= 8; i++) {
+      ctx.beginPath(); ctx.moveTo(i * w / 8, 0); ctx.lineTo(i * w / 8, h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, i * h / 8); ctx.lineTo(w, i * h / 8); ctx.stroke();
+    }
+    // многоугольники — заливка
+    for (const poly of (spec.polygons || [])) {
+      ctx.beginPath();
+      poly.forEach((n, i) => {
+        const [x, y] = pts[n] || [0, 0];
+        if (!i) ctx.moveTo(X(x), Y(y)); else ctx.lineTo(X(x), Y(y));
+      });
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(55,211,255,.10)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(160,230,250,.9)';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+    }
+    for (const seg of (spec.segments || [])) {
+      const [a, b] = seg;
+      const pa = pts[a] || [0, 0], pb = pts[b] || [0, 0];
+      ctx.beginPath(); ctx.moveTo(X(pa[0]), Y(pa[1])); ctx.lineTo(X(pb[0]), Y(pb[1]));
+      ctx.strokeStyle = 'rgba(160,230,250,.9)'; ctx.lineWidth = 1.6; ctx.stroke();
+    }
+    for (const c of (spec.circles || [])) {
+      const [cn, r] = c;
+      const [cx, cy] = pts[cn] || [0, 0];
+      ctx.beginPath(); ctx.arc(X(cx), Y(cy), r * s, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(160,230,250,.75)'; ctx.lineWidth = 1.4; ctx.stroke();
+    }
+    ctx.font = '600 11px ui-monospace,monospace';
+    for (const n of names) {
+      const [x, y] = pts[n];
+      ctx.beginPath(); ctx.arc(X(x), Y(y), 2.6, 0, Math.PI * 2);
+      ctx.fillStyle = '#eaf9ff'; ctx.fill();
+      ctx.fillStyle = 'rgba(220,240,250,.95)';
+      ctx.fillText(n, X(x) + 5, Y(y) - 5);
+    }
+    read.textContent = 'перетаскивай · колесо — масштаб';
+  };
+  panel._zoom = (k) => {
+    const cx = (view.xmin + view.xmax) / 2, cy = (view.ymin + view.ymax) / 2;
+    view.xmin = cx - (cx - view.xmin) / k; view.xmax = cx + (view.xmax - cx) / k;
+    view.ymin = cy - (cy - view.ymin) / k; view.ymax = cy + (view.ymax - cy) / k;
+    draw();
+  };
+  panel._reset = () => { view.xmin = xmin - 1; view.xmax = xmax + 1; view.ymin = ymin - 1; view.ymax = ymax + 1; draw(); };
+  let drag = null;
+  cv.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, v: { ...view } }; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const r = cv.getBoundingClientRect();
+    const dx = (drag.x - e.clientX) / r.width * (drag.v.xmax - drag.v.xmin);
+    const dy = (e.clientY - drag.y) / r.height * (drag.v.ymax - drag.v.ymin);
+    view.xmin = drag.v.xmin + dx; view.xmax = drag.v.xmax + dx;
+    view.ymin = drag.v.ymin + dy; view.ymax = drag.v.ymax + dy;
+    draw();
+  });
+  cv.addEventListener('pointerup', () => { drag = null; });
+  cv.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    panel._zoom(e.deltaY < 0 ? 1.15 : 1 / 1.15);
+  }, { passive: false });
+  draw();
+}
+
 function mountUiPanels(root, opts) {
   if (!root) return;
   const inert = !!(opts && opts.inert);
@@ -4455,12 +4905,13 @@ async function send(opts) {
   loadChats();
   // Поздний background-прогон не заказывает подсказки для чужого активного
   // диалога и не обновляет его состояние посреди нового ответа.
-  /* BF: подсказки пишутся после КАЖДОГО ответа. Прежнее условие требовало
-     живую ноду — если пользователь за время ответа перезашёл в диалог
-     (лента перерисовалась, нода умерла), заказ молча скипался и у поля
-     ввода оставались подсказки ПРОШЛОГО ответа */
-  if (S.streamRun === runId &&
-      ((node.root && node.root.isConnected) || ui.chatId === activeChatId())) {
+  /* BF/BG: подсказки пишутся после КАЖДОГО ответа. Заказ живёт, пока
+     это последний прогон и пользователь в ЭТОМ диалоге — живая нода
+     не обязательна (лента могла перерисоваться), пустой chat_id нового
+     диалога подхватывается из S.chatId (SSE-событие chat уже прилетело).
+     НОВЫЙ ответ уже печатается — заказ не нужен, его сделает свой finally */
+  const chat = ui.chatId || S.chatId;
+  if (!(S.streaming && S.streamRun !== runId) && chat && chat === activeChatId()) {
     refreshState();
     fetchReplies();   // подсказки — уже после того, как ответ закрыт
   }
@@ -4470,6 +4921,9 @@ async function send(opts) {
    показывает мерцающие заглушки: пусто было бы похоже на «ничего не будет». */
 async function fetchReplies() {
   const box = $('#replyBar');
+  /* BG: во время ответа подсказок не показываем — только после его
+     конца (поздний заказ прошлого прогона не всплывёт поверх печати) */
+  if (S.streaming) return;
   const chat = activeChatId();
   if (!box || !chat) return;
   // Пока подсказки считаются, пользователь может отправить своё сообщение.
@@ -5645,6 +6099,7 @@ function flushPendingReplyUi(ui) {
   ui.replyLive = live;
   ui.pendingReplyUi = '';
   mountUiPanels(live);
+  mountPlotPanels(live);
   scrollDown(false, ui);
   followGrowingPanel(live, 900, ui);
   return true;
@@ -6261,9 +6716,8 @@ function clearRunRoute(ui) {
 function dotAction(root) {
   const core = root && root.querySelector ? root.querySelector('.ai-core') : null;
   if (!core || !root.classList.contains('live')) return;
-  /* BE: пока идёт игра с фигурой — не вспыхиваем: у morph/burst один
-     animation, всплеск сжал бы фигуру до размера покоя */
-  if (core.classList.contains('shaped')) return;
+  /* BG: пока играет SVG-фигура — не вспыхиваем поверх */
+  if (core.classList.contains('shape-on')) return;
   core.classList.add('dot-act');
   clearTimeout(core._actTimer);
   core._actTimer = setTimeout(() => {
@@ -6271,19 +6725,183 @@ function dotAction(root) {
   }, 1150);
 }
 
-/* BE: ГАРМОНИЧНЫЕ УЗНАВАЕМЫЕ ФИГУРЫ — меньше, но понятнее: 4D —
-   тессеракт, пентахорон; 3D — куб, тетраэдр, кристалл; 2D — звезда,
-   шестиугольник, крест; 1D — линия, дуга-волна, зигзаг. Все с рёбрами
-   и полупрозрачной поверхностью (1D — сплошные линии) */
-const DOT_SHAPES = ['sh-tess', 'sh-penta', 'sh-cube', 'sh-tetra', 'sh-crystal',
-  'sh-star', 'sh-hex', 'sh-cross', 'sh-line', 'sh-wave', 'sh-zig'];
-/* BE: пока фигура держится, она ВРАЩАЕТСЯ — каждый раз в другой
-   плоскости: экрана / перпендикулярная экрану / под углом / вокруг
-   вертикальной оси */
+/* BG: ФИГУРЫ — ПОЛНОЦЕННАЯ ВЕКТОРНАЯ ГРАФИКА (SVG). Каждая фигура —
+   подробный чертёж: градиентная заливка со светом (блик сверху-слева),
+   яркие передние рёбра, видимые ЗАДНИЕ рёбра сквозь полупрозрачные
+   грани. 4D — тессеракт, пентахорон; 3D — куб, тетраэдр, кристалл;
+   2D — звезда, шестиугольник, крест; 1D — линия, волна, зигзаг */
+const DOT_SHAPES = {
+  tess: {
+    name: 'тессеракт',
+    draw: (L) => {
+      const o = [[-11,-11],[11,-11],[11,11],[-11,11]];
+      const k = .55, inn = o.map(([x,y]) => [x*k, y*k]);
+      const conn = o.map((pt, i) =>
+        '<line x1="' + pt[0] + '" y1="' + pt[1] + '" x2="' + inn[i][0] + '" y2="' + inn[i][1] + '"/>').join('');
+      return '<g stroke="url(#gB' + L + ')" stroke-width="1" opacity=".55">' + conn + '</g>' +
+        '<rect x="-11" y="-11" width="22" height="22" rx="1.5" fill="url(#gF' + L + ')" fill-opacity=".82" stroke="url(#gE' + L + ')" stroke-width=".9"/>' +
+        '<rect x="' + (-11*k) + '" y="' + (-11*k) + '" width="' + (22*k) + '" height="' + (22*k) + '" rx="1" fill="url(#gF' + L + ')" fill-opacity=".9" stroke="url(#gE' + L + ')" stroke-width=".9"/>';
+    }
+  },
+  penta: {
+    name: 'пентахорон',
+    draw: (L) => {
+      const pts = [], inn = [];
+      for (let i = 0; i < 5; i++) {
+        const a = -Math.PI / 2 + i * 2 * Math.PI / 5;
+        const b = a + Math.PI / 5;
+        pts.push([12 * Math.cos(a), 12 * Math.sin(a)]);
+        inn.push([5.2 * Math.cos(b), 5.2 * Math.sin(b)]);
+      }
+      const ring = pts.concat([pts[0]]);
+      const star = [];
+      for (let i = 0; i < 5; i++) star.push(pts[i], pts[(i + 2) % 5]);
+      return '<polygon points="' + ring.map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".82" stroke="url(#gE' + L + ')" stroke-width=".9"/>' +
+        '<g stroke="url(#gB' + L + ')" stroke-width=".8" opacity=".6"><polygon points="' + star.map((q) => q.join(',')).join(' ') + '" fill="none"/>' +
+        inn.map((q) => '<line x1="0" y1="0" x2="' + q[0] + '" y2="' + q[1] + '"/>').join('') + '</g>' +
+        '<circle cx="0" cy="0" r="1.6" fill="url(#gE' + L + ')"/>';
+    }
+  },
+  cube: {
+    name: 'куб',
+    draw: (L) => {
+      const hx = 11, hy = 6.2, off = 4.6;
+      const silhouette = [[-hx,-hy],[0,-hy*2],[hx,-hy],[hx,hy],[0,hy*2],[-hx,hy]];
+      const back = '<g stroke="url(#gB' + L + ')" stroke-width=".9" opacity=".55">' +
+        '<line x1="' + (-hx + off) + '" y1="' + (-hy - off * .62) + '" x2="' + (hx - off) + '" y2="' + (hy + off * .62) + '"/>' +
+        '<line x1="' + (hx - off) + '" y1="' + (-hy - off * .62) + '" x2="' + (-hx + off) + '" y2="' + (hy + off * .62) + '"/>' +
+        '<line x1="0" y1="' + (-hy * 2 - off * .3) + '" x2="0" y2="' + (hy * 2 + off * .3) + '"/></g>';
+      const topFace = '<polygon points="0,' + (-hy * 2) + ' ' + hx + ',' + (-hy) + ' 0,0 ' + (-hx) + ',' + (-hy) + '" fill="url(#gF' + L + ')" fill-opacity=".55" stroke="url(#gE' + L + ')" stroke-width=".9"/>';
+      return back + topFace +
+        '<polygon points="' + silhouette.map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".8" stroke="url(#gE' + L + ')" stroke-width="1"/>' +
+        '<line x1="0" y1="' + (-hy * 2) + '" x2="0" y2="0" stroke="url(#gE' + L + ')" stroke-width=".7" opacity=".7"/>' +
+        '<line x1="' + hx + '" y1="' + (-hy) + '" x2="0" y2="0" stroke="url(#gE' + L + ')" stroke-width=".7" opacity=".7"/>' +
+        '<line x1="' + (-hx) + '" y1="' + (-hy) + '" x2="0" y2="0" stroke="url(#gE' + L + ')" stroke-width=".7" opacity=".7"/>';
+    }
+  },
+  tetra: {
+    name: 'тетраэдр',
+    draw: (L) => {
+      const apex = [0, -12], bl = [-10.5, 9.5], br = [10.5, 9.5], back = [0, 4.2];
+      return '<g stroke="url(#gB' + L + ')" stroke-width=".9" opacity=".55">' +
+        '<line x1="' + apex[0] + '" y1="' + apex[1] + '" x2="' + back[0] + '" y2="' + back[1] + '"/>' +
+        '<line x1="' + bl[0] + '" y1="' + bl[1] + '" x2="' + back[0] + '" y2="' + back[1] + '"/>' +
+        '<line x1="' + br[0] + '" y1="' + br[1] + '" x2="' + back[0] + '" y2="' + back[1] + '"/></g>' +
+        '<polygon points="' + [apex, bl, br].map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".8" stroke="url(#gE' + L + ')" stroke-width="1"/>' +
+        '<polygon points="' + [apex, br, back].map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".35" stroke="none"/>' +
+        '<ellipse cx="-3.2" cy="-5.4" rx="2.6" ry="1.5" fill="#fff" opacity=".38" transform="rotate(-32 -3.2 -5.4)"/>';
+    }
+  },
+  crystal: {
+    name: 'кристалл',
+    draw: (L) => {
+      const pts = [];
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + i * Math.PI / 5;
+        const r = i % 2 ? 6.4 : 12;
+        pts.push([r * Math.cos(a), r * Math.sin(a)]);
+      }
+      const facets = pts.map((q) => '<line x1="' + q[0] + '" y1="' + q[1] + '" x2="0" y2="0"/>').join('');
+      return '<g stroke="url(#gB' + L + ')" stroke-width=".7" opacity=".5">' + facets + '</g>' +
+        '<polygon points="' + pts.map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".85" stroke="url(#gE' + L + ')" stroke-width="1"/>' +
+        '<circle cx="-2.6" cy="-4.4" r="2.2" fill="#fff" opacity=".4"/>';
+    }
+  },
+  star: {
+    name: 'звезда',
+    draw: (L) => {
+      const pts = [];
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + i * Math.PI / 5;
+        const r = i % 2 ? 5 : 12.2;
+        pts.push([r * Math.cos(a), r * Math.sin(a)]);
+      }
+      const rays = pts.filter((_, i) => i % 2 === 0).map((q) =>
+        '<line x1="' + q[0] + '" y1="' + q[1] + '" x2="0" y2="0"/>').join('');
+      return '<g stroke="url(#gB' + L + ')" stroke-width=".7" opacity=".5">' + rays + '</g>' +
+        '<polygon points="' + pts.map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".88" stroke="url(#gE' + L + ')" stroke-width=".9"/>' +
+        '<circle cx="-1.8" cy="-3.6" r="1.8" fill="#fff" opacity=".42"/>';
+    }
+  },
+  hex: {
+    name: 'шестиугольник',
+    draw: (L) => {
+      const pts = [], inn = [];
+      for (let i = 0; i < 6; i++) {
+        const a = -Math.PI / 2 + i * Math.PI / 3;
+        pts.push([12 * Math.cos(a), 12 * Math.sin(a)]);
+        inn.push([6 * Math.cos(a), 6 * Math.sin(a)]);
+      }
+      const conn = pts.map((q, i) =>
+        '<line x1="' + q[0] + '" y1="' + q[1] + '" x2="' + inn[i][0] + '" y2="' + inn[i][1] + '"/>').join('');
+      return '<g stroke="url(#gB' + L + ')" stroke-width=".8" opacity=".5">' + conn + '</g>' +
+        '<polygon points="' + pts.map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".82" stroke="url(#gE' + L + ')" stroke-width="1"/>' +
+        '<polygon points="' + inn.map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".9" stroke="url(#gE' + L + ')" stroke-width=".8"/>';
+    }
+  },
+  cross: {
+    name: 'крест',
+    draw: (L) => {
+      const a = 3.6, b = 12;
+      const pts = [[-a,-b],[a,-b],[a,-a],[b,-a],[b,a],[a,a],[a,b],[-a,b],[-a,a],[-b,a],[-b,-a],[-a,-a]];
+      const k = .45, inn = pts.map(([x, y]) => [x * k, y * k]);
+      const conn = pts.map((q, i) =>
+        '<line x1="' + q[0] + '" y1="' + q[1] + '" x2="' + inn[i][0] + '" y2="' + inn[i][1] + '"/>').join('');
+      return '<g stroke="url(#gB' + L + ')" stroke-width=".7" opacity=".45">' + conn + '</g>' +
+        '<polygon points="' + pts.map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".85" stroke="url(#gE' + L + ')" stroke-width=".95"/>' +
+        '<polygon points="' + inn.map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".92" stroke="url(#gE' + L + ')" stroke-width=".7"/>';
+    }
+  },
+  line: {
+    name: 'линия',
+    draw: () => '<line x1="-11.5" y1="9.5" x2="11.5" y2="-9.5" stroke="#8fd9ff" stroke-width="2.6" stroke-linecap="round" opacity=".9"/>' +
+      '<line x1="-11.5" y1="9.5" x2="11.5" y2="-9.5" stroke="#eaf9ff" stroke-width=".9" stroke-linecap="round"/>'
+  },
+  wave: {
+    name: 'волна',
+    draw: () => '<path d="M -12 3 C -8 -7, -4 -7, 0 1 S 8 9, 12 0" fill="none" stroke="#8fd9ff" stroke-width="2.6" stroke-linecap="round" opacity=".9"/>' +
+      '<path d="M -12 3 C -8 -7, -4 -7, 0 1 S 8 9, 12 0" fill="none" stroke="#eaf9ff" stroke-width=".9" stroke-linecap="round"/>'
+  },
+  zig: {
+    name: 'зигзаг',
+    draw: () => '<polyline points="-12,6 -6,-5 0,6 6,-5 12,6" fill="none" stroke="#8fd9ff" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" opacity=".9"/>' +
+      '<polyline points="-12,6 -6,-5 0,6 6,-5 12,6" fill="none" stroke="#eaf9ff" stroke-width=".9" stroke-linejoin="round" stroke-linecap="round"/>'
+  }
+};
+const DOT_SHAPE_KEYS = Object.keys(DOT_SHAPES);
+/* BG: пока фигура держится, она МЕДЛЕННО доворачивается — каждый раз в
+   другой плоскости: экрана / перпендикулярная / под углом / вертикаль */
 const DOT_SPINS = ['rot-z', 'rot-x', 'rot-y', 'rot-d'];
-const DOT_MORPH_MS = 700;      // BD: пружинисто расширяется до фигуры
-const DOT_MORPH_OUT_MS = 650;  // BD: упруго сжимается обратно в круг
-const DOT_HOLD_MS = 1500;      // BD: полторы секунды в фигуре
+const DOT_MORPH_MS = 700;      // пружинисто расширяется до фигуры
+const DOT_MORPH_OUT_MS = 650;  // упруго сжимается обратно в круг
+const DOT_HOLD_MS = 1500;      // полторы секунды в фигуре
+let DOT_SVG_N = 0;
+
+function dotShapeSvg(core) {
+  if (core._shapeSvg && core._shapeSvg.isConnected) return core._shapeSvg;
+  const L = ++DOT_SVG_N;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'dot-shape-svg');
+  svg.setAttribute('viewBox', '-16 -16 32 32');
+  svg.innerHTML =
+    '<defs>' +
+      '<radialGradient id="gF' + L + '" cx="34%" cy="28%" r="82%">' +
+        '<stop offset="0%" stop-color="#ffffff"/><stop offset="42%" stop-color="#aee6ff"/>' +
+        '<stop offset="74%" stop-color="#2f9fd8"/><stop offset="100%" stop-color="#0a5f92"/>' +
+      '</radialGradient>' +
+      '<linearGradient id="gE' + L + '" x1="0" y1="0" x2="1" y2="1">' +
+        '<stop offset="0%" stop-color="#f2fbff"/><stop offset="100%" stop-color="#9fd8f2"/>' +
+      '</linearGradient>' +
+      '<linearGradient id="gB' + L + '" x1="0" y1="0" x2="1" y2="1">' +
+        '<stop offset="0%" stop-color="#4d90b8"/><stop offset="100%" stop-color="#1c5d86"/>' +
+      '</linearGradient>' +
+    '</defs><g class="rot-g"></g>';
+  svg._gradL = L;
+  core.parentNode.appendChild(svg);
+  core._shapeSvg = svg;
+  return svg;
+}
+
 function dotShapePlay(root) {
   const core = root && root.querySelector ? root.querySelector('.ai-core') : null;
   if (!core) return;
@@ -6296,26 +6914,29 @@ function dotShapePlay(root) {
   const play = () => {
     if (!core.isConnected || !root.classList.contains('live') ||
         core.classList.contains('dot-settle')) { return; }
-    const shape = DOT_SHAPES[Math.floor(Math.random() * DOT_SHAPES.length)];
+    const key = DOT_SHAPE_KEYS[Math.floor(Math.random() * DOT_SHAPE_KEYS.length)];
     const spin = DOT_SPINS[Math.floor(Math.random() * DOT_SPINS.length)];
-    /* BC: ПРУЖИНА с золотом — расширился с перелётом и ужался в фигуру
-       ×2.1; золото и свечение живут В КАДРАХ самой трансформации */
-    core.classList.add(shape, 'shaped', 'sh-in');
+    const svg = dotShapeSvg(core);
+    const g = svg.querySelector('.rot-g');
+    /* каждая игра — фигура и плоскость вращения заново */
+    g.setAttribute('class', 'rot-g');
+    g.innerHTML = DOT_SHAPES[key].draw(svg._gradL);
+    void g.getBoundingClientRect();
+    g.setAttribute('class', 'rot-g ' + spin);
+    svg.classList.remove('sh-out');
+    svg.classList.add('sh-in');
+    core.classList.add('shape-on');
     setTimeout(() => {
-      if (!core.classList) return;
-      core.classList.remove('sh-in');
-      /* BF: фигура встала — полторы секунды она МЕДЛЕННО доворачивается
-         (~125–140°, ease-in-out), каждый раз в другой плоскости */
-      core.classList.add(spin);
-    }, DOT_MORPH_MS);
-    setTimeout(() => {
-      if (!core.classList) return;
-      /* медленный доворот завершился вместе с показом — снимаем без рывка */
-      core.classList.remove(spin);
-      core.classList.add('sh-out');
+      if (!svg.classList) return;
+      /* доворот завершился вместе с показом — сжимаемся без рывка */
+      svg.classList.remove('sh-in');
+      svg.classList.add('sh-out');
+      core.classList.remove('shape-on');
       setTimeout(() => {
-        if (!core.classList) return;
-        core.classList.remove(shape, 'shaped', 'sh-out');
+        if (!svg.classList) return;
+        svg.classList.remove('sh-out');
+        g.setAttribute('class', 'rot-g');
+        g.innerHTML = '';
         schedule();
       }, DOT_MORPH_OUT_MS);
     }, DOT_MORPH_MS + DOT_HOLD_MS);
@@ -6330,9 +6951,15 @@ function finishLiveDot(root) {
   if (core) {
     clearTimeout(core._actTimer);
     clearTimeout(core._shapeTimer);
-    DOT_SHAPES.forEach((sh) => core.classList.remove(sh));
-    DOT_SPINS.forEach((sp) => core.classList.remove(sp));
-    core.classList.remove('dot-act', 'shaped', 'sh-in', 'sh-out');
+    core.classList.remove('dot-act', 'shape-on', 'dot-settle');
+    if (core._shapeSvg) {
+      const sg = core._shapeSvg;
+      sg.classList.remove('sh-in', 'sh-out');
+      const g = sg.querySelector('.rot-g');
+      if (g) { g.setAttribute('class', 'rot-g'); g.innerHTML = ''; }
+      sg.remove();
+      core._shapeSvg = null;
+    }
     core.classList.add('dot-settle');
     setTimeout(() => {
       if (core.classList) core.classList.remove('dot-settle');
@@ -6421,7 +7048,8 @@ function queueResponseFinish(ui, content, success) {
       // перед сворачиванием. foldCodeBlocks съёживает от видимой высоты.
       foldCodeBlocks(ui.mdEl, true);
       mountUiPanels(ui.mdEl);
-      if (ui.replyLive && ui.replyLive.isConnected) mountUiPanels(ui.replyLive);
+      mountPlotPanels(ui.mdEl);
+      if (ui.replyLive && ui.replyLive.isConnected) mountPlotPanels(ui.replyLive);
       $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click',
         () => openPreview({ name: im.alt || 'изображение', url: im.src })));
 
@@ -8801,13 +9429,13 @@ function paintTaskCard(card, t) {
     evBox.appendChild(el('div', 'tc-ev', esc(typeof e === 'string' ? e : (e.text || JSON.stringify(e)))));
   });
   const acts = card.querySelector('.tc-actions');
+  /* BG: клик по кнопке — ТОЛЬКО её функция: карточку не открываем */
   const mk = (label, cls, fn, disabled) => {
     const b = el('button', 'btn sm ' + (cls || ''), label);
     b.disabled = !!disabled;
-    b.addEventListener('click', fn);
+    b.addEventListener('click', (e) => { e.stopPropagation(); fn(e); });
     acts.appendChild(b);
   };
-  if ((t.events || []).length) mk('Лог', 'ghost', () => evBox.classList.toggle('open'));
   if (st !== 'running') {
     mk('Запустить', 'primary', async () => {
       const r = await api('/api/tasks/run', { task_id: t.id });
@@ -8847,6 +9475,13 @@ function openTask(t) {
       esc(t.prompt) + '</div></div>' +
     (t.result ? '<div class="sd" style="margin:4px 0 10px">Последний результат:</div>' +
       '<div class="tc-result md">' + MD.render(String(t.result).slice(0, 2500)) + '</div>' : '') +
+    ((t.events || []).length
+      ? '<details class="sd" style="margin-top:10px"><summary style="cursor:pointer">Лог (' +
+        t.events.length + ')</summary><div class="tc-events open" style="max-height:220px;overflow:auto">' +
+        t.events.slice(-40).map((e) => '<div class="tc-ev">' +
+          esc(typeof e === 'string' ? e : (e.text || JSON.stringify(e))) + '</div>').join('') +
+        '</div></details>'
+      : '') +
     '<div class="modal-acts">' +
       '<button class="btn" id="tkClose">Закрыть</button>' +
       '<button class="btn" id="tkEdit">Редактировать</button>' +
