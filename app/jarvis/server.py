@@ -740,6 +740,11 @@ class Handler(BaseHTTPRequestHandler):
         # выбор из интерактивной панели ```ui: модели он нужен, ленте — нет
         if body.get("silent"):
             user_meta["silent"] = True
+            # BM: панель ОТВЕЧЕНА — факт переживает перезагрузку. Фронт по
+            # этому ключу деактивирует интерактивчик при открытии диалога:
+            # отвеченная панель больше никогда не выглядит активной
+            if body.get("continue_of"):
+                user_meta["continue_of"] = str(body.get("continue_of") or "")
         edit_of = body.get("edit_of") or ""
         if edit_of and db.get_message(edit_of):
             # это правка: добавляем ВЕРСИЮ к старому сообщению и убираем

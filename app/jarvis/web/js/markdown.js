@@ -42,6 +42,7 @@
   var SYM = { triangle:'\u25b3', angle:'\u2220', perp:'\u22a5', parallel:'\u2225',
     cdot:'\u00b7', times:'\u00d7', div:'\u00f7', pm:'\u00b1', mp:'\u2213',
     leq:'\u2264', geq:'\u2265', neq:'\u2260', ne:'\u2260', approx:'\u2248',
+    le:'\u2264', ge:'\u2265',
     sim:'\u223c', equiv:'\u2261', propto:'\u221d', to:'\u2192',
     rightarrow:'\u2192', leftarrow:'\u2190', Rightarrow:'\u21d2',
     leftrightarrow:'\u2194', Leftrightarrow:'\u21d4', infty:'\u221e',
@@ -215,18 +216,19 @@
             root = s.slice(i + 1, close); i = close + 1;
           }
           var g = groupAt(s, i); i = g.next;
-          /* BL: КОРЕНЬ ОДНОЙ ЛИНИЕЙ. Черта над содержимым — продолжение
-             ТОГО ЖЕ svg-штриха, что и носик (H1400 уходит за правый край
-             и обрезается .msqrt): одна толщина, один цвет, один рисунок —
-             нет стыка двух разных отрисовок (раньше черта была отдельным
-             ::before-блоком и отличалась от штриха толщиной/сглаживанием).
-             Пустой .msq-b держит базовую линию: подкоренное стоит на базе
-             строки при любой высоте содержимого — корень не уезжает
-             вверх/вниз. svg хранит пропорции знака (aspect-ratio), а не
-             растягивается */
-          out += '<span class="msqrt"><span class="msq-b">&nbsp;</span>' +
+          /* BM: КОРЕНЬ, КОТОРЫЙ НЕ ЛОМАЕТСЯ. Прежняя верстка (inline-flex +
+             svg c width:auto и aspect-ratio) разваливалась: браузер в
+             фолбэке давал svg 300px — корень вырастал огромным и пустым,
+             подкоренное уезжало за край обрезки. Теперь всё просто и
+             непробиваемо: .msqrt — обычный inline-block; подкоренное
+             стоит В ПОТОКЕ (оно физически не может исчезнуть); носик —
+             абсолютный svg на всю высоту со стрелкой preserveAspectRatio=
+             none (vector-effect держит толщину 1.4px при любом растяжении);
+             черта — border-top ТОГО ЖЕ цвета и ТОЙ ЖЕ толщины 1.4px, что
+             штрих носика: одна непрерывная линия при любом размере */
+          out += '<span class="msqrt">' +
             (root ? '<span class="msq-i">' + mesc(root) + '</span>' : '') +
-            '<svg class="msq-svg" viewBox="0 0 11 24" preserveAspectRatio="none"><path d="M.8 13.9 L3.3 16 L5.9 0 H1400" fill="none" stroke="rgba(190,235,255,.85)" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+            '<svg class="msq-svg" viewBox="0 0 11 24" preserveAspectRatio="none" aria-hidden="true"><path d="M.8 13.9 L3.3 16 L5.9 0 H11" fill="none" stroke="rgba(190,235,255,.85)" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
             '<span class="msq-r">' + mathRender(g.text, inline) + '</span></span>';
           continue;
         }

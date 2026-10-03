@@ -588,7 +588,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    ВЕСЬ ответ (мысли, инструменты, печать) живёт по-настоящему — меняет
    форму и размер, вспыхивает золотом в тон курсору, светится; в финале
    coreSettle мягко оседает в идеальный кружок. */
-.ai-core{position:absolute;left:50%;top:8px;width:19.5px;height:19.5px;margin:-9.75px 0 0 -9.75px;
+/* BM: точка 15px (−25% от 19.5) — чуть крупнее прежних 13px */
+.ai-core{position:absolute;left:50%;top:8px;width:15px;height:15px;margin:-7.5px 0 0 -7.5px;
   border-radius:50%;background:radial-gradient(circle,#fff,var(--cy2) 45%,#0575a8);
   box-shadow:0 0 10px rgba(0,212,255,.5),0 0 26px rgba(0,212,255,.22);
   /* BD: ВТОРОЙ FPS-КОРЕНЬ «комп лагает» (эра BB): на КАЖДОМ историческом
@@ -621,24 +622,33 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    морфа фигура «прыгала» вниз). Центр точки = top:8px + половина её
    высоты; svg стоит тем же центром. Кроссфейд двух одинаковых кругов,
    без масштабных прыжков */
-.dot-shape-svg{position:absolute;left:50%;top:8px;width:60px;height:60px;
-  margin:-30px 0 0 -30px;opacity:0;pointer-events:none;overflow:visible;z-index:3;
+/* BM: РАЗМЕР −25%: svg 46px, точка 15px — чуть крупнее прежних (40/13),
+   но уже не «огромный». Пропорция viewBox 32 → круг при m=0 имеет диаметр
+   10.4/32·46 ≈ 15px — ровно круглешок: кроссфейд без скачка размера.
+   svg стоит ЦЕНТРОМ на центре точки (top:8px − полвысоты) */
+.dot-shape-svg{position:absolute;left:50%;top:8px;width:46px;height:46px;
+  margin:-23px 0 0 -23px;opacity:1;pointer-events:none;overflow:visible;z-index:3;
   filter:brightness(1) drop-shadow(0 0 5px rgba(0,195,255,.5))}
-.dot-shape-svg.sh-in{animation:dotSvgIn .45s ease-out forwards}
+/* BM: ВХОД БЕЗ РАСТВОРЕНИЯ. svg появляется сразу КРУГОМ того же размера,
+   что круглешок (морф начинается буквально из текущего положения), поэтому
+   затемнять/проявлять его незачем — вход полностью геометрический */
 .dot-shape-svg.sh-out{animation:dotSvgOut .4s ease-in forwards}
+/* BM: УЛЁТ в конце ответа — фигура сжалась в круг, секунду постояла и
+   мягко уходит вверх, съёживаясь; на месте остаётся обычный круглешок */
+.dot-shape-svg.sh-fly{animation:dotSvgFly .5s cubic-bezier(.55,0,.85,.5) forwards}
 /* BK: ЗОЛОТО БЕЗ СКАЧКОВ — в каждом кадре одна и та же структура
    фильтров (brightness + drop-shadow), меняются только значения */
-@keyframes dotSvgIn{
-  0%{opacity:0;transform:scale(1);
-    filter:brightness(1) drop-shadow(0 0 5px rgba(0,212,255,.55))}
-  45%{opacity:1;transform:scale(1);
-    filter:brightness(1.18) drop-shadow(0 0 8px rgba(217,164,65,.8))}
-  100%{opacity:1;transform:scale(1);
-    filter:brightness(1) drop-shadow(0 0 5px rgba(0,195,255,.55))}}
+/* BM: вход фигуры — геометрия без растворения; золото приходит кадрами
+   движка (единая структура фильтра), отдельная CSS-анимация входа не нужна */
 @keyframes dotSvgOut{
   0%{opacity:1;transform:scale(1);
     filter:brightness(1) drop-shadow(0 0 5px rgba(0,212,255,.55))}
   100%{opacity:0;transform:scale(1);
+    filter:brightness(1) drop-shadow(0 0 2px rgba(0,212,255,.35))}}
+@keyframes dotSvgFly{
+  0%{opacity:1;transform:translateY(0) scale(1);
+    filter:brightness(1) drop-shadow(0 0 5px rgba(0,212,255,.55))}
+  100%{opacity:0;transform:translateY(-42px) scale(.22);
     filter:brightness(1) drop-shadow(0 0 2px rgba(0,212,255,.35))}}
 /* BI: ВРАЩЕНИЕ ФИГУР — БОЛЬШЕ НЕ CSS. Вращает JS-движок: 3D-тела
    кувыркаются осью-углом с пересортировкой граней, 4D — в плоскостях
@@ -1150,19 +1160,24 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    строки: черта дроби на уровне «=», переменные не тонут */
 .math-inline .mfrac{font-size:.82em;vertical-align:middle;margin:0 1px}
 .math-inline .mfrac .mfr-n,.math-inline .mfrac .mfr-d{padding:0 3px}
-.msqrt{display:inline-flex;align-items:stretch;margin:0 1px;
-  overflow:hidden;padding-top:1px}
-/* BL: ПУСТОЙ STRUT — базовая линия контейнера. inline-flex брал базу у
-   svg (нижний край!), и корень уезжал вверх/вниз от высоты содержимого.
-   Строка-невидимка ставит базу на уровень первой строки подкоренного */
-.msqrt .msq-b{flex:0 0 0px;width:0;padding-top:1px;overflow:hidden}
-/* BL: СТЕПЕНЬ КОРНЯ живёт слева от знака, не залезая на него */
-.msqrt .msq-i{font-size:.62em;align-self:flex-start;margin:0 .08em 0 0;opacity:.85}
-/* BL: ЗНАК ХРАНИТ ПРОПОРЦИИ при любой высоте (aspect-ratio 11:24), а
-   черта — продолжение того же штриха (H1400 clipped by .msqrt) */
-.msqrt .msq-svg{width:auto;aspect-ratio:11/24;flex:0 0 auto;display:block;
-  align-self:stretch;overflow:visible}
-.msqrt .msq-r{position:relative;padding:1px 3px 0 2px;margin-left:-1px}
+/* BM: КОРЕНЬ — СОДЕРЖИМОЕ В ПОТОКЕ, ЗНАК АБСОЛЮТОМ. Прежняя верстка
+   (inline-flex + svg width:auto + aspect-ratio) на некоторых контентах
+   проваливалась в 300px-фолбэк: корень вырастал огромным и ПУСТЫМ,
+   подкоренное уезжало за край. Теперь: .msqrt — обычный inline-block,
+   подкоренное в нормальном потоке (не может исчезнуть), носик —
+   абсолютный svg на всю высоту знака, черта — border-top над
+   содержимым. Базовая линия = базовая линия подкоренного: корень
+   стоит на строке при любой высоте содержимого */
+.msqrt{position:relative;display:inline-block;line-height:0;
+  padding-left:.62em;margin:0 1px}
+.msqrt .msq-svg{position:absolute;left:0;top:0;width:.62em;height:100%;
+  overflow:visible;pointer-events:none;display:block}
+/* черта — та же линия, что носик: одна толщина 1.4px, один цвет */
+.msqrt .msq-r{display:inline-block;line-height:1.5;min-height:1em;
+  border-top:1.4px solid rgba(190,235,255,.85);padding:0 .18em 0 .1em}
+/* СТЕПЕНЬ КОРНЯ — над хвостом знака, не залезая на него */
+.msqrt .msq-i{position:absolute;left:-.02em;top:-.58em;font-size:.62em;
+  opacity:.85;z-index:1;line-height:1}
 .math-block .mop,.math-inline .mop{padding:0 3px;color:#9fd8f2}
 .mfn{font-style:normal;padding:0 2px 0 4px}
 .mtext{font-style:normal}

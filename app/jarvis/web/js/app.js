@@ -334,50 +334,21 @@ function toolLine(kind, on) {
     }
     markHost = liveUi.marksEl;
   } else if (liveUi) {
-    /* BK: МЕТКА МЕЖДУ ПРЕДЛОЖЕНИЯМИ. Граница не имеет права разрезать
-       слово или предложение: ищем последний ЗАВЕРШЁННОЕ предложение в
-       напечатанном; если первое ещё не дописано — метка ждёт (скрыта),
-       и renderTyped поставит её сразу после точки */
-    const curLen = liveUi.frozen ? liveUi.frozen.src.length : 0;
-    const shown = String(liveUi.shown || '');
-    const k = lastSentenceEnd(shown, curLen);
-    /* BL: граница имеет право встать, только если после неё — «чистый»
-       разрез: не внутри блока кода, не внутри открытой формулы и не
-       внутри ДОПИСЫВАЕМОЙ ТАБЛИЦЫ (метка ждёт конца объекта). Иначе —
-       предложение/объект ещё не закончены, метка спрятана */
-    let canFreeze = false, head = '';
-    if (k > curLen) {
-      head = shown.slice(0, k);
-      const mathOk = (head.match(/\\\[/g) || []).length ===
-                     (head.match(/\\\]/g) || []).length;
-      canFreeze = !inCodeBlock(head) && mathOk && !endsInOpenTable(head);
-    }
-    try {
-      if (canFreeze) {
-        liveUi.frozen = { src: head, html: MD.render(stripSteps(head)) };
-        liveUi._frozenSrc = null;   // заставить renderTyped перелить границу
-        /* BI: граница ЗАМОРАЖИВАЕТСЯ НАВСЕГДА: весь будущий текст будет
-           хвостом ПОСЛЕ метки — метка не сползает вниз с новой печатью */
-        liveUi.freezeLocked = true;
-        liveUi.freezePending = false;
-      } else {
-        /* предложение или объект ещё пишется — ждём его конца, метку прячем */
-        liveUi.freezePending = true;
-      }
-    } catch (e) { /* не смогли заморозить — метка просто встанет после границы */ }
-    if (!liveUi.marksEl || (liveUi.mdEl && !liveUi.mdEl.contains(liveUi.marksEl))) {
+    /* BM: КАЖДАЯ МЕТКА — НА СВОЁМ МЕСТЕ. Прежде toolLine сам замораживал
+       текст, и вторая метка (например, «отключён») пере-замораживала границу
+       ПЕРВОЙ и перетаскивала вниз весь слот с уже закреплённой меткой —
+       включение и отключение слипались, первая уезжала. Теперь toolLine
+       только объявляет ожидание своей границы, а renderTyped закрывает
+       СВОЙ сегмент на конце СВОЕГО предложения и закрепляет метку за этой
+       границей навсегда. Границы предыдущих меток неприкосновенны */
+    liveUi.freezePending = true;
+    if (!liveUi.marksEl || !liveUi.marksEl.isConnected ||
+        liveUi.marksEl.parentNode === liveUi.node.body) {
       liveUi.marksEl = el('div', 'md-marks');
-      const frozen = liveUi.mdEl.querySelector('.md-frozen');
-      const tail = liveUi.mdEl.querySelector('.md-tail');
-      if (frozen && frozen.parentNode === liveUi.mdEl) {
-        frozen.after(liveUi.marksEl);
-      } else if (tail && tail.parentNode === liveUi.mdEl) {
-        liveUi.mdEl.insertBefore(liveUi.marksEl, tail);
-      } else {
-        liveUi.mdEl.appendChild(liveUi.marksEl);
-      }
+      if (liveUi.mdEl) liveUi.mdEl.appendChild(liveUi.marksEl);
     }
-    /* пока граница ждёт конца предложения — метки не видно */
+    /* пока граница не найдена — метки не видно; renderTyped покажет слот,
+       когда предложение (или объект: таблица, формула) метки закончится */
     liveUi.marksEl.style.display = liveUi.freezePending ? 'none' : '';
     markHost = liveUi.marksEl;
   }
@@ -1312,13 +1283,25 @@ function renderMessageInto(host, m, activePanel) {
 function renderMessages(host, messages) {
   const prevHost = S.forceHost;
   S.forceHost = host;
-  // AD: активная панель — только у ПОСЛЕДНЕГО ответа Джарвиса
+  /* AD: активная панель — только у ПОСЛЕДНЕГО ответа Джарвиса.
+     BM: И ТОЛЬКО ЕСЛИ НА НЕЁ НЕ ОТВЕТИЛИ. Раньше отвеченная панель
+     (да/нет, два варианта) при повторном открытии диалога снова была
+     активной: «последний ответ» ≠ «неотвеченный». Тихой репликой с
+     meta.continue_of пользователь уже ответил — такая панель
+     законсервирована навсегда, как и любая старая */
   const msgs = messages || [];
   let lastAiId = '';
   for (let i = msgs.length - 1; i >= 0; i--) {
     if (msgs[i].role === 'assistant') { lastAiId = msgs[i].id; break; }
   }
-  msgs.forEach((m) => renderMessageInto(host, m, m.role === 'assistant' && m.id === lastAiId));
+  const answered = new Set();
+  msgs.forEach((m) => {
+    if (m.role === 'user' && (m.meta || {}).continue_of) {
+      answered.add(m.meta.continue_of);
+    }
+  });
+  msgs.forEach((m) => renderMessageInto(host, m,
+    m.role === 'assistant' && m.id === lastAiId && !answered.has(m.id)));
   S.forceHost = prevHost;
   fixTables(host);
   // Варианты продолжения принадлежат последнему ответу Джарвиса. Возвращаясь
@@ -2023,12 +2006,21 @@ function flyWelcomeInto(node, wf) {
   /* полёт стартует СРАЗУ — призраки созданы в момент отправки */
   if (core && wf.ghostCore) {
     const rings = $$('.gr', wf.ghostCore);
+    const gcoreEl = wf.ghostCore.querySelector('.gcore');
     flyGhost(wf.ghostCore, () => core.getBoundingClientRect(), () => {
       core.classList.remove('pre-flight');
     }, (p, e) => {
       /* AY: кольца тают СО СКОРОСТЬЮ ПОЛЁТА — по той же кривой, что и
          движение: не спешат впереди, к посадке остаётся круглешок */
       rings.forEach((r) => { r.style.opacity = String(Math.max(0, 1 - e)); });
+      /* BM: ядро призрака РАСТЁТ в полёте с 28% (доля ядра в реакторе
+         приветствия) до 100% (весь круглешок ответа): призрак садится
+         РОВНО тем же размером, что ждёт его точка, — без скачка */
+      if (gcoreEl) {
+        const sz = 28 + 72 * e;
+        gcoreEl.style.width = sz + '%';
+        gcoreEl.style.height = sz + '%';
+      }
     });
   }
   if (name && wf.ghostTitle) {
@@ -3884,6 +3876,9 @@ function plotShell(panel, title) {
   panel.appendChild(cv);
   panel.appendChild(bar);
   panel.appendChild(read);
+  /* BM: ПРАВАЯ КНОПКА И ДОЛГОЕ ЗАЖАТИЕ НЕ ОТКРЫВАЮТ меню браузера
+     (сохранить картинку и т.д.) — жесты графика важнее контекстного меню */
+  cv.addEventListener('contextmenu', (e) => e.preventDefault());
   const ctx = cv.getContext('2d');
   return { cv, ctx, read, bar };
 }
@@ -3895,6 +3890,56 @@ function plotHiDpi(cv, ctx) {
   cv.height = Math.max(80, Math.round(300 * dpr));
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return { w: r.width, h: 300 };
+}
+
+/* BM: ГРАФИК ДАННЫХ. Не всё — формула: температура по часам, ветер,
+   курсы, измерения. Прежний график принимал только "f" — модель писала
+   {"f":["temp"]}, компилятор падал «неизвестное имя», а пользователю
+   показывали лекцию про двойные кавычки. Корень проблемы: у данных не
+   было своего пути. Теперь ключ "data" (синоним "series"): массив серий,
+   каждая {label, points:[[x,y],…]} | {label, values:[…]} | {label, x:[…],
+   y:[…]}; голый массив точек (или чисел) — одна серия. Формулы остались
+   для математики, данные — для жизни */
+function plotParseSeries(spec) {
+  const raw = spec.data != null ? spec.data : (spec.series != null ? spec.series : null);
+  if (raw == null) return [];
+  const one = (v, idx) => {
+    let label = '', pts = null;
+    if (Array.isArray(v)) {
+      if (v.length && Array.isArray(v[0])) {
+        pts = v.filter((p) => Array.isArray(p) && p.length >= 2 &&
+          isFinite(+p[0]) && isFinite(+p[1])).map((p) => [+p[0], +p[1]]);
+      } else if (v.length && typeof v[0] === 'number') {
+        pts = v.map((y, i) => [i, +y]).filter((p) => isFinite(p[1]));
+      }
+      label = 'ряд ' + (idx + 1);
+    } else if (v && typeof v === 'object') {
+      label = String(v.label || v.name || 'ряд ' + (idx + 1));
+      if (Array.isArray(v.points)) {
+        pts = v.points.filter((p) => Array.isArray(p) && p.length >= 2 &&
+          isFinite(+p[0]) && isFinite(+p[1])).map((p) => [+p[0], +p[1]]);
+      } else if (Array.isArray(v.values)) {
+        pts = v.values.map((y, i) => [i, +y]).filter((p) => isFinite(p[1]));
+      } else if (Array.isArray(v.x) && Array.isArray(v.y)) {
+        pts = [];
+        for (let i = 0; i < Math.min(v.x.length, v.y.length); i++) {
+          if (isFinite(+v.x[i]) && isFinite(+v.y[i])) pts.push([+v.x[i], +v.y[i]]);
+        }
+      }
+    }
+    if (!pts || !pts.length) return null;
+    pts.sort((a, b) => a[0] - b[0]);
+    return { label, pts };
+  };
+  const list = [];
+  if (Array.isArray(raw) && raw.length && typeof raw[0] === 'object' &&
+      !Array.isArray(raw[0])) {
+    raw.forEach((sv, i) => { const r = one(sv, i); if (r) list.push(r); });
+  } else {
+    const r = one(raw, 0);
+    if (r) list.push(r);
+  }
+  return list;
 }
 
 /* ---------- 2D: функции y = f(x) ---------- */
@@ -3910,9 +3955,11 @@ function plotHiDpi(cv, ctx) {
 function buildPlot2Panel(panel, spec) {
   const fns = (Array.isArray(spec.f) ? spec.f : (spec.f ? [spec.f] : []))
     .filter((e) => e != null && String(e).trim() !== '').map((e) => mathCompile(e));
-  if (!fns.length) {
-    throw new Error('нет формул: для графика пиши {"f": ["sin(x)"], "x": [-6, 6]} — ' +
-      'строго двойные кавычки; для поверхности 3D — {"z": "sin(x)*cos(y)", ' +
+  const series = plotParseSeries(spec);
+  if (!fns.length && !series.length) {
+    throw new Error('нет данных: функции — {"f": ["sin(x)"], "x": [-6, 6]}; ' +
+      'данные (температура, курсы, измерения) — {"data": [{"label": "имя", ' +
+      '"points": [[0, -3], [3, -1]]}]}; поверхность 3D — {"z": "sin(x)*cos(y)", ' +
       '"x": [-3, 3], "y": [-3, 3]}');
   }
   const labels = (Array.isArray(spec.f) ? spec.f : [spec.f]).map((e) => String(e));
@@ -3929,7 +3976,9 @@ function buildPlot2Panel(panel, spec) {
     { r: 1.618, label: '1:φ' }, { r: 2, label: '2:1' },
     { r: .5, label: '1:2' }, { r: 0, label: 'авто' },
   ];
-  let aspect = ASPECTS[0];       // BH: по умолчанию честный 1:1
+  /* BM: график ДАННЫХ открывается в «авто» — единичный квадрат у кривых
+     по часам бессмыслен; математика остаётся при честном 1:1 */
+  let aspect = (!fns.length && series.length) ? ASPECTS[5] : ASPECTS[0];
   let hover = null;
 
   const autoY = () => {
@@ -3941,6 +3990,10 @@ function buildPlot2Panel(panel, spec) {
         if (isFinite(v)) { ya = Math.min(ya, v); yb = Math.max(yb, v); }
       }
     }
+    /* BM: данные участвуют в подгонке наравне с кривыми */
+    series.forEach((s) => s.pts.forEach((p) => {
+      if (p[0] >= x0 && p[0] <= x1) { ya = Math.min(ya, p[1]); yb = Math.max(yb, p[1]); }
+    }));
     if (!isFinite(ya) || !isFinite(yb)) { ya = -1; yb = 1; }
     const pad = (yb - ya) * 0.12 + 0.5;
     return [ya - pad, yb + pad];
@@ -4016,17 +4069,32 @@ function buildPlot2Panel(panel, spec) {
   const smartInit = () => {
     let a = X0(), b = X1();
     if (spec.x == null) {
-      const xs = featureXs().filter((x) => Math.abs(x) <= 32).sort((p, q) => p - q);
-      let picked = null;
-      for (const r of [4, 8, 16, 32]) {
-        const w = xs.filter((x) => Math.abs(x) <= r);
-        if (w.length >= 3) { picked = w; break; }
+      if (series.length) {
+        /* BM: окно данных — по фактическим точкам серий, ничего не выдумываем */
+        let da = Infinity, db = -Infinity;
+        series.forEach((s) => s.pts.forEach((p) => {
+          da = Math.min(da, p[0]); db = Math.max(db, p[0]);
+        }));
+        if (isFinite(da) && isFinite(db)) { a = da; b = db; }
+        else { a = -6.28; b = 6.28; }
+      } else {
+        const xs = featureXs().filter((x) => Math.abs(x) <= 32).sort((p, q) => p - q);
+        let picked = null;
+        for (const r of [4, 8, 16, 32]) {
+          const w = xs.filter((x) => Math.abs(x) <= r);
+          if (w.length >= 3) { picked = w; break; }
+        }
+        if (picked) { a = picked[0]; b = picked[picked.length - 1]; }
+        else { a = -6.28; b = 6.28; }
       }
-      if (picked) { a = picked[0]; b = picked[picked.length - 1]; }
-      else { a = -6.28; b = 6.28; }
     }
-    if (a > 0) a = 0;                        // центр координат — всегда в кадре
-    if (b < 0) b = 0;
+    /* BM: центр координат — всегда в кадре у МАТЕМАТИКИ; график данных
+       (курсы за 100, температура) держится на своих числах — прижимать
+       окно к нулю значило бы сжать кривую в лепёшку */
+    if (fns.length) {
+      if (a > 0) a = 0;
+      if (b < 0) b = 0;
+    }
     if (b - a < 2.5) { const c = (a + b) / 2; a = c - 1.25; b = c + 1.25; }
     const padX = (b - a) * 0.08 + 0.1;
     x0 = a - padX; x1 = b + padX;
@@ -4038,7 +4106,7 @@ function buildPlot2Panel(panel, spec) {
     /* BL: первый кадр — умное окно (важные точки + центр координат) */
     if (!panel._smartInit) { panel._smartInit = true; smartInit(); }
     /* первый кадр: если функции нигде не определены — наводим окно */
-    if (y0 === null && !fns.some((f) => {
+    if (y0 === null && fns.length && !fns.some((f) => {
       for (let i = 0; i <= 40; i++) {
         if (isFinite(f(x0 + (x1 - x0) * i / 40))) return true;
       }
@@ -4141,8 +4209,29 @@ function buildPlot2Panel(panel, spec) {
       }
       ctx.stroke();
     });
+    /* BM: СЕРИИ ДАННЫХ — ломаная с точками: видно и ход, и сами значения */
+    series.forEach((s, si) => {
+      const col = colors[(fns.length + si) % colors.length];
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      let pen = false;
+      s.pts.forEach((p) => {
+        const px = X(p[0]), py = Y(p[1]);
+        if (px < -20 || px > w + 20 || py < -20 || py > h + 20) { pen = false; return; }
+        if (!pen) { ctx.moveTo(px, py); pen = true; } else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+      ctx.fillStyle = col;
+      s.pts.forEach((p) => {
+        const px = X(p[0]), py = Y(p[1]);
+        if (px < -20 || px > w + 20 || py < -20 || py > h + 20) return;
+        ctx.beginPath(); ctx.arc(px, py, 2.6, 0, Math.PI * 2); ctx.fill();
+      });
+    });
     /* BH: ХОВЕР — точка принадлежит БЛИЖАЙШЕЙ кривой: показываем её
-       имя (формулу), цвет и координаты, на самом графике — маркер */
+       имя (формулу), цвет и координаты, на самом графике — маркер.
+       BM: рядом ищутся и ТОЧКИ ДАННЫХ — у серии своё имя (label) */
     if (hover) {
       const x = x0 + (x1 - x0) * hover.px / w;
       let best = null;
@@ -4153,7 +4242,25 @@ function buildPlot2Panel(panel, spec) {
         const d = Math.abs(py - hover.py);
         if (d < (best ? best.d : 26)) best = { d, fi, y, py };
       });
-      if (best) {
+      let bestPt = null;
+      series.forEach((s, si) => {
+        s.pts.forEach((p) => {
+          const d = Math.hypot(X(p[0]) - hover.px, Y(p[1]) - hover.py);
+          if (d < (bestPt ? bestPt.d : 22)) bestPt = { d, si, p };
+        });
+      });
+      /* точка данных ближе, чем кривая — показываем её */
+      if (bestPt && (!best || bestPt.d < best.d)) {
+        const s = series[bestPt.si];
+        const col = colors[(fns.length + bestPt.si) % colors.length];
+        ctx.beginPath();
+        ctx.arc(X(bestPt.p[0]), Y(bestPt.p[1]), 4.6, 0, Math.PI * 2);
+        ctx.fillStyle = col;
+        ctx.globalAlpha = .28; ctx.fill(); ctx.globalAlpha = 1;
+        ctx.lineWidth = 1.6; ctx.strokeStyle = col; ctx.stroke();
+        read.innerHTML = '<b style="color:' + col + '">' + esc(s.label) + '</b>' +
+          ' · x = ' + plotFmt(bestPt.p[0]) + ' · y = ' + plotFmt(bestPt.p[1]);
+      } else if (best) {
         ctx.beginPath();
         ctx.arc(hover.px, best.py, 4.6, 0, Math.PI * 2);
         ctx.fillStyle = colors[best.fi % colors.length];
@@ -4490,7 +4597,10 @@ function buildPlot3Panel(panel, spec) {
       panX += dx;
       panY += dy;
     } else {
-      alpha -= dx * 0.011;
+      /* BM: ЗЕРКАЛО ПОЧИНЕНО. Прежде alpha -= dx крутила БЛИЖНЮЮ сторону
+         ПРОТИВ drag'а — вращение по горизонтали было зеркальным. Тянем
+         вправо — ближний край едет вправо, как глобус */
+      alpha += dx * 0.011;
       beta = Math.max(-1.35, Math.min(1.35, beta + dy * 0.011));
     }
     draw();
@@ -5667,18 +5777,39 @@ async function send(opts) {
       if (ui.mdEl) {
         ui.mdEl.classList.remove('typing');
         const full = String(ui.shown || ui.buffer || '');
-        if (ui.marksEl && ui.frozen && ui.freezeLocked) {
-          /* BK: метка стоит МЕЖДУ замороженной головой и хвостом —
-             пересборка ответа не имеет права её терять */
+        /* BM: пересборка при остановке собирает ВСЕ сегменты меток:
+           [frozen₁ marks₁ frozen₂ marks₂ … active tail] — ни одна
+           закреплённая метка не теряется и остаётся на своём месте */
+        const segs = ui.segs || [];
+        const cut = ui.frozen ? ui.frozen.src.length :
+          (segs.length ? segs[segs.length - 1].srcLen : 0);
+        if (segs.length || (ui.marksEl && ui.frozen)) {
           ui.mdEl.innerHTML = '';
-          const fr = el('div', 'md-frozen');
-          fr.innerHTML = ui.frozen.html;
+          segs.forEach((sg) => {
+            const fr = el('div', 'md-frozen');
+            fr.innerHTML = sg.html;
+            ui.mdEl.appendChild(fr);
+            if (sg.marksEl) {
+              ui.mdEl.appendChild(sg.marksEl);
+              sg.marksEl.style.display = '';
+              sg.frozenEl = fr;
+            }
+          });
+          if (ui.frozen) {
+            const fr = el('div', 'md-frozen');
+            fr.innerHTML = ui.frozen.html;
+            ui.mdEl.appendChild(fr);
+            ui._activeFrozen = fr;
+          }
           const tl = el('div', 'md-tail');
-          tl.innerHTML = MD.render(stripSteps(full.slice(ui.frozen.src.length)));
-          ui.mdEl.appendChild(fr);
-          ui.mdEl.appendChild(ui.marksEl);
+          tl.innerHTML = MD.render(stripSteps(full.slice(cut)));
           ui.mdEl.appendChild(tl);
-          ui.marksEl.style.display = '';
+          if (ui.marksEl && ui.freezePending) {
+            ui.mdEl.appendChild(ui.marksEl);
+            ui.marksEl.style.display = '';
+            ui.freezePending = false;
+          }
+          ui._frozenSrc = null;
         } else {
           ui.mdEl.innerHTML = MD.render(stripSteps(full));
           if (ui.marksEl && !ui.mdEl.contains(ui.marksEl) &&
@@ -5759,11 +5890,25 @@ async function send(opts) {
   }
 }
 
+/* BM: ПРЕФЕТЧ ПОДСКАЗОК. Сервер уже отдал ответ (done), но локальная
+   печать ещё бежит — это окно и используем: запрос /api/replies уходит
+   СРАЗУ в момент done и складывается в кэш. Когда печать докончит,
+   подсказки вылетают МГНОВЕННО из кэша — пользователь не ждёт и не
+   смотрит на мерцающие заглушки */
+function prefetchReplies() {
+  const chat = activeChatId();
+  if (!chat) return;
+  if (S.replyPrefetch && S.replyPrefetch.chat === chat) return;
+  const p = api('/api/replies', { chat_id: chat })
+    .then((r) => ((r && r.items) || []), () => null);
+  S.replyPrefetch = { chat, at: Date.now(), p };
+}
+
 /* Варианты продолжения тянем отдельным запросом. Пока их считают, полоса
    показывает мерцающие заглушки: пусто было бы похоже на «ничего не будет». */
 async function fetchReplies() {
   const box = $('#replyBar');
-  /* BG: во время ответа подсказок не показываем — только после его
+  /* BG: во время ответа подсказки не показываем — только после его
      конца (поздний заказ прошлого прогона не всплывёт поверх печати) */
   if (S.streaming) return;
   const chat = activeChatId();
@@ -5771,6 +5916,22 @@ async function fetchReplies() {
   // Пока подсказки считаются, пользователь может отправить своё сообщение.
   // Без метки заказа опоздавший ответ всплыл бы поверх нового разговора.
   const ticket = (S.replyTicket = (S.replyTicket || 0) + 1);
+  /* BM: сначала префетч — он стартовал ещё в момент done и почти всегда
+     уже готов: подсказки встают в полосу сразу, без единой заглушки */
+  const pre = (S.replyPrefetch && S.replyPrefetch.chat === chat) ? S.replyPrefetch : null;
+  if (pre) S.replyPrefetch = null;
+  const load = pre ? pre.p :
+    api('/api/replies', { chat_id: chat }).then((r) => ((r && r.items) || []), () => null);
+  const quick = await Promise.race([
+    load.then((items) => ({ items })),
+    new Promise((res) => setTimeout(() => res({}), 400)),
+  ]);
+  if (S.replyTicket !== ticket) return;
+  if (quick.items) {
+    if (activeChatId() === chat) showReplies(quick.items);
+    return;
+  }
+  /* префетч ещё в пути — считаем как раньше, с заглушками */
   box.hidden = false;
   box.innerHTML = '<span class="reply-skel"></span><span class="reply-skel"></span>' +
                   '<span class="reply-skel"></span>';
@@ -5781,10 +5942,10 @@ async function fetchReplies() {
     if (S.replyTicket === ticket) showReplies([]);
   }, 22000);
   try {
-    const r = await api('/api/replies', { chat_id: chat });
+    const items = await load;
     if (S.replyTicket !== ticket) return;
     if (activeChatId() !== chat) { showReplies([]); return; }
-    showReplies(r.items || []);
+    showReplies(items || []);
   } catch (e) {
     if (S.replyTicket === ticket) showReplies([]);
   } finally {
@@ -6976,16 +7137,37 @@ function fastLine(text, at) {
 const STEP_MARK = /\[\s*ШАГ\s*(?:\d+|ГОТОВ)\s*\]\s*/g;
 function stripSteps(t) { return t.replace(STEP_MARK, ''); }
 
+/* BM: ЗАКРЫТЬ СЕГМЕНТ МЕТКИ. Активная заморозка финализируется и вместе со
+   своим слотом метки уходит в прошлое: пара [frozen₁ marks₁] зафиксирована
+   навсегда, новая заморозка начнётся после неё с чистого листа. Вызывается
+   из renderTyped, когда метка дождалась конца СВОЕГО предложения/объекта */
+function closeMarkSegment(ui) {
+  const segs = ui.segs || (ui.segs = []);
+  if (!ui.frozen) { ui.freezePending = false; return; }
+  segs.push({ frozenEl: null, html: ui.frozen.html, marksEl: ui.marksEl,
+    srcLen: ui.frozen.src.length, _dirty: true });
+  if (ui.marksEl) ui.marksEl.style.display = '';
+  ui.marksEl = null;          // следующая метка получит новый слот
+  ui.frozen = null;           // …и новую границу
+  ui.freezePending = false;
+}
+
 function renderTyped(ui) {
   if (!ui.mdEl) return;
   const text = ui.shown;
+  const segs = ui.segs || (ui.segs = []);
   if (ui.frozen && !text.startsWith(ui.frozen.src)) ui.frozen = null;
-  let src = ui.frozen ? ui.frozen.src : '';
+  let base = segs.length ? segs[segs.length - 1].srcLen : 0;
+  if (ui.frozen && ui.frozen.src.length < base) ui.frozen = null;
+  let src = ui.frozen ? ui.frozen.src : text.slice(0, base);
   let html = ui.frozen ? ui.frozen.html : '';
   const idx = text.lastIndexOf('\n\n');
-  /* BK: метка режима ЖДЁТ конца предложения: как только в печати
-     появилась точка после текущей границы — замораживаем ровно на ней */
-  if (ui.freezePending && !ui.freezeLocked) {
+  /* BK/BM: МЕТКА ЖДЁТ КОНЦА СВОЕГО ПРЕДЛОЖЕНИЯ — и встаёт ПОСЛЕ него.
+     Граница имеет право встать только на «чистом» разрезе: не внутри блока
+     кода, не внутри открытой формулы, не внутри дописываемой таблицы.
+     Нашли — закрываем сегмент: эта граница закрепляется навсегда, и никакая
+     будущая метка её уже не сдвинет */
+  if (ui.freezePending) {
     const k = lastSentenceEnd(text, src.length);
     if (k > src.length) {
       const head = text.slice(0, k);
@@ -6993,19 +7175,18 @@ function renderTyped(ui) {
                      (head.match(/\\\]/g) || []).length;
       /* BL: таблица ещё пишется — граница ждёт её конца (см. toolLine) */
       if (!inCodeBlock(head) && mathOk && !endsInOpenTable(head)) {
-        ui.frozen = { src: head, html: MD.render(stripSteps(head)) };
-        ui._frozenSrc = null;
-        ui.freezeLocked = true;
-        ui.freezePending = false;
-        if (ui.marksEl) ui.marksEl.style.display = '';
+        ui.frozen = { src: head, html: MD.render(stripSteps(head.slice(base))) };
+        closeMarkSegment(ui);
+        base = segs[segs.length - 1].srcLen;
+        src = text.slice(0, base);
+        html = '';
       }
     }
   }
-  /* BI: после уведомления о режиме граница ЗАКРЕПЛЕНА: весь текст после
-     метки остаётся хвостом и печатается ПОД ней (метка на месте включения) */
-  if (ui.freezeLocked) {
-    if (ui.frozen) { src = ui.frozen.src; html = ui.frozen.html; }
-  } else if (idx >= 0 && idx + 2 > src.length) {
+  /* обычная заморозка абзацев гонит АКТИВНЫЙ сегмент вперёд (готовые
+     абзацы не перерендериваются). Ожиданию метки она не мешает: метка
+     встанет на конец своего предложения, когда он придёт */
+  if (idx >= 0 && idx + 2 > src.length) {
     const cand = text.slice(0, idx + 2);
     // границу нельзя ставить внутри блока кода — он рендерится целиком
     // BF: и внутри ОТКРЫТОЙ формулы \[ ... \] — математическая панель
@@ -7013,7 +7194,7 @@ function renderTyped(ui) {
     const mathOpen = (cand.match(/\\\[/g) || []).length !== (cand.match(/\\\]/g) || []).length;
     if (!inCodeBlock(cand) && !mathOpen) {
       src = cand;
-      html = MD.render(stripSteps(cand));
+      html = MD.render(stripSteps(cand.slice(base)));
       ui.frozen = { src, html };
     }
   }
@@ -7038,48 +7219,78 @@ function renderTyped(ui) {
   // ГОЛОВА И ХВОСТ В РАЗНЫХ УЗЛАХ: замороженная часть не перестраивается —
   // её HTML фиксируется один раз, а свёрнутые вкладки кода (слоты с кнопками
   // и слушателями) стоят в ней неподвижно. Переписывается только хвост.
-  let frozenEl = ui.mdEl.firstElementChild;
-  if (!frozenEl || !frozenEl.classList.contains('md-frozen')) {
-    ui.mdEl.replaceChildren();
-    frozenEl = el('div', 'md-frozen');
-    ui.mdEl.appendChild(frozenEl);
-    ui._frozenSrc = null;
-    ui._tailKeys = [];
+  /* BM: СЕГМЕНТНАЯ СТРУКТУРА ПЕЧАТИ. Каждая закреплённая метка держит свой
+     кусок текста: [frozen₁ marks₁ frozen₂ marks₂ … activeFrozen (pending
+     слот) tail]. Закрытые сегменты неприкосновенны — их элементы и html не
+     меняются до конца ответа; активный frozen и хвост живут как раньше */
+  let activePrev = (ui._activeFrozen && ui._activeFrozen.isConnected &&
+    ui.mdEl.contains(ui._activeFrozen)) ? ui._activeFrozen : null;
+  segs.forEach((sg) => {
+    if (sg.frozenEl && (!sg.frozenEl.isConnected || !ui.mdEl.contains(sg.frozenEl))) {
+      sg.frozenEl = null;
+    }
+    if (!sg.frozenEl) {
+      /* только что закрытый сегмент забирает прежний активный элемент */
+      sg.frozenEl = activePrev || el('div', 'md-frozen');
+      if (activePrev) activePrev = null;
+    }
+  });
+  let active = activePrev;
+  if (!active) {
+    const fr = $$('.md-frozen', ui.mdEl);
+    const last = fr.length ? fr[fr.length - 1] : null;
+    active = (last && !segs.some((sg) => sg.frozenEl === last)) ? last : el('div', 'md-frozen');
   }
-  /* BH: между головой и хвостом живёт слот меток (.md-marks — уведомления
-     о режимах, включённых посреди ответа). Порядок нормализуем только
-     когда он реально нарушен — лишний appendChild перезапускал бы анимацию
-     входа метки на каждом такте печати.
-     BJ: метка, поставленная ДО начала печати, живёт в ТЕЛЕ ответа (перед
-     строкой статуса) — её НЕ переносим внутрь печати: текст обязан
-     печататься ПОД меткой, а не наоборот */
+  ui._activeFrozen = active;
+  /* BH: pending-слот меток живёт сразу за активной головой (скрыт, пока
+     граница не найдена). BJ: метка, поставленная ДО начала печати, живёт
+     в ТЕЛЕ ответа — её НЕ переносим внутрь печати */
   if (ui.marksEl && !ui.mdEl.contains(ui.marksEl) &&
       ui.marksEl.parentNode !== ui.node.body) ui.mdEl.appendChild(ui.marksEl);
-  let tailEl = frozenEl.nextElementSibling;
-  if (tailEl && tailEl.classList.contains('md-marks')) tailEl = tailEl.nextElementSibling;
-  if (!tailEl || !tailEl.classList.contains('md-tail')) {
-    tailEl = el('div', 'md-tail');
-    ui.mdEl.appendChild(tailEl);
-  }
-  {
-    const want = [frozenEl];
+  let tailEl = null;
+  { const ch = Array.from(ui.mdEl.children);
+    for (let i = ch.length - 1; i >= 0; i--) {
+      if (ch[i].classList.contains('md-tail')) { tailEl = ch[i]; break; }
+    } }
+  if (!tailEl) { tailEl = el('div', 'md-tail'); ui.mdEl.appendChild(tailEl); }
+  { /* порядок наводим только когда он реально нарушен — лишний appendChild
+       перезапускал бы анимацию входа метки на каждом такте печати */
+    const want = [];
+    segs.forEach((sg) => { want.push(sg.frozenEl, sg.marksEl); });
+    want.push(active);
     if (ui.marksEl && ui.mdEl.contains(ui.marksEl)) want.push(ui.marksEl);
     want.push(tailEl);
     let ordered = ui.mdEl.children.length === want.length;
     if (ordered) for (let k = 0; k < want.length; k++) {
       if (ui.mdEl.children[k] !== want[k]) { ordered = false; break; }
     }
-    if (!ordered) want.forEach((n) => ui.mdEl.appendChild(n));
+    if (!ordered) {
+      Array.from(ui.mdEl.children).forEach((n) => { if (want.indexOf(n) < 0) n.remove(); });
+      want.forEach((n) => ui.mdEl.appendChild(n));
+    }
   }
-  if (ui._frozenSrc !== src) {
-    frozenEl.innerHTML = html;
-    ui._frozenSrc = src;
+  /* закрытый сегмент получает свой html ОДИН раз — и навсегда */
+  segs.forEach((sg) => {
+    if (sg._dirty) {
+      sg.frozenEl.innerHTML = sg.html;
+      sg._dirty = false;
+      refoldCodeBlocks(ui, sg.frozenEl, null, '');
+      mountPlotPanels(sg.frozenEl);
+      ui._tailKeys = [];
+    }
+  });
+  /* ключ активной заморозки: без frozen ключ — просто граница сегментов,
+     чтобы пустой активный элемент не перезаписывался на каждом такте */
+  const frozenKey = ui.frozen ? ui.frozen.src : '@' + base;
+  if (ui._frozenSrc !== frozenKey) {
+    active.innerHTML = html;
+    ui._frozenSrc = frozenKey;
     // свернуть код головы один раз — и больше не трогать до конца ответа
-    refoldCodeBlocks(ui, frozenEl, null, '');
+    refoldCodeBlocks(ui, active, null, '');
     ui._tailKeys = [];
     /* BI: график в замороженной части оживает СРАЗУ при заморозке —
        раньше панель монтировалась только в конце ответа */
-    mountPlotPanels(frozenEl);
+    mountPlotPanels(active);
   }
   /* BI: хвост перерисовывается каждый такт — смонтированные панели
      (canvas + слушатели) вынимаем ДО innerHTML и ставим на место ПОСЛЕ:
@@ -7735,13 +7946,18 @@ function dotFaceNormal(pts) {
    3D-позиции, грани наливаются стеклом, а сам круг тает — и в обратную
    сторону при уходе. Круг и фигура — одно тело, ничего не «появляется
    поверх» */
-function dotShapeFrame(key, t, L) {
+function dotShapeFrame(key, t, L, mForced) {
   const sh = DOT_SHAPES[key];
   const SC = sh.d === 4 ? 8.6 : 10.4;
   const smooth = (k) => k * k * (3 - 2 * k);
   const mt = t * 1000;
   let m;
-  if (mt < DOT_MORPH_MS) m = smooth(mt / DOT_MORPH_MS);
+  if (mForced != null) {
+    /* BM: ПРИНУДИТЕЛЬНЫЙ ОБРАТНЫЙ МОРФ — конец ответа среди фигуры:
+       m честно едет к нулю той же геометрией (вращение продолжается),
+       никакого растворения вместо морфа */
+    m = 1 - smooth(Math.max(0, Math.min(1, mForced)));
+  } else if (mt < DOT_MORPH_MS) m = smooth(mt / DOT_MORPH_MS);
   else if (mt < DOT_MORPH_MS + DOT_HOLD_MS) m = 1;
   else m = 1 - smooth(Math.min(1, (mt - DOT_MORPH_MS - DOT_HOLD_MS) / DOT_MORPH_OUT_MS));
   let pts3;
@@ -7880,6 +8096,10 @@ function dotShapePlay(root) {
       core._shapeRaf = null;
       if (!svg.isConnected || !g) return;
       const t = (performance.now() - t0) / 1000;
+      /* BM: помним текущее состояние показа — по нему finishLiveDot
+         доиграет обратный морф, если ответ кончится среди фигуры */
+      svg._playKey = key;
+      svg._playT = t;
       g.innerHTML = dotShapeFrame(key, t, svg._gradL);
       if (svg.classList.contains('sh-out')) return;   // сворачиваемся — стоп
       if (!finished && t * 1000 >= DOT_MORPH_MS + DOT_HOLD_MS + DOT_MORPH_OUT_MS) {
@@ -7887,7 +8107,7 @@ function dotShapePlay(root) {
            место настоящему круглешку (перекрёстное растворение) */
         finished = true;
         stopRot();
-        svg.classList.remove('sh-in');
+        svg.classList.remove('sh-fly');
         svg.classList.add('sh-out');
         core.classList.remove('shape-on');
         setTimeout(() => {
@@ -7903,8 +8123,10 @@ function dotShapePlay(root) {
     };
     g.innerHTML = dotShapeFrame(key, 0, svg._gradL);
     core._shapeRaf = requestAnimationFrame(rot);
-    svg.classList.remove('sh-out');
-    svg.classList.add('sh-in');
+    /* BM: вход — ЧИСТАЯ ГЕОМЕТРИЯ: первый кадр уже стоит кругом того же
+       размера, что круглешок (R=5.2 в viewBox 32 при svg 46px ≈ 15px),
+       проявлять нечего — морф начинается буквально из самой точки */
+    svg.classList.remove('sh-out', 'sh-fly');
     core.classList.add('shape-on');
   };
   schedule();
@@ -7915,26 +8137,53 @@ function finishLiveDot(root) {
   if (core) {
     clearTimeout(core._actTimer);
     clearTimeout(core._shapeTimer);
+    const activeShow = !!(core._shapeSvg && core._shapeRaf);
     if (core._shapeRaf) { cancelAnimationFrame(core._shapeRaf); core._shapeRaf = null; }
     core.classList.remove('dot-act', 'shape-on', 'dot-settle');
-    /* BJ: ФИГУРА УХОДИТ ПЛАВНО, а не исчезает мгновенно: раньше в момент
-       конца ответа svg вырывался из DOM среди вращения — фигура «рвалась».
-       Теперь играем мягкий sh-out (анимация больше не привязана к классу
-       .live) и убираем svg только после её конца; кружок в это время
-       плавно проявляется перекрёстным растворением */
-    if (core._shapeSvg) {
+    /* BM: ЧЕСТНЫЙ КОНЕЦ ФИГУРЫ. Раньше конец ответа среди показа просто
+       РАСТВОРЯЛ фигуру (sh-out) — морф «жульничал». Теперь: (1) фигура
+       сужается обратно в круглешок настоящей геометрией — m едет к нулю
+       за DOT_MORPH_OUT_MS, вращение не останавливается; (2) став кругом,
+       секунду стоит (настоящий круглешок проявляется под ней — размеры
+       совпадают); (3) УЛЕТАЕТ: svg мягко съёживается и уходит вверх */
+    if (activeShow) {
+      const svg = core._shapeSvg;
+      core._shapeSvg = null;
+      const g = svg ? svg.querySelector('.rot-g') : null;
+      if (svg && g && svg.isConnected) {
+        const key = svg._playKey, tFrom = svg._playT || 0, L = svg._gradL;
+        const tc = performance.now();
+        const shrink = () => {
+          const p = (performance.now() - tc) / DOT_MORPH_OUT_MS;
+          const t = tFrom + (performance.now() - tc) / 1000;
+          g.innerHTML = dotShapeFrame(key, t, L, Math.min(1, p));
+          if (p < 1) { svg._closeRaf = requestAnimationFrame(shrink); return; }
+          /* фигура стала кругом: настоящий круглешок проявляется под ней
+             и мягко оседает в покой (coreSettle) */
+          core.classList.remove('shape-on');
+          core.classList.add('dot-settle');
+          setTimeout(() => {
+            if (core.classList) core.classList.remove('dot-settle');
+          }, 640);
+          svg._closeHold = setTimeout(() => {
+            svg.classList.add('sh-fly');
+            svg._closeRaf = setTimeout(() => svg.remove(), 560);
+          }, 1000);   /* BM: секунда покоя перед улётом */
+        };
+        svg._closeRaf = requestAnimationFrame(shrink);
+      } else if (svg) {
+        svg.remove();
+      }
+    } else if (core._shapeSvg) {
+      /* показа нет (пустой svg между показами) — просто убираем его */
       const sg = core._shapeSvg;
       core._shapeSvg = null;
-      sg.classList.remove('sh-in');
-      sg.classList.add('sh-out');
-      const g = sg.querySelector('.rot-g');
-      if (g) { g.setAttribute('class', 'rot-g'); g.innerHTML = ''; }
-      setTimeout(() => sg.remove(), 800);
+      sg.remove();
+      core.classList.add('dot-settle');
+      setTimeout(() => {
+        if (core.classList) core.classList.remove('dot-settle');
+      }, 640);
     }
-    core.classList.add('dot-settle');
-    setTimeout(() => {
-      if (core.classList) core.classList.remove('dot-settle');
-    }, 640);
   }
   root.classList.remove('live');
 }
@@ -7956,6 +8205,9 @@ function settleVisualDone(ui) {
 function queueResponseFinish(ui, content, success) {
   if (ui.doneReceived) return;
   ui.doneReceived = true;
+  /* BM: подсказки заказываем СРАЗУ в момент done — пока печать дописывает
+     ответ, они уже считаются; к концу печати будут готовы мгновенно */
+  prefetchReplies();
   // Ответ уже ПОЛУЧИСТ целиком. Хвост из кода, таблиц и списков не должен
   // «досматриваться» в медленном темпе — плотный контент ускоряется.
   // Разговорный текст после done печатается как живой: с прежним темпом
@@ -8022,10 +8274,10 @@ function queueResponseFinish(ui, content, success) {
       mountUiPanels(ui.mdEl);
       mountPlotPanels(ui.mdEl);
       fixTables(ui.mdEl);
-      /* BL: метка, так и не дождавшаяся «своего» конца предложения
+      /* BL/BM: метка, так и не дождавшаяся «своего» конца предложения
          (ответ кончился таблицей или без точки), всё равно показывается —
          в самом конце, после всего объекта, который она ждала */
-      if (ui.marksEl && ui.freezePending && !ui.freezeLocked) {
+      if (ui.marksEl && ui.freezePending) {
         if (ui.marksEl.parentNode !== ui.node.body) ui.mdEl.appendChild(ui.marksEl);
         ui.marksEl.style.display = '';
         ui.freezePending = false;
@@ -8815,21 +9067,34 @@ function handleEvent(ev, ui) {
       typerStop(ui);
       ui.fastFinish = false;
       ui.buffer = ''; ui.shown = ''; ui.frozen = null;
-      ui.freezeLocked = false;
       ui.replyUiSpec = '';
       ui.pendingReplyUi = '';
       if (ui.replyLive && ui.replyLive.isConnected) ui.replyLive.remove();
       ui.replyLive = null;
-      /* BJ: метки режимов ПЕРЕЖИВАЮТ перезапуск ответа: уведомление стоит
-         на месте включения и не имеет права исчезнуть вместе с текстом.
-         До начала новой печати оно живёт в теле ответа — перед строкой
-         статуса, куда вернётся и новая печать (после метки) */
-      if (ui.marksEl && ui.mdEl && ui.mdEl.contains(ui.marksEl)) {
-        const st = (ui.statusEl && ui.node.body.contains(ui.statusEl))
-          ? ui.statusEl : null;
-        if (st) ui.node.body.insertBefore(ui.marksEl, st);
-        else ui.node.body.appendChild(ui.marksEl);
+      /* BJ/BM: МЕТКИ ПЕРЕЖИВАЮТ перезапуск ответа — ВСЕ слоты (закреплённые
+         сегменты и ожидающий) уходят в тело ответа перед строкой статуса,
+         порядок сохраняется. Новая печать начнётся под ними; следующие
+         метки получат новые слоты в новой печати */
+      {
+        const slots = [];
+        (ui.segs || []).forEach((sg) => { if (sg.marksEl) slots.push(sg.marksEl); });
+        if (ui.marksEl) slots.push(ui.marksEl);
+        slots.forEach((slot) => {
+          if (ui.mdEl && ui.mdEl.contains(slot)) {
+            const st = (ui.statusEl && ui.node.body.contains(ui.statusEl))
+              ? ui.statusEl : null;
+            if (st) ui.node.body.insertBefore(slot, st);
+            else ui.node.body.appendChild(slot);
+          }
+          slot.style.display = '';   // ожидающая метка тоже видна: событие было
+        });
+        if (ui.segs) ui.segs.forEach((sg) => { sg.frozenEl = null; });
+        ui.segs = [];
+        ui._activeFrozen = null;
+        ui._frozenSrc = null;
       }
+      ui.marksEl = null;
+      ui.freezePending = false;
       if (ui.mdEl) { ui.mdEl.remove(); ui.mdEl = null; }
       if (!ui.statusEl) {
         ui.statusEl = el('div', 'thinking-line');

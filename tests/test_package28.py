@@ -3194,7 +3194,7 @@ class IterationXTests(unittest.TestCase):
         self.assertIn("gate-hold", js)
         self.assertIn("function appendLivePlaceholder", js)
         self.assertIn("function appendFreshMessages", js)
-        self.assertIn("renderMessageInto(host, m, m.role === 'assistant' && m.id === lastAiId)", js)
+        self.assertIn("m.role === 'assistant' && m.id === lastAiId && !answered.has(m.id)", js)
         self.assertIn("shell.dataset.agHold = '1'", js)
         self.assertIn(".qt-folder.open .qt-kids{display:flex}", css)
         self.assertNotIn(".qt-folder.open .qt-kids{display:flex;margin:2px 0 4px}", css)
@@ -3253,7 +3253,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.69", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.70", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3867,7 +3867,7 @@ class IterationAJTests(unittest.TestCase):
         self.assertNotIn("relayFlick", js)
         self.assertNotIn("relay", css)
         # круглешок живой: дышит в покое, пульсирует при печати (чистый CSS)
-        self.assertIn(".ai-core{position:absolute;left:50%;top:8px;width:19.5px;height:19.5px;", css)
+        self.assertIn(".ai-core{position:absolute;left:50%;top:8px;width:15px;height:15px;", css)
         # BD: история статична И дешёвая; дышит только текущий ответ
         self.assertNotIn("coreBreathe", css)
         self.assertIn("animation:coreLive 4.6s ease-in-out infinite}", css)
@@ -4589,8 +4589,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.69", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.69", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.70", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.70", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4724,7 +4724,7 @@ class IterationAUTests(unittest.TestCase):
     def test_au3_version_chip(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b69</span>', html)
+        self.assertIn('<span class="ver-chip">b70</span>', html)
         self.assertIn(".ver-chip{align-self:center;", css)
 
     def test_au4_flight_waits_for_scroll(self) -> None:
@@ -4999,7 +4999,7 @@ class IterationAZTests(unittest.TestCase):
         # с CSS-правилом кнопок .act ломала карточку ответа рамкой
         self.assertIn("const core = root.querySelector('.ai-core');", fd)
         self.assertIn("core.classList.remove('dot-act', 'shape-on', 'dot-settle');", fd)
-        self.assertIn("sg.classList.add('sh-out');", fd)
+        self.assertIn("const activeShow = !!(core._shapeSvg && core._shapeRaf);", fd)
         self.assertIn("core._shapeSvg = null;", fd)
         self.assertIn("core.classList.add('dot-settle');", fd)
 
@@ -5135,14 +5135,14 @@ class IterationBBTests(unittest.TestCase):
         # ПЛАВНО (интерполяция filter в кадрах, без резких скачков)
         self.assertIn("g.innerHTML = dotShapeFrame(key, t, svg._gradL);", play)
         self.assertIn("function dotShapeFrame(", js)
-        self.assertIn(".dot-shape-svg.sh-in{animation:dotSvgIn .45s", css)
+        self.assertIn(".dot-shape-svg.sh-fly{animation:dotSvgFly .5s", css)
         self.assertIn(".dot-shape-svg.sh-out{animation:dotSvgOut .4s", css)
-        self.assertIn("@keyframes dotSvgIn{", css)
+        self.assertIn("@keyframes dotSvgFly{", css)
         self.assertIn("@keyframes dotSvgOut{", css)
         # BH: холст 30px (13px душил градиенты), пик — масштаб 1
-        self.assertIn("width:60px;height:60px;", css)
-        self.assertIn("100%{opacity:1;transform:scale(1);", css)
-        self.assertIn("45%{opacity:1;transform:scale(1);", css)
+        self.assertIn("width:46px;height:46px;", css)
+        self.assertIn("100%{opacity:0;transform:translateY(-42px) scale(.22);", css)
+        self.assertIn("0%{opacity:1;transform:translateY(0) scale(1);", css)
 
     def test_bb4_thinking_only_for_work(self) -> None:
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
@@ -5196,18 +5196,16 @@ class IterationBCTests(unittest.TestCase):
         self.assertIn("const DOT_MORPH_OUT_MS = 650;", js)
         self.assertIn("const DOT_HOLD_MS = 4000;", js)
         # BH: фигура — 30px SVG, пружина до масштаба 1 (30px ≈ 2.3 круга)
-        self.assertIn(".dot-shape-svg.sh-in{animation:dotSvgIn .45s", css)
-        self.assertIn("100%{opacity:1;transform:scale(1);", css)
-        self.assertIn("width:60px;height:60px;", css)
+        self.assertIn(".dot-shape-svg.sh-fly{animation:dotSvgFly .5s", css)
+        self.assertIn("0%{opacity:1;transform:translateY(0) scale(1);", css)
+        self.assertIn("width:46px;height:46px;", css)
         # золото в кадрах морфа — плавное (интерполяция filter)
-        self.assertIn("filter:brightness(1.18) drop-shadow(0 0 8px rgba(217,164,65,.8))", css)
-        self.assertIn("filter:brightness(1) drop-shadow(0 0 5px rgba(0,212,255,.55))", css)
-        # золото — ровно в кадрах трансформации (кадр 45% In / 0% Out)
-        morph_in = css.split("@keyframes dotSvgIn{")[1].split("}}")[0]
-        self.assertIn("rgba(217,164,65,.8)", morph_in)
+        # BM: улёт — одна структура фильтра в каждом кадре
+        fly = css.split("@keyframes dotSvgFly{")[1].split("}}")[0]
+        self.assertEqual(fly.count("brightness"), fly.count("{"))
+        self.assertEqual(fly.count("drop-shadow"), fly.count("{"))
         morph_out = css.split("@keyframes dotSvgOut{")[1].split("}}")[0]
         self.assertIn("opacity:0", morph_out)
-        self.assertIn("brightness(1.18)", morph_in)
 
     def test_bc5_more_3d_4d_shapes(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5426,7 +5424,7 @@ class IterationBFTests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         # круглешок на уровне надписи JARVIS
-        self.assertIn(".ai-core{position:absolute;left:50%;top:8px;width:19.5px;height:19.5px;", css)
+        self.assertIn(".ai-core{position:absolute;left:50%;top:8px;width:15px;height:15px;", css)
         # длинный ответ: аватар прилипает к верху — круглешок всегда в кадре
         self.assertIn(".msg-ai.live .ai-avatar{position:sticky;top:8px;z-index:2}", css)
         # фигура — ОБЪЁМНОЕ ТЕЛО: свет и блик несут SVG-градиенты
@@ -5538,16 +5536,16 @@ class IterationBGTests(unittest.TestCase):
             self.assertIn("  %s: {" % shape, js)
         for gone in ("star", "hex", "cross", "line", "wave", "zig"):
             self.assertNotIn("  %s: {" % gone, js)
-        self.assertIn("width:60px;height:60px;", css)
+        self.assertIn("width:46px;height:46px;", css)
         self.assertIn("d: 4,", js)
         # полигональные clip-path-фигуры ушли из CSS навсегда
         self.assertNotIn("clip-path:polygon(", css)
         self.assertIn(".dot-shape-svg{", css)
         self.assertIn(".msg-ai.live .ai-core.shape-on{opacity:0}", css)
         # золото нарастает и уходит ПЛАВНО — интерполяцией в кадрах морфа
-        self.assertIn("@keyframes dotSvgIn{", css)
+        self.assertIn("@keyframes dotSvgFly{", css)
         self.assertIn("@keyframes dotSvgOut{", css)
-        self.assertIn("rgba(217,164,65,.75)", css)
+        self.assertIn("#ffd8a8", css)
         # вращение — отдельная группа фигуры, ~125-140° за 1.5s ease-in-out
         self.assertIn("function dotShapeFrame(", js)
 
@@ -5623,13 +5621,14 @@ class IterationBHTests(unittest.TestCase):
         # включение режима ПОСЕРЕДИНЕ ответа: метка в потоке печати,
         # между замороженной головой и хвостом — а не в конце ленты
         self.assertIn("let liveUi = (S.followUi", tl)
-        self.assertIn("const k = lastSentenceEnd(shown, curLen);", tl)
-        self.assertIn("liveUi.frozen = { src: head, html: MD.render(stripSteps(head)) };", tl)
+        # BM: границу ищет renderTyped — toolLine только объявляет ожидание
+        self.assertIn("liveUi.freezePending = true;", tl)
         self.assertIn("liveUi.marksEl = el('div', 'md-marks');", tl)
         self.assertIn("if (markHost) markHost.appendChild(row);", tl)
         rt = js.split("function renderTyped(")[1].split("\nfunction ")[0]
-        self.assertIn("md-marks", rt)
+        self.assertIn("ui.marksEl", rt)
         self.assertIn("want.forEach((n) => ui.mdEl.appendChild(n));", rt)
+        self.assertIn("segs.forEach((sg) => { want.push(sg.frozenEl, sg.marksEl); });", rt)
         self.assertIn(".md-marks{width:100%}", css)
         # карточки разрешений НЕ трогали — как было
         self.assertNotIn(".mc-actions>.mc-switch", css)
@@ -5652,7 +5651,7 @@ class IterationBHTests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # 30px холст: 13px душил градиенты и штрихи
-        self.assertIn("width:60px;height:60px;", css)
+        self.assertIn("width:46px;height:46px;", css)
         self.assertIn("filter:brightness(1) drop-shadow(0 0 5px rgba(0,195,255,.5))", css)
         # градиенты background НЕ анимируются — золото только через
         # интерполируемые фильтры; точка гаснет кроссфейдом, не мгновенно
@@ -5661,9 +5660,9 @@ class IterationBHTests(unittest.TestCase):
             self.assertNotIn("background", block, kf)
         self.assertIn("hue-rotate(-138deg)", css)
         self.assertIn(".msg-ai.live .ai-core{transition:opacity .45s ease}", css)
-        # много кадров морфа — плавный разгон и плавный уход
-        self.assertIn("45%{opacity:1;", css)
-        self.assertIn("45%{opacity:1;transform:scale(1);", css)
+        # BM: вход фигуры — геометрия без растворения; улёт — мягкая дуга
+        self.assertIn("0%{opacity:1;transform:translateY(0) scale(1);", css)
+        self.assertIn("100%{opacity:0;transform:translateY(-42px) scale(.22);", css)
 
     def test_bh5_math_limits_envs_arrows(self) -> None:
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
@@ -5704,7 +5703,7 @@ class IterationBHTests(unittest.TestCase):
         self.assertIn("const ASPECTS = [", p2)
         self.assertIn("{ r: 1, label: '1:1' }", p2)
         self.assertIn("{ r: 0, label: 'авто' }", p2)
-        self.assertIn("let aspect = ASPECTS[0];", p2)
+        self.assertIn("let aspect = (!fns.length && series.length) ? ASPECTS[5] : ASPECTS[0];", p2)
         self.assertIn(".plot-pop{", css)
         self.assertIn(".plot-pop.open{display:flex}", css)
         # светлее фон
@@ -5748,22 +5747,26 @@ class IterationBJTests(unittest.TestCase):
         self.assertIn("ui.marksEl.parentNode !== ui.node.body", rt)
         # reset не стирает метку вместе с текстом
         reset = js.split("case 'reset':")[1].split("\n    case ")[0]
-        self.assertIn("ui.node.body.insertBefore(ui.marksEl, st);", reset)
+        self.assertIn("ui.node.body.insertBefore(slot, st);", reset)
+        self.assertIn("(ui.segs || []).forEach((sg) => { if (sg.marksEl) slots.push(sg.marksEl); });",
+                      reset)
 
     def test_bj3_dot_bigger_softer_faces_visible(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         fd = js.split("function finishLiveDot(")[1].split("\nfunction ")[0]
         # фигуры крупнее (40px), вход/ход без пружинного перелёта
-        self.assertIn("width:60px;height:60px;", css)
-        self.assertIn(".dot-shape-svg.sh-in{animation:dotSvgIn .45s", css)
+        self.assertIn("width:46px;height:46px;", css)
+        self.assertIn(".dot-shape-svg.sh-fly{animation:dotSvgFly .5s", css)
         self.assertIn(".dot-shape-svg.sh-out{animation:dotSvgOut .4s", css)
         # грани заметнее + обводка запаивает швы между полигонами
         self.assertIn("(0.18 + 0.34 * bright)", js)
         self.assertIn('stroke-width=".4"', js)
         # конец ответа не рвёт фигуру на полобороте — мягкий уход
-        self.assertIn("sg.classList.add('sh-out');", fd)
-        self.assertIn("setTimeout(() => sg.remove(), 800);", fd)
+        self.assertIn("svg.classList.add('sh-fly');", fd)
+        self.assertIn("dotShapeFrame(key, t, L, Math.min(1, p))", fd)
+        self.assertIn("}, 1000);   /* BM: секунда покоя перед улётом */", fd)
+        self.assertIn("svg._closeRaf = setTimeout(() => svg.remove(), 560);", fd)
 
     def test_bj4_gold_never_snaps(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5773,7 +5776,7 @@ class IterationBJTests(unittest.TestCase):
             ("coreLive", ("hue-rotate", "saturate", "brightness", "drop-shadow")),
             ("coreBurst", ("hue-rotate", "saturate", "brightness", "drop-shadow")),
             ("coreSettle", ("hue-rotate", "saturate", "brightness", "drop-shadow")),
-            ("dotSvgIn", ("brightness", "drop-shadow")),
+            ("dotSvgFly", ("brightness", "drop-shadow")),
             ("dotSvgOut", ("brightness", "drop-shadow")),
         ):
             block = css.split("@keyframes %s{" % kf)[1].split("}}")[0]
@@ -5787,7 +5790,7 @@ class IterationBJTests(unittest.TestCase):
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # обычный корень: штрих + одна диагональ + носик, срастается с чертой
-        self.assertIn("M.8 13.9 L3.3 16 L5.9 0 H1400", md)
+        self.assertIn("M.8 13.9 L3.3 16 L5.9 0 H11", md)
         # дробь центрируется на строке (baseline числителя больше не топит её)
         self.assertIn("vertical-align:middle;margin:0 2px;line-height:1.15", css)
         self.assertIn(".math-inline .mfrac{font-size:.82em;vertical-align:middle", css)
@@ -5826,8 +5829,8 @@ class IterationBJTests(unittest.TestCase):
 
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b69</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.69", html)
+        self.assertIn('<span class="ver-chip">b70</span>', html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.70", html)
 
 
 
@@ -5874,22 +5877,32 @@ class IterationBKTests(unittest.TestCase):
         rt = js.split("function renderTyped(")[1].split("\nfunction ")[0]
         self.assertIn("function lastSentenceEnd(", js)
         self.assertIn("liveUi.freezePending = true;", tl)
+        # BM: toolLine НЕ замораживает сам — только слот и ожидание
+        self.assertNotIn("liveUi.frozen = {", tl)
         self.assertIn("liveUi.marksEl.style.display = liveUi.freezePending ? 'none' : '';", tl)
-        self.assertIn("if (ui.freezePending && !ui.freezeLocked)", rt)
+        self.assertIn("if (ui.freezePending) {", rt)
         self.assertIn("const k = lastSentenceEnd(text, src.length);", rt)
+        self.assertIn("closeMarkSegment(ui);", rt)
+        self.assertIn("function closeMarkSegment(", js)
 
     def test_bk5_radical_bar_matches_nose(self) -> None:
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # BL: черта — продолжение того же штриха (H1400, клип .msqrt),
         # strut держит базовую линию, знак хранит пропорции
-        self.assertIn("M.8 13.9 L3.3 16 L5.9 0 H1400", md)
+        self.assertIn("M.8 13.9 L3.3 16 L5.9 0 H11", md)
         self.assertIn('stroke="rgba(190,235,255,.85)"', md)
-        self.assertIn('<span class="msq-b">&nbsp;</span>', md)
-        self.assertIn("aspect-ratio:11/24", css)
-        self.assertIn(".msqrt .msq-b{", css)
-        self.assertNotIn(".msq-r::before", css)
-        self.assertIn("margin:0 .08em 0 0", css)
+        self.assertIn('<span class="msq-r">', md)
+        self.assertIn('preserveAspectRatio="none" aria-hidden="true"', md)
+        self.assertNotIn("msq-b", md)
+        self.assertNotIn("H1400", md)
+        self.assertIn(
+            ".msqrt{position:relative;display:inline-block;line-height:0;", css)
+        self.assertIn(
+            ".msqrt .msq-r{display:inline-block;line-height:1.5;min-height:1em;", css)
+        self.assertIn(
+            ".msqrt .msq-svg{position:absolute;left:0;top:0;width:.62em;height:100%;", css)
+        self.assertNotIn("aspect-ratio:11/24", css)
 
     def test_bk6_plot_interpreter_unicode_and_defs(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -5914,8 +5927,8 @@ class IterationBKTests(unittest.TestCase):
 
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b69</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.69", html)
+        self.assertIn('<span class="ver-chip">b70</span>', html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.70", html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -5934,7 +5947,7 @@ class IterationBLTests(unittest.TestCase):
         self.assertIn("function endsInOpenTable(", js)
         tl = js.split("function toolLine(")[1].split("\nfunction ")[0]
         rt = js.split("function renderTyped(")[1].split("\nfunction ")[0]
-        self.assertIn("!endsInOpenTable(head)", tl)
+        self.assertNotIn("endsInOpenTable", tl)
         self.assertIn("!endsInOpenTable(head)", rt)
         # метка, не дождавшаяся конца, показывается в конце ответа
         qrf = js.split("function queueResponseFinish(")[1].split("\nfunction ")[0]
@@ -5956,10 +5969,10 @@ class IterationBLTests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # морф растёт из центра точки: svg и ядро в одном центре
         self.assertIn(
-            ".dot-shape-svg{position:absolute;left:50%;top:8px;width:60px;height:60px;",
+            ".dot-shape-svg{position:absolute;left:50%;top:8px;width:46px;height:46px;",
             css)
         self.assertIn(
-            ".ai-core{position:absolute;left:50%;top:8px;width:19.5px;height:19.5px;",
+            ".ai-core{position:absolute;left:50%;top:8px;width:15px;height:15px;",
             css)
         self.assertIn("const DOT_HOLD_MS = 4000;", js)
         # рёбра стилизуются непрерывно по глубине — без градиентных щелчков
@@ -5976,7 +5989,7 @@ class IterationBLTests(unittest.TestCase):
         self.assertIn("const featureXs = () => {", p2)
         self.assertIn("const smartInit = () => {", p2)
         # ноль всегда в кадре — ось не уезжает за край
-        self.assertIn("if (a > 0) a = 0;", p2)
+        self.assertIn("if (fns.length) {\n      if (a > 0) a = 0;", p2)
         self.assertIn("const margin = Math.min(0.5, span0 * 0.06);", p2)
         # ± плавные: smoothstep в трёх панелях (2D, 3D, geo)
         self.assertEqual(
