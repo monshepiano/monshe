@@ -262,7 +262,7 @@ function toolLine(kind, on) {
   const box = stream();
   if (!box) return;
   const agent = kind === 'agent';
-  /* BH: метка режима, включённого ПОСЕРЕДИНЕ ответа, остаётся ПОСЕРЕДИ
+  /* BH: метка режима, включённого ПОСЕРЕДИНЕ ответа, остаётся ПОСЕРЕДИНЕ
      ответа — в месте включения, а не уезжает в конец ленты. Текст,
      напечатанный до включения, замораживаем границей: метка встанет
      ровно между ним и будущим текстом (внутри печати, слотом .md-marks) */
@@ -271,13 +271,39 @@ function toolLine(kind, on) {
     S.followUi.node.root.classList.contains('live')) ? S.followUi : null;
   /* BI: печать может стоять на паузе (followUi погас), но ответ ещё
      жив — уведомление всё равно должно встать в его поток */
-  if (!liveUi && S.streaming) {
-    const cand = S.liveUi;
+  if (!liveUi) {
+    const cand = (S.liveUi && S.liveUi !== S.followUi) ? S.liveUi :
+      (S.streaming ? S.followUi : null);
     if (cand && cand.mdEl && cand.mdEl.isConnected && cand.node &&
         cand.node.root && cand.node.root.classList.contains('live')) liveUi = cand;
   }
+  /* BJ: ТЕКСТА ЕЩЁ НЕТ — типичный агентский случай: разрешение спрашивают
+     ДО того, как Джарвис начал печатать. Раньше метка в этот момент
+     падала в самый НИЗ ленты (append в box) и оставалась под всем
+     ответом. Теперь она встаёт В ТЕЛО ответа, прямо перед строкой
+     статуса — будущий текст напечатается ПОД ней, ровно после метки */
+  let preText = false;
+  if (!liveUi) {
+    const cand = (S.streaming && S.liveUi) ? S.liveUi :
+      ((S.streaming && S.followUi) ? S.followUi : null);
+    if (cand && cand.node && cand.node.root &&
+        cand.node.root.classList.contains('live') && !cand.mdEl) {
+      liveUi = cand;
+      preText = true;
+    }
+  }
   let markHost = null;
-  if (liveUi) {
+  if (liveUi && preText) {
+    if (!liveUi.marksEl || !liveUi.marksEl.isConnected) {
+      liveUi.marksEl = el('div', 'md-marks');
+      const body = liveUi.node.body;
+      const st = (liveUi.statusEl && body.contains(liveUi.statusEl))
+        ? liveUi.statusEl : null;
+      if (st) body.insertBefore(liveUi.marksEl, st);
+      else body.appendChild(liveUi.marksEl);
+    }
+    markHost = liveUi.marksEl;
+  } else if (liveUi) {
     try {
       const shown = String(liveUi.shown || '');
       const mathOk = (shown.match(/\\\[/g) || []).length ===
@@ -1558,27 +1584,27 @@ function chaseBottom(box, run) {
   if (st.chasing) return;
   st.chasing = true;
   box.classList.add('pin-instant');
-  /* BH: РАЗГОН вместо рывка. Раньше первый кадр догона съедал сразу 26%
-     остатка: у большой агентской карточки (200-300px) это 60-80px за один
-     кадр — глаз ловил скачок. Теперь шаг стартует маленьким и РАЗГОНЯЕТСЯ
-     к своей доле (×1.22 за кадр): мелкий текст печатается как раньше
-     (шаг и так меньше 3px), а крупные вставки догоняются плавным ходом */
-  st.v = 0;
+  /* BJ: РОВНЫЙ ХОД БЕЗ РЫВКОВ. Прежняя кривая «разгонялась» к доле остатка
+     (×1.22 за кадр): у большой агентской карточки скорость долетала до
+     26% остатка за один-два кадра — глаз ловил бросок. Теперь скорость
+     ПРЯМО ПРОПОРЦИОНАЛЬНА остатку и просто ограничена сверху: большое
+     окно догоняется быстрым, но постоянным ходом, у дна ход плавно
+     замирает (экспоненциальное затухание — как инерция у iOS). Ни
+     разгона, ни ступенек: одна и та же плавная кривая у печати, у
+     карточек и у панелей */
   const frame = () => {
     st.chasing = false;
-    if (run && run.followOutput === false) { box.classList.remove('pin-instant'); st.v = 0; return; }
+    if (run && run.followOutput === false) { box.classList.remove('pin-instant'); return; }
     const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
-    if (gap <= 1) { box.classList.remove('pin-instant'); st.v = 0; return; }
+    if (gap <= 1) { box.classList.remove('pin-instant'); return; }
     st.autoPend += 1;
-    const want = Math.max(3, Math.ceil(gap * 0.26));
-    st.v = Math.min(want, (st.v || 0) * 1.22 + 5);
-    box.scrollTop = box.scrollTop + st.v;
+    const v = Math.min(24, Math.max(1.6, gap * 0.11));
+    box.scrollTop = box.scrollTop + v;
     if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) {
       st.chasing = true;
       requestAnimationFrame(frame);
     } else {
       box.classList.remove('pin-instant');
-      st.v = 0;
     }
   };
   requestAnimationFrame(frame);
@@ -3576,14 +3602,77 @@ function plotFmt(v) {
 }
 
 /* панель графика/чертежа: canvas + тулбар; один раз оживляется */
+/* BJ: ГРАФИК-ИНТЕРПРЕТАТОР ПОНИМАЕТ ЛЮБУЮ разумную запись. Модель иногда
+   пишет plot-спеку с одинарными кавычками, голыми ключами, висячими
+   запятыми, комментариями или просто парами «f=sin(x)» — раньше это
+   валилось с «Не разобрать JSON» и график пропадал. Теперь: строгий
+   JSON → мягкий JSON (одинарные кавычки, голые ключи, хвостовые
+   запятые, // комментарии) → пары ключ=значение → голая формула.
+   Плюс синонимы ключей: y/func/formula → f (кривая), поверхность — z */
+function plotParseSpec(raw) {
+  const src = String(raw || '').trim()
+    .replace(/^```[a-zа-яё]*\s*/i, '').replace(/```\s*$/, '');
+  if (!src) return {};
+  try { return JSON.parse(src); } catch (e) { /* дальше мягкий разбор */ }
+  let s = src
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/,\s*([}\]])/g, '$1')
+    .replace(/([{,]\s*)([A-Za-z_]\w*)\s*:/g, '$1"$2":')
+    .replace(/'/g, '"');
+  try {
+    const spec = JSON.parse(s);
+    if (spec && typeof spec === 'object') return spec;
+  } catch (e) { /* дальше пары ключ=значение */ }
+  const out = {};
+  const re = /([A-Za-z_]\w*)\s*[:=]\s*("[^"]*"|'[^']*'|\[[^\]]*\]|[^,\n\]}]+)/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const k = m[1].toLowerCase();
+    let v = m[2].trim().replace(/^["']|["']$/g, '').trim();
+    if (k === 'f' || k === 'z' || k === 'title') {
+      if (v.startsWith('[')) {
+        try { out[k] = JSON.parse(v.replace(/'/g, '"')); } catch (e) { out[k] = [v]; }
+      } else out[k] = v;
+    } else if (k === 'x' || k === 'range' || k === 'domain') {
+      const arr = v.match(/-?\d+(?:\.\d+)?/g);
+      if (arr && arr.length >= 2) out.x = [Number(arr[0]), Number(arr[1])];
+    } else if (k === 'yy' || k === 'yrange' ||
+               (k === 'y' && /^\[\s*-?\d/.test(v.replace(/'/g, '')))) {
+      /* y=[-3,3] — это ДИАПАЗОН оси Y (поверхность), а не формула */
+      const arr = v.match(/-?\d+(?:\.\d+)?/g);
+      if (arr && arr.length >= 2) out.yy = [Number(arr[0]), Number(arr[1])];
+    } else if (k === 'y' || k === 'func' || k === 'formula' || k === 'fn') {
+      if (!out.f) out.f = v.startsWith('[') ? [v] : v;   // y=… — это кривая
+    }
+  }
+  /* совсем без ключей? одиночная формула — это график: если в ней есть
+     y — поверхность z, иначе кривая f */
+  if (!out.f && !out.z && !out.title && !src.includes(':') && !src.includes('=')) {
+    const t = src.replace(/^["']|["']$/g, '').trim();
+    if (t && !/[\n{}]/.test(t)) out[/\by\b|[*,+\-\/].*\by\b/.test(t) ? 'z' : 'f'] = t;
+  }
+  return out;
+}
+
 function mountPlotPanels(root) {
   $$('.plot-panel', root).forEach((panel) => {
     if (panel.dataset.live === '1') return;
     panel.dataset.live = '1';
     panel._jarvisPlot = true;
-    let spec;
-    try { spec = JSON.parse(panel.dataset.plot || '{}'); }
-    catch (e) { panel.innerHTML = '<div class="plot-err">Не разобрать JSON: ' + esc(e.message) + '</div>'; return; }
+    const spec = plotParseSpec(panel.dataset.plot);
+    /* синонимы: модель пишет "y"/"func"/"formula" вместо "f" (строки —
+     это кривые; числовой массив в y — диапазон оси для поверхности) */
+    if (!spec.f && !spec.z && spec.y != null) {
+      const ys = Array.isArray(spec.y) ? spec.y : [spec.y];
+      if (ys.length && ys.every((v) => typeof v === 'string')) {
+        spec.f = Array.isArray(spec.y) ? spec.y : spec.y;
+        delete spec.y;
+      }
+    }
+    if (!spec.f && (spec.func || spec.formula || spec.fn)) {
+      spec.f = spec.func || spec.formula || spec.fn;
+    }
     const kind = panel.dataset.kind || (spec.z ? 'plot3' : 'plot');
     try {
       if (kind === 'geo') buildGeoPanel(panel, spec);
@@ -3643,8 +3732,9 @@ function buildPlot2Panel(panel, spec) {
   const fns = (Array.isArray(spec.f) ? spec.f : (spec.f ? [spec.f] : []))
     .filter((e) => e != null && String(e).trim() !== '').map((e) => mathCompile(e));
   if (!fns.length) {
-    throw new Error('нет формул: для графика пиши {"f": ["sin(x)"], "x": [-6, 6]}, ' +
-      'для поверхности 3D — {"z": "sin(x)*cos(y)", "x": [-3, 3], "y": [-3, 3]}');
+    throw new Error('нет формул: для графика пиши {"f": ["sin(x)"], "x": [-6, 6]} — ' +
+      'строго двойные кавычки; для поверхности 3D — {"z": "sin(x)*cos(y)", ' +
+      '"x": [-3, 3], "y": [-3, 3]}');
   }
   const labels = (Array.isArray(spec.f) ? spec.f : [spec.f]).map((e) => String(e));
   const colors = ['#37d3ff', '#ffd489', '#8f86cf', '#3fbf95', '#e3798d'];
@@ -3866,13 +3956,18 @@ function buildPlot2Panel(panel, spec) {
     const r = cv.getBoundingClientRect();
     hover = { px: e.clientX - r.left, py: e.clientY - r.top };
     if (!drag) { draw(); return; }
-    /* ПАН ПО ВСЕЙ ПЛОЩАДИ: едут обе оси (Y больше не подгоняется) */
+    /* ПАН ПО ВСЕЙ ПЛОЩАДИ: едут обе оси (Y больше не подгоняется).
+       BJ: ИСПРАВЛЕННАЯ МАТЕМАТИКА — раньше сдвиг домена делился на ширину
+       холста ещё раз, и пан двигал график на доли пикселя: график
+       «не перемещался». Сдвиг в пикселях × единиц на пиксель — вот и всё */
     const ux = (drag.x1 - drag.x0) / r.width;
     const uy = (drag.y1 - drag.y0) / r.height;
-    x0 = drag.x0 + (drag.x - e.clientX) / r.width * ux;
-    x1 = drag.x1 + (drag.x - e.clientX) / r.width * ux;
-    y0 = drag.y0 + (e.clientY - drag.y) / r.height * uy;
-    y1 = drag.y1 + (e.clientY - drag.y) / r.height * uy;
+    const dx = (drag.x - e.clientX) * ux;
+    const dy = (e.clientY - drag.y) * uy;
+    x0 = drag.x0 + dx;
+    x1 = drag.x1 + dx;
+    y0 = drag.y0 + dy;
+    y1 = drag.y1 + dy;
     draw();
   });
   cv.addEventListener('pointerup', () => { drag = null; });
@@ -3892,9 +3987,17 @@ function buildPlot2Panel(panel, spec) {
 
 /* ---------- 3D: поверхность z = f(x,y), вращение мышью ---------- */
 function buildPlot3Panel(panel, spec) {
-  const fz = mathCompile(spec.z);
+  /* BJ: z бывает и массивом из одного элемента — берём формулу, а не
+     падаем на «нет формул» */
+  const zSrc = Array.isArray(spec.z) ? (spec.z[0] != null ? spec.z[0] : '') : spec.z;
+  if (!String(zSrc || '').trim()) {
+    throw new Error('нет формулы поверхности: пиши {"z": "sin(x)*cos(y)", ' +
+      '"x": [-3, 3], "y": [-3, 3]} — строго двойные кавычки');
+  }
+  const fz = mathCompile(String(zSrc));
   const xr = (spec.x && spec.x.length === 2) ? spec.x : [-3, 3];
-  const yr = (spec.y && spec.y.length === 2) ? spec.y : [-3, 3];
+  const yr = ((spec.y && spec.y.length === 2) ? spec.y :
+    ((spec.yy && spec.yy.length === 2) ? spec.yy : [-3, 3]));
   const { cv, ctx, read } = plotShell(panel, spec.title);
   let alpha = -0.65, beta = 0.6, zoom = 1;
   /* BI: ЖЕСТЫ как просил юзер: одна кнопка/палец — ВРАЩЕНИЕ,
@@ -6547,8 +6650,12 @@ function renderTyped(ui) {
   /* BH: между головой и хвостом живёт слот меток (.md-marks — уведомления
      о режимах, включённых посреди ответа). Порядок нормализуем только
      когда он реально нарушен — лишний appendChild перезапускал бы анимацию
-     входа метки на каждом такте печати */
-  if (ui.marksEl && !ui.mdEl.contains(ui.marksEl)) ui.mdEl.appendChild(ui.marksEl);
+     входа метки на каждом такте печати.
+     BJ: метка, поставленная ДО начала печати, живёт в ТЕЛЕ ответа (перед
+     строкой статуса) — её НЕ переносим внутрь печати: текст обязан
+     печататься ПОД меткой, а не наоборот */
+  if (ui.marksEl && !ui.mdEl.contains(ui.marksEl) &&
+      ui.marksEl.parentNode !== ui.node.body) ui.mdEl.appendChild(ui.marksEl);
   let tailEl = frozenEl.nextElementSibling;
   if (tailEl && tailEl.classList.contains('md-marks')) tailEl = tailEl.nextElementSibling;
   if (!tailEl || !tailEl.classList.contains('md-tail')) {
@@ -7246,7 +7353,11 @@ function dotShapeFrame(key, t, L) {
     return [p[0] * k * SC, p[1] * k * SC, p[2]];
   });
   const px = (i) => P[i][0].toFixed(2) + ',' + P[i][1].toFixed(2);
-  /* грани-стекло: художник по глубине, свет по нормали */
+  /* грани-стекло: художник по глубине, свет по нормали.
+     BJ: стекло стало ЗАМЕТНЕЕ (0.18+0.34·свет — раньше 0.13+0.22, на
+     светлых экранах грани казались «не прорисованными»), плюс тонкая
+     обводка той же заливкой запаивает щели-швы между соседними
+     полигонами (антиалиасные просветы сквозь фигуру) */
   const faces = sh.F.map((f) => {
     const ps = f.map((i) => P[i]);
     let depth = 0;
@@ -7258,7 +7369,9 @@ function dotShapeFrame(key, t, L) {
       depth,
       html: '<polygon points="' + f.map((i) => px(i)).join(' ') +
         '" fill="url(#gF' + L + ')" fill-opacity="' +
-        (0.13 + 0.22 * bright).toFixed(3) + '" stroke="none"/>',
+        (0.18 + 0.34 * bright).toFixed(3) + '" stroke="url(#gF' + L +
+        ')" stroke-width=".4" stroke-opacity="' +
+        (0.18 + 0.34 * bright).toFixed(3) + '"/>',
     };
   }).sort((a, b) => a.depth - b.depth);
   /* рёбра: передние яркие, задние приглушённые */
@@ -7372,13 +7485,19 @@ function finishLiveDot(root) {
     clearTimeout(core._shapeTimer);
     if (core._shapeRaf) { cancelAnimationFrame(core._shapeRaf); core._shapeRaf = null; }
     core.classList.remove('dot-act', 'shape-on', 'dot-settle');
+    /* BJ: ФИГУРА УХОДИТ ПЛАВНО, а не исчезает мгновенно: раньше в момент
+       конца ответа svg вырывался из DOM среди вращения — фигура «рвалась».
+       Теперь играем мягкий sh-out (анимация больше не привязана к классу
+       .live) и убираем svg только после её конца; кружок в это время
+       плавно проявляется перекрёстным растворением */
     if (core._shapeSvg) {
       const sg = core._shapeSvg;
-      sg.classList.remove('sh-in', 'sh-out');
+      core._shapeSvg = null;
+      sg.classList.remove('sh-in');
+      sg.classList.add('sh-out');
       const g = sg.querySelector('.rot-g');
       if (g) { g.setAttribute('class', 'rot-g'); g.innerHTML = ''; }
-      sg.remove();
-      core._shapeSvg = null;
+      setTimeout(() => sg.remove(), 800);
     }
     core.classList.add('dot-settle');
     setTimeout(() => {
@@ -8254,10 +8373,21 @@ function handleEvent(ev, ui) {
       typerStop(ui);
       ui.fastFinish = false;
       ui.buffer = ''; ui.shown = ''; ui.frozen = null;
+      ui.freezeLocked = false;
       ui.replyUiSpec = '';
       ui.pendingReplyUi = '';
       if (ui.replyLive && ui.replyLive.isConnected) ui.replyLive.remove();
       ui.replyLive = null;
+      /* BJ: метки режимов ПЕРЕЖИВАЮТ перезапуск ответа: уведомление стоит
+         на месте включения и не имеет права исчезнуть вместе с текстом.
+         До начала новой печати оно живёт в теле ответа — перед строкой
+         статуса, куда вернётся и новая печать (после метки) */
+      if (ui.marksEl && ui.mdEl && ui.mdEl.contains(ui.marksEl)) {
+        const st = (ui.statusEl && ui.node.body.contains(ui.statusEl))
+          ? ui.statusEl : null;
+        if (st) ui.node.body.insertBefore(ui.marksEl, st);
+        else ui.node.body.appendChild(ui.marksEl);
+      }
       if (ui.mdEl) { ui.mdEl.remove(); ui.mdEl = null; }
       if (!ui.statusEl) {
         ui.statusEl = el('div', 'thinking-line');

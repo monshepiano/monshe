@@ -603,8 +603,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   filter:drop-shadow(0 0 5px rgba(0,212,255,.55));
   transition:opacity .18s ease;
   animation:coreLive 4.6s ease-in-out infinite}
-/* BG: пока играет SVG-фигура, кружок мягко уступает место */
-.msg-ai.live .ai-core{transition:opacity .3s ease}
+/* BG→BJ: пока играет SVG-фигура, кружок мягко уступает место — кросс-
+   фейд .45s перекрывается с входом фигуры .9s, точки «вспышки» нет */
+.msg-ai.live .ai-core{transition:opacity .45s ease}
 .msg-ai.live .ai-core.shape-on{opacity:0}
 .msg-ai.live .ai-core::before{content:'';position:absolute;inset:22%;opacity:0;
   border:1.5px solid rgba(255,255,255,.92);border-radius:2px;
@@ -614,25 +615,37 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    полупрозрачные грани со ВИДНЫМИ задними ребрами, свечение. Морф —
    пружинный: кружок уступает место фигуре (масштаб 2.1×), золото
    НАРАСТАЕТ И УХОДИТ ПЛАВНО (интерполяция filter, без резких скачков) */
-.dot-shape-svg{position:absolute;left:50%;top:8px;width:30px;height:30px;
-  margin:-15px 0 0 -15px;opacity:0;pointer-events:none;overflow:visible;z-index:3;
-  filter:drop-shadow(0 0 5px rgba(0,195,255,.5))}
-.msg-ai.live .dot-shape-svg.sh-in{animation:dotSvgIn .7s cubic-bezier(.34,1.32,.42,1) forwards}
-.msg-ai.live .dot-shape-svg.sh-out{animation:dotSvgOut .65s cubic-bezier(.42,.06,.5,1) forwards}
-/* BH: МОРФ — много кадров с перекрытием: разгон мягкий, золото нарастает
-   и уходит ИНТЕРПОЛЯЦИЕЙ фильтра (у CSS не анимируются только градиенты
-   фона — filter и transform плавные по определению) */
+/* BJ: ФИГУРЫ КРУПНЕЕ (40px вместо 30) и МЯГЧЕ: без пружинного перелёта —
+   плавный вход .9s и такой же плавный выход; анимации больше не
+   привязаны к классу .live, поэтому конец ответа НЕ обрывает фигуру
+   на полобороте — она мягко сворачивается и после снятия live */
+.dot-shape-svg{position:absolute;left:50%;top:14px;width:40px;height:40px;
+  margin:-20px 0 0 -20px;opacity:0;pointer-events:none;overflow:visible;z-index:3;
+  filter:brightness(1) drop-shadow(0 0 5px rgba(0,195,255,.5))}
+.dot-shape-svg.sh-in{animation:dotSvgIn .9s cubic-bezier(.25,.85,.3,1) forwards}
+.dot-shape-svg.sh-out{animation:dotSvgOut .75s cubic-bezier(.55,.06,.45,1) forwards}
+/* BJ: ЗОЛОТО БЕЗ СКАЧКОВ. У CSS фильтры интерполируются ТОЛЬКО при
+   одинаковой структуре списка (те же функции в том же порядке): раньше
+   кадры с drop-shadow против drop-shadow+brightness переключались
+   ДИСКРЕТНО — «пожелтение» мгновенно щёлкало. Теперь в каждом кадре
+   один и тот же список brightness+drop-shadow, меняются только
+   значения — золото нарастает и уходит непрерывно */
 @keyframes dotSvgIn{
-  0%{opacity:0;transform:scale(.24);filter:drop-shadow(0 0 2px rgba(0,212,255,.35))}
-  30%{opacity:.85;filter:drop-shadow(0 0 6px rgba(0,212,255,.55)) brightness(1.06)}
-  45%{opacity:1;filter:drop-shadow(0 0 10px rgba(217,164,65,.75)) brightness(1.16)}
-  72%{transform:scale(1.07);filter:drop-shadow(0 0 6px rgba(0,212,255,.6)) brightness(1.04)}
-  100%{opacity:1;transform:scale(1);filter:drop-shadow(0 0 5px rgba(0,195,255,.55))}}
+  0%{opacity:0;transform:scale(.3);
+    filter:brightness(1) drop-shadow(0 0 2px rgba(0,212,255,.35))}
+  35%{opacity:.9;
+    filter:brightness(1.06) drop-shadow(0 0 6px rgba(0,212,255,.55))}
+  62%{opacity:1;transform:scale(1.015);
+    filter:brightness(1.16) drop-shadow(0 0 9px rgba(217,164,65,.75))}
+  100%{opacity:1;transform:scale(1);
+    filter:brightness(1) drop-shadow(0 0 5px rgba(0,195,255,.55))}}
 @keyframes dotSvgOut{
-  0%{opacity:1;transform:scale(1);filter:drop-shadow(0 0 8px rgba(217,164,65,.7)) brightness(1.1)}
-  38%{opacity:1;transform:scale(1.03);filter:drop-shadow(0 0 5px rgba(0,212,255,.5)) brightness(1.04)}
-  62%{opacity:.92;transform:scale(.94);filter:drop-shadow(0 0 3px rgba(0,212,255,.45))}
-  100%{opacity:0;transform:scale(.26);filter:drop-shadow(0 0 2px rgba(0,212,255,.35))}}
+  0%{opacity:1;transform:scale(1);
+    filter:brightness(1.12) drop-shadow(0 0 8px rgba(217,164,65,.7))}
+  45%{opacity:1;transform:scale(1.015);
+    filter:brightness(1.04) drop-shadow(0 0 5px rgba(0,212,255,.5))}
+  100%{opacity:0;transform:scale(.32);
+    filter:brightness(1) drop-shadow(0 0 2px rgba(0,212,255,.35))}}
 /* BI: ВРАЩЕНИЕ ФИГУР — БОЛЬШЕ НЕ CSS. Вращает JS-движок: 3D-тела
    кувыркаются осью-углом с пересортировкой граней, 4D — в плоскостях
    XW/ZW (тессеракт выворачивается). .rot-g — контейнер кадров */
@@ -641,34 +654,39 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .ai-core.dot-settle{animation:coreSettle .55s cubic-bezier(.65,0,.35,1) forwards}
 /* BD: ПОКОЙ БЕЗ ИЗМЕНЕНИЯ РАЗМЕРА — размер меняют только трансформации
    в фигуры. В покое круглешок чуть желтеет, светится и мерцает */
-/* BH: ЗОЛОТО БЕЗ СКАЧКОВ — у CSS НЕ анимируются градиенты background:
-   раньше кадр 38% мгновенно перекрашивал точку в золото (и так же
-   мгновенно возвращал). Фон теперь НЕ трогаем вовсе: тёплое золото
-   нарастает ИНТЕРПОЛЯЦИЕЙ фильтров hue-rotate/saturate/drop-shadow */
+/* BJ: ЗОЛОТО ДЫШИТ ПЛАВНО. Все кадры coreLive/coreBurst/coreSettle
+   держат ОДНУ ИТУ ЖЕ структуру фильтра (hue-rotate+saturate+brightness+
+   один drop-shadow): раньше списки отличались — браузер не мог
+   интерполировать и ЩЁЛКАЛ цветом. Теперь значения едут непрерывно */
 @keyframes coreLive{
-  0%,100%{filter:drop-shadow(0 0 5px rgba(0,212,255,.55))}
-  38%{filter:hue-rotate(-138deg) saturate(1.4) brightness(1.08)
-    drop-shadow(0 0 4px #ffd8a8) drop-shadow(0 0 7px rgba(217,164,65,.6))}
-  66%{filter:drop-shadow(0 0 8px rgba(0,212,255,.75)) brightness(1.14)}
-  82%{filter:drop-shadow(0 0 6px rgba(0,212,255,.6))}}
+  0%,100%{filter:hue-rotate(0deg) saturate(1) brightness(1)
+    drop-shadow(0 0 5px rgba(0,212,255,.55))}
+  38%{filter:hue-rotate(-138deg) saturate(1.45) brightness(1.1)
+    drop-shadow(0 0 6px #ffd8a8)}
+  66%{filter:hue-rotate(0deg) saturate(1.05) brightness(1.14)
+    drop-shadow(0 0 8px rgba(0,212,255,.75))}
+  82%{filter:hue-rotate(0deg) saturate(1) brightness(1.03)
+    drop-shadow(0 0 6px rgba(0,212,255,.6))}}
 /* AZ: ВСПЛЕСК НА ДЕЙСТВИИ — открылся инструмент, шаг плана, файл:
    короткий энергичный такт с золотой искрой, затем снова покой */
 @keyframes coreBurst{
-  0%{transform:scale(1)}
+  0%{transform:scale(1);filter:hue-rotate(0deg) saturate(1) brightness(1)
+    drop-shadow(0 0 5px rgba(0,212,255,.55))}
   25%{transform:scale(1.32);
     filter:hue-rotate(-138deg) saturate(1.55) brightness(1.28)
-      drop-shadow(0 0 6px #ffd489) drop-shadow(0 0 9px var(--gold))
-      drop-shadow(0 0 24px rgba(217,164,65,.7))}
-  55%{transform:scale(.96);filter:drop-shadow(0 0 4px rgba(0,212,255,.5))}
-  100%{transform:scale(1)}}
+      drop-shadow(0 0 9px #ffd489)}
+  55%{transform:scale(.96);filter:hue-rotate(0deg) saturate(1.05) brightness(1.02)
+    drop-shadow(0 0 4px rgba(0,212,255,.5))}
+  100%{transform:scale(1);filter:hue-rotate(0deg) saturate(1) brightness(1)
+    drop-shadow(0 0 5px rgba(0,212,255,.55))}}
 /* AY: финал ответа — вязкая живая форма мягко оседает в кружок */
 @keyframes coreSettle{
   0%{transform:scale(1.24);
     filter:hue-rotate(-138deg) saturate(1.45) brightness(1.15)
-      drop-shadow(0 0 5px #ffd489) drop-shadow(0 0 8px var(--gold))
-      drop-shadow(0 0 22px rgba(217,164,65,.6))}
+      drop-shadow(0 0 8px rgba(255,212,137,.8))}
   100%{transform:scale(1);
-    filter:drop-shadow(0 0 5px rgba(0,212,255,.6)) drop-shadow(0 0 13px rgba(0,212,255,.3))}}
+    filter:hue-rotate(0deg) saturate(1) brightness(1)
+      drop-shadow(0 0 8px rgba(0,212,255,.45))}}
 /* AS: ПЕРВЫЙ ЗАПРОС — ядро и надпись JARVIS перелетают из приветствия */
 .fly-ghost{position:fixed;z-index:400;pointer-events:none;margin:0;will-change:transform;
   /* BB: размытие в движении — переход ведёт браузер, JS не пишет
@@ -1011,8 +1029,16 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    (свёртка блоков убрана: код всегда полноразмерный, живёт в live-code) */
 .md blockquote{margin:10px 0;padding:8px 14px;border-left:2.5px solid var(--cy);background:rgba(0,212,255,.06);
   border-radius:0 9px 9px 0;color:var(--tx2)}
-.md table{width:100%;border-collapse:collapse;margin:11px 0;font-size:12.5px;display:block;overflow-x:auto}
-.md th,.md td{border:1px solid var(--line);padding:7px 11px;text-align:left}
+/* BJ: СПОКОЙНЫЕ ТАБЛИЦЫ. Во время печати таблица росла рывками: auto-
+   раскладка пересчитывала ширину колонок на каждой новой строке, а длинные
+   ячейки раздували её во все стороны. Теперь: фиксированная раскладка
+   (колонки равные — ширина не прыгает), длинные слова переносятся, а не
+   растягивают колонку, и очень длинные таблицы живут в своём окне со
+   скроллом (до 62vh), не растягивая сообщение на несколько экранов */
+.md table{width:100%;border-collapse:collapse;margin:11px 0;font-size:12.5px;display:block;
+  overflow:auto;table-layout:fixed;max-height:62vh}
+.md th,.md td{border:1px solid var(--line);padding:7px 11px;text-align:left;
+  overflow-wrap:anywhere;word-break:break-word}
 .md th{background:rgba(0,212,255,.1);color:var(--cy);font-weight:600}
 .md tr:nth-child(even){background:rgba(255,255,255,.02)}
 .md hr{border:0;border-top:1px solid var(--line);margin:14px 0}
@@ -1118,22 +1144,26 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   border-left:2px solid rgba(0,190,255,.35);background:rgba(0,150,235,.05);
   white-space:pre-wrap;overflow-x:auto;word-break:break-word}
 .math-block.math-live{border-left-color:rgba(0,190,255,.6)}
-/* BG: живые элементы LaTeX — дробь-стопка, корень с чертой, вектор */
+/* BG: живые элементы LaTeX — дробь-стопка, корень с чертой, вектор.
+   BJ: ДРОБЬ ЦЕНТРИРУЕТСЯ НА СТРОКЕ (vertical-align:middle): раньше
+   выравнивание шло по базовой линии ЧИСЛИТЕЛЯ (baseline inline-flex
+   синтезируется из первого flex-элемента) со сдвигом вниз — дробь
+   «проваливалась» под текст. Теперь середина дроби (её черта) встаёт
+   на уровень знака «=» и соседних переменных */
 .mfrac{display:inline-flex;flex-direction:column;align-items:center;
-  vertical-align:-0.5em;margin:0 2px;line-height:1.15}
+  vertical-align:middle;margin:0 2px;line-height:1.15}
 .mfrac .mfr-n{padding:0 4px;border-bottom:1.4px solid rgba(190,235,255,.85)}
 .mfrac .mfr-d{padding:0 4px}
-/* BI: ИНЛАЙН-ДРОБЬ — текстовый стиль (как \tfrac в LaTeX): мельче и не
-   проваливается ниже строки — раньше дробь раздувала строку и её хвост
-   «уходил под текст», казалось, что переменные пишутся ниже */
-.math-inline .mfrac{font-size:.84em;vertical-align:-.38em;margin:0 1px}
+/* BI→BJ: ИНЛАЙН-ДРОБЬ — текстовый стиль (мельче), но тоже ПО ЦЕНТРУ
+   строки: черта дроби на уровне «=», переменные не тонут */
+.math-inline .mfrac{font-size:.82em;vertical-align:middle;margin:0 1px}
 .math-inline .mfrac .mfr-n,.math-inline .mfrac .mfr-d{padding:0 3px}
 .msqrt{display:inline-flex;align-items:stretch;margin:0 1px}
 .msqrt .msq-i{font-size:.62em;align-self:flex-start;margin-right:-2px;opacity:.85}
-/* BI: ЗНАК КОРНЯ — SVG-штрих, растянутый на высоту выражения: диагональ
-   длинная и короткая + хвост, черта содержания продолжается из хвоста
-   (раньше юникодный √ не доставал до черты — «прямая не из корня») */
-.msqrt .msq-svg{width:.5em;flex:0 0 auto;display:block;align-self:stretch;
+/* BJ: ОБЫЧНЫЙ КОРЕНЬ: короткий штрих + одна диагональ + носик, который
+   срастается с чертой над содержимым; SVG растягивается по высоте
+   выражения — длинный корень честно растит черту на всю длину */
+.msqrt .msq-svg{width:.46em;flex:0 0 auto;display:block;align-self:stretch;
   color:#bfe6f8;overflow:visible}
 .msqrt .msq-r{border-top:1.4px solid rgba(190,235,255,.85);
   padding:0 3px 0 2px;margin-left:-1px}
@@ -1162,6 +1192,16 @@ sup.msup,sub.msub{font-size:.72em}
 .mbig .mb-t{margin-bottom:.06em}
 .mbig .mb-b{margin-top:.06em}
 .mbig .mfn{padding:0}
+/* BJ: БОЛЬШОЙ ОПЕРАТОР В СТРОКЕ — пределы НАД и ПОД знаком (юзер просил
+   дважды: сноски сбоку читались как «границы перед значком»). Стопка
+   компактная: знак почти обычного размера, пределы мелкие, центр
+   приходится на середину строки — переменные по бокам не проваливаются */
+.mbi-in{display:inline-block;vertical-align:middle;margin:0 2px}
+.mbi-in .msym{font-size:1.04em;line-height:1}
+.mbi-in .msym2{line-height:1.14}
+.mbi-in .mlim{font-size:.58em;line-height:1.08}
+.mbi-in .mb-t{margin-bottom:.03em}
+.mbi-in .mb-b{margin-top:.03em}
 /* BH: \boxed{...} — рамка вокруг результата */
 .mboxed{display:inline-block;border:1.4px solid rgba(120,200,240,.55);
   border-radius:7px;padding:2px 9px;margin:3px 1px}

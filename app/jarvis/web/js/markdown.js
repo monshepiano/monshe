@@ -142,17 +142,13 @@
     var out = '', i = 0, s = String(src || '');
     var bigPend = null;   // большой оператор ждёт свои пределы ^/_
     var flushBig = function () {
-      /* BI: в ИНЛАЙН-строке большие операторы печатаются ТЕКСТОВЫМ стилем —
-         пределы сносками сбоку (как настоящий LaTeX): стопка над/под знаком
-         раздувала межстрочный интервал и «проваливала» переменные ниже */
+      /* BJ: пределы больших операторов — ВСЕГДА над и под знаком, и в
+         строке тоже: сноски сбоку читались как «границы перед значком».
+         В инлайне стопка компактнее (мельче знак и пределы), центр
+         приходится на середину строки — переменные не проваливаются */
       if (!bigPend) return;
-      if (inline) {
-        out += '<span class="msym">' + bigPend.sym + '</span>' +
-          (bigPend.sub != null ? '<sub class="msub">' + bigPend.sub + '</sub>' : '') +
-          (bigPend.sup != null ? '<sup class="msup">' + bigPend.sup + '</sup>' : '');
-      } else {
-        out += bigStack(bigPend);
-      }
+      out += (inline ? '<span class="mbi-in">' : '') +
+        bigStack(bigPend) + (inline ? '</span>' : '');
       bigPend = null;
     };
     while (i < s.length) {
@@ -219,11 +215,13 @@
             root = s.slice(i + 1, close); i = close + 1;
           }
           var g = groupAt(s, i); i = g.next;
-          /* BI: ЗНАК КОРНЯ — настоящий, из штриха-диагонали и хвоста (SVG
-             path): юникодный \u221a не дотягивался чертой до выражения, и
-             сверху висела прямая «не из корня» */
+          /* BJ: ОБЫЧНЫЙ ЗНАК КОРНЯ — аккуратный типографский: короткий
+             штрих, одна ровная диагональ до верха и горизонтальный
+             носик, который СРАСТАЕТСЯ с чертой над содержимым (она
+             растёт на всю длину выражения). Прежний «двойной излом»
+             выглядел рукописно; юникодный √ не дотягивался до черты */
           out += '<span class="msqrt">' + (root ? '<span class="msq-i">' + mesc(root) + '</span>' : '') +
-            '<svg class="msq-svg" viewBox="0 0 12 24" preserveAspectRatio="none"><path d="M1.2 16.2 L4.4 17.8 L7.9 3.2 L12 .9" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+            '<svg class="msq-svg" viewBox="0 0 11 24" preserveAspectRatio="none"><path d="M.8 13.9 L3.3 16 L5.9 .9 H11" fill="none" stroke="currentColor" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
             '<span class="msq-r">' + mathRender(g.text, inline) + '</span></span>';
           continue;
         }
@@ -304,7 +302,10 @@
   function mathIsBlock(body) {
     var t = String(body || '').trim();
     if (/[=\u2264\u2265\u2260\u2248\u2192\u21d2\u2194]/.test(t)) return true;
-    if (/\\(frac|dfrac|sqrt|int|iint|iiint|oint|sum|prod|lim|boxed|begin|overset|underset)\b/.test(t)) return true;
+    /* BJ: (?![a-zA-Z]) вместо \b — подчёрвание СЛОВО в regex, и \int_a^b
+       не распознавался как блочная формула: интеграл с пределами жил в
+       строке сносками, хотя обязан стоять отдельной строкой */
+    if (/\\(frac|dfrac|sqrt|int|iint|iiint|oint|sum|prod|lim|boxed|begin|overset|underset)(?![a-zA-Z])/.test(t)) return true;
     if (/\\begin\s*\{/.test(t)) return true;
     if (t.length > 26 || t.split('\\\\').length > 1) return true;
     return false;
