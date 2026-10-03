@@ -50,8 +50,71 @@
     forall:'\u2200', exists:'\u2203', in:'\u2208', notin:'\u2209',
     subset:'\u2282', subseteq:'\u2286', cup:'\u222a', cap:'\u2229',
     emptyset:'\u2205', varnothing:'\u2205', cdots:'\u22ef', ldots:'\u2026',
-    dots:'\u2026', vdots:'\u22ee', prime:'\u2032', circ:'\u2218',
-    degree:'\u00b0', ell:'\u2113', hbar:'\u210f', anglebr:'\u27e8' };
+    dots:'\u2026', vdots:'\u22ee', ddots:'\u22f1', prime:'\u2032', circ:'\u2218',
+    degree:'\u00b0', ell:'\u2113', hbar:'\u210f', anglebr:'\u27e8',
+    /* BH: длинные стрелки и прочие частые знаки — модель любит
+       \Longrightarrow и \Longleftrightarrow, раньше они печатались
+       буквами. Плюс скобки-полы, множества, логика */
+    longrightarrow:'\u27f6', longleftarrow:'\u27f5',
+    Longrightarrow:'\u27f9', Longleftarrow:'\u27f8',
+    longleftrightarrow:'\u27f7', Longleftrightarrow:'\u27fa',
+    implies:'\u27f9', impliedby:'\u27f8', iff:'\u27fa',
+    mapsto:'\u21a6', longmapsto:'\u27fc', hookrightarrow:'\u21aa',
+    uparrow:'\u2191', downarrow:'\u2193', updownarrow:'\u2195',
+    Uparrow:'\u21d1', Downarrow:'\u21d3',
+    lceil:'\u2308', rceil:'\u2309', lfloor:'\u230a', rfloor:'\u230b',
+    langle:'\u27e8', rangle:'\u27e9', vert:'|', Vert:'\u2016', mid:'\u2223',
+    setminus:'\u2216', wedge:'\u2227', vee:'\u2228', neg:'\u00ac',
+    nexists:'\u2204', therefore:'\u2234', because:'\u2235',
+    simeq:'\u2243', cong:'\u2245', ll:'\u226a', gg:'\u226b',
+    leqslant:'\u2a7d', geqslant:'\u2a7e', oplus:'\u2295', ominus:'\u2296',
+    otimes:'\u2297', odot:'\u2299', ast:'\u2217', star:'\u22c6',
+    bullet:'\u2022', aleph:'\u2135', Re:'\u211c', Im:'\u2111',
+    surd:'\u221a', backslash:'\u005c', nsubset:'\u2284', nsupset:'\u2285',
+    nsubseteq:'\u2288', triangleq:'\u225c', doteq:'\u2250',
+    checkmark:'\u2713', blacksquare:'\u25a0', square:'\u25a1',
+    varphi:'\u03c6', varepsilon:'\u03b5', vartheta:'\u03d1', varpi:'\u03d6',
+    varrho:'\u03f1', varsigma:'\u03c2' };
+  /* BH: БОЛЬШИЕ ОПЕРАТОРЫ — у \int/\sum/\lim пределы стоят НАД и ПОД
+     знаком, а не сзади сзади снизу. Симовол копится в bigPend, следующие
+     ^/_ прилипают к нему, всё собирается в вертикальную стопку */
+  var BIGOPS = { int:'\u222b', iint:'\u222c', iiint:'\u222d', oint:'\u222e',
+    sum:'\u2211', prod:'\u220f', coprod:'\u2210',
+    bigcup:'\u22c3', bigcap:'\u22c2', bigoplus:'\u2a01', bigotimes:'\u2a02',
+    lim:'lim', max:'max', min:'min', sup:'sup', inf:'inf' };
+  function bigStack(p) {
+    var h = '<span class="mbig">';
+    if (p.sup != null) h += '<span class="mlim mb-t">' + p.sup + '</span>';
+    h += '<span class="' + (p.fn ? 'mfn msym2' : 'msym') + '">' + p.sym + '</span>';
+    if (p.sub != null) h += '<span class="mlim mb-b">' + p.sub + '</span>';
+    return h + '</span>';
+  }
+  /* BH: окружения — aligned (выравнивание по &), cases (фигурная скобка),
+     матрицы. Строки делим по \\, ячейки по & — как настоящий LaTeX */
+  function renderEnv(env, body) {
+    if (env === 'array') body = String(body || '').replace(/^\s*\{[^}]*\}/, '');
+    var rows = String(body || '').split(/\\\\/).filter(function (r, ri, all) {
+      return r.trim() !== '' || all.length === 1;
+    });
+    var isCases = env === 'cases' || env === 'dcases';
+    var isMat = /matrix|array/.test(env);
+    var isAl = env.indexOf('align') === 0 || env === 'aligned';
+    var h = '<span class="mtable' + (isCases ? ' mcases' : '') + (isAl ? ' m-al' : '') + '">';
+    rows.forEach(function (row) {
+      var cells = row.split('&');
+      h += '<span class="mrow">';
+      cells.forEach(function (c) { h += '<span class="mcell">' + mathRender(c.trim()) + '</span>'; });
+      h += '</span>';
+    });
+    h += '</span>';
+    if (isMat) {
+      var o = env[0] === 'p' ? '(' : (env[0] === 'b' || env[0] === 'B') ? '[' :
+        (env[0] === 'v' || env[0] === 'V') ? '|' : '';
+      var c2 = { '(': ')', '[': ']', '|': '|' }[o] || '';
+      if (o) h = '<span class="mbr">' + o + '</span>' + h + '<span class="mbr">' + c2 + '</span>';
+    }
+    return h;
+  }
   var FUNCS = ['arcsin','arccos','arctan','sinh','cosh','tanh','sin','cos','tan',
     'log','ln','lg','exp','det','dim','deg','arg','min','max','gcd','sec','csc','cot'];
   var BB = { R:'\u211d', N:'\u2115', Z:'\u2124', Q:'\u211a', C:'\u2102' };
@@ -77,8 +140,16 @@
 
   function mathRender(src) {
     var out = '', i = 0, s = String(src || '');
+    var bigPend = null;   // большой оператор ждёт свои пределы ^/_
     while (i < s.length) {
       var ch = s[i];
+      /* большой оператор без пределов (или с уже собранными) — выдать в поток,
+         кроме случая, когда дальше идут его пределы или \limits */
+      if (bigPend && ch !== '^' && ch !== '_' &&
+          !(ch === '\\' && /^(?:\\limits|\\nolimits)/.test(s.slice(i)))) {
+        out += bigStack(bigPend);
+        bigPend = null;
+      }
       if (ch === '\\') {
         var cmd = /^\\([a-zA-Z]+|\\|,|;|!| )/.exec(s.slice(i));
         if (!cmd) { out += mesc(s[i + 1] || ''); i += 2; continue; }
@@ -86,6 +157,41 @@
         i += cmd[0].length;
         if (name === ',' || name === ';' || name === ' ' || name === '!') { continue; }
         if (name === '\\') { out += '<br>'; continue; }
+        if (name === 'begin') {
+          var envG = groupAt(s, i); i = envG.next;
+          var env = envG.text.trim();
+          var endRe = new RegExp('\\\\end\\s*\\{([^}]*)\\}');
+          var endM = endRe.exec(s.slice(i));
+          var envBody = endM ? s.slice(i, i + endM.index) : s.slice(i);
+          i = endM ? i + endM.index + endM[0].length : s.length;
+          out += renderEnv(env.replace(/\*/g, ''), envBody);
+          continue;
+        }
+        if (name === 'end') { var eg = groupAt(s, i); i = eg.next; continue; }
+        if (name === 'boxed') {
+          var bx = groupAt(s, i); i = bx.next;
+          out += '<span class="mboxed">' + mathRender(bx.text) + '</span>';
+          continue;
+        }
+        if (name === 'overset' || name === 'underset' || name === 'stackrel') {
+          var ov1 = groupAt(s, i); i = ov1.next;
+          var ov2 = groupAt(s, i); i = ov2.next;
+          var ovT = mathRender(ov1.text), ovB = mathRender(ov2.text);
+          if (name === 'underset') {
+            out += '<span class="mbig"><span class="msym2">' + ovB + '</span>' +
+              '<span class="mlim mb-b">' + ovT + '</span></span>';
+          } else {
+            out += '<span class="mbig"><span class="mlim mb-t">' + ovT + '</span>' +
+              '<span class="msym2">' + ovB + '</span></span>';
+          }
+          continue;
+        }
+        if (BIGOPS[name]) {
+          var isFn = name === 'lim' || name === 'max' || name === 'min' ||
+            name === 'sup' || name === 'inf';
+          bigPend = { sym: BIGOPS[name], sup: null, sub: null, fn: isFn };
+          continue;
+        }
         if (name === 'frac' || name === 'tfrac' || name === 'dfrac') {
           var a = groupAt(s, i); i = a.next;
           var b = groupAt(s, i); i = b.next;
@@ -142,11 +248,18 @@
       }
       if (ch === '^' || ch === '_') {
         var gr = groupAt(s, i + 1); i = gr.next;
+        if (bigPend) {
+          /* пределы большого оператора — над и под знаком */
+          if (ch === '^') bigPend.sup = mathRender(gr.text);
+          else bigPend.sub = mathRender(gr.text);
+          continue;
+        }
         out += ch === '^'
           ? '<sup class="msup">' + mathRender(gr.text) + '</sup>'
           : '<sub class="msub">' + mathRender(gr.text) + '</sub>';
         continue;
       }
+      if (ch === '&') { i += 1; continue; }   /* вне окружений & не показываем */
       if ('=<>+-*/'.indexOf(ch) >= 0 && ch !== ' ') {
         out += '<span class="mop">' + mesc(ch) + '</span>';
         i += 1;
@@ -155,6 +268,7 @@
       out += mesc(ch);
       i += 1;
     }
+    if (bigPend) out += bigStack(bigPend);
     return out;
   }
 
@@ -164,7 +278,8 @@
   function mathIsBlock(body) {
     var t = String(body || '').trim();
     if (/[=\u2264\u2265\u2260\u2248\u2192\u21d2\u2194]/.test(t)) return true;
-    if (/\\(frac|dfrac|sqrt|int|iint|iiint|oint|sum|prod|lim)\b/.test(t)) return true;
+    if (/\\(frac|dfrac|sqrt|int|iint|iiint|oint|sum|prod|lim|boxed|begin|overset|underset)\b/.test(t)) return true;
+    if (/\\begin\s*\{/.test(t)) return true;
     if (t.length > 26 || t.split('\\\\').length > 1) return true;
     return false;
   }

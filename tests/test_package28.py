@@ -3253,7 +3253,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.64", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.65", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4589,8 +4589,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.64", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.64", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.65", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.65", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -4724,7 +4724,7 @@ class IterationAUTests(unittest.TestCase):
     def test_au3_version_chip(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn('<span class="ver-chip">b64</span>', html)
+        self.assertIn('<span class="ver-chip">b65</span>', html)
         self.assertIn(".ver-chip{align-self:center;", css)
 
     def test_au4_flight_waits_for_scroll(self) -> None:
@@ -4984,10 +4984,12 @@ class IterationAZTests(unittest.TestCase):
         live_core = css.split(".msg-ai.live .ai-core{")[1].split("}")[0]
         self.assertNotIn("clip-path", live_core)
         self.assertIn("filter:drop-shadow(", live_core)
-        # BG: 11 понятных фигур рисуются векторно, со светом и рёбрами
+        # BH: 8 фигур (2D убраны юзером), рисуются векторно со светом
         for shape in ("tess", "penta", "cube", "tetra", "crystal",
-                      "star", "hex", "cross", "line", "wave", "zig"):
+                      "line", "wave", "zig"):
             self.assertIn("  %s: {" % shape, js)
+        for gone in ("star", "hex", "cross"):
+            self.assertNotIn("  %s: {" % gone, js)
         self.assertIn('<radialGradient id="gF', js)
         self.assertIn('<linearGradient id="gE', js)
         self.assertIn("const DOT_SHAPE_KEYS = Object.keys(DOT_SHAPES);", js)
@@ -5108,7 +5110,10 @@ class IterationBBTests(unittest.TestCase):
         # BD: такт живости — БЕЗ размера (только цвет, золото, мерцание)
         live = css.split("@keyframes coreLive{")[1].split("}}")[0]
         self.assertNotIn("transform", live)
-        self.assertIn("background", live)
+        # BH: градиенты background НЕ анимируются — золото интерполяцией
+        # фильтров, без мгновенных перекрасок
+        self.assertNotIn("background", live)
+        self.assertIn("hue-rotate", live)
         self.assertIn("drop-shadow", live)
         # BD: ВТОРОЙ FPS-КОРЕНЬ — полигоны и свечение на КАЖДОМ
         # историческом ядре; история теперь простой круг
@@ -5133,7 +5138,9 @@ class IterationBBTests(unittest.TestCase):
         self.assertIn(".msg-ai.live .dot-shape-svg.sh-out{animation:dotSvgOut .65s", css)
         self.assertIn("@keyframes dotSvgIn{", css)
         self.assertIn("@keyframes dotSvgOut{", css)
-        self.assertIn("transform:scale(2.1)", css)
+        # BH: холст 30px (13px душил градиенты), пик — масштаб 1
+        self.assertIn("width:30px;height:30px;", css)
+        self.assertIn("100%{opacity:1;transform:scale(1);", css)
         self.assertIn("45%{opacity:1;filter:drop-shadow(0 0 10px rgba(217,164,65,.75))", css)
 
     def test_bb4_thinking_only_for_work(self) -> None:
@@ -5187,9 +5194,10 @@ class IterationBCTests(unittest.TestCase):
         self.assertIn("const DOT_MORPH_MS = 700;", js)
         self.assertIn("const DOT_MORPH_OUT_MS = 650;", js)
         self.assertIn("const DOT_HOLD_MS = 1500;", js)
-        # BG: фигура заметно больше круга (×2.1) — SVG-пружина
+        # BH: фигура — 30px SVG, пружина до масштаба 1 (30px ≈ 2.3 круга)
         self.assertIn(".msg-ai.live .dot-shape-svg.sh-in{animation:dotSvgIn .7s", css)
-        self.assertIn("100%{opacity:1;transform:scale(2.1)", css)
+        self.assertIn("100%{opacity:1;transform:scale(1);", css)
+        self.assertIn("width:30px;height:30px;", css)
         # золото в кадрах морфа — плавное (интерполяция filter)
         self.assertIn("filter:drop-shadow(0 0 10px rgba(217,164,65,.75))", css)
         self.assertIn("filter:drop-shadow(0 0 8px rgba(217,164,65,.7))", css)
@@ -5198,21 +5206,23 @@ class IterationBCTests(unittest.TestCase):
         self.assertIn("rgba(217,164,65,.75)", morph_in)
         morph_out = css.split("@keyframes dotSvgOut{")[1].split("}}")[0]
         self.assertIn("rgba(217,164,65,.7)", morph_out)
-        self.assertIn("brightness(1.18)", morph_in)
+        self.assertIn("brightness(1.16)", morph_in)
 
     def test_bc5_more_3d_4d_shapes(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # BG: меньше, но понятнее — 2×4D + 3×3D + 3×2D + 3×1D, все — SVG
+        # BH: 2D-фигуры УБРАНЫ юзером (плоские смотрелись ужасно):
+        # осталось 2×4D + 3×3D + 3×1D, все — SVG со светом
         d4 = ("tess", "penta")
         d3 = ("cube", "tetra", "crystal")
-        d2 = ("star", "hex", "cross")
         d1 = ("line", "wave", "zig")
-        self.assertEqual((len(d4), len(d3), len(d2), len(d1)), (2, 3, 3, 3))
-        self.assertIn("  cross: {", js)
-        for gone in ("sh-prism", "sh-cyl", "sh-diamond", "sh-trefoil",
-                     "sh-vortex", "sh-blob"):
-            self.assertNotIn(gone, js + css)
+        self.assertEqual((len(d4), len(d3), len(d1)), (2, 3, 3))
+        for shape in d4 + d3 + d1:
+            self.assertIn("  %s: {" % shape, js)
+        for gone in ("star", "hex", "cross", "sh-prism", "sh-cyl", "sh-diamond",
+                     "sh-trefoil", "sh-vortex", "sh-blob"):
+            self.assertNotIn("  %s: {" % gone, js)
+            self.assertNotIn(".%s{" % gone, css)
 
 
 class IterationBDTests(unittest.TestCase):
@@ -5271,9 +5281,9 @@ class IterationBDTests(unittest.TestCase):
     def test_bd5_shapes_harmonic_and_recognizable(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # BG: 11 понятных фигур — SVG-чертежи со светом и рёбрами
+        # BH: 8 понятных фигур (2D убраны) — SVG-чертежи со светом и рёбрами
         for shape in ("tess", "penta", "cube", "tetra", "crystal",
-                      "star", "hex", "cross", "line", "wave", "zig"):
+                      "line", "wave", "zig"):
             self.assertIn("  %s: {" % shape, js)
         for gone in ("sh-vortex", "sh-blob", "sh-prism", "sh-cyl",
                      "sh-diamond", "sh-trefoil"):
@@ -5321,13 +5331,14 @@ class IterationBETests(unittest.TestCase):
         groups = {
             "4d": ("tess", "penta"),
             "3d": ("cube", "tetra", "crystal"),
-            "2d": ("star", "hex", "cross"),
             "1d": ("line", "wave", "zig"),
         }
-        self.assertEqual(tuple(len(v) for v in groups.values()), (2, 3, 3, 3))
+        # BH: 2D-фигуры убраны; 1D-линии НЕ вращаются
+        self.assertEqual(tuple(len(v) for v in groups.values()), (2, 3, 3))
         for shapes in groups.values():
             for shape in shapes:
                 self.assertIn("  %s: {" % shape, js)
+        self.assertIn("DOT_SHAPES[key].d > 1", js)
         # BG: свет и рёбра — SVG-градиенты и штрихи в JS-чертежах
         self.assertIn('<radialGradient id="gF', js)
         self.assertIn('stroke="url(#gE', js)
@@ -5342,7 +5353,7 @@ class IterationBETests(unittest.TestCase):
                    "@keyframes spinY{", "@keyframes spinD{"):
             self.assertIn(kf, css)
         self.assertIn(".dot-shape-svg .rot-g.rot-z{animation:spinZ 1.5s ease-in-out forwards}", css)
-        self.assertIn("g.setAttribute('class', 'rot-g ' + spin);", js)
+        self.assertIn("g.setAttribute('class', 'rot-g' + (spin ? ' ' + spin : ''));", js)
         # сброс плоскости — возврат класса группы к чистому rot-g
         self.assertIn("g.setAttribute('class', 'rot-g');", js)
         # ЧАСТО: каждые 3.5–8 секунд, читатель не скучает
@@ -5437,7 +5448,8 @@ class IterationBFTests(unittest.TestCase):
         self.assertIn(".dot-shape-svg .rot-g.rot-z{animation:spinZ 1.5s ease-in-out forwards}", css)
         self.assertIn("rotate(140deg)", css)
         self.assertIn("rotateX(-125deg)", css)
-        self.assertIn("const spin = DOT_SPINS[Math.floor(Math.random() * DOT_SPINS.length)];", js)
+        self.assertIn("const spin = DOT_SHAPES[key].d > 1", js)
+        self.assertIn("g.setAttribute('class', 'rot-g' + (spin ? ' ' + spin : ''));", js)
 
     def test_bf4_tool_line_robot_quiet(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -5498,10 +5510,15 @@ class IterationBGTests(unittest.TestCase):
 
     def test_bg2_mode_permission_buttons_centered(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        # кнопки «Включить/Пропустить» — ПО ЦЕНТРУ карточки (было: прижаты
-        # к левому краю); рецепт: flex + margin:auto на детях
+        # BH: карточки разрешений ВЕРНУТЫ как было (юзер не просил их менять);
+        # по центру — только строка-уведомление о режиме (.tool-mark)
         self.assertIn(".mc-actions{display:flex;align-items:center;gap:16px}", css)
-        self.assertIn(".mc-actions>.mc-switch,.mc-actions>.mc-skip{margin:auto}", css)
+        self.assertNotIn(".mc-actions>.mc-switch", css)
+        tm = css.split(".tool-mark{")[1].split("}")[0]
+        self.assertIn("margin:7px auto", tm)
+        self.assertIn("width:max-content", tm)
+        self.assertIn("display:flex", tm)
+        self.assertIn("align-items:center", tm)
 
     def test_bg3_chips_immediate_clear_and_gated_refetch(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -5530,8 +5547,12 @@ class IterationBGTests(unittest.TestCase):
         self.assertIn('stroke="url(#gE', js)
         self.assertIn('fill-opacity=".8"', js)
         for shape in ("tess", "penta", "cube", "tetra", "crystal",
-                      "star", "hex", "cross", "line", "wave", "zig"):
+                      "line", "wave", "zig"):
             self.assertIn("  %s: {" % shape, js)
+        for gone in ("star", "hex", "cross"):
+            self.assertNotIn("  %s: {" % gone, js)
+        self.assertIn("width:30px;height:30px;", css)
+        self.assertIn("DOT_SHAPES[key].d > 1", js)
         # полигональные clip-path-фигуры ушли из CSS навсегда
         self.assertNotIn("clip-path:polygon(", css)
         self.assertIn(".dot-shape-svg{", css)
@@ -5586,6 +5607,128 @@ class IterationBGTests(unittest.TestCase):
         self.assertIn(".plot-panel{", css)
         # панели монтируются и у готовых ответов, и у live-печати
         self.assertGreaterEqual(js.count("mountPlotPanels("), 4)
+
+
+class IterationBHTests(unittest.TestCase):
+    """Итерация BH (beta.65): плавный агентский скролл, уведомление режима
+    посреди ответа, круглешок только 3D/4D с честным светом, математика с
+    пределами/окружениями и графики с ховером/паном/соотношением осей."""
+
+    def test_bh1_agent_scroll_smooth_as_quiet(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        # непрерывный живой догон: пока есть live-ответ, лента доедает
+        # остаток каждый кадр — как печать тихого режима
+        self.assertIn("function followLiveStream(", js)
+        self.assertIn("box.querySelector('.msg-ai.live')", js)
+        self.assertIn("Math.max(2, Math.ceil(gap * 0.16))", js)
+        self.assertIn("followLiveStream(box);", js)
+        # догон начинается с малого шага и РАЗГОНЯЕТСЯ (не 26% разом)
+        chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
+        self.assertIn("st.v = 0;", chase)
+        self.assertIn("st.v = Math.min(want, (st.v || 0) * 1.22 + 5);", chase)
+        self.assertIn("Math.max(3, Math.ceil(gap * 0.26))", chase)
+
+    def test_bh2_mode_note_stays_mid_answer(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        tl = js.split("function toolLine(")[1].split("\nfunction ")[0]
+        # включение режима ПОСЕРЕДИНЕ ответа: метка в потоке печати,
+        # между замороженной головой и хвостом — а не в конце ленты
+        self.assertIn("const liveUi = (S.followUi", tl)
+        self.assertIn("liveUi.frozen = { src: shown, html: MD.render(stripSteps(shown)) };", tl)
+        self.assertIn("liveUi.marksEl = el('div', 'md-marks');", tl)
+        self.assertIn("if (markHost) markHost.appendChild(row);", tl)
+        rt = js.split("function renderTyped(")[1].split("\nfunction ")[0]
+        self.assertIn("md-marks", rt)
+        self.assertIn("want.forEach((n) => ui.mdEl.appendChild(n));", rt)
+        self.assertIn(".md-marks{width:100%}", css)
+        # карточки разрешений НЕ трогали — как было
+        self.assertNotIn(".mc-actions>.mc-switch", css)
+
+    def test_bh3_dot_shapes_volumetric_only(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # 2D убраны; осталось 2×4D + 3×3D + 3×1D; 1D не вращаются
+        for shape in ("tess", "penta", "cube", "tetra", "crystal", "line", "wave", "zig"):
+            self.assertIn("  %s: {" % shape, js)
+        for gone in ("star", "hex", "cross"):
+            self.assertNotIn("  %s: {" % gone, js)
+        self.assertIn("d: 4,", js)
+        self.assertIn("d: 3,", js)
+        self.assertIn("d: 1,", js)
+        self.assertIn("const spin = DOT_SHAPES[key].d > 1", js)
+        self.assertIn("g.setAttribute('class', 'rot-g' + (spin ? ' ' + spin : ''));", js)
+
+    def test_bh4_dot_gold_and_light_honest(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # 30px холст: 13px душил градиенты и штрихи
+        self.assertIn("width:30px;height:30px;", css)
+        self.assertIn("filter:drop-shadow(0 0 5px rgba(0,195,255,.5))", css)
+        # градиенты background НЕ анимируются — золото только через
+        # интерполируемые фильтры; точка гаснет кроссфейдом, не мгновенно
+        for kf in ("coreLive", "coreBurst", "coreSettle"):
+            block = css.split("@keyframes %s{" % kf)[1].split("}}")[0]
+            self.assertNotIn("background", block, kf)
+        self.assertIn("hue-rotate(-138deg)", css)
+        self.assertIn(".msg-ai.live .ai-core{transition:opacity .3s ease}", css)
+        # много кадров морфа — плавный разгон и плавный уход
+        self.assertIn("30%{opacity:.85;", css)
+        self.assertIn("72%{transform:scale(1.07);", css)
+
+    def test_bh5_math_limits_envs_arrows(self) -> None:
+        md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # большие операторы: пределы НАД и ПОД знаком
+        self.assertIn("var BIGOPS = {", md)
+        self.assertIn("function bigStack(", md)
+        self.assertIn("if (bigPend) {", md)
+        self.assertIn("bigPend.sup = mathRender(gr.text);", md)
+        # окружения и спецкоманды
+        self.assertIn("function renderEnv(", md)
+        self.assertIn("if (name === 'boxed') {", md)
+        self.assertIn("if (name === 'begin') {", md)
+        self.assertIn("if (ch === '&') { i += 1; continue; }", md)
+        self.assertIn("Longrightarrow:'" + chr(92) + "u27f9'", md)
+        self.assertIn("Longleftrightarrow:'" + chr(92) + "u27fa'", md)
+        self.assertIn("longrightarrow:'" + chr(92) + "u27f6'", md)
+        # стили: стопка оператора, рамка boxed, таблица aligned, скобка cases
+        self.assertIn(".mbig{", css)
+        self.assertIn(".mboxed{", css)
+        self.assertIn(".mtable{", css)
+        self.assertIn(".mcases", css)
+
+    def test_bh6_plot_free_pan_hover_aspect(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        p2 = js.split("function buildPlot2Panel(")[1].split("\nfunction ")[0]
+        # пан по ВСЕЙ площади: обе оси, Y больше не подгоняется
+        self.assertIn("drag = { x: e.clientX, y: e.clientY, x0, x1, y0, y1 };", p2)
+        self.assertIn("y0 = drag.y0 + (e.clientY - drag.y) / r.height * uy;", p2)
+        # ховер: ближайшая кривая + координаты + имя функции
+        self.assertIn("hover = { px: e.clientX - r.left, py: e.clientY - r.top };", p2)
+        self.assertIn("if (d < (best ? best.d : 26)) best = { d, fi, y, py };", p2)
+        self.assertIn("f' + (fns.length > 1 ? (best.fi + 1) : '') + ' = '", p2)
+        self.assertIn("ctx.arc(hover.px, best.py, 4.6, 0, Math.PI * 2);", p2)
+        # соотношение осей: по умолчанию 1:1, попап с вариантами
+        self.assertIn("const ASPECTS = [", p2)
+        self.assertIn("{ r: 1, label: '1:1' }", p2)
+        self.assertIn("{ r: 0, label: 'авто' }", p2)
+        self.assertIn("let aspect = ASPECTS[0];", p2)
+        self.assertIn(".plot-pop{", css)
+        self.assertIn(".plot-pop.open{display:flex}", css)
+        # светлее фон
+        self.assertIn("background:rgba(13,29,47,.55)", css)
+
+    def test_bh7_3d_empty_surface_fixed(self) -> None:
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        p3 = js.split("function buildPlot3Panel(")[1].split("\nfunction ")[0]
+        # сетка считается отдельно, при пустоте — авто-поиск области определения
+        self.assertIn("const sampleGrid = () => {", p3)
+        self.assertIn("for (const R of [2, 5, 10, 25, 60]) {", p3)
+        self.assertIn("поверхность пуста: функция нигде не определена", p3)
+        # дырявые клетки пропускаем — поверхность рисуется где определена
+        self.assertIn("if (!isFinite(c00) || !isFinite(c10) || !isFinite(c11) || !isFinite(c01)) continue;", p3)
 
 
 if __name__ == "__main__":

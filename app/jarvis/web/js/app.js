@@ -262,6 +262,38 @@ function toolLine(kind, on) {
   const box = stream();
   if (!box) return;
   const agent = kind === 'agent';
+  /* BH: метка режима, включённого ПОСЕРЕДИНЕ ответа, остаётся ПОСЕРЕДИ
+     ответа — в месте включения, а не уезжает в конец ленты. Текст,
+     напечатанный до включения, замораживаем границей: метка встанет
+     ровно между ним и будущим текстом (внутри печати, слотом .md-marks) */
+  const liveUi = (S.followUi && S.followUi.mdEl && S.followUi.mdEl.isConnected &&
+    S.followUi.node && S.followUi.node.root &&
+    S.followUi.node.root.classList.contains('live')) ? S.followUi : null;
+  let markHost = null;
+  if (liveUi) {
+    try {
+      const shown = String(liveUi.shown || '');
+      const mathOk = (shown.match(/\\\[/g) || []).length ===
+                     (shown.match(/\\\]/g) || []).length;
+      if (shown && !inCodeBlock(shown) && mathOk) {
+        liveUi.frozen = { src: shown, html: MD.render(stripSteps(shown)) };
+        liveUi._frozenSrc = null;   // заставить renderTyped перелить границу
+      }
+    } catch (e) { /* не смогли заморозить — метка просто встанет после границы */ }
+    if (!liveUi.marksEl || !liveUi.mdEl.contains(liveUi.marksEl)) {
+      liveUi.marksEl = el('div', 'md-marks');
+      const frozen = liveUi.mdEl.querySelector('.md-frozen');
+      const tail = liveUi.mdEl.querySelector('.md-tail');
+      if (frozen && frozen.parentNode === liveUi.mdEl) {
+        frozen.after(liveUi.marksEl);
+      } else if (tail && tail.parentNode === liveUi.mdEl) {
+        liveUi.mdEl.insertBefore(liveUi.marksEl, tail);
+      } else {
+        liveUi.mdEl.appendChild(liveUi.marksEl);
+      }
+    }
+    markHost = liveUi.marksEl;
+  }
   /* BF: иконка агента — РОБОТ, как в проактивном предложении о включении;
      дизайн строки скопирован с предлагашек (иконка в мягкой плитке),
      но меньше и тише */
@@ -272,7 +304,8 @@ function toolLine(kind, on) {
       : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="4.6" width="17.2" height="12.4" rx="2.2"/><path d="M9.5 20.5h5M12 17v3.5"/></svg>') +
     '</span><span class="tm-name">' + (agent ? 'Агент' : 'Компьютер') + '</span>' +
     '<span class="tm-state">' + (on ? 'включён' : 'отключён') + '</span>';
-  box.appendChild(row);
+  if (markHost) markHost.appendChild(row);
+  else box.appendChild(row);
   scrollDown(false);
 }
 
@@ -1444,7 +1477,9 @@ function runScrollBox(ui) {
    плавное, но от быстрой печати кода не отстаёт. */
 function watchRunFollow(ui) {
   const box = runScrollBox(ui);
-  if (!box || !box.addEventListener || box.__jarvisFollowRuns) return;
+  if (!box || !box.addEventListener) return;
+  followLiveStream(box);
+  if (box.__jarvisFollowRuns) return;
   box.__jarvisFollowRuns = true;
   const st = (box.__jarvisScroll = box.__jarvisScroll ||
     { lastTop: box.scrollTop, lastH: box.scrollHeight, autoPend: 0, chasing: false });
@@ -1510,18 +1545,59 @@ function chaseBottom(box, run) {
   if (st.chasing) return;
   st.chasing = true;
   box.classList.add('pin-instant');
+  /* BH: РАЗГОН вместо рывка. Раньше первый кадр догона съедал сразу 26%
+     остатка: у большой агентской карточки (200-300px) это 60-80px за один
+     кадр — глаз ловил скачок. Теперь шаг стартует маленьким и РАЗГОНЯЕТСЯ
+     к своей доле (×1.22 за кадр): мелкий текст печатается как раньше
+     (шаг и так меньше 3px), а крупные вставки догоняются плавным ходом */
+  st.v = 0;
   const frame = () => {
     st.chasing = false;
-    if (run && run.followOutput === false) { box.classList.remove('pin-instant'); return; }
+    if (run && run.followOutput === false) { box.classList.remove('pin-instant'); st.v = 0; return; }
     const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
-    if (gap <= 1) { box.classList.remove('pin-instant'); return; }
+    if (gap <= 1) { box.classList.remove('pin-instant'); st.v = 0; return; }
     st.autoPend += 1;
-    box.scrollTop = box.scrollTop + Math.max(3, Math.ceil(gap * 0.26));
+    const want = Math.max(3, Math.ceil(gap * 0.26));
+    st.v = Math.min(want, (st.v || 0) * 1.22 + 5);
+    box.scrollTop = box.scrollTop + st.v;
     if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) {
       st.chasing = true;
       requestAnimationFrame(frame);
     } else {
       box.classList.remove('pin-instant');
+      st.v = 0;
+    }
+  };
+  requestAnimationFrame(frame);
+}
+
+/* BH: НЕПРЕРЫВНЫЙ ЖИВОЙ ДОГОН. В тихом режиме лента растёт мелкими шагами
+   печати — chase вызывается часто и всё выглядит плавно. В агентском
+   контент растёт ПОЗЖЕ события: строки панели входят с задержками,
+   свёртки дожимаются, статус меняет высоту — разовые scrollDown это
+   ловили одним поздним рывком. Пока в ленте есть живой ответ, тихий
+   цикл каждый кадр ДОЕДАЕТ остаток тем же плавным ходом — как печать */
+function followLiveStream(box) {
+  if (!box || !box.addEventListener || !box.querySelector) return;
+  if (typeof requestAnimationFrame !== 'function') return;
+  const st = (box.__jarvisScroll = box.__jarvisScroll ||
+    { lastTop: box.scrollTop, lastH: box.scrollHeight, autoPend: 0, chasing: false });
+  if (st.liveLoop) return;
+  st.liveLoop = true;
+  const frame = () => {
+    st.liveLoop = false;
+    if (!box.isConnected) return;
+    if (!box.querySelector('.msg-ai.live')) return;   // ответ кончился — цикл угас
+    const run = S.followUi && runScrollBox(S.followUi) === box ? S.followUi : null;
+    const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
+    if (gap > 1 && !(run && run.followOutput === false) && !st.chasing) {
+      st.autoPend += 1;
+      box.classList.add('pin-instant');
+      box.scrollTop = box.scrollTop + Math.max(2, Math.ceil(gap * 0.16));
+      requestAnimationFrame(frame);
+    } else {
+      if (!st.chasing) box.classList.remove('pin-instant');
+      requestAnimationFrame(frame);
     }
   };
   requestAnimationFrame(frame);
@@ -3541,35 +3617,64 @@ function plotHiDpi(cv, ctx) {
 }
 
 /* ---------- 2D: функции y = f(x) ---------- */
+/* BH: ГРАФИК КАК В МАТЕМАТИЧЕСКОМ РЕДАКТОРЕ.
+   — ПАН свободный по ВСЕЙ площади (раньше уезжал только X: Y всё время
+     пере-подгонялся под кривую — вид был приклеен к графику);
+   — МАСШТАБ всегда: кнопки ± и колесо двигают ОБЕ оси, после первого
+     касания Y перестаёт подгоняться и держится как есть;
+   — ХОВЕР: точка на графике показывает, КАКОЙ функции она принадлежит
+     (ближайшая кривая) и её координаты;
+   — СООТНОШЕНИЕ ОСЕЙ: по умолчанию 1:1 (единичный квадрат — квадрат,
+     окружность — круг), сбоку кнопка с выбором: авто, 1:1, 4:3, 3:2, 16:9. */
 function buildPlot2Panel(panel, spec) {
   const fns = (Array.isArray(spec.f) ? spec.f : (spec.f ? [spec.f] : [])).map((e) => mathCompile(e));
   if (!fns.length) throw new Error('нет функций: нужен ключ "f"');
-  const { cv, ctx, read } = plotShell(panel, spec.title);
-  let x0 = (spec.x && spec.x[0] != null) ? spec.x[0] : -6.28;
-  let x1 = (spec.x && spec.x[1] != null) ? spec.x[1] : 6.28;
-  let y0 = null, y1 = null;
+  const labels = (Array.isArray(spec.f) ? spec.f : [spec.f]).map((e) => String(e));
+  const colors = ['#37d3ff', '#ffd489', '#8f86cf', '#3fbf95', '#e3798d'];
+  const { cv, ctx, read, bar } = plotShell(panel, spec.title);
+  const X0 = () => (spec.x && spec.x[0] != null) ? spec.x[0] : -6.28;
+  const X1 = () => (spec.x && spec.x[1] != null) ? spec.x[1] : 6.28;
+  let x0 = X0(), x1 = X1();
+  let y0 = null, y1 = null;      // null = авто по кривым (только до первого касания)
+  const ASPECTS = [
+    { r: 1, label: '1:1' }, { r: 4 / 3, label: '4:3' },
+    { r: 3 / 2, label: '3:2' }, { r: 16 / 9, label: '16:9' },
+    { r: 0, label: 'авто' },
+  ];
+  let aspect = ASPECTS[0];       // BH: по умолчанию честный 1:1
+  let hover = null;
+
+  const autoY = () => {
+    let ya = Infinity, yb = -Infinity;
+    for (let i = 0; i <= 160; i++) {
+      const x = x0 + (x1 - x0) * i / 160;
+      for (const f of fns) {
+        const v = f(x);
+        if (isFinite(v)) { ya = Math.min(ya, v); yb = Math.max(yb, v); }
+      }
+    }
+    if (!isFinite(ya) || !isFinite(yb)) { ya = -1; yb = 1; }
+    const pad = (yb - ya) * 0.12 + 0.5;
+    return [ya - pad, yb + pad];
+  };
+
   const draw = () => {
     const { w, h } = plotHiDpi(cv, ctx);
-    const yAuto = y0 === null;
-    let ya = Infinity, yb = -Infinity;
-    if (yAuto) {
-      for (let i = 0; i <= 120; i++) {
-        const x = x0 + (x1 - x0) * i / 120;
-        for (const f of fns) {
-          const v = f(x);
-          if (isFinite(v)) { ya = Math.min(ya, v); yb = Math.max(yb, v); }
-        }
-      }
-      if (!isFinite(ya) || !isFinite(yb)) { ya = -1; yb = 1; }
-      const pad = (yb - ya) * 0.12 + 0.5;
-      ya -= pad; yb += pad;
-    } else { ya = y0; yb = y1; }
+    if (y0 === null) { const a = autoY(); y0 = a[0]; y1 = a[1]; }
+    if (aspect.r) {
+      /* фиксированное соотношение осей: пикселей на единицу X и Y
+         совпадают (умноженные на r) — единица выглядит одинаково */
+      const yc = (y0 + y1) / 2;
+      const span = (x1 - x0) * h / (w * aspect.r);
+      y0 = yc - span / 2; y1 = yc + span / 2;
+    }
     const X = (x) => (x - x0) / (x1 - x0) * w;
-    const Y = (y) => h - (y - ya) / (yb - ya) * h;
+    const Y = (y) => h - (y - y0) / (y1 - y0) * h;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(4,12,22,0)';
-    // сетка и оси
-    ctx.strokeStyle = 'rgba(0,190,255,.08)';
+    /* BH: ФОН СВЕТЛЕЕ — сетка и кривые читаются на светлых экранах */
+    ctx.fillStyle = 'rgba(120,190,230,.05)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = 'rgba(120,200,235,.12)';
     ctx.lineWidth = 1;
     const gx = Math.max(4, Math.round(w / 90));
     for (let i = 0; i <= gx; i++) {
@@ -3580,16 +3685,15 @@ function buildPlot2Panel(panel, spec) {
       const py = i * h / Math.max(1, Math.round(h / 60));
       ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(w, py); ctx.stroke();
     }
-    ctx.strokeStyle = 'rgba(140,210,240,.5)';
-    if (ya < 0 && yb > 0) { ctx.beginPath(); ctx.moveTo(0, Y(0)); ctx.lineTo(w, Y(0)); ctx.stroke(); }
+    ctx.strokeStyle = 'rgba(150,215,245,.55)';
+    if (y0 < 0 && y1 > 0) { ctx.beginPath(); ctx.moveTo(0, Y(0)); ctx.lineTo(w, Y(0)); ctx.stroke(); }
     if (x0 < 0 && x1 > 0) { ctx.beginPath(); ctx.moveTo(X(0), 0); ctx.lineTo(X(0), h); ctx.stroke(); }
-    ctx.fillStyle = 'rgba(154,202,219,.75)';
+    ctx.fillStyle = 'rgba(178,222,240,.85)';
     ctx.font = '10px ui-monospace,monospace';
     ctx.fillText(plotFmt(x0), 4, h - 5);
     ctx.fillText(plotFmt(x1), w - 34, h - 5);
-    ctx.fillText(plotFmt(yAuto ? ya : ya), 4, 12);
-    // кривые
-    const colors = ['#37d3ff', '#ffd489', '#8f86cf', '#3fbf95', '#e3798d'];
+    ctx.fillText(plotFmt(y0), 4, 12);
+    ctx.fillText(plotFmt(y1), 4, 24);
     fns.forEach((f, fi) => {
       ctx.strokeStyle = colors[fi % colors.length];
       ctx.lineWidth = 1.8;
@@ -3598,39 +3702,99 @@ function buildPlot2Panel(panel, spec) {
       for (let px = 0; px <= w; px += 1) {
         const x = x0 + (x1 - x0) * px / w;
         const y = f(x);
-        if (!isFinite(y) || y < ya - (yb - ya) * 2 || y > yb + (yb - ya) * 2) { pen = false; continue; }
+        if (!isFinite(y) || y < y0 - (y1 - y0) * 2 || y > y1 + (y1 - y0) * 2) { pen = false; continue; }
         const py = Y(y);
         if (!pen) { ctx.moveTo(px, py); pen = true; } else ctx.lineTo(px, py);
       }
       ctx.stroke();
     });
-    panel._view = () => read.textContent = 'x: ' + plotFmt(panel._mx) + '  y: ' + plotFmt(fns[0](panel._mx));
+    /* BH: ХОВЕР — точка принадлежит БЛИЖАЙШЕЙ кривой: показываем её
+       имя (формулу), цвет и координаты, на самом графике — маркер */
+    if (hover) {
+      const x = x0 + (x1 - x0) * hover.px / w;
+      let best = null;
+      fns.forEach((f, fi) => {
+        const y = f(x);
+        if (!isFinite(y)) return;
+        const py = Y(y);
+        const d = Math.abs(py - hover.py);
+        if (d < (best ? best.d : 26)) best = { d, fi, y, py };
+      });
+      if (best) {
+        ctx.beginPath();
+        ctx.arc(hover.px, best.py, 4.6, 0, Math.PI * 2);
+        ctx.fillStyle = colors[best.fi % colors.length];
+        ctx.globalAlpha = .28; ctx.fill(); ctx.globalAlpha = 1;
+        ctx.lineWidth = 1.6; ctx.strokeStyle = colors[best.fi % colors.length]; ctx.stroke();
+        read.innerHTML = '<b style="color:' + colors[best.fi % colors.length] + '">' +
+          'f' + (fns.length > 1 ? (best.fi + 1) : '') + ' = ' + esc(labels[best.fi]) + '</b>' +
+          ' · x = ' + plotFmt(x) + ' · y = ' + plotFmt(best.y);
+      } else {
+        read.textContent = 'x = ' + plotFmt(x);
+      }
+    } else {
+      read.textContent = 'тащи — двигать · колесо — масштаб';
+    }
   };
   panel._zoom = (k) => {
-    const cx = (x0 + x1) / 2;
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
     x0 = cx - (cx - x0) / k; x1 = cx + (x1 - cx) / k;
+    y0 = cy - (cy - y0) / k; y1 = cy + (y1 - cy) / k;
     draw();
   };
-  panel._reset = () => { x0 = (spec.x && spec.x[0] != null) ? spec.x[0] : -6.28;
-    x1 = (spec.x && spec.x[1] != null) ? spec.x[1] : 6.28; y0 = y1 = null; draw(); };
+  panel._reset = () => { x0 = X0(); x1 = X1(); y0 = y1 = null; aspect = ASPECTS[0]; syncAspect(); draw(); };
+  /* кнопка соотношения осей + выезжающие параметры */
+  const aspBtn = el('button', '', '1:1');
+  aspBtn.title = 'Соотношение осей';
+  aspBtn.style.width = 'auto';
+  aspBtn.style.padding = '0 8px';
+  aspBtn.style.fontSize = '11px';
+  const pop = el('div', 'plot-pop');
+  const syncAspect = () => {
+    aspBtn.textContent = aspect.label;
+    $$('.plot-opt', pop).forEach((b, i) => b.classList.toggle('on', ASPECTS[i] === aspect));
+  };
+  ASPECTS.forEach((a) => {
+    const b = el('button', 'plot-opt', a.label);
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      aspect = a; pop.classList.remove('open'); syncAspect(); draw();
+    });
+    pop.appendChild(b);
+  });
+  aspBtn.addEventListener('click', (e) => { e.stopPropagation(); pop.classList.toggle('open'); });
+  bar.appendChild(aspBtn);
+  panel.appendChild(pop);
+  syncAspect();
   let drag = null;
-  cv.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, x0, x1 }; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointerdown', (e) => {
+    pop.classList.remove('open');
+    drag = { x: e.clientX, y: e.clientY, x0, x1, y0, y1 };
+    cv.setPointerCapture(e.pointerId);
+  });
   cv.addEventListener('pointermove', (e) => {
     const r = cv.getBoundingClientRect();
-    panel._mx = x0 + (e.clientX - r.left) / r.width * (x1 - x0);
-    if (panel._view) panel._view();
-    if (!drag) return;
-    const dx = (drag.x - e.clientX) / r.width * (drag.x1 - drag.x0);
-    x0 = drag.x0 + dx; x1 = drag.x1 + dx;
+    hover = { px: e.clientX - r.left, py: e.clientY - r.top };
+    if (!drag) { draw(); return; }
+    /* ПАН ПО ВСЕЙ ПЛОЩАДИ: едут обе оси (Y больше не подгоняется) */
+    const ux = (drag.x1 - drag.x0) / r.width;
+    const uy = (drag.y1 - drag.y0) / r.height;
+    x0 = drag.x0 + (drag.x - e.clientX) / r.width * ux;
+    x1 = drag.x1 + (drag.x - e.clientX) / r.width * ux;
+    y0 = drag.y0 + (e.clientY - drag.y) / r.height * uy;
+    y1 = drag.y1 + (e.clientY - drag.y) / r.height * uy;
     draw();
   });
   cv.addEventListener('pointerup', () => { drag = null; });
+  cv.addEventListener('pointerleave', () => { hover = null; draw(); });
   cv.addEventListener('wheel', (e) => {
     e.preventDefault();
     const r = cv.getBoundingClientRect();
     const mx = x0 + (e.clientX - r.left) / r.width * (x1 - x0);
+    const my = y1 - (e.clientY - r.top) / r.height * (y1 - y0);
     const k = e.deltaY < 0 ? 1.15 : 1 / 1.15;
     x0 = mx - (mx - x0) / k; x1 = mx + (x1 - mx) / k;
+    y0 = my - (my - y0) / k; y1 = my + (y1 - my) / k;
     draw();
   }, { passive: false });
   draw();
@@ -3644,6 +3808,54 @@ function buildPlot3Panel(panel, spec) {
   const { cv, ctx, read } = plotShell(panel, spec.title);
   let alpha = -0.65, beta = 0.6, zoom = 1;
   const N = 42;
+  /* BH: «ПОВЕРХНОСТЬ ПУСТА». Если функция определена не везде (корни,
+     логарифмы, деление), сетка из NaN дырявит всю поверхность, а на узком
+     диапазоне может не поймать ни одной конечной точки. Сначала ищем
+     область определения расширяющимися кругами; нашли — наводим диапазоны
+     на неё; нет нигде — честно сообщаем про формулу */
+  const sampleGrid = () => {
+    let zmin = Infinity, zmax = -Infinity;
+    const grid = [];
+    for (let i = 0; i <= N; i++) {
+      const row = [];
+      const x = xr[0] + (xr[1] - xr[0]) * i / N;
+      for (let j = 0; j <= N; j++) {
+        const y = yr[0] + (yr[1] - yr[0]) * j / N;
+        const z = fz(x, y);
+        if (isFinite(z)) { zmin = Math.min(zmin, z); zmax = Math.max(zmax, z); }
+        row.push(z);
+      }
+      grid.push(row);
+    }
+    return { grid, zmin, zmax };
+  };
+  let sampled = sampleGrid();
+  if (!isFinite(sampled.zmin) || !isFinite(sampled.zmax)) {
+    let aimed = false;
+    for (const R of [2, 5, 10, 25, 60]) {
+      let xa = Infinity, xb = -Infinity, ya = Infinity, yb = -Infinity, n = 0;
+      for (let i = 0; i <= 24; i++) {
+        for (let j = 0; j <= 24; j++) {
+          const x = -R + 2 * R * i / 24, y = -R + 2 * R * j / 24;
+          if (isFinite(fz(x, y))) {
+            n++; xa = Math.min(xa, x); xb = Math.max(xb, x);
+            ya = Math.min(ya, y); yb = Math.max(yb, y);
+          }
+        }
+      }
+      if (n > 8) {
+        const px = (xb - xa) * 0.12 + 0.1, py = (yb - ya) * 0.12 + 0.1;
+        xr[0] = xa - px; xr[1] = xb + px; yr[0] = ya - py; yr[1] = yb + py;
+        aimed = true;
+        break;
+      }
+    }
+    if (!aimed) throw new Error('поверхность пуста: функция нигде не определена — проверь формулу z');
+    sampled = sampleGrid();
+    if (!isFinite(sampled.zmin) || !isFinite(sampled.zmax)) {
+      throw new Error('поверхность пуста: не удалось нацелиться на область определения');
+    }
+  }
   const draw = () => {
     const { w, h } = plotHiDpi(cv, ctx);
     ctx.clearRect(0, 0, w, h);
@@ -3658,33 +3870,21 @@ function buildPlot3Panel(panel, spec) {
       const depth = Y0 * cb + z * sb;
       return { px: cx + X * scale, py: cy - Y * scale, depth };
     };
-    const quads = [];
-    const zs = [];
-    for (let i = 0; i <= N; i++) {
-      zs.push(fz(xr[0] + (xr[1] - xr[0]) * i / N, yr[0]));
-    }
-    let zmin = Infinity, zmax = -Infinity;
-    const grid = [];
-    for (let i = 0; i <= N; i++) {
-      const row = [];
-      const x = xr[0] + (xr[1] - xr[0]) * i / N;
-      for (let j = 0; j <= N; j++) {
-        const y = yr[0] + (yr[1] - yr[0]) * j / N;
-        const z = fz(x, y);
-        if (isFinite(z)) { zmin = Math.min(zmin, z); zmax = Math.max(zmax, z); }
-        row.push(z);
-      }
-      grid.push(row);
-    }
-    if (!isFinite(zmin) || !isFinite(zmax)) throw new Error('поверхность пуста');
+    const { grid, zmin, zmax } = sampled;
     const zr = Math.max(1e-6, zmax - zmin);
+    const quads = [];
     for (let i = 0; i < N; i++) {
       for (let j = 0; j < N; j++) {
+        /* BH: дырявые клетки (NaN в любом углу) просто пропускаем —
+           поверхность рисуется там, где определена */
+        const c00 = grid[i][j], c10 = grid[i + 1][j],
+              c11 = grid[i + 1][j + 1], c01 = grid[i][j + 1];
+        if (!isFinite(c00) || !isFinite(c10) || !isFinite(c11) || !isFinite(c01)) continue;
         const x1 = xr[0] + (xr[1] - xr[0]) * i / N, x2 = xr[0] + (xr[1] - xr[0]) * (i + 1) / N;
         const y1 = yr[0] + (yr[1] - yr[0]) * j / N, y2 = yr[0] + (yr[1] - yr[0]) * (j + 1) / N;
-        const c = [project(x1, y1, grid[i][j]), project(x2, y1, grid[i + 1][j]),
-          project(x2, y2, grid[i + 1][j + 1]), project(x1, y2, grid[i][j + 1])];
-        const zm = (grid[i][j] + grid[i + 1][j] + grid[i + 1][j + 1] + grid[i][j + 1]) / 4;
+        const c = [project(x1, y1, c00), project(x2, y1, c10),
+          project(x2, y2, c11), project(x1, y2, c01)];
+        const zm = (c00 + c10 + c11 + c01) / 4;
         quads.push({ c, zm });
       }
     }
@@ -6209,10 +6409,26 @@ function renderTyped(ui) {
     ui._frozenSrc = null;
     ui._tailKeys = [];
   }
+  /* BH: между головой и хвостом живёт слот меток (.md-marks — уведомления
+     о режимах, включённых посреди ответа). Порядок нормализуем только
+     когда он реально нарушен — лишний appendChild перезапускал бы анимацию
+     входа метки на каждом такте печати */
+  if (ui.marksEl && !ui.mdEl.contains(ui.marksEl)) ui.mdEl.appendChild(ui.marksEl);
   let tailEl = frozenEl.nextElementSibling;
+  if (tailEl && tailEl.classList.contains('md-marks')) tailEl = tailEl.nextElementSibling;
   if (!tailEl || !tailEl.classList.contains('md-tail')) {
     tailEl = el('div', 'md-tail');
     ui.mdEl.appendChild(tailEl);
+  }
+  {
+    const want = [frozenEl];
+    if (ui.marksEl && ui.mdEl.contains(ui.marksEl)) want.push(ui.marksEl);
+    want.push(tailEl);
+    let ordered = ui.mdEl.children.length === want.length;
+    if (ordered) for (let k = 0; k < want.length; k++) {
+      if (ui.mdEl.children[k] !== want[k]) { ordered = false; break; }
+    }
+    if (!ordered) want.forEach((n) => ui.mdEl.appendChild(n));
   }
   if (ui._frozenSrc !== src) {
     frozenEl.innerHTML = html;
@@ -6730,9 +6946,13 @@ function dotAction(root) {
    яркие передние рёбра, видимые ЗАДНИЕ рёбра сквозь полупрозрачные
    грани. 4D — тессеракт, пентахорон; 3D — куб, тетраэдр, кристалл;
    2D — звезда, шестиугольник, крест; 1D — линия, волна, зигзаг */
+/* BH: 2D-фигуры (звезда, шестиугольник, крест) УБРАНЫ — на фоне объёмных
+   они выглядели плоско и дёшево. Осталось 8 честных тел: 2×4D + 3×3D +
+   3×1D-линии. d — размерность: 1D-линии НЕ вращаются (им нечем блеснуть
+   при довороте — просто мягкое дыхание света) */
 const DOT_SHAPES = {
   tess: {
-    name: 'тессеракт',
+    name: 'тессеракт', d: 4,
     draw: (L) => {
       const o = [[-11,-11],[11,-11],[11,11],[-11,11]];
       const k = .55, inn = o.map(([x,y]) => [x*k, y*k]);
@@ -6744,7 +6964,7 @@ const DOT_SHAPES = {
     }
   },
   penta: {
-    name: 'пентахорон',
+    name: 'пентахорон', d: 4,
     draw: (L) => {
       const pts = [], inn = [];
       for (let i = 0; i < 5; i++) {
@@ -6763,7 +6983,7 @@ const DOT_SHAPES = {
     }
   },
   cube: {
-    name: 'куб',
+    name: 'куб', d: 3,
     draw: (L) => {
       const hx = 11, hy = 6.2, off = 4.6;
       const silhouette = [[-hx,-hy],[0,-hy*2],[hx,-hy],[hx,hy],[0,hy*2],[-hx,hy]];
@@ -6780,7 +7000,7 @@ const DOT_SHAPES = {
     }
   },
   tetra: {
-    name: 'тетраэдр',
+    name: 'тетраэдр', d: 3,
     draw: (L) => {
       const apex = [0, -12], bl = [-10.5, 9.5], br = [10.5, 9.5], back = [0, 4.2];
       return '<g stroke="url(#gB' + L + ')" stroke-width=".9" opacity=".55">' +
@@ -6793,7 +7013,7 @@ const DOT_SHAPES = {
     }
   },
   crystal: {
-    name: 'кристалл',
+    name: 'кристалл', d: 3,
     draw: (L) => {
       const pts = [];
       for (let i = 0; i < 10; i++) {
@@ -6807,63 +7027,18 @@ const DOT_SHAPES = {
         '<circle cx="-2.6" cy="-4.4" r="2.2" fill="#fff" opacity=".4"/>';
     }
   },
-  star: {
-    name: 'звезда',
-    draw: (L) => {
-      const pts = [];
-      for (let i = 0; i < 10; i++) {
-        const a = -Math.PI / 2 + i * Math.PI / 5;
-        const r = i % 2 ? 5 : 12.2;
-        pts.push([r * Math.cos(a), r * Math.sin(a)]);
-      }
-      const rays = pts.filter((_, i) => i % 2 === 0).map((q) =>
-        '<line x1="' + q[0] + '" y1="' + q[1] + '" x2="0" y2="0"/>').join('');
-      return '<g stroke="url(#gB' + L + ')" stroke-width=".7" opacity=".5">' + rays + '</g>' +
-        '<polygon points="' + pts.map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".88" stroke="url(#gE' + L + ')" stroke-width=".9"/>' +
-        '<circle cx="-1.8" cy="-3.6" r="1.8" fill="#fff" opacity=".42"/>';
-    }
-  },
-  hex: {
-    name: 'шестиугольник',
-    draw: (L) => {
-      const pts = [], inn = [];
-      for (let i = 0; i < 6; i++) {
-        const a = -Math.PI / 2 + i * Math.PI / 3;
-        pts.push([12 * Math.cos(a), 12 * Math.sin(a)]);
-        inn.push([6 * Math.cos(a), 6 * Math.sin(a)]);
-      }
-      const conn = pts.map((q, i) =>
-        '<line x1="' + q[0] + '" y1="' + q[1] + '" x2="' + inn[i][0] + '" y2="' + inn[i][1] + '"/>').join('');
-      return '<g stroke="url(#gB' + L + ')" stroke-width=".8" opacity=".5">' + conn + '</g>' +
-        '<polygon points="' + pts.map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".82" stroke="url(#gE' + L + ')" stroke-width="1"/>' +
-        '<polygon points="' + inn.map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".9" stroke="url(#gE' + L + ')" stroke-width=".8"/>';
-    }
-  },
-  cross: {
-    name: 'крест',
-    draw: (L) => {
-      const a = 3.6, b = 12;
-      const pts = [[-a,-b],[a,-b],[a,-a],[b,-a],[b,a],[a,a],[a,b],[-a,b],[-a,a],[-b,a],[-b,-a],[-a,-a]];
-      const k = .45, inn = pts.map(([x, y]) => [x * k, y * k]);
-      const conn = pts.map((q, i) =>
-        '<line x1="' + q[0] + '" y1="' + q[1] + '" x2="' + inn[i][0] + '" y2="' + inn[i][1] + '"/>').join('');
-      return '<g stroke="url(#gB' + L + ')" stroke-width=".7" opacity=".45">' + conn + '</g>' +
-        '<polygon points="' + pts.map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".85" stroke="url(#gE' + L + ')" stroke-width=".95"/>' +
-        '<polygon points="' + inn.map((q) => q.join(',')).join(' ') + '" fill="url(#gF' + L + ')" fill-opacity=".92" stroke="url(#gE' + L + ')" stroke-width=".7"/>';
-    }
-  },
   line: {
-    name: 'линия',
+    name: 'линия', d: 1,
     draw: () => '<line x1="-11.5" y1="9.5" x2="11.5" y2="-9.5" stroke="#8fd9ff" stroke-width="2.6" stroke-linecap="round" opacity=".9"/>' +
       '<line x1="-11.5" y1="9.5" x2="11.5" y2="-9.5" stroke="#eaf9ff" stroke-width=".9" stroke-linecap="round"/>'
   },
   wave: {
-    name: 'волна',
+    name: 'волна', d: 1,
     draw: () => '<path d="M -12 3 C -8 -7, -4 -7, 0 1 S 8 9, 12 0" fill="none" stroke="#8fd9ff" stroke-width="2.6" stroke-linecap="round" opacity=".9"/>' +
       '<path d="M -12 3 C -8 -7, -4 -7, 0 1 S 8 9, 12 0" fill="none" stroke="#eaf9ff" stroke-width=".9" stroke-linecap="round"/>'
   },
   zig: {
-    name: 'зигзаг',
+    name: 'зигзаг', d: 1,
     draw: () => '<polyline points="-12,6 -6,-5 0,6 6,-5 12,6" fill="none" stroke="#8fd9ff" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" opacity=".9"/>' +
       '<polyline points="-12,6 -6,-5 0,6 6,-5 12,6" fill="none" stroke="#eaf9ff" stroke-width=".9" stroke-linejoin="round" stroke-linecap="round"/>'
   }
@@ -6886,14 +7061,15 @@ function dotShapeSvg(core) {
   svg.innerHTML =
     '<defs>' +
       '<radialGradient id="gF' + L + '" cx="34%" cy="28%" r="82%">' +
-        '<stop offset="0%" stop-color="#ffffff"/><stop offset="42%" stop-color="#aee6ff"/>' +
-        '<stop offset="74%" stop-color="#2f9fd8"/><stop offset="100%" stop-color="#0a5f92"/>' +
+        '<stop offset="0%" stop-color="#ffffff"/><stop offset="38%" stop-color="#c8eeff"/>' +
+        '<stop offset="72%" stop-color="#48b6ea"/><stop offset="100%" stop-color="#0e6ea8"/>' +
       '</radialGradient>' +
       '<linearGradient id="gE' + L + '" x1="0" y1="0" x2="1" y2="1">' +
-        '<stop offset="0%" stop-color="#f2fbff"/><stop offset="100%" stop-color="#9fd8f2"/>' +
+        '<stop offset="0%" stop-color="#ffffff"/><stop offset="55%" stop-color="#d4f1ff"/>' +
+        '<stop offset="100%" stop-color="#8ed4f4"/>' +
       '</linearGradient>' +
       '<linearGradient id="gB' + L + '" x1="0" y1="0" x2="1" y2="1">' +
-        '<stop offset="0%" stop-color="#4d90b8"/><stop offset="100%" stop-color="#1c5d86"/>' +
+        '<stop offset="0%" stop-color="#7cc2e6"/><stop offset="100%" stop-color="#2a76a0"/>' +
       '</linearGradient>' +
     '</defs><g class="rot-g"></g>';
   svg._gradL = L;
@@ -6915,14 +7091,16 @@ function dotShapePlay(root) {
     if (!core.isConnected || !root.classList.contains('live') ||
         core.classList.contains('dot-settle')) { return; }
     const key = DOT_SHAPE_KEYS[Math.floor(Math.random() * DOT_SHAPE_KEYS.length)];
-    const spin = DOT_SPINS[Math.floor(Math.random() * DOT_SPINS.length)];
+    /* BH: вращаются только ОБЪЁМНЫЕ тела; 1D-линии стоят спокойно */
+    const spin = DOT_SHAPES[key].d > 1
+      ? DOT_SPINS[Math.floor(Math.random() * DOT_SPINS.length)] : null;
     const svg = dotShapeSvg(core);
     const g = svg.querySelector('.rot-g');
     /* каждая игра — фигура и плоскость вращения заново */
     g.setAttribute('class', 'rot-g');
     g.innerHTML = DOT_SHAPES[key].draw(svg._gradL);
     void g.getBoundingClientRect();
-    g.setAttribute('class', 'rot-g ' + spin);
+    g.setAttribute('class', 'rot-g' + (spin ? ' ' + spin : ''));
     svg.classList.remove('sh-out');
     svg.classList.add('sh-in');
     core.classList.add('shape-on');
