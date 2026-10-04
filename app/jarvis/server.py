@@ -810,7 +810,11 @@ class Handler(BaseHTTPRequestHandler):
         # фильтр локален (обычная реплика без фактов не платит за вызов), а
         # структуру решает nano-модель: «я люблю кошек» должно стать
         # «любимое животное: кошки», а не «я люблю: кошек».
-        saved_facts = agent.remember_smart_facts(text)
+        # BM4: СИНХРОННО — ТОЛЬКО локальный черновик (микросекунды); nano-
+        # # структуризация ушла в фоновый поток. Прежний синхронный вызов
+        # сидел ДО старта главного ответа и стоил до 8 секунд молчания
+        # «думаю» на каждой реплике с личным фактом.
+        saved_facts = agent.remember_smart_facts_async(text)
         memory_facts = [{"kind": item.get("kind", "fact"),
                          "key": item.get("key", ""),
                          "value": item.get("value", "")} for item in saved_facts]

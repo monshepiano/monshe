@@ -176,7 +176,7 @@ def _ai_personalized() -> List[Dict[str, str]]:
         {"role": "user",
          "content": "Недавние темы: %s" % ("; ".join(topics) or "нет данных")},
     ], tier="nano", max_tokens=500, temperature=0.8, timeout=8,
-       operation="welcome_ideas")
+       operation="welcome_ideas", background=True)
     content = raw.get("content") if isinstance(raw, dict) else str(raw)
     match = re.search(r"\[.*\]", str(content or ""), re.S)
     if not match:

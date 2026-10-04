@@ -96,6 +96,47 @@ def _request(url: str, api_key: str, payload: Optional[Dict] = None, method: str
     return urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX)
 
 
+# ------------------------------------------------- приоритет главного ответа
+# BM4: ПРИЧИНА «МЕДЛЕННО ДУМАЕТ И ПЕЧАТАЕТ» — ПОСТОРОННИЕ ВЫЗОВЫ В ПУТИ
+# ОТВЕТА. Каждый рецидив этого бага имел один и тот же механизм: очередной
+# «полезный фоновый» LLM-вызов (сводка, планировщик, подсказки, память)
+# оказывался в критическом пути или в конкуренции с главным стримом — и
+# провайдер с лимитами на ключ заставлял ответ человека ждать. Правило
+# теперь железное: главный ответ держит «foreground», а все второстепенные
+# вызовы (background=True) стартуют только когда ни один главный стрим
+# не активен. Дедлока нет: ожидание ограничено, после таймаута вызов
+# всё равно выполняется.
+_FG_LOCK = threading.Lock()
+_FG_COUNT = 0
+_FG_FREE = threading.Event()
+_FG_FREE.set()
+
+
+class _Foreground:
+    """Держит «линию свободной для фоновых вызовов» на время главного стрима."""
+
+    def __enter__(self) -> "_Foreground":
+        global _FG_COUNT
+        with _FG_LOCK:
+            _FG_COUNT += 1
+            _FG_FREE.clear()
+        return self
+
+    def __exit__(self, *exc: Any) -> bool:
+        global _FG_COUNT
+        with _FG_LOCK:
+            _FG_COUNT -= 1
+            if _FG_COUNT <= 0:
+                _FG_COUNT = 0
+                _FG_FREE.set()
+        return False
+
+
+def wait_foreground_free(timeout: float = 20.0) -> bool:
+    """Подождать, пока закончатся главные ответы. False — время вышло."""
+    return _FG_FREE.wait(timeout)
+
+
 # ------------------------------------------------------------- keep-alive
 # urllib открывает новое TCP+TLS-соединение на каждый запрос. На нестримовых
 # вызовах (chat, каталог моделей) соединение можно переиспользовать: это
@@ -544,13 +585,17 @@ def _build_payload(model: str, messages: List[Dict], tools: Optional[List[Dict]]
 def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] = None,
          temperature: Optional[float] = None, max_tokens: Optional[int] = None,
          provider: Optional[str] = None, timeout: int = 180,
-         operation: str = "llm") -> Dict[str, Any]:
+         operation: str = "llm", background: bool = False) -> Dict[str, Any]:
     """Не-стриминговый вызов с автоматическим фолбэком на резервного провайдера.
 
     ``timeout`` — общий wall-clock budget всего вызова, включая повтор и
     резервного провайдера. Раньше он ошибочно применялся к КАЖДОЙ попытке:
     planner с timeout=25 мог задержать AGENT более чем на 100 секунд.
     """
+    # BM4: второстепенный вызов не конкурирует с главным ответом: пока идёт
+    # чей-то foreground-стрим, ждём свободного окна (с потолком — без дедлоков)
+    if background:
+        wait_foreground_free(min(20.0, max(1.0, float(timeout))))
     providers = [provider] if provider else (active_providers() or ["cloudru"])
     span = telemetry.Span(operation, tier=tier)
     deadline = time.monotonic() + max(0.25, float(timeout))
@@ -657,8 +702,12 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
             started_output = False
             saw_done = False
             try:
+                # BM4: 45с вместо 75с — потолок ОЖИДАНИЯ, а не работы: сокет
+                # сбрасывается каждым чанком, так что это таймаут на МОЛЧАНИЕ
+                # провайдера. Зависший запрос раньше держал человека в «думаю»
+                # до 75 секунд на каждую попытку.
                 with _request(conf["base_url"].rstrip("/") + "/chat/completions",
-                              conf["api_key"], payload, timeout=75) as resp:
+                              conf["api_key"], payload, timeout=45) as resp:
                     acc_content: List[str] = []
                     acc_reasoning: List[str] = []
                     tool_acc: Dict[int, Dict[str, Any]] = {}
@@ -799,10 +848,13 @@ def chat_stream(messages: List[Dict], tier: str = "base", tools: Optional[List[D
     иначе «остановленный» агент продолжал платить за генерацию."""
     span = telemetry.Span(operation, tier=tier)
     try:
-        yield from _chat_stream_impl(messages, tier=tier, tools=tools,
-                                     temperature=temperature, max_tokens=max_tokens,
-                                     provider=provider, operation=operation, _span=span,
-                                     should_stop=should_stop)
+        # BM4: главный стрим держит foreground — фоновые вызовы (подсказки,
+        # планировщик, память, идеи) ждут свободного окна, а не рвут печать
+        with _Foreground():
+            yield from _chat_stream_impl(messages, tier=tier, tools=tools,
+                                         temperature=temperature, max_tokens=max_tokens,
+                                         provider=provider, operation=operation, _span=span,
+                                         should_stop=should_stop)
     except GeneratorExit:
         span.finish("cancelled")
         raise

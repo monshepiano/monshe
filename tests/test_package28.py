@@ -1337,7 +1337,7 @@ class TurnUiContractEconomyTests(unittest.TestCase):
              mock.patch.object(server.orchestrator, "summarize_history",
                                side_effect=lambda items: items), \
              mock.patch.object(server.orchestrator, "choose_tier", return_value=route), \
-             mock.patch.object(server.agent, "remember_smart_facts", return_value=[]), \
+             mock.patch.object(server.agent, "remember_smart_facts_async", return_value=[]), \
              mock.patch.object(server.agent, "build_system_prompt",
                                return_value="BASE SYSTEM"), \
              mock.patch.object(server.agent, "turn_ui_contract",
@@ -1918,7 +1918,8 @@ class VisionUiContractTests(unittest.TestCase):
                                return_value={"background": False, "schedule": "", "reason": ""}), \
              mock.patch.object(server.orchestrator, "summarize_history", side_effect=lambda items: items), \
              mock.patch.object(server.orchestrator, "choose_tier", return_value=route), \
-             mock.patch.object(server.agent, "remember_smart_facts") as remember_facts, \
+             mock.patch.object(server.agent, "remember_smart_facts_async",
+                               return_value=[]) as remember_facts, \
              mock.patch.object(server.agent, "build_system_prompt", return_value="BASE SYSTEM"), \
              mock.patch.object(server.agent.tools, "schemas", return_value=[]):
             server.Handler._chat_stream(handler, {
@@ -1929,7 +1930,7 @@ class VisionUiContractTests(unittest.TestCase):
             })
 
         self.assertEqual(chat_stream.call_count, 1, "vision UI must not require a preflight model call")
-        remember_facts.assert_called_once_with("Сделай мем")
+        remember_facts.assert_called_once_with("Сделай мем")   # async-обёртка на входной границе
         blocking_chat.assert_not_called()
         assistant_saves = [call for call in add_message.call_args_list
                            if len(call.args) >= 3 and call.args[1] == "assistant"]
@@ -3254,7 +3255,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.72", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.73", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4589,8 +4590,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.72", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.72", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.73", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.73", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5832,7 +5833,7 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.72", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.73", html)
 
 
 
@@ -5932,7 +5933,7 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.72", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.73", html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -6162,6 +6163,99 @@ class IterationBM3Tests(unittest.TestCase):
         # правило графиков живёт в системном промпте агента
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
         self.assertIn('"x": [0, 3, 6], "y": [-3, -1, 2]', src)
+
+
+class IterationBM4Tests(unittest.TestCase):
+    """BM4 — первопричина «медленно думает и печатает»: в критическом пути
+    ответа нет ни одного постороннего LLM-вызова, а второстепенные вызовы
+    никогда не конкурируют с главным стримом."""
+
+    def test_foreground_gate_blocks_background_chat(self) -> None:
+        import io
+        import jarvis.llm as srv
+
+        class FakeResp(io.BytesIO):
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def close(self): pass
+
+        def fake_stream(*a, **k):
+            yield {"type": "model", "model": "m"}
+            time.sleep(0.25)
+            yield {"type": "delta", "text": "текст"}
+
+        started = []
+        with mock.patch.object(srv, "_chat_stream_impl", side_effect=fake_stream), \
+             mock.patch.object(srv, "provider_conf",
+                               return_value={"api_key": "k", "base_url": "http://x"}), \
+             mock.patch.object(srv, "pick_model", return_value="m"), \
+             mock.patch.object(srv, "_request",
+                               side_effect=lambda *a, **k: started.append(1) or
+                               FakeResp(b'{"choices":[{"message":{"content":"[]"}}]}')):
+            gen = srv.chat_stream([{"role": "user", "content": "q"}])
+            next(gen)
+            self.assertFalse(srv._FG_FREE.is_set(),
+                             "живой стрим держит foreground — линия занята")
+            t0 = time.time()
+            try:
+                srv.chat([{"role": "user", "content": "q"}],
+                         background=True, timeout=1, operation="bg_probe")
+            except Exception:
+                pass   # важна задержка старта, а не результат (БД в тестах мокается)
+            waited = time.time() - t0
+            gen.close()
+        self.assertGreaterEqual(waited, 0.9,
+                                "фоновый вызов обязан ждать живой стрим")
+        self.assertTrue(srv._FG_FREE.is_set() and srv._FG_COUNT == 0,
+                        "gate освобождается после закрытия стрима")
+
+    def test_background_call_runs_free_when_idle(self) -> None:
+        import jarvis.llm as srv
+        self.assertTrue(srv._FG_FREE.is_set(), "в простое линия свободна")
+        t0 = time.time()
+        with mock.patch.object(srv, "wait_foreground_free",
+                               side_effect=lambda t: srv._FG_FREE.wait(t)):
+            waited = srv.wait_foreground_free(0.05)
+        self.assertTrue(waited)
+        self.assertLess(time.time() - t0, 0.2)
+
+    def test_memory_async_returns_draft_and_defers_model(self) -> None:
+        calls = []
+        with mock.patch.object(agent, "extract_obvious_memories",
+                               return_value=[{"kind": "Нравится", "key": "Нравится",
+                                              "value": "кошек"}]), \
+             mock.patch.object(agent, "remember_smart_facts",
+                               side_effect=lambda t: calls.append(t) or []):
+            t0 = time.time()
+            draft = agent.remember_smart_facts_async("я люблю кошек")
+            self.assertLess(time.time() - t0, 0.05,
+                            "входная граница не платит сетью")
+            self.assertEqual(draft[0]["value"], "кошек")
+            for _ in range(100):
+                if calls:
+                    break
+                time.sleep(0.02)
+        self.assertEqual(calls, ["я люблю кошек"],
+                         "nano-структуризация выполняется фоновым потоком")
+
+    def test_memory_async_no_facts_no_thread(self) -> None:
+        with mock.patch.object(agent, "extract_obvious_memories", return_value=[]), \
+             mock.patch.object(agent, "remember_smart_facts") as model:
+            self.assertEqual(agent.remember_smart_facts_async("как дела?"), [])
+            time.sleep(0.05)
+            model.assert_not_called()
+
+    def test_side_calls_marked_background(self) -> None:
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        self.assertIn('operation="planner",' + chr(10) + '                   background=True', src)
+        self.assertIn('operation="reply_suggestions_ai",' + chr(10) + '           background=True', src)
+        ideas_src = Path("app/jarvis/ideas.py").read_text(encoding="utf-8")
+        self.assertIn('operation="welcome_ideas", background=True', ideas_src)
+
+    def test_stream_socket_timeout_45(self) -> None:
+        llm_src = Path("app/jarvis/llm.py").read_text(encoding="utf-8")
+        self.assertIn("payload, timeout=45) as resp:", llm_src)
+        self.assertNotIn("timeout=75) as resp:", llm_src)
 
 
 if __name__ == "__main__":

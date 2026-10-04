@@ -186,6 +186,28 @@ def _parse_memory_json(content: str) -> Optional[List[Dict[str, str]]]:
     return facts[:6]
 
 
+def remember_smart_facts_async(text: str) -> List[Dict[str, Any]]:
+    """BM4: память БОЛЬШЕ НЕ СТОИТ В ПУТИ ОТВЕТА.
+
+    Прежде этот вызов сидел в /api/chat СИНХРОННО, ДО старта главного ответа:
+    каждая реплика с личным фактом («я люблю…», «меня зовут…») платила
+    целый nano-раунд (до 8 секунд при плохом провайдере) ПЕРЕД первым
+    токеном ответа — отсюда «ненормально медленно думаю». Локальный черновик
+    возвращается мгновенно (отклик интерфейса не меняется), а структура
+    фактов уточняется фоновым потоком, когда главный ответ не активен."""
+    draft = extract_obvious_memories(text)
+    if not draft:
+        return []
+
+    def _work() -> None:
+        try:
+            remember_smart_facts(text)
+        except Exception:
+            pass
+    threading.Thread(target=_work, daemon=True, name="jarvis-memory").start()
+    return draft
+
+
 def remember_smart_facts(text: str) -> List[Dict[str, Any]]:
     """Сохранить личные факты после анализа маленькой моделью.
 
@@ -219,7 +241,7 @@ def remember_smart_facts(text: str) -> List[Dict[str, Any]]:
             {"role": "system", "content": system},
             {"role": "user", "content": "Реплика: %s" % str(text or "")[:1200]},
         ], tier="nano", max_tokens=300, temperature=0.1, timeout=8,
-           operation="memory")
+           operation="memory", background=True)
         facts = _parse_memory_json(result.get("content", ""))
         if facts is not None:
             saved = []
@@ -1414,6 +1436,8 @@ def suggest_replies_ai(user_text: str, answer: str,
             parts.append("JARVIS использовал инструменты: %s." %
                          ", ".join(str(t) for t in tools_used if t))
         parts.append("Последний ответ JARVIS (фрагмент): %s" % tail[:1400])
+        # BM4: подсказки — второстепенный вызов: не рвут печать и не стоят
+        # перед чужим первым токеном
         raw = llm.chat([
             {"role": "system",
              "content": "Ты придумаешь продолжение переписки пользователя с "
@@ -1444,7 +1468,8 @@ def suggest_replies_ai(user_text: str, answer: str,
                         "по направлению. Ответь ТОЛЬКО JSON-массивом из "
                         "трёх строк."},
             {"role": "user", "content": "\n\n".join(parts)},
-        ], tier="nano", timeout=9, operation="reply_suggestions_ai")
+        ], tier="nano", timeout=9, operation="reply_suggestions_ai",
+           background=True)
         content = raw.get("content") if isinstance(raw, dict) else str(raw)
         raw_text = str(content or "")
         parsed = [x for x in _parse_reply_suggestions(raw_text)
@@ -2348,7 +2373,8 @@ class Agent:
                     {"role": "user", "content":
                      "Задача: %s\nПервый выбранный агентом инструмент: %s" % (text, tools_hint)},
                 ], tier="nano", max_tokens=320, temperature=0.2,
-                   timeout=4 if attempt == 1 else 7, operation="planner")
+                   timeout=4 if attempt == 1 else 7, operation="planner",
+                   background=True)
                 steps = parse_plan_steps(result.get("content", ""))
                 if 3 <= len(steps) <= 6:
                     return steps
