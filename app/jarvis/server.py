@@ -298,7 +298,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._serve_static(path[len("/static/"):])
 
         if path == "/api/state":
-            return self._json(self._state())
+            # BM8: день начинается в местную полночь устройства — фронт
+            # присылает её сам (время устройства, без геолокации и разрешений)
+            try:
+                day_start = float((params.get("day_start") or ["0"])[0] or 0)
+            except (TypeError, ValueError):
+                day_start = 0.0
+            return self._json(self._state(day_start=day_start))
         if path == "/api/config":
             return self._json(CONFIG.public())
         if path == "/api/health":
@@ -315,7 +321,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "computer": status})
         if path == "/api/providers":
             # BM6: точный снимок «кто сейчас жив» — зонд сети, здоровье
-            # (TTFT/скорость печати) и штраф очереди по каждому провайдеру
+            # (TTFT/скорость печати) и штраф очереди по каждому провайдеру.
+            # BM8: ?deep=1 — ещё и генерационный зонд ВСЕХ провайдеров
+            # (по кнопке человека; частые клики не плодят запросы)
+            if (params.get("deep") or ["0"])[0] in ("1", "true", "yes"):
+                try:
+                    llm.deep_probe_all()
+                except Exception:
+                    pass
             return self._json({"ok": True, "providers": llm.providers_status()})
         if path == "/api/models":
             provider = (params.get("provider") or ["cloudru"])[0]
@@ -708,7 +721,7 @@ class Handler(BaseHTTPRequestHandler):
         return media.analyze_image(image, question)
 
     # --------------------------------------------------------------- состояние
-    def _state(self) -> Dict[str, Any]:
+    def _state(self, day_start: float = 0.0) -> Dict[str, Any]:
         # Убираем legacy-дубли памяти до первого показа карточек. Функция
         # process-local idempotent и после первого state-запроса ничего не делает.
         agent.repair_legacy_automatic_memories()
@@ -728,7 +741,8 @@ class Handler(BaseHTTPRequestHandler):
             "approvals": db.list_approvals(),
             "notifications": notes,
             "unread": len([n for n in notes if not n.get("read")]),
-            "usage": db.usage_summary(),
+            "usage": db.usage_summary() if not day_start
+                     else db.usage_summary(since=day_start),
             "billing": billing.snapshot(),
             "config": CONFIG.public(),
             "silent_tools": tools.silent_names(),   # фронт не хранит свою копию

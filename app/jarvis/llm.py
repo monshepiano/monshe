@@ -273,8 +273,10 @@ _HEALTH_LOCK = threading.Lock()
 _PROVIDER_HEALTH: Dict[str, "deque"] = {}
 _HEALTH_TTL = 600.0             # здоровье живёт 10 минут — эпизоды проходят сами
 _HEALTH_MIN_SAMPLES = 2         # меньше двух опытов — мнение не сложилось
-_HEALTH_DEGRADED_TTFT = 6.0     # медиана TTFT выше — провайдер медленный
-_HEALTH_DEAD_CPS = 12.0         # меньше 12 зн/с печати — провайдер еле жив
+_HEALTH_DEGRADED_TTFT = 4.0     # медиана TTFT выше — провайдер медленный
+                                # (обычный отклик 0.5-2с; 4с — уже деградация)
+_HEALTH_DEAD_CPS = 25.0         # меньше 25 зн/с печати — провайдер еле жив
+                                # (обычная печать 100-200 зн/с)
 
 
 def _record_provider_health(prov: str, ok: bool, ttft_s: float = 0.0,
@@ -388,7 +390,8 @@ def probe_provider(name: str, timeout: float = 4.0) -> bool:
 
 
 _GEN_PROBE_STATE: Dict[str, Dict[str, float]] = {}
-_GEN_PROBE_GAP_S = 120.0        # генерационный зонд — не чаще, чем раз в 2 минуты
+_GEN_PROBE_GAP_S = 300.0        # здоровый провайдер — микро-запрос раз в 5 минут
+_GEN_PROBE_GAP_HOT_S = 120.0    # под подозрением (штраф) — раз в 2 минуты
 
 
 def generation_probe(prov: str, timeout: float = 12.0) -> Optional[float]:
@@ -405,10 +408,12 @@ def generation_probe(prov: str, timeout: float = 12.0) -> Optional[float]:
     if not base or not str(conf.get("api_key") or "").strip():
         return None
     try:
-        model = pick_model("nano", prov)
+        # BM8: меряем РАБОЧУЮ модель (base) — на nano всё быстро даже у
+        # деградировавшего провайдера, и зонд врал «ген. 0.16с»
+        model = pick_model("base", prov)
         payload = {"model": model,
-                   "messages": [{"role": "user", "content": "ок"}],
-                   "max_tokens": 8, "stream": False}
+                   "messages": [{"role": "user", "content": "Скажи: ок"}],
+                   "max_tokens": 16, "stream": False}
         t0 = time.monotonic()
         resp = _request(base + "/chat/completions", conf["api_key"], payload,
                         "POST", timeout=int(timeout),
@@ -432,12 +437,46 @@ def generation_probe(prov: str, timeout: float = 12.0) -> Optional[float]:
 
 
 def _gen_probe_due(prov: str, names: List[str]) -> bool:
-    """Генерационный зонд нужен основному (и тому, кто под штрафом)."""
+    """Генерационный зонд нужен основному (и тому, кто под штрафом).
+
+    Темп бережливый: здоровому основному — раз в 5 минут (≈0.5₽ в день),
+    провайдеру под подозрением — раз в 2 минуты, пока не оправдается."""
+    hot = _provider_penalty(prov) > 0
+    gap = _GEN_PROBE_GAP_HOT_S if hot else _GEN_PROBE_GAP_S
     last = _GEN_PROBE_STATE.get(prov)
-    if last and time.monotonic() - float(last.get("at") or 0.0) < _GEN_PROBE_GAP_S:
+    if last and time.monotonic() - float(last.get("at") or 0.0) < gap:
         return False
     order = provider_order(names)
     return prov == order[0] if order else False
+
+
+_DEEP_PROBE_LOCK = threading.Lock()
+
+
+def deep_probe_all(timeout_s: float = 15.0) -> None:
+    """Генерационный зонд ВСЕХ активных провайдеров — по кнопке человека.
+
+    Даёт полную картину «кто как реально отвечает» за один проход;
+    параллельно, с общим потолком времени. Частые запуски не плодят
+    запросы: пока один идёт, второй просто ждёт его конца."""
+    names = active_providers()
+    if not names:
+        return
+    with _DEEP_PROBE_LOCK:
+        threads = []
+        for name in names:
+            def run(n: str = name) -> None:
+                try:
+                    generation_probe(n)
+                except Exception:
+                    pass
+            t = threading.Thread(target=run, daemon=True,
+                                 name="jarvis-genprobe")
+            t.start()
+            threads.append(t)
+        deadline = time.monotonic() + max(3.0, timeout_s)
+        for t in threads:
+            t.join(max(0.1, deadline - time.monotonic()))
 
 
 def provider_probe_status(name: str) -> Dict[str, Any]:

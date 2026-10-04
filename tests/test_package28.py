@@ -3259,7 +3259,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.77", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.78", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3505,7 +3505,9 @@ class IterationABTests(unittest.TestCase):
     def test_ab4_free_image_survives_rate_limit(self) -> None:
         code = Path("app/jarvis/tools/media.py").read_text(encoding="utf-8")
         # корень «после одной генерации капут»: анонимный лимит + 180с таймауты
-        self.assertIn("timeout=75", code)
+        # BM8: 75с — потолок запроса внутри ОБЩЕГО бюджета цепочки (90с)
+        self.assertIn("timeout=min(75", code)
+        self.assertIn("_FREE_IMAGE_BUDGET_S", code)
         self.assertIn("&referrer=jarvis", code)
         self.assertIn("time.sleep(4)", code)               # пауза перед повтором
         self.assertIn("urllib.error.HTTPError", code)      # 429 ловится отдельно
@@ -4594,8 +4596,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.77", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.77", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.78", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.78", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5837,7 +5839,7 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.77", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.78", html)
 
 
 
@@ -5937,7 +5939,7 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.77", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.78", html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -6794,6 +6796,173 @@ class IterationBM7Tests(unittest.TestCase):
         lll._GEN_PROBE_STATE["cloudru"] = {"ttft": 3.2, "at": time.monotonic()}
         snap = lll.providers_status()
         self.assertEqual(snap["cloudru"]["gen_ttft_s"], 3.2)
+
+
+class IterationBM8Tests(unittest.TestCase):
+    """BM8 — ген-зонд меряет РАБОЧУЮ модель (base), а не nano; реальные
+    медленные ответы (TTFT 4-6с) понижают провайдера; улучшатель промпта
+    картинки больше не жуёт 3 минуты; JSON-ответы с любыми ключами
+    ловятся; границы инструмента не гаснут; расход считается за сегодня."""
+
+    def setUp(self) -> None:
+        llm._PROVIDER_HEALTH.clear()
+        llm._PROBE_STATE.clear()
+        llm._GEN_PROBE_STATE.clear()
+        llm._TOKEN_CACHE.clear()
+
+    def test_gen_probe_uses_base_model(self) -> None:
+        """Зонд на nano врал «ген 0.16с» — меряем рабочую модель base."""
+        import jarvis.llm as lll
+
+        class Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return b"{}"
+
+        tiers = []
+        with mock.patch.object(lll, "provider_conf",
+                               return_value={"api_key": "k",
+                                             "base_url": "http://x/v1"}), \
+             mock.patch.object(lll, "pick_model",
+                               side_effect=lambda t, p: tiers.append(t) or "m"), \
+             mock.patch.object(lll, "_request", return_value=Resp()):
+            lll.generation_probe("cloudru")
+        self.assertEqual(tiers, ["base"], "ген-зонд обязан мерять base-модель")
+
+    def test_health_thresholds_catch_mild_degradation(self) -> None:
+        """TTFT 5с (раньше порог 6с пропускал) — уже деградация."""
+        import jarvis.llm as lll
+        lll._record_provider_health("cloudru", True, ttft_s=5.0, cps=180.0)
+        lll._record_provider_health("cloudru", True, ttft_s=5.0, cps=180.0)
+        self.assertEqual(lll.provider_order(["cloudru", "deepseek"])[0],
+                         "deepseek", "5с до первого токена = деградация")
+        # а 2.5с — нормальная жизнь, понижать нельзя
+        lll._PROVIDER_HEALTH.clear()
+        lll._record_provider_health("yandex", True, ttft_s=2.5, cps=150.0)
+        lll._record_provider_health("yandex", True, ttft_s=2.5, cps=150.0)
+        self.assertEqual(lll.provider_order(["yandex", "deepseek"])[0],
+                         "yandex")
+
+    def test_enhance_prompt_has_hard_timeout(self) -> None:
+        """КОРЕНЬ «картинка минут 3 без результата»: улучшатель промпта
+        ходил к nano без таймаута (180с по умолчанию)."""
+        import jarvis.tools.media as med
+        from unittest import mock as _mock
+        captured = {}
+        with _mock.patch.object(
+                med.llm, "chat",
+                side_effect=lambda *a, **kw: captured.update(kw) or
+                {"content": "промпт"}) as mk:
+            out = med._enhance_prompt("кот на окне", 1024, 1024)
+        mk.assert_called_once()
+        self.assertEqual(captured.get("timeout"), 12,
+                         "улучшатель обязан уложиться в 12 секунд")
+        self.assertTrue(out)
+
+    def test_free_image_chain_has_budget(self) -> None:
+        """Бесплатная цепочка ограничена 90 секундами В ЦЕЛОМ."""
+        code = Path("app/jarvis/tools/media.py").read_text(encoding="utf-8")
+        self.assertIn("_FREE_IMAGE_BUDGET_S = 90.0", code)
+        self.assertIn("timeout=min(75, max(2, left))", code)
+
+    def test_yandex_failure_surfaces_in_final_error(self) -> None:
+        """Яндекс отказал — финальная ошибка называет причину, а не молчит."""
+        import jarvis.tools.media as med
+        from unittest import mock as _mock
+        conf = {"media.image_provider": "auto",
+                "media.image_gateway_url": "", "media.image_gateway_token": "",
+                "providers.yandex": {"api_key": "yk", "folder_id": "b1g"},
+                "media.enhance_prompt": False}
+        with _mock.patch.object(med, "CONFIG", conf), \
+             _mock.patch.object(med, "_yandex_image",
+                                side_effect=med.GigaChatError("403: нет роли")), \
+             _mock.patch.object(
+                 med, "_free_image",
+                 return_value={"ok": False,
+                               "error": "бесплатный генератор временно недоступен (x)"}):
+            res = med.generate_image("кот", 512, 512)
+        self.assertFalse(res["ok"])
+        self.assertIn("Яндекс не нарисовал", res["error"])
+        self.assertIn("403", res["error"])
+
+    def test_degenerate_json_answer_detection(self) -> None:
+        """JSON с любыми ключами и массивы — тоже вырожденный ответ."""
+        from jarvis import agent as ag
+        self.assertTrue(ag.is_degenerate_json_answer(
+            '{"answer": "сумма", "total": 42}'))
+        self.assertTrue(ag.is_degenerate_json_answer(
+            "```json\n{\"a\": 1, \"b\": 2}\n```"))
+        self.assertTrue(ag.is_degenerate_json_answer(
+            '[{"question": "один", "answer": "два"}, {"question": "три"}]'))
+        self.assertFalse(ag.is_degenerate_json_answer("Обычный текст ответа"))
+        self.assertFalse(ag.is_degenerate_json_answer('{"a": 1} и текст'))
+        # человек сам просил JSON — ловушка не работает
+        self.assertTrue(ag.user_wants_json("дай JSON со списком"))
+        self.assertFalse(ag.user_wants_json("нарисуй кота"))
+
+    def test_usage_summary_since_midnight(self) -> None:
+        """usage_summary умеет считать «с момента» (местная полночь)."""
+        import jarvis.db as jdb
+        with mock.patch.object(jdb, "query_one", return_value={}) as q1, \
+             mock.patch.object(jdb, "query", return_value=[]):
+            jdb.usage_summary(since=1770000000.0)
+        # второй позиционный аргумент — кортеж параметров (SQL первый)
+        self.assertEqual(q1.call_args[0][1][0], 1770000000.0)
+
+    def test_state_accepts_day_start(self) -> None:
+        """Сервер: /api/state?day_start= переключает usage на «за сегодня»."""
+        src = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertIn('params.get("day_start")', src)
+        self.assertIn("db.usage_summary(since=day_start)", src)
+
+    def test_deep_probe_endpoint_and_lock(self) -> None:
+        """?deep=1 — ген-зонд всех провайдеров; повторные клики не плодят."""
+        import jarvis.llm as lll
+        src = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertIn('params.get("deep")', src)
+        self.assertIn("llm.deep_probe_all()", src)
+        probed = []
+        with mock.patch.object(lll, "active_providers",
+                               return_value=["a", "b"]), \
+             mock.patch.object(lll, "generation_probe",
+                               side_effect=lambda n: probed.append(n)):
+            lll.deep_probe_all(timeout_s=3.0)
+        self.assertEqual(sorted(probed), ["a", "b"])
+
+    def test_gen_probe_cadence_cheap_when_healthy(self) -> None:
+        """Здоровый провайдер — зонд раз в 5 минут, под штрафом — 2 минуты."""
+        import jarvis.llm as lll
+        self.assertEqual(lll._GEN_PROBE_GAP_S, 300.0)
+        self.assertEqual(lll._GEN_PROBE_GAP_HOT_S, 120.0)
+
+    def test_tool_mask_never_removed(self) -> None:
+        """Затемнение краёв потока инструмента — навсегда после переполнения."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        glide = js.split("function glideFlow(")[1].split("\nfunction ")[0]
+        self.assertNotIn("classList.remove('full')", glide,
+                         "маска границ не снимается никогда")
+        # новые строки перезапускают полёт при стоящей маске
+        feed = js.split("function qtFeed(")[1].split("\nfunction ")[0]
+        self.assertIn("flow.classList.contains('full') && inner.scrollHeight", feed)
+
+    def test_chip_shows_role_light_not_name(self) -> None:
+        """Чип — слово «провайдер» и огонёк роли; имя в подсказке."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        spc = js.split("function setProvChip(name)")[1].split("\nfunction ")[0]
+        self.assertIn(".textContent = 'провайдер'", spc)
+        self.assertIn("cur.order === 0 ? 'ok'", spc)
+        self.assertIn("'err live'", spc)
+        self.assertIn("PROV_SHORT", spc)
+        self.assertIn("cloud.ru", js.split("const PROV_SHORT")[1][:200])
+
+    def test_sidebar_today_spend(self) -> None:
+        """Сайдбар: «Расход сегодня» от местной полуночи устройства."""
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        self.assertIn("Расход сегодня", html)
+        self.assertNotIn("Расход 24ч", html)
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("day_start=' + dayStart", js)
+        self.assertIn("getFullYear(), d.getMonth(), d.getDate()", js)
 
 
 if __name__ == "__main__":

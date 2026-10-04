@@ -995,7 +995,12 @@ $('#tgComputer').addEventListener('click', function () {
 
 /* ============================ состояние ============================ */
 async function refreshState() {
-  const st = await api('/api/state');
+  // BM8: «Расход сегодня» — от местной полуночи УСТРОЙСТВА (без геолокации
+  // и разрешений: часовой пояс устройства — тот, по которому живёт человек).
+  // Считается при каждом обновлении: полночь переезжает сама.
+  const d = new Date();
+  const dayStart = Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 1000);
+  const st = await api('/api/state?day_start=' + dayStart);
   if (!st.ok) { setChip('#chipConn', 'err', 'нет связи'); return; }
   setChip('#chipConn', 'ok', 'связь');
   S.config = st.config || {};
@@ -1127,8 +1132,9 @@ function setChip(sel, cls, text) {
 }
 
 /* ================== BM7: провайдер перед глазами ================== */
-const PROV_SHORT = { cloudru: 'Cloud.ru', yandex: 'Yandex', gigachat: 'GigaChat',
-                     deepseek: 'DeepSeek', aitunnel: 'AITunnel' };
+/* BM8: провайдер в паспорте ответа — доменной меткой через точку */
+const PROV_SHORT = { cloudru: 'cloud.ru', yandex: 'yandex', gigachat: 'gigachat',
+                     deepseek: 'deepseek', aitunnel: 'aitunnel' };
 
 /* Снимок «кто сейчас жив»: зонд сайта + ГЕНЕРАЦИОННЫЙ зонд (микро-запрос
    1 токен) + здоровье по живым ответам. Один источник для чипа, строк
@@ -1142,14 +1148,34 @@ async function fetchProvidersSnapshot() {
 }
 
 function setProvChip(name) {
-  const label = PROV_SHORT[name] || name || 'провайдер';
+  /* BM8: чип показывает РОЛЬ огоньком, а не имя: зелёный — отвечает
+     основной, жёлтый — первый запасной, красный — второй/дальний,
+     красный мигающий — не работает никто. Имя — в подсказке. */
   S.lastProvider = name || '';
   const snap = S.providers || {};
-  const row = snap[name];
+  const act = Object.entries(snap)
+    .filter(([, v]) => v && v.order >= 0).sort((a, b) => a[1].order - b[1].order);
+  const chip = $('#chipProv');
+  if (!chip) return;
   let cls = 'ok';
-  if (row && row.probe && row.probe.probed && row.probe.dead) cls = 'err';
-  else if (row && row.penalty > 0) cls = 'warn';
-  setChip('#chipProv', cls, label);
+  let title = 'провайдер';
+  if (!act.length) {
+    cls = 'err live'; title = 'ни один провайдер не подключён — вставь ключ в настройках';
+  } else if (act.every(([, v]) => v.probe && v.probe.probed && v.probe.dead)) {
+    cls = 'err live'; title = 'все провайдеры не отвечают';
+  } else {
+    const cur = (name && snap[name] && snap[name].order >= 0)
+      ? snap[name] : act[0][1];
+    const curName = (name && snap[name] && snap[name].order >= 0)
+      ? name : act[0][0];
+    cls = cur.order === 0 ? 'ok' : (cur.order === 1 ? 'warn' : 'err');
+    title = 'отвечает: ' + (PROV_SHORT[curName] || curName)
+      + (cur.order > 0 ? ' (запасной ' + cur.order + ')' : ' (основной)')
+      + (cur.penalty > 0 ? ' — медленно, штраф ' + cur.penalty : '');
+  }
+  chip.title = title;
+  chip.querySelector('.dot').className = 'dot ' + cls;
+  chip.querySelector('span').textContent = 'провайдер';
 }
 
 /* Живые индикаторы в свёрнутых строках настроек: зонд, генерация, штраф */
@@ -1173,9 +1199,15 @@ function refreshProvRows(scope) {
 }
 
 /* Точный снимок всех провайдеров — по клику на чип и кнопке в настройках */
-async function showProvidersState() {
+async function showProvidersState(deep) {
   toast('Проверяю…', 'info');
-  const provs = await fetchProvidersSnapshot();
+  const provs = deep
+    ? (async () => { try {
+        const h = await api('/api/providers?deep=1');
+        S.providers = h.providers || {};
+        return S.providers;
+      } catch (e) { return fetchProvidersSnapshot(); } })()
+    : fetchProvidersSnapshot();
   const lines = Object.entries(provs).sort((a, b) =>
     ((a[1].order < 0 ? 99 : a[1].order) - (b[1].order < 0 ? 99 : b[1].order))).map(([k, v]) => {
     const pr = v.probe || {};
@@ -1192,6 +1224,7 @@ async function showProvidersState() {
   }).join('\n');
   modal('<h3>Состояние провайдеров</h3><pre class="out">' + esc(lines || 'нет данных') + '</pre>' +
     '<div class="modal-acts"><button class="btn primary" onclick="document.getElementById(\'modalBack\').classList.remove(\'open\')">Ок</button></div>');
+  refreshProvRows();
   if (S.lastProvider) setProvChip(S.lastProvider);
 }
 
@@ -6437,8 +6470,11 @@ function qtThinkFeed(flow, text) {
       flow.classList.add('full');
       flow._h = 88;
       flow.style.height = '88px';
-      glideFlow(flow, inner);
     }
+  }
+  // BM8: маска вечная — новые строки перезапускают полёт и при стоящем full
+  if (flow.classList.contains('full') && inner.scrollHeight > 92) {
+    glideFlow(flow, inner);
   }
   if (flow._ui) scrollSoon(flow._ui);
 }
@@ -6463,8 +6499,12 @@ function qtFeed(flow, text) {
       flow.classList.add('full');
       flow._h = 88;
       flow.style.height = '88px';
-      glideFlow(flow, inner);
     }
+  }
+  // BM8: маска теперь вечная — полёт обязаны заново запускать новые
+  // строки, даже если класс full уже стоит с прошлого переполнения
+  if (flow.classList.contains('full') && inner.scrollHeight > 88 + 4) {
+    glideFlow(flow, inner);
   }
   // страница прилипает к растущему инструменту: текст не пишется за экраном
   if (flow._ui) scrollSoon(flow._ui);
@@ -6495,7 +6535,10 @@ function glideFlow(flow, inner) {
       // (сравнение с ПОТОЛКОМ окна, а не с clientHeight: высота едет
       // переходом и на старте отстаёт — было бы ложное «не переполнен»)
       if (inner.scrollHeight > 88 + 4) step();
-      else { flow._glide = false; flow.classList.remove('full'); }
+      // BM8: затемнение краёв НЕ снимается. Как только хоть одна строка
+      // не влезла — границы остаются тёмными навсегда: их мигание при
+      // каждом новом тексте выглядело как поломка
+      else { flow._glide = false; }
     }, 520);
   };
   step();
@@ -12068,7 +12111,7 @@ function renderSettings() {
     S.config = r.config || S.config;
     toast('Настройки сохранены', 'success'); renderSettings(); refreshState();
   });
-  $('#testProv', prov).addEventListener('click', () => showProvidersState());
+  $('#testProv', prov).addEventListener('click', () => showProvidersState(true));
 
   // Изображения идут через российский release gateway. В ZIP лежит только
   // ограниченный revocable token; настоящий provider credential остаётся на

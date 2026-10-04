@@ -843,8 +843,9 @@ def log_usage(provider: str, model: str, tier: str, prompt_tokens: int, completi
     )
 
 
-def usage_summary(hours: int = 24) -> Dict[str, Any]:
-    since = now() - hours * 3600
+def usage_summary(hours: int = 24, since: float = 0) -> Dict[str, Any]:
+    # BM8: since (epoch) — «с местного полуночи» для строки «Расход сегодня»
+    since = float(since) if since else now() - hours * 3600
     row = query_one(
         """SELECT COALESCE(SUM(prompt_tokens),0) AS pt, COALESCE(SUM(completion_tokens),0) AS ct,
                   COALESCE(SUM(cost_rub),0) AS cost, COUNT(*) AS calls

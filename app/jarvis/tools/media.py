@@ -239,8 +239,10 @@ def _enhance_prompt(prompt: str, width: int, height: int) -> str:
         "до 900 знаков.\n\nЗапрос: %s"
     ) % (ratio, prompt)
     try:
+        # BM8: потолок 12 секунд — улучшение промпта не имеет права
+        # задерживать картинку; не успели — рисуем с исходным текстом
         response = llm.chat([{"role": "user", "content": instruction}], tier="nano",
-                            max_tokens=450, temperature=0.45)
+                            max_tokens=450, temperature=0.45, timeout=12)
         text = str(response.get("content") or "").strip()
         # nano-модель могла вписать обращение — вычищаем и её ответ
         cleaned = strip_address(text)
@@ -454,6 +456,7 @@ def _yandex_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
 # flux остаётся последним запасным. Рабочая модель запоминается.
 _FREE_IMAGE_MODELS = ("zimage", "klein", "flux")
 _FREE_IMAGE_STATE: Dict[str, Any] = {"model": ""}
+_FREE_IMAGE_BUDGET_S = 90.0     # BM8: общий потолок бесплатной цепочки
 
 
 def _free_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
@@ -483,8 +486,13 @@ def _free_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
     image = b""
     used = ""
     last_error = ""
+    budget_deadline = time.monotonic() + _FREE_IMAGE_BUDGET_S
     for model in order:
         for attempt in (1, 2):
+            left = budget_deadline - time.monotonic()
+            if left <= 1:
+                last_error = "бесплатный генератор: время вышло (%s)" % model
+                break
             # Z: НЕГАТИВНЫЙ ПРОМПТ — убирает типичный мусор бесплатных генераторов
             # (текст на картинке, водяные знаки, мыло, кривые руки)
             url = ("https://image.pollinations.ai/prompt/%s?width=%d&height=%d"
@@ -493,7 +501,8 @@ def _free_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
                       urllib.parse.quote(negative)))
             req = urllib.request.Request(url, headers={"User-Agent": _UA})
             try:
-                with urllib.request.urlopen(req, timeout=75, context=_CTX) as resp:
+                with urllib.request.urlopen(req, timeout=min(75, max(2, left)),
+                                            context=_CTX) as resp:
                     image = resp.read()
             except urllib.error.HTTPError as exc:
                 last_error = "HTTP %s от %s" % (exc.code, model)
@@ -567,13 +576,16 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: st
         yandex_ready = bool(
             str((CONFIG.get("providers.yandex") or {}).get("api_key") or "").strip()
             and str((CONFIG.get("providers.yandex") or {}).get("folder_id") or "").strip())
+        yandex_error = ""
         if provider == "yandex" or (provider == "auto" and yandex_ready):
             try:
                 return _yandex_image(refined, int(width or 1024), int(height or 1024))
-            except GigaChatError:
+            except GigaChatError as exc:
                 if provider == "yandex":
                     raise
-                # Яндекс не ответил — тихо едем дальше по цепочке
+                # Яндекс не ответил — едем дальше, но причину сохраним для
+                # финальной ошибки: человек должен знать, ЧТО именно сломалось
+                yandex_error = str(exc)
         if provider == "gateway" or (provider == "auto" and has_gateway):
             return _gateway_image(refined, int(width or 1024), int(height or 1024))
         if provider == "free":
@@ -584,7 +596,15 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: st
             # provider='gigachat' и оставляла его без ключа навсегда: каждый
             # запрос падал «вставь ключ». Форс без ключа — это незавершённая
             # настройка, а не приказ отказать: открытый flux рисует из коробки.
-            return _free_image(refined, int(width or 1024), int(height or 1024))
+            res = _free_image(refined, int(width or 1024), int(height or 1024))
+            # BM8: всё упало — человек видит ПРИЧИНУ, начиная с Яндекса
+            if not res.get("ok") and yandex_error:
+                return {"ok": False,
+                        "error": "Яндекс не нарисовал (%s); бесплатный "
+                                 "генератор тоже не ответил. Проверьте "
+                                 "folder_id и роль ai.imageGeneration.user "
+                                 "у ключа Яндекса." % yandex_error[:160]}
+            return res
 
         model = str(CONFIG.get("media.gigachat_model", "GigaChat") or "GigaChat").strip()
         payload = {

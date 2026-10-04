@@ -2826,6 +2826,49 @@ function testIterationBM6Contracts() {
     'BM6: the switch status line names the provider from its config label');
 }
 
+function testIterationBM8Contracts() {
+  // BM8: ЧИП-ОГОНЁК — роль ответившего, имя в подсказке, «никто» мигает
+  const spc = extractFunction(js, 'setProvChip');
+  assert(spc.includes(".textContent = 'провайдer'".replace('er', 'ер')) ||
+    spc.includes(".textContent = 'провайдер'"),
+    'BM8: the chip says «провайдер» — the light carries the meaning');
+  assert(spc.includes("cur.order === 0 ? 'ok'") &&
+    spc.includes("cur.order === 1 ? 'warn'") &&
+    spc.includes("'err live'"),
+    'BM8: green = primary, yellow = first backup, red = far backup, blinking red = nobody alive');
+  assert(spc.includes('title = ') && spc.includes('PROV_SHORT'),
+    'BM8: the exact provider name lives in the chip tooltip');
+  // BM8: провайдер в паспорте ответа — доменной меткой через точку
+  assert(js.includes("cloudru: 'cloud.ru'"),
+    'BM8: the answer passport names the provider as cloud.ru');
+  // BM8: ГЛУБОКАЯ ПРОВЕРКА — ген-зонд всех по кнопке
+  assert(js.includes("api('/api/providers?deep=1')") &&
+    js.includes('showProvidersState(true)'),
+    'BM8: the button runs a generation probe of every provider at once');
+  // BM8: ГРАНИЦЫ ИНСТРУМЕНТА НЕ ГАСНУТ после первого переполнения
+  const glide = extractFunction(js, 'glideFlow');
+  assert(!glide.includes("classList.remove('full')"),
+    'BM8: the flow-edge darkening never lifts once a line has overflowed');
+  const feed = extractFunction(js, 'qtFeed');
+  assert(feed.includes("flow.classList.contains('full') && inner.scrollHeight"),
+    'BM8: new lines restart the glide while the mask stays on');
+  // BM8: РАСХОД ЗА СЕГОДНЯ — от местной полуночи устройства
+  assert(html.includes('Расход сегодня') && !html.includes('Расход 24ч') &&
+    js.includes("day_start=' + dayStart") &&
+    js.includes('getFullYear(), d.getMonth(), d.getDate()'),
+    'BM8: sidebar shows today\'s spend from the device\'s local midnight');
+  // BM8: ген-зонд меряет РАБОЧУЮ модель, темп бережливый
+  assert(pyLlm.includes('pick_model("base", prov)') &&
+    pyLlm.includes('_GEN_PROBE_GAP_S = 300.0') &&
+    pyLlm.includes('_GEN_PROBE_GAP_HOT_S = 120.0') &&
+    pyLlm.includes('def deep_probe_all('),
+    'BM8: the generation probe measures the base (workhorse) model; 5 min when healthy, 2 min under suspicion');
+  // BM8: улучшатель промпта картинки — жёсткие 12 секунд
+  const pyMedia = fs.readFileSync(path.join(root, 'app/jarvis/tools/media.py'), 'utf8');
+  assert(pyMedia.includes('temperature=0.45, timeout=12'),
+    'BM8: prompt enhancement cannot stall image generation (12s hard cap)');
+}
+
 function testIterationAXContracts() {
   // AX: скоординированный уход — всё одной длительности 620мс
   assert(js.includes('function welcomeExit(') &&
@@ -3183,7 +3226,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.77'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.78'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -3633,8 +3676,9 @@ function testIterationBHContracts() {
   testIterationBLContracts();
   testIterationBMContracts();
   testIterationBM6Contracts();
+  testIterationBM8Contracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 51 regression groups passed');
+  console.log('package28_frontend_runtime: 52 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

@@ -1845,6 +1845,35 @@ def is_tool_payload_answer(text: str) -> bool:
     return isinstance(obj, dict) and ("ok" in obj or "results" in obj)
 
 
+def user_wants_json(user_text: str) -> bool:
+    """Человек явно просил JSON — такой ответ легален, ловушка не работает."""
+    return "json" in str(user_text or "").lower()
+
+
+def is_degenerate_json_answer(text: str) -> bool:
+    """BM8: ответ ЦЕЛИКОМ является JSON (объектом или массивом) — вырожден.
+
+    Прежняя ловушка брала только конверты с ключами ok/results — утекали
+    `{"answer": …}`, `{"status": …}` и массивы. Здесь: голый JSON или
+    ```json-блок, распарсившийся целиком. Легальные случаи (человек сам
+    просил JSON) отсекает вызывающий код через user_wants_json."""
+    t = (text or "").strip()
+    if len(t) < 24 or not (t.startswith("{") or t.startswith("[")
+                           or t.startswith("```")):
+        return False
+    fence = re.search(r"```(?:json)?\s*([\{\[].*?[\}\]])\s*```", t, re.S)
+    if fence:
+        t = fence.group(1).strip()
+    if not (t.startswith("{") and t.endswith("}")) and \
+       not (t.startswith("[") and t.endswith("]")):
+        return False
+    try:
+        obj = json.loads(t)
+    except Exception:
+        return False
+    return isinstance(obj, (dict, list))
+
+
 def local_answer_from_results(convo: List[Dict[str, Any]]) -> str:
     """Локальный человеческий пересказ результатов инструментов.
 
@@ -3214,7 +3243,10 @@ class Agent:
                 # вернул инструмент. Пользователь видит `{"ok": true, …}` —
                 # это не ответ. Один раз возвращаем модель к работе; повтор —
                 # честный локальный пересказ реальных результатов.
-                if text_piece and is_tool_payload_answer(text_piece) and not payload_guard_used:
+                if text_piece and not payload_guard_used and (
+                        is_tool_payload_answer(text_piece) or
+                        (is_degenerate_json_answer(text_piece)
+                         and not user_wants_json(user_text))):
                     payload_guard_used = True
                     if gate_open:
                         yield {"type": "reset"}
@@ -3251,7 +3283,9 @@ class Agent:
                     for progress in self._advance_plan(self.plan_len):
                         yield progress
                 final_text = text_piece
-                if is_tool_payload_answer(final_text):
+                if is_tool_payload_answer(final_text) or (
+                        is_degenerate_json_answer(final_text)
+                        and not user_wants_json(user_text)):
                     # модель УПОРНО повторяет конверт даже после замечания
                     final_text = (local_answer_from_results(convo)
                                   or ("Не получилось выполнить запрос: модель "
