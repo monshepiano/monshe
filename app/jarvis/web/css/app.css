@@ -242,10 +242,11 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   padding:0;line-height:1}
 .collapse-btn svg{width:14px;height:14px;display:block}
 
-/* ================= BM10: ПРОСТРАНСТВА (идея из Arc) =================
-   Над чертой — переключатель (всегда одинаков), под чертой — вкладки
-   конкретного пространства. Активная иконка светится и подчёркнута;
-   CHAT — базовое, всегда чуть светлее остальных. */
+/* ================= BM11: ПРОСТРАНСТВА (идея из Arc) =================
+   Над чертой — LIVE и мини-иконки пространств: чат — базовое (заполнен
+   синим), выбранное светится БЕЗ подчёркивания, а подсвеченная область —
+   глайдер, который жидко перетекает на другую иконку. Справа от иконок —
+   настройки. Под чертой — вкладки конкретного пространства. */
 .brand{border-bottom:0}
 .spaces{display:flex;flex-direction:column;gap:9px;padding:10px 6px 12px;
   border-bottom:1px solid var(--line)}
@@ -259,23 +260,29 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sp-mode.active{border-color:rgba(0,212,255,.45);color:var(--tx);
   background:linear-gradient(180deg,rgba(0,212,255,.14),rgba(0,212,255,.04));
   box-shadow:0 0 14px rgba(0,212,255,.12),inset 0 0 10px rgba(0,212,255,.05)}
-/* CHAT: светящийся круглешок БЕЗ анимации — спокойный свет */
-.sp-orb{width:9px;height:9px;border-radius:50%;flex:none;
-  background:radial-gradient(circle,#fff,var(--cy2) 55%,#0389b8);
-  box-shadow:0 0 8px var(--cy),0 0 16px rgba(0,212,255,.45)}
-.sp-row{display:flex;gap:6px;justify-content:center}
+.sp-row{display:flex;gap:6px;justify-content:center;position:relative}
 .sp-ico{position:relative;width:36px;height:34px;border:1px solid transparent;
   border-radius:10px;background:transparent;color:var(--tx3);cursor:pointer;
-  display:grid;place-items:center;transition:all .22s ease;padding:0}
+  display:grid;place-items:center;transition:color .25s ease,filter .25s ease;padding:0}
 .sp-ico svg{width:17px;height:17px}
-/* CHAT — базовое: всегда чуть светлее */
-.sp-ico.base{color:var(--tx2)}
-.sp-ico:hover{background:rgba(0,212,255,.08);color:var(--tx)}
-.sp-ico.sel{color:var(--cy2);background:rgba(0,212,255,.12);
-  box-shadow:inset 0 0 9px rgba(0,212,255,.09),0 0 10px rgba(0,212,255,.1)}
-.sp-ico.sel::after{content:'';position:absolute;left:10px;right:10px;bottom:-5px;
-  height:2px;border-radius:2px;background:var(--cy);
-  box-shadow:0 0 7px var(--cy)}
+/* CHAT — базовое: круглое сообщение, заполненное и ярко-синее */
+.sp-ico.base{color:var(--cy2)}
+.sp-ico:hover{color:var(--tx)}
+/* ГЛАЙДЕР: подсвеченная область выбранного пространства. Не принадлежит
+   иконке — живёт отдельным слоем и при переключении морфом перетекает
+   на новую иконку (позицию ставит JS, кривая — с лёгким перелётом) */
+.sp-glider{position:absolute;top:0;height:34px;border-radius:10px;
+  background:rgba(0,212,255,.13);box-shadow:inset 0 0 10px rgba(0,212,255,.1),
+  0 0 12px rgba(0,212,255,.12);pointer-events:none;
+  transition:left .34s cubic-bezier(.3,1.35,.42,1),width .34s cubic-bezier(.3,1.35,.42,1),
+    opacity .25s ease;opacity:0}
+.sp-glider.on{opacity:1}
+/* выбранное: ярче и светится — без подчёркивания */
+.sp-ico.sel{color:var(--cy2);filter:drop-shadow(0 0 6px rgba(0,212,255,.55))}
+.sp-ico.base.sel{filter:drop-shadow(0 0 7px rgba(0,212,255,.7))}
+/* настройки — с правого края ряда иконок */
+.sp-ico.sp-set{margin-left:auto;color:var(--tx3)}
+.sp-ico.sp-set:hover{color:var(--tx2)}
 /* имя пространства при наведении */
 .sp-ico[data-tip]::before{content:attr(data-tip);position:absolute;
   left:50%;top:calc(100% + 8px);transform:translateX(-50%);white-space:nowrap;
@@ -284,6 +291,55 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   padding:6px 9px;opacity:0;pointer-events:none;transition:opacity .18s ease;
   z-index:80;box-shadow:0 8px 22px rgba(0,0,0,.5)}
 .sp-ico:hover::before{opacity:1}
+/* ================= BM11: ДОК — пространства в доке =================
+   Док не менялся со времён вкладок: в нём только вкладки, иконка LIVE и
+   значок текущего пространства. Наведение на значок плавно выплывает
+   вправо небольшой панелью со всеми пространствами и настройками. */
+.sp-dock{display:none}
+.spd-live,.spd-cur{width:40px;height:38px;border:1px solid transparent;border-radius:11px;
+  background:transparent;color:var(--tx3);cursor:pointer;display:grid;place-items:center;
+  transition:color .22s ease,background .22s ease;padding:0}
+.spd-live svg,.spd-cur svg{width:17px;height:17px}
+.spd-live:hover{color:var(--cy2);background:rgba(0,212,255,.09)}
+.spd-cur{color:var(--cy2)}
+.spd-cur-wrap{position:relative}
+.spd-fly{position:absolute;left:calc(100% + 14px);top:50%;display:flex;align-items:center;
+  gap:4px;padding:5px 6px;border-radius:13px;background:rgba(8,16,28,.96);
+  border:1px solid var(--line2);box-shadow:0 12px 34px rgba(0,0,0,.55);
+  transform:translate(-10px,-50%);opacity:0;pointer-events:none;z-index:90;
+  transition:transform .26s cubic-bezier(.25,1.2,.4,1),opacity .2s ease}
+.spd-cur-wrap:hover .spd-fly,.spd-fly:hover{opacity:1;pointer-events:auto;
+  transform:translate(0,-50%)}
+.spf-ico{position:relative;width:34px;height:32px;border:1px solid transparent;border-radius:9px;
+  background:transparent;color:var(--tx3);cursor:pointer;display:grid;place-items:center;
+  transition:color .22s ease,background .22s ease,transform .26s cubic-bezier(.25,1.2,.4,1),
+    opacity .2s ease;padding:0;opacity:0;transform:translateX(-6px)}
+.spf-ico svg{width:16px;height:16px}
+.spd-cur-wrap:hover .spf-ico,.spd-fly:hover .spf-ico{opacity:1;transform:none}
+/* иконки выплывают по очереди — панель «наливается» слева направо */
+.spd-cur-wrap:hover .spf-ico:nth-child(1),.spd-fly:hover .spf-ico:nth-child(1){transition-delay:.04s}
+.spd-cur-wrap:hover .spf-ico:nth-child(2),.spd-fly:hover .spf-ico:nth-child(2){transition-delay:.08s}
+.spd-cur-wrap:hover .spf-ico:nth-child(3),.spd-fly:hover .spf-ico:nth-child(3){transition-delay:.12s}
+.spd-cur-wrap:hover .spf-ico:nth-child(5),.spd-fly:hover .spf-ico:nth-child(5){transition-delay:.16s}
+.spf-ico:hover{color:var(--tx);background:rgba(0,212,255,.1)}
+.spf-ico.base{color:var(--cy2)}
+.spf-ico.sel{color:var(--cy2);filter:drop-shadow(0 0 5px rgba(0,212,255,.5))}
+.spf-div{width:1px;height:22px;background:var(--line2);margin:0 3px}
+.spf-ico[data-tip]::before{content:attr(data-tip);position:absolute;
+  left:50%;top:calc(100% + 9px);transform:translateX(-50%);white-space:nowrap;
+  font:10.5px/1 var(--ff);color:var(--tx2);background:rgba(8,16,28,.96);
+  border:1px solid var(--line2);border-radius:8px;padding:5px 8px;opacity:0;
+  pointer-events:none;transition:opacity .18s ease;z-index:80}
+.spf-ico:hover::before{opacity:1}
+/* в доке пространства скрываются: док — только вкладки + LIVE + текущее */
+.app.collapsed .spaces{display:none}
+.app.collapsed .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;
+  margin:0 6px;padding:4px 0;
+  animation:spDockIn .3s ease .2s backwards}
+@keyframes spDockIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+/* сворачивание: пространства гаснут в общий такт с диалогами */
+.spaces{transition:opacity .25s ease}
+.side-folding .spaces{opacity:0;transform:translateX(-10px)}
 /* содержимое сайдбара ПОД чертой принадлежит пространству */
 .space-off{display:none!important}
 .space-future{padding:16px 14px;font-size:11.5px;color:var(--tx3);line-height:1.5}
@@ -1260,14 +1316,15 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    Теперь индекс выровнен по правому краю узкой зоны у кончика:
    узкий стоит у носика, широкий растёт ВЛЕВО — как в настоящей
    математике, и никогда не задевает штрих */
-.msqrt .msq-i{position:absolute;left:-.16em;width:.34em;text-align:right;
-  top:-.55em;font-size:.62em;opacity:.85;z-index:1;line-height:1;
+.msqrt .msq-i{position:absolute;left:-.24em;width:.34em;text-align:right;
+  top:-.44em;font-size:.62em;opacity:.85;z-index:1;line-height:1;
   white-space:nowrap}
-/* BM10: СТЕПЕНЬ НИЖЕ — почти не залезает за верхнюю черту корня.
+/* BM11: СТЕПЕНЬ ЕЩЁ НИЖЕ и чуть левее — не задевает верхнюю черту
+   корня (степень висит над носиком, где черты ещё нет).
    И корень в ЗНАМЕНАТЕЛЕ дроби чуть опущен: его черта больше не
    наезжает на знак дроби */
 .mfr-d .msqrt{margin-top:.22em}
-.mfr-d .msqrt .msq-i{top:-.5em}
+.mfr-d .msqrt .msq-i{top:-.4em}
 .math-block .mop,.math-inline .mop{padding:0 3px;color:#9fd8f2}
 .mfn{font-style:normal;padding:0 2px 0 4px}
 .mtext{font-style:normal}
@@ -1350,6 +1407,47 @@ sup.msup,sub.msub{font-size:.72em}
 .media-wrap{position:relative;max-width:560px;margin:2px 0}
 .media-audio{max-width:420px;margin:2px 0}
 .media-audio audio{width:100%;height:36px}
+/* ================= BM11: МИНИ-ВКЛАДКИ В ДИАЛОГЕ (```embed) =================
+   Фрагмент другой вкладки прямо в ответе: тонкая рамка как у
+   интерактивчиков, наверху имя вкладки, внизу её мини-интерфейс.
+   Узнаваемо, но компактно; глубокие действия — в самой вкладке */
+.embed-card{margin:14px 0;max-width:440px;border-radius:13px;
+  border:1px solid rgba(0,200,240,.22);
+  background:linear-gradient(180deg,rgba(0,40,60,.34),rgba(0,20,34,.34));
+  box-shadow:inset 0 0 24px rgba(0,200,240,.06);overflow:hidden}
+.emb-head{display:flex;align-items:center;gap:8px;padding:9px 12px;
+  border-bottom:1px solid rgba(0,200,240,.14)}
+.emb-head .emb-ico{width:15px;height:15px;color:var(--cy);flex:none;
+  display:grid;place-items:center}
+.emb-head .emb-ico svg{width:15px;height:15px}
+.emb-head b{font:600 10.5px/1 var(--ff);letter-spacing:1.6px;color:var(--tx2)}
+.emb-head .emb-sub{flex:1;font-size:10.5px;color:var(--tx3);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.emb-open{border:1px solid var(--line);border-radius:8px;background:transparent;
+  color:var(--tx3);font-size:10.5px;padding:4px 9px;cursor:pointer;
+  transition:color .2s ease,border-color .2s ease;flex:none}
+.emb-open:hover{color:var(--cy2);border-color:var(--line2)}
+.emb-body{padding:6px 8px;display:flex;flex-direction:column;gap:2px;max-height:210px;overflow:auto}
+.emb-body::-webkit-scrollbar{width:4px}
+.emb-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;
+  font-size:12px;color:var(--tx2);cursor:pointer;transition:background .18s ease}
+.emb-row:hover{background:rgba(0,212,255,.07);color:var(--tx)}
+.emb-row .emb-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--tx3)}
+.emb-row.running .emb-dot{background:#57d98c;box-shadow:0 0 7px rgba(87,217,140,.7)}
+.emb-row.paused .emb-dot{background:#f0be46;box-shadow:0 0 7px rgba(240,190,70,.6)}
+.emb-row.done .emb-dot{background:rgba(122,162,247,.8)}
+.emb-row.error .emb-dot{background:#e3798d}
+.emb-row .emb-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.emb-row .emb-meta{font-size:10.5px;color:var(--tx3);flex:none}
+.emb-act{border:1px solid var(--line);border-radius:7px;background:transparent;
+  color:var(--tx3);font-size:10px;padding:3px 8px;cursor:pointer;flex:none;
+  transition:color .18s ease,border-color .18s ease}
+.emb-act:hover{color:var(--cy2);border-color:var(--line2)}
+.emb-empty{padding:12px 10px;font-size:11.5px;color:var(--tx3)}
+.embed-load{padding:14px;font-size:12px;color:var(--tx3);display:flex;align-items:center;gap:9px}
+.embed-load i{width:13px;height:13px;border-radius:50%;border:2px solid
+  rgba(122,162,247,.25);border-top-color:rgba(122,162,247,.85);
+  animation:plotSpin 1s linear infinite;flex:none}
 .plot-load{padding:14px;font-size:12px;color:var(--tx3);display:flex;
   align-items:center;gap:9px}
 .plot-load i{width:13px;height:13px;border-radius:50%;border:2px solid
@@ -2178,6 +2276,12 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
     overflow:visible;transition:width .3s cubic-bezier(.4,0,.2,1)}
   .app.nav-open .sidebar{width:262px;padding:16px 12px;gap:12px;box-shadow:20px 0 50px rgba(0,0,0,.55)}
   .brand-text,.chats-block,.nav-label,.side-foot .stat-row{display:none}
+  /* BM11: узкая полоса — тот же док: пространства сворачиваются в
+     LIVE + значок текущего, разворачиваются только вместе с меню */
+  .spaces{display:none}
+  .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;margin:0}
+  .app.nav-open .spaces{display:flex}
+  .app.nav-open .sp-dock{display:none}
   .app.nav-open .brand-text,.app.nav-open .nav-label,.app.nav-open .side-foot .stat-row{display:block}
   .app.nav-open .chats-block{display:flex}
   .brand{flex-direction:column;gap:8px;padding:4px 0 10px}
@@ -3188,6 +3292,9 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   .toggles{gap:4px;padding-left:8px;padding-right:8px}
   .toggle{padding:0 8px;font-size:10.5px}
   .agent-switch{padding:0;gap:5px;font-size:10px}
+  /* BM11: ряд тумбелов сузился на 2px справа — лимит остаётся ровно
+     под ускорением (61px от края), а не уезжает на пару пикселей */
+  .budget-btn{margin-right:53px}
 }
 /* Пауза без задач: мутная и некликабельная — ставить паузу нечему */
 #autoPauseBtn.idle{opacity:.32;cursor:default;filter:saturate(.3)}
@@ -3195,11 +3302,13 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 /* AGENT: буква A стоит на самом круглешке (см. .agent-switch-track i) */
 
 /* ================= лимит ₽ ================= */
-.budget-btn{position:relative;width:30px;height:28px;border-radius:11px;border:1px solid var(--line);
+.budget-btn{position:relative;width:30px;height:28px;border-radius:20px;border:1px solid var(--line);
   background:transparent;cursor:pointer;color:var(--tx3);display:flex;align-items:center;
   justify-content:center;padding:0;transition:all .2s ease;
-  /* BM10: ровно ПОД кнопкой ускорения (та же ширина 30px, сдвиг на Send) */
-  margin-right:50px}
+  /* BM11: ровно ПОД кнопкой ускорения. Кнопка крайняя справа в ряду
+     тумблеров (после AGENT): правый край = паддинг ряда (10) + отступ 51
+     = 61px от края, как у ускорения (10 паддинг + Send 42 + зазор 9) */
+  margin-right:51px}
 .budget-btn:hover{border-color:var(--line2);color:var(--tx2)}
 .budget-coin{font-weight:800;font-size:14px;line-height:1}
 /* активный лимит: жёлтая монета + пульс ТОЧЬ-В-ТОЧЬ как у точки

@@ -543,7 +543,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     compute = False
             if not compute:
-                job["event"].wait(timeout=11.0)
+                job["event"].wait(timeout=16.0)
                 return self._json({"ok": True, "items": job.get("items") or []})
             try:
                 # BM2: ЛЮБОЙ СБОЙ НЕ ОСТАВЛЯЕТ ЧЕЛОВЕКА БЕЗ КНОПОК. Прежний код
@@ -1230,12 +1230,16 @@ def _reply_job_result(msg_id: str) -> Optional[List[str]]:
 
     Вызывается только из /api/replies, когда meta ещё пуста: значит, nano
     считает прямо сейчас — ждать дешевле и честнее, чем пускать второй
-    конкурентный запрос в того же провайдера."""
+    конкурентный запрос в того же провайдера.
+    BM11: ожидание обязано покрывать ВЕСЬ бюджет nano (14с) с запасом:
+    прежний лимит 11с останавливал запрос РАНЬШЕ расчёта — фронт получал
+    пустоту, и чипы пропадали вовсе, когда nano отвечала на 11-14-й
+    секунде (деградировавший провайдер — обычное дело)"""
     with _REPLY_JOBS_LOCK:
         job = _REPLY_JOBS.get(msg_id)
     if not job:
         return None
-    job["event"].wait(timeout=11.0)
+    job["event"].wait(timeout=16.0)
     items = job.get("items")
     return items if isinstance(items, list) and items else None
 

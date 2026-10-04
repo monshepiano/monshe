@@ -427,6 +427,14 @@
           out.push('<div class="plot-panel" data-kind="geo" data-plot="' + esc(buf.join('\n')) + '"></div>');
           continue;
         }
+        // BM11: мини-вкладка — фрагмент другой вкладки прямо в диалоге
+        // (AUTO/Файлы/Память/Сценарии): рамка с именем вкладки и её
+        // мини-интерфейсом. Спецификация остаётся в data-атрибуте —
+        // оживляет app.js один раз, как у ui/plot
+        if (lang === 'embed' || lang === 'вкладка' || lang === 'мини') {
+          out.push('<div class="embed-panel" data-embed="' + esc(buf.join('\n')) + '"></div>');
+          continue;
+        }
         out.push('<pre data-lang="' + esc(lang) + '"><code>' + esc(buf.join('\n')) + '</code></pre>');
         continue;
       }

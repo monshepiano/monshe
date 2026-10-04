@@ -701,6 +701,8 @@ function toggleSidebar() {
   // диалоги уезжают/возвращаются РАЗОМ с превращением — один такт
   app.classList.toggle('side-folding', collapsing);
   dockY(collapsing);
+  // BM11: после превращения глайдер обязан встать на выбранную иконку
+  setTimeout(spaceGlider, 650);
   /* BK: состояние панели больше не хранится: каждый запуск — с доком */
 }
 $('#collapseBtn').addEventListener('click', toggleSidebar);
@@ -1130,11 +1132,30 @@ function renderBalance(b) {
    Всё, что под чертой (вкладки, диалоги), принадлежит пространству. */
 const SPACES = ['chat', 'math', 'music'];
 const SPACE_META = {
-  chat: { name: 'CHAT', ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.8A3.8 3.8 0 017.8 3h8.4A3.8 3.8 0 0120 6.8v5.4a3.8 3.8 0 01-3.8 3.8H9.2l-5.2 4v-4.7A3.8 3.8 0 014 6.8z"/></svg>' },
-  math: { name: 'MATH', ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 4H9.8l4.9 8-4.9 8h7.7"/></svg>' },
-  music: { name: 'MUSIC', ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5.6l10-2V16"/><circle cx="6.6" cy="18" r="2.6"/><circle cx="16.6" cy="16" r="2.6"/></svg>' },
+  chat: { name: 'CHAT', tip: 'чат',
+    ico: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 3.6c-4.9 0-8.9 3.3-8.9 7.5 0 2.3 1.3 4.4 3.3 5.8-.2 1.1-.8 2.2-1.7 3.1 1.7-.2 3.3-.9 4.4-1.8 1 .3 1.9.4 2.9.4 4.9 0 8.9-3.4 8.9-7.5S16.9 3.6 12 3.6z"/></svg>' },
+  math: { name: 'MATH', tip: 'математика',
+    ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 4H9.8l4.9 8-4.9 8h7.7"/></svg>' },
+  music: { name: 'MUSIC', tip: 'музыка',
+    ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5.6l10-2V16"/><circle cx="6.6" cy="18" r="2.6"/><circle cx="16.6" cy="16" r="2.6"/></svg>' },
 };
 S.space = 'chat';
+
+/* BM11: ГЛАЙДЕР — подсвеченная область выбранного пространства. Живёт
+   отдельно от иконок: при переключении не перескакивает, а морфом
+   перетекает на новую иконку (позицию считает JS, течёт — CSS) */
+function spaceGlider() {
+  const row = $('#spRow'), g = $('#spGlider');
+  if (!row || !g) return;
+  const sel = row.querySelector('.sp-ico.sel:not(.sp-set)');
+  if (!sel) { g.classList.remove('on'); return; }
+  const rr = row.getBoundingClientRect(), rs = sel.getBoundingClientRect();
+  /* док: ряд скрыт — координаты нулевые, глайдер ждёт разворачивания */
+  if (!rr.width || !rs.width) { g.classList.remove('on'); return; }
+  g.style.left = (rs.left - rr.left) + 'px';
+  g.style.width = rs.width + 'px';
+  g.classList.add('on');
+}
 
 function spaceApply(name) {
   document.body.dataset.space = name;
@@ -1149,8 +1170,19 @@ function spaceApply(name) {
     $('.spaces').after(fut);
   }
   if (fut) fut.classList.toggle('space-off', isChat);
-  // иконки: активная светится и подчёркнута; CHAT всегда чуть светлее
+  // иконки: активная светится (без подчёркивания); чат — базовое, заполнен
   $$('.sp-ico').forEach((b) => {
+    b.classList.toggle('sel', b.dataset.space === name);
+    b.classList.toggle('base', b.dataset.space === 'chat');
+  });
+  spaceGlider();
+  // док: значок текущего пространства + подсветка в выплывающей панели
+  const cur = $('#spdCur');
+  if (cur) {
+    cur.innerHTML = (SPACE_META[name] || {}).ico || '';
+    cur.title = (SPACE_META[name] || {}).tip || name;
+  }
+  $$('.spf-ico').forEach((b) => {
     b.classList.toggle('sel', b.dataset.space === name);
     b.classList.toggle('base', b.dataset.space === 'chat');
   });
@@ -1169,46 +1201,65 @@ function spaceApply(name) {
 function setSpace(name, dir) {
   if (name === S.space || !SPACE_META[name]) return;
   if (S.streaming) { toast('Дождись конца ответа — потом переключу', 'warn'); return; }
-  const from = SPACES.indexOf(S.space);
-  const way = dir || ((SPACES.indexOf(name) > from) ? 1 : -1);
+  const way = dir || ((SPACES.indexOf(name) > SPACES.indexOf(S.space)) ? 1 : -1);
+  /* BM11: АНИМАЦИЯ КАК В ARC, направленная. Старое пространство уплывает
+     в сторону движения, новое приезжает С ПРОТИВОПОЛОЖНОЙ стороны:
+     вправо (way=1) — старое влево, новое справа; влево — зеркально.
+     WAAPI: без классов-состояний, кадры не конфликтуют */
+  const vis = () => [
+    $$('.view').find((v) => v.classList.contains('active')),
+    $('.nav:not(.space-off)'), $('.chats-block:not(.space-off)'),
+    $('#spaceFuture:not(.space-off)'),
+  ].filter(Boolean);
+  const out = vis();
   S.space = name;
-  // анимация: активное содержимое уезжает в сторону УХОДА, новое въезжает
-  // с противоположной — как в Arc
-  const parts = [$$('.view').find((v) => v.classList.contains('active')), $('.nav'), $('.chats-block')];
-  parts.forEach((n) => { if (n) { n.classList.add('sp-slide', way > 0 ? 'sp-out-l' : 'sp-out-r'); } });
+  out.forEach((n) => n.animate(
+    [{ transform: 'none', opacity: 1 },
+     { transform: 'translateX(' + (-56 * way) + 'px)', opacity: 0 }],
+    { duration: 195, easing: 'cubic-bezier(.55,.06,.68,.19)', fill: 'forwards' }));
   setTimeout(() => {
+    out.forEach((n) => n.getAnimations().forEach((a) => a.cancel()));
     spaceApply(name);
-    parts.forEach((n) => {
-      if (!n) return;
-      n.classList.remove('sp-out-l', 'sp-out-r');
-      n.classList.add(way > 0 ? 'sp-out-r' : 'sp-out-l');
-      void n.offsetWidth;                       // reflow: старт въезда из-за края
-      n.classList.remove('sp-out-l', 'sp-out-r');
-    });
-  }, 265);
+    const inn = vis();
+    inn.forEach((n) => n.animate(
+      [{ transform: 'translateX(' + (56 * way) + 'px)', opacity: 0 },
+       { transform: 'none', opacity: 1 }],
+      { duration: 300, easing: 'cubic-bezier(.18,.8,.28,1)' }));
+  }, 200);
 }
 
 function initSpaces() {
-  $$('.sp-ico').forEach((b) => b.addEventListener('click', () => setSpace(b.dataset.space)));
-  $('#spModeChat').addEventListener('click', () => setSpace('chat'));
-  $('#spModeLive').addEventListener('click', () =>
-    toast('Лайф-режим — финальный этап плана, готовим позже', 'info', 'LIVE'));
-  // СВАЙП ДВУМЯ ПАЛЬЦАМИ по горизонтали (как в Arc): колёсико с deltaX
+  $$('.sp-ico[data-space]').forEach((b) => b.addEventListener('click', () => setSpace(b.dataset.space)));
+  const set = $('#spSettings');
+  if (set) set.addEventListener('click', () => showView('settings'));
+  const liveToast = () => toast('Лайф-режим — финальный этап плана, готовим позже', 'info', 'LIVE');
+  $('#spModeLive').addEventListener('click', liveToast);
+  const spdLive = $('#spdLive');
+  if (spdLive) spdLive.addEventListener('click', liveToast);
+  // выплывающая панель дока: клики по иконкам пространств и настроек
+  $$('#spdFly .spf-ico').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.view) showView(b.dataset.view);
+    else setSpace(b.dataset.space);
+  }));
+  // СВАЙП ДВУМЯ ПАЛЬЦАМИ по горизонтали (как в Arc): колёсико с deltaX.
+  // BM11: БЫСТРЕЕ — порог ниже, на вертикаль реагируем смелее, пауза
+  // между свайпами короче: переключение успевает за короткий жест
   let lastSwipe = 0;
   window.addEventListener('wheel', (e) => {
-    if (Math.abs(e.deltaX) < 55 || Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.7) return;
+    if (Math.abs(e.deltaX) < 38 || Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.35) return;
     if (e.target && e.target.closest && e.target.closest(
       '.qt-detail, .fprev-body, .plan-dock, .plot-bar, pre, .modal, .sbx-files')) return;
     const now = Date.now();
-    if (now - lastSwipe < 900) return;
+    if (now - lastSwipe < 450) return;
     lastSwipe = now;
     const i = SPACES.indexOf(S.space);
     const next = e.deltaX > 0 ? i + 1 : i - 1;
     if (next >= 0 && next < SPACES.length) setSpace(SPACES[next], e.deltaX > 0 ? 1 : -1);
   }, { passive: true });
+  // окно меняет ширину — глайдер обязан остаться на своей иконке
+  window.addEventListener('resize', () => spaceGlider());
   spaceApply('chat');
 }
-
 function setChip(sel, cls, text) {
   const chip = $(sel);
   chip.querySelector('.dot').className = 'dot ' + (cls || '');
@@ -1259,9 +1310,9 @@ function setProvChip(name) {
   }
   chip.title = title;
   chip.querySelector('.dot').className = 'dot ' + cls;
-  // BM9: после слова — имя: «провайдер: cloud.ru». Роль несёт огонёк.
+  // BM11: слово «провайдер» убрано — только имя. Роль несёт огонёк.
   chip.querySelector('span').textContent = S.lastProvider
-    ? 'провайдер: ' + (PROV_SHORT[S.lastProvider] || S.lastProvider) : 'провайдер';
+    ? (PROV_SHORT[S.lastProvider] || S.lastProvider) : '—';
 }
 
 /* Живые индикаторы в свёрнутых строках настроек: зонд, генерация, штраф */
@@ -4135,6 +4186,165 @@ function mountPlotPanels(root) {
       }
     }
   });
+  /* BM11: мини-вкладки живут той же жизнью, что графики: монтируются
+     там же, где панели графиков (печать — загрузка, финал — сборка) */
+  mountEmbedPanels(root);
+}
+
+/* ================= BM11: МИНИ-ВКЛАДКИ В ДИАЛОГЕ (```embed) =================
+   Фрагмент другой вкладки прямо в ответе: тонкая рамка как у
+   интерактивчиков, наверху имя вкладки, внизу её мини-интерфейс с
+   ОГРАНИЧЕННЫМ взаимодействием (запустить/остановить задачу, перейти
+   во вкладку). Рабочих пространств (MATH/MUSIC) пока нет — интеграция
+   собирается из вкладок; когда пространства появятся, фрагменты
+   вольются той же карточкой */
+const EMBED_VIEWS = {
+  auto: { name: 'AUTO', sub: 'фоновые задачи', ico: '◎', view: 'auto' },
+  files: { name: 'ФАЙЛЫ', sub: 'песочница диалога', ico: '▤', view: 'files' },
+  memory: { name: 'ПАМЯТЬ', sub: 'что Джарвис помнит', ico: '◇', view: 'memory' },
+  scenarios: { name: 'СЦЕНАРИИ', sub: 'автозапуски', ico: '⚡', view: 'scenarios' },
+};
+const EMBED_TASK_ST = {
+  queued: 'в очереди', running: 'работает', paused: 'пауза',
+  done: 'готово', error: 'ошибка', scheduled: 'по расписанию',
+};
+
+function embedParseSpec(raw) {
+  let src = String(raw || '').trim()
+    .replace(/^```[a-zа-яё]*\s*/i, '').replace(/```\s*$/, '');
+  let spec = {};
+  try { spec = JSON.parse(src) || {}; } catch (e) { spec = {}; }
+  if (!spec.view && spec.tab) spec.view = spec.tab;
+  if (!spec.view) spec.view = src;           // голое слово — имя вкладки
+  const v = String(spec.view).toLowerCase().trim();
+  const map = { auto: 'auto', 'задачи': 'auto', 'авто': 'auto',
+    files: 'files', 'файлы': 'files', 'файл': 'files',
+    memory: 'memory', 'память': 'memory',
+    scenarios: 'scenarios', 'сценарии': 'scenarios', 'сценарий': 'scenarios' };
+  spec.view = map[v] || (EMBED_VIEWS[v] ? v : null);
+  return spec;
+}
+
+function mountEmbedPanels(root) {
+  $$('.embed-panel', root).forEach((panel) => {
+    if (panel.dataset.live === '1') return;
+    panel.dataset.live = '1';
+    let spec = null;
+    try { spec = embedParseSpec(panel.dataset.embed); } catch (e) { spec = null; }
+    /* печать ещё идёт — карточка собирается после финального рендера */
+    if (S.streaming && panel.closest && panel.closest('.msg-ai.live')) {
+      panel.innerHTML = '<div class="embed-load"><i></i><span>собираю вкладку…</span></div>';
+      panel.dataset.live = '';
+      return;
+    }
+    if (!spec || !spec.view) {
+      panel.innerHTML = '<div class="emb-empty">Вкладка не указана: '
+        + '```embed {"view": "auto"}</div>';
+      return;
+    }
+    buildEmbedPanel(panel, spec);
+  });
+}
+
+function buildEmbedPanel(panel, spec) {
+  const meta = EMBED_VIEWS[spec.view];
+  const card = el('div', 'embed-card');
+  const head = el('div', 'emb-head');
+  head.innerHTML = '<span class="emb-ico">' + esc(meta.ico) + '</span><b>'
+    + esc(meta.name) + '</b><span class="emb-sub">'
+    + esc(String(spec.title || meta.sub)) + '</span>';
+  const open = el('button', 'emb-open', 'Открыть');
+  open.addEventListener('click', () => showView(meta.view));
+  head.appendChild(open);
+  const body = el('div', 'emb-body');
+  card.appendChild(head);
+  card.appendChild(body);
+  panel.innerHTML = '';
+  panel.appendChild(card);
+  const fail = (e) => {
+    body.innerHTML = '<div class="emb-empty">'
+      + esc((e && e.message) || 'не удалось открыть вкладку') + '</div>';
+  };
+  const emptyNote = (t) => {
+    body.innerHTML = '<div class="emb-empty">' + esc(t) + '</div>';
+  };
+  if (spec.view === 'auto') {
+    api('/api/tasks').then((r) => {
+      const ts = (r && r.tasks) || [];
+      if (!ts.length) { emptyNote('Задач пока нет — попроси меня сделать что-то в фоне.'); return; }
+      ts.slice(0, 4).forEach((t) => {
+        const cls = (t.status === 'running' || t.status === 'queued') ? 'running'
+          : t.status === 'paused' ? 'paused' : t.status === 'done' ? 'done'
+          : t.status === 'error' ? 'error' : '';
+        const row = el('div', 'emb-row ' + cls);
+        row.innerHTML = '<i class="emb-dot"></i><span class="emb-name">'
+          + esc(t.title || t.prompt || 'задача') + '</span><span class="emb-meta">'
+          + esc(EMBED_TASK_ST[t.status] || t.status || '') + '</span>';
+        if (t.status === 'paused' || t.status === 'done' || t.status === 'error') {
+          const run = el('button', 'emb-act', '▶');
+          run.title = 'Запустить';
+          run.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            api('/api/tasks/run', { task_id: t.id }).then(() => buildEmbedPanel(panel, spec), () => {});
+          });
+          row.appendChild(run);
+        }
+        if (t.status === 'running' || t.status === 'queued') {
+          const stop = el('button', 'emb-act', '■');
+          stop.title = 'Остановить';
+          stop.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            api('/api/tasks/cancel', { task_id: t.id }).then(() => buildEmbedPanel(panel, spec), () => {});
+          });
+          row.appendChild(stop);
+        }
+        row.addEventListener('click', () => showView('auto'));
+        body.appendChild(row);
+      });
+    }, fail);
+  } else if (spec.view === 'files') {
+    const q = '/api/files/browse?dir=' + (S.chatId
+      ? '&chat_id=' + encodeURIComponent(S.chatId) : '');
+    api(q).then((r) => {
+      const es = (r && r.ok && r.entries) || [];
+      if (!es.length) { emptyNote('Песочница диалога пуста — файлы появятся, как только я что-нибудь создам.'); return; }
+      es.slice(0, 6).forEach((f) => {
+        const row = el('div', 'emb-row');
+        row.innerHTML = '<i class="emb-dot" style="' + (f.is_dir ? '' : 'background:rgba(0,212,255,.55)') + '"></i>'
+          + '<span class="emb-name">' + esc(f.name) + '</span><span class="emb-meta">'
+          + esc(f.is_dir ? ((f.items || 0) + ' об.') : fmtSize(f.size || 0)) + '</span>';
+        row.addEventListener('click', () => showView('files'));
+        body.appendChild(row);
+      });
+    }, fail);
+  } else if (spec.view === 'memory') {
+    api('/api/memory').then((r) => {
+      const ms = (r && r.memory) || [];
+      if (!ms.length) { emptyNote('Память пуста — расскажи о себе в диалоге, я запомню.'); return; }
+      ms.slice(0, 6).forEach((m) => {
+        const row = el('div', 'emb-row');
+        const val = String(m.value || '');
+        row.innerHTML = '<i class="emb-dot"></i><span class="emb-name">'
+          + esc(m.key || m.kind) + '</span><span class="emb-meta">'
+          + esc(val.length > 42 ? val.slice(0, 42) + '…' : val) + '</span>';
+        row.addEventListener('click', () => showView('memory'));
+        body.appendChild(row);
+      });
+    }, fail);
+  } else if (spec.view === 'scenarios') {
+    api('/api/scenarios').then((r) => {
+      const scs = (r && r.ok && r.scenarios) || [];
+      if (!scs.length) { emptyNote('Сценариев пока нет — сохрани частый запрос из диалога.'); return; }
+      scs.slice(0, 5).forEach((sc) => {
+        const row = el('div', 'emb-row');
+        row.innerHTML = '<i class="emb-dot"></i><span class="emb-name">'
+          + esc(sc.title || 'сценарий') + '</span><span class="emb-meta">'
+          + ((sc.steps || []).length) + ' шагов</span>';
+        row.addEventListener('click', () => showView('scenarios'));
+        body.appendChild(row);
+      });
+    }, fail);
+  }
 }
 
 function plotShell(panel, title) {
@@ -4474,6 +4684,20 @@ function buildPlot2Panel(panel, spec) {
         else { a = -6.28; b = 6.28; }
       }
     }
+    /* BM11: ДАННЫЕ ВАЖНЕЕ диапазона из спеки. Модель любит приложить
+       «x»: [-6, 6] к данным с годами или датами — точки оказывались за
+       кадром, оси рисовались, а график показывал ПУСТУЮ ПЛОСКОСТЬ.
+       Если в окне спеки нет ни одной точки данных — окно честно
+       становится по фактическим точкам */
+    if (series.length && !fns.length) {
+      let da = Infinity, db = -Infinity, inside = 0;
+      const lo = Math.min(a, b), hi = Math.max(a, b);
+      series.forEach((sr) => sr.pts.forEach((pt) => {
+        da = Math.min(da, pt[0]); db = Math.max(db, pt[0]);
+        if (pt[0] >= lo && pt[0] <= hi) inside++;
+      }));
+      if (!inside && isFinite(da) && isFinite(db) && db > da) { a = da; b = db; }
+    }
     /* BM: центр координат — всегда в кадре у МАТЕМАТИКИ; график данных
        (курсы за 100, температура) держится на своих числах — прижимать
        окно к нулю значило бы сжать кривую в лепёшку */
@@ -4498,6 +4722,36 @@ function buildPlot2Panel(panel, spec) {
       }
       return false;
     })) aimDomain();
+    /* BM11: ПУСТАЯ ПЛОСКОСТЬ ЗАПРЕЩЕНА. Если после умного старта в окне
+       нет НИ ОДНОЙ видимой точки (кривые нигде не определены, данные за
+       кадром) — панель не молчит голыми осями: окно ещё раз наводится
+       на фактическое содержимое, а если его нет вовсе — честно говорит */
+    if (!panel._emptyGuard) {
+      panel._emptyGuard = true;
+      const anyVisible = fns.some((f) => {
+        for (let i = 0; i <= 40; i++) {
+          if (isFinite(f(x0 + (x1 - x0) * i / 40))) return true;
+        }
+        return false;
+      }) || series.some((sr) => sr.pts.some((pt) => pt[0] >= x0 && pt[0] <= x1));
+      if (!anyVisible) {
+        if (series.length) {
+          let da = Infinity, db = -Infinity;
+          series.forEach((sr) => sr.pts.forEach((pt) => {
+            da = Math.min(da, pt[0]); db = Math.max(db, pt[0]);
+          }));
+          if (isFinite(da) && isFinite(db) && db > da) {
+            const pad = (db - da) * 0.08 + 0.1;
+            x0 = da - pad; x1 = db + pad; y0 = y1 = null;
+          }
+        } else {
+          panel.innerHTML = '<div class="plot-err">формула не дала ни одной точки — '
+            + 'она нигде не определена. Точки данных — {"data": [{"label": "имя", '
+            + '"points": [[0, 1], [1, 2]]}]}</div>';
+          return;
+        }
+      }
+    }
     if (y0 === null) { const a = autoY(); y0 = a[0]; y1 = a[1]; }
     if (aspect.r) {
       /* фиксированное соотношение: пикселей на единицу X и Y совпадают.
@@ -6351,11 +6605,11 @@ async function fetchReplies() {
   box.innerHTML = '<span class="reply-skel"></span><span class="reply-skel"></span>' +
                   '<span class="reply-skel"></span>';
   // Заглушки не должны светиться дольше, чем это выглядит осмысленно.
-  // Сервер держит запрос максимум ~12 с (nano с запасом); если модель
-  // молчит — убираем полосу сами, не оставляя мигать «вечную загрузку».
+  // BM11: бюджет nano — 14с, сервер держит запрос с запасом (16с); раньше
+  // заглушки гасли на 15-й секунде РАНЬШЕ ответа — чипы пропадали вовсе.
   const bail = setTimeout(() => {
     if (S.replyTicket === ticket) showReplies([]);
-  }, 15000);
+  }, 18000);
   try {
     const items = await load;
     if (S.replyTicket !== ticket) return;

@@ -3259,7 +3259,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.80", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.81", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4267,11 +4267,16 @@ class AiReplySuggestionsTests(unittest.TestCase):
 
     def test_local_fallback_varies_by_answer_type(self) -> None:
         code_items = agent.suggest_replies("напиши", "вот код:\n```python\nprint(1)\n```")
-        self.assertEqual(code_items, ["Сохрани в файл", "Добавь ещё функции",
+        self.assertEqual(code_items, ["Сохрани в файл", "Предложи улучшения",
                                       "Объясни по шагам"])
         talk_items = agent.suggest_replies("расскажи", "Коротко о погоде.")
-        self.assertEqual(talk_items, ["Расскажи подробнее", "Покажи на примере",
-                                      "Что дальше?"])
+        # BM11: запас универсален для любого ответа — уточнение, развитие,
+        # применение; прежние «расскажи подробнее»-тройки выглядели шаблоном
+        self.assertEqual(talk_items, ["Уточни главное", "Предложи варианты развития",
+                                      "Как это применить?"])
+        for one in talk_items:
+            self.assertTrue(agent._suggestion_usable(one),
+                            "запасная реплика обязана проходить фильтр: %s" % one)
 
     def test_new_message_supersedes_previous_run_in_chat(self) -> None:
         # контракт сервера: новое сообщение в диалоге останавливает прежний
@@ -4596,8 +4601,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.80", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.80", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.81", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.81", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5839,7 +5844,7 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.80", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.81", html)
 
 
 
@@ -5939,7 +5944,7 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.80", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.81", html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -6948,10 +6953,11 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn("flow.classList.contains('full') && inner.scrollHeight", feed)
 
     def test_chip_shows_role_light_not_name(self) -> None:
-        """Чип — слово «провайдер» и огонёк роли; имя в подсказке."""
+        """Чип — только имя провайдера и огонёк роли; слово «провайдер» убрано."""
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         spc = js.split("function setProvChip(name)")[1].split("\nfunction ")[0]
-        self.assertIn("'провайдер: ' + (PROV_SHORT[S.lastProvider]", spc)
+        self.assertIn("? (PROV_SHORT[S.lastProvider] || S.lastProvider) : '—';", spc)
+        self.assertNotIn("'провайдер: '", js)
         self.assertIn("cur.order === 0 ? 'ok'", spc)
         self.assertIn("'err live'", spc)
         self.assertIn("PROV_SHORT", spc)
@@ -7056,12 +7062,83 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn("const SPACES = ['chat', 'math', 'music'];", js)
         self.assertIn("function setSpace(name, dir)", js)
         self.assertIn("initSpaces();", js)
-        # свайп двумя пальцами: колесо с deltaX
-        self.assertIn("Math.abs(e.deltaX) < 55", js)
+        # свайп двумя пальцами: колесо с deltaX, быстрый порог
+        self.assertIn("Math.abs(e.deltaX) < 38", js)
+        self.assertIn("if (now - lastSwipe < 450) return;", js)
         # старт всегда в CHAT
         self.assertIn("spaceApply('chat');", js)
-        self.assertIn('.sp-ico.sel::after', css)
+        # BM11: подчёркивания у выбранного нет — светится; глайдер перетекает
+        self.assertNotIn('.sp-ico.sel::after', css)
+        self.assertIn('.sp-glider{', css)
+        self.assertIn('function spaceGlider()', js)
         self.assertIn('.sp-mode.active', css)
+
+    def test_bm11_show_media_known_to_the_agent(self) -> None:
+        """Модель знает про show_media и не отказывается от аудио/видео."""
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        self.assertIn("show_media — картинка, аудио или видео из интернета", src)
+        flat = " ".join(src.split())
+        self.assertIn(
+            "НИКОГДА не говори «не могу передать аудио- или видеоконтент» "
+            "— show_media это умеет", flat)
+
+    def test_bm11_embed_rule_and_fences(self) -> None:
+        """Мини-вкладки: правило в промпте + фенс в markdown + карточка в app.js."""
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        self.assertIn("МИНИ-ВКЛАДКИ", src)
+        self.assertIn("```embed", src)
+        md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
+        self.assertIn("lang === 'embed'", md)
+        self.assertIn('class="embed-panel" data-embed=', md)
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("function mountEmbedPanels(", js)
+        self.assertIn("function buildEmbedPanel(panel, spec)", js)
+        for view in ("auto", "files", "memory", "scenarios"):
+            self.assertIn("%s: {" % view, js.split("const EMBED_VIEWS = {")[1]
+                          .split("};")[0])
+
+    def test_bm11_reply_wait_covers_nano_budget(self) -> None:
+        """Ожидание подсказок покрывает бюджет nano (14с), чипы не пропадают."""
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertEqual(srv.count('wait(timeout=16.0)'), 2,
+                         "оба ожидания бегущего расчёта — 16с")
+        self.assertNotIn("wait(timeout=11.0)", srv)
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("}, 18000);", js)
+
+    def test_bm11_budget_button_alignment(self) -> None:
+        """Кнопка лимита: радиус тумблера, крайняя справа, ровно под ускорением."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn("width:30px;height:28px;border-radius:20px;", css)
+        self.assertIn("margin-right:51px}", css)
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        self.assertLess(html.index('id="swAgent"'), html.index('id="tgBudget"'),
+                        "лимит — крайняя правая кнопка ряда тумблеров")
+
+    def test_bm11_root_degree_lower(self) -> None:
+        """Степень корня ещё ниже и левее; в знаменателе опущена."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn("left:-.24em;width:.34em", css)
+        self.assertIn("top:-.44em", css)
+        self.assertIn(".mfr-d .msqrt .msq-i{top:-.4em}", css)
+
+    def test_bm11_dock_untouched_spaces_flyout(self) -> None:
+        """Док: вкладки как раньше + LIVE + текущее пространство с выплывающей панелью."""
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        for marker in ('id="spDock"', 'id="spdLive"', 'id="spdCur"', 'id="spdFly"',
+                       'id="spSettings"', 'id="spGlider"'):
+            self.assertIn(marker, html)
+        self.assertIn(".app.collapsed .spaces{display:none}", css)
+        self.assertIn(".app.collapsed .sp-dock{display:flex", css)
+        self.assertIn(".spd-cur-wrap:hover .spd-fly,.spd-fly:hover{opacity:1", css)
+
+    def test_bm11_plot_empty_plane_banned(self) -> None:
+        """Пустая плоскость запрещена: окно по точкам, честная ошибка."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("ДАННЫЕ ВАЖНЕЕ диапазона из спеки", js)
+        self.assertIn("ПУСТАЯ ПЛОСКОСТЬ ЗАПРЕЩЕНА", js)
+        self.assertIn("panel._emptyGuard", js)
 
     def test_bm9_interactive_panels_after_news(self) -> None:
         """После сводки новостей/погоды панели выбора снова уместны."""

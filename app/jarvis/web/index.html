@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#04070d">
 <title>JARVIS</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='42' fill='none' stroke='%2300d4ff' stroke-width='6'/><circle cx='50' cy='50' r='18' fill='%2300d4ff'/></svg>">
-<link rel="stylesheet" href="/static/css/app.css?v=1.2.0-beta.80">
+<link rel="stylesheet" href="/static/css/app.css?v=1.2.0-beta.81">
 </head>
 <body>
 
@@ -52,43 +52,92 @@
         </button>
     </div>
 
-    <!-- BM10: ПРОСТРАНСТВА (идея из браузера Arc). Над чертой — переключатель:
-         он одинаков во всех пространствах. Под чертой — вкладки и диалоги
-         КОНКРЕТНОГО пространства. Переключение: клик по иконке или свайп
-         двумя пальцами по горизонтали. -->
+    <!-- BM11: ПРОСТРАНСТВА (идея из браузера Arc). Над чертой — LIVE и
+         мини-иконки пространств: чат — базовое, заполнен и подсвечен синим;
+         выбранное пространство светится, подсветка-глайдер «перетекает»
+         на иконку при переключении. Справа от иконок — настройки.
+         Переключение: клик или свайп двумя пальцами. -->
     <div class="spaces" id="spacesBar">
       <div class="sp-modes">
-        <button class="sp-mode active" id="spModeChat" title="CHAT — универсальное пространство">
-          <i class="sp-orb"></i><span>CHAT</span>
-        </button>
-        <button class="sp-mode" id="spModeLive" title="LIVE — режим трансляции (скоро)">
+        <button class="sp-mode" id="spModeLive" title="LIVE">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4.6 15.8a6.4 6.4 0 010-7.6"/><path d="M8.1 13.3a3.4 3.4 0 010-2.6"/>
-            <rect x="10.6" y="9.2" width="2.8" height="5.6" rx="1.2"/>
-            <path d="M19.4 15.8a6.4 6.4 0 000-7.6"/><path d="M15.9 13.3a3.4 3.4 0 000-2.6"/>
+            <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/>
+            <path d="M8.8 8.8a4.5 4.5 0 0 0 0 6.4"/><path d="M6 6a8.4 8.4 0 0 0 0 12"/>
+            <path d="M15.2 8.8a4.5 4.5 0 0 1 0 6.4"/><path d="M18 6a8.4 8.4 0 0 1 0 12"/>
           </svg><span>LIVE</span>
         </button>
       </div>
       <div class="sp-row" id="spRow">
-        <button class="sp-ico sel" data-space="chat" data-tip="Чат — базовое пространство">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 6.8A3.8 3.8 0 017.8 3h8.4A3.8 3.8 0 0120 6.8v5.4a3.8 3.8 0 01-3.8 3.8H9.2l-5.2 4v-4.7A3.8 3.8 0 014 6.8z"/>
+        <i class="sp-glider" id="spGlider" aria-hidden="true"></i>
+        <button class="sp-ico sel base" data-space="chat" data-tip="чат">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M12 3.6c-4.9 0-8.9 3.3-8.9 7.5 0 2.3 1.3 4.4 3.3 5.8-.2 1.1-.8 2.2-1.7 3.1 1.7-.2 3.3-.9 4.4-1.8 1 .3 1.9.4 2.9.4 4.9 0 8.9-3.4 8.9-7.5S16.9 3.6 12 3.6z"/>
           </svg>
         </button>
-        <button class="sp-ico" data-space="math" data-tip="Математика (скоро)">
+        <button class="sp-ico" data-space="math" data-tip="математика">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M17.5 4H9.8l4.9 8-4.9 8h7.7"/>
           </svg>
         </button>
-        <button class="sp-ico" data-space="music" data-tip="Музыка (скоро)">
+        <button class="sp-ico" data-space="music" data-tip="музыка">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M9 18V5.6l10-2V16"/><circle cx="6.6" cy="18" r="2.6"/><circle cx="16.6" cy="16" r="2.6"/>
           </svg>
         </button>
+        <button class="sp-ico sp-set" id="spSettings" data-tip="настройки">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3.1"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- BM11: ДОК (свёрнутое меню). В доке — только вкладки, как раньше,
+         плюс иконка LIVE и значок текущего пространства: наведение плавно
+         выплывает панелью со всеми пространствами и настройками -->
+    <div class="sp-dock" id="spDock">
+      <button class="spd-live" id="spdLive" title="LIVE">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/>
+          <path d="M8.8 8.8a4.5 4.5 0 0 0 0 6.4"/><path d="M6 6a8.4 8.4 0 0 0 0 12"/>
+          <path d="M15.2 8.8a4.5 4.5 0 0 1 0 6.4"/><path d="M18 6a8.4 8.4 0 0 1 0 12"/>
+        </svg>
+      </button>
+      <div class="spd-cur-wrap">
+        <button class="spd-cur" id="spdCur" title="чат"></button>
+        <div class="spd-fly" id="spdFly">
+          <button class="spf-ico" data-space="chat" data-tip="чат">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M12 3.6c-4.9 0-8.9 3.3-8.9 7.5 0 2.3 1.3 4.4 3.3 5.8-.2 1.1-.8 2.2-1.7 3.1 1.7-.2 3.3-.9 4.4-1.8 1 .3 1.9.4 2.9.4 4.9 0 8.9-3.4 8.9-7.5S16.9 3.6 12 3.6z"/>
+            </svg>
+          </button>
+          <button class="spf-ico" data-space="math" data-tip="математика">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M17.5 4H9.8l4.9 8-4.9 8h7.7"/>
+            </svg>
+          </button>
+          <button class="spf-ico" data-space="music" data-tip="музыка">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 18V5.6l10-2V16"/><circle cx="6.6" cy="18" r="2.6"/><circle cx="16.6" cy="16" r="2.6"/>
+            </svg>
+          </button>
+          <i class="spf-div" aria-hidden="true"></i>
+          <button class="spf-ico" data-view="settings" data-tip="настройки">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3.1"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -149,7 +198,7 @@
       <div class="status-cluster">
         <div class="status-chip" id="chipConn"><i class="dot"></i><span>соединение</span></div>
         <!-- BM7: какой провайдер отвечает прямо сейчас; клик — точный снимок всех -->
-        <div class="status-chip" id="chipProv" title="Провайдер — клик для состояния всех"><i class="dot"></i><span>провайдер</span></div>
+        <div class="status-chip" id="chipProv" title="Провайдер — клик для состояния всех"><i class="dot"></i><span>—</span></div>
         <div class="status-chip" id="chipAuto"><i class="dot"></i><span>AUTO</span></div>
       </div>
       <div class="top-title" id="topTitle">Диалог</div>
@@ -247,9 +296,6 @@
               <span class="tg-dot"></span>Компьютер
             </button>
             <div class="spacer"></div>
-            <button class="budget-btn" id="tgBudget" data-tip="Лимит ₽ на ответ">
-              <span class="budget-coin">₽</span>
-            </button>
             <div class="budget-pop" id="budgetPop" hidden>
               <div class="bp-head"><b>Лимит на ответ</b><button class="bp-off" id="budgetOff" hidden>Снять</button></div>
               <div class="bp-body">
@@ -272,6 +318,9 @@
                 <i aria-hidden="true">A</i>
               </label>
             </div>
+            <button class="budget-btn" id="tgBudget" data-tip="Лимит ₽ на ответ">
+              <span class="budget-coin">₽</span>
+            </button>
           </div>
         </div>
       </div>
@@ -420,7 +469,7 @@
   <div class="modal" id="modal"></div>
 </div>
 
-<script src="/static/js/markdown.js?v=1.2.0-beta.80"></script>
-<script src="/static/js/app.js?v=1.2.0-beta.80"></script>
+<script src="/static/js/markdown.js?v=1.2.0-beta.81"></script>
+<script src="/static/js/app.js?v=1.2.0-beta.81"></script>
 </body>
 </html>

@@ -1154,8 +1154,8 @@ function testRussianImageAndHudFollowupContract() {
     'the A letter must live ON the switch knob itself');
   assert(!/agent-switch-label/.test(html), 'no caption floats beside the AGENT track anymore');
   const budgetAt = html.indexOf('id="tgBudget"', togglesAt);
-  assert(budgetAt > 0 && budgetAt < agentAt,
-    'the ruble-limit button sits left of the AGENT switch');
+  assert(budgetAt > 0 && budgetAt > agentAt,
+    'BM11: the ruble-limit button is the rightmost control (after AGENT) so its right edge lands exactly beneath the boost button');
   assert(!/<button[^>]+id="tgAgent"/.test(html));
   assert(/\.toggle\s*\{[^}]*height:28px[^}]*padding:0 12px/s.test(css));
   assert(/\.agent-switch\s*\{[^}]*height:28px[^}]*display:flex[^}]*border:0[^}]*background:transparent/s.test(css) &&
@@ -2665,7 +2665,7 @@ function testIterationBKContracts() {
     css.includes('.msqrt::after{content:\'\';position:absolute;left:.35em;right:0;top:-.7px;') &&
     css.includes('height:1.4px;background:rgba(190,235,255,.85)') &&
     !css.includes('.msq-b') && !css.includes('aspect-ratio:11/24') && !css.includes('border-top:1.4px') &&
-    css.includes('.msqrt .msq-i{position:absolute;left:-.16em;width:.34em;text-align:right;'),
+    css.includes('.msqrt .msq-i{position:absolute;left:-.24em;width:.34em;text-align:right;'),
     'BM3: the svg is cropped at the tip (no dead width — the radicand sits right behind the nose), the bar starts at the tip, and a wide root index grows LEFT, never onto the stroke');
   // BK: ГРАФИК-ИНТЕРПРЕТАТОР — z(x,y)=, юникод-математика, спасение формул
   assert(js.includes("src.replace(/(^|[^\\w])([a-zA-Z])\\s*\\(([^)]*)\\)\\s*=/g,") &&
@@ -2831,8 +2831,8 @@ function testIterationBM6Contracts() {
 function testIterationBM8Contracts() {
   // BM8: ЧИП-ОГОНЁК — роль ответившего, имя в подсказке, «никто» мигает
   const spc = extractFunction(js, 'setProvChip');
-  assert(spc.includes("'провайдер: ' + (PROV_SHORT[S.lastProvider]"),
-    'BM8/BM9: the chip says «провайдер: cloud.ru» — the light carries the role, the text names it');
+  assert(spc.includes("? (PROV_SHORT[S.lastProvider] || S.lastProvider) : '—';"),
+    'BM8/BM11: the chip carries the provider NAME alone («cloud.ru») — the light carries the role');
   assert(spc.includes("cur.order === 0 ? 'ok'") &&
     spc.includes("cur.order === 1 ? 'warn'") &&
     spc.includes("'err live'"),
@@ -2875,10 +2875,11 @@ function testIterationBM9Contracts() {
   const urm = extractFunction(js, 'updateResponseMeta');
   assert(urm.includes('PROV_SHORT[provRaw] || provRaw'),
     'BM9: the answer passport maps the provider id to its domain label');
-  // BM9: чип «провайдер: имя»; «модели готовы» убраны
+  // BM11: чип — только имя провайдера (слово «провайдер» убрано)
   assert(!html.includes('id="chipModel"') &&
-    js.includes("'провайдер: ' + (PROV_SHORT[S.lastProvider]"),
-    'BM9: the top bar says «провайдер: cloud.ru» — the old «модели готовы» chip is gone');
+    js.includes("? (PROV_SHORT[S.lastProvider] || S.lastProvider) : '—';") &&
+    !js.includes("'провайдер: '"),
+    'BM11: the top bar chip carries the provider name alone — the word «провайдер» is gone');
   // BM9: агент не перекрашивает огоньки панели
   assert(!css.includes('body.agent-on .status-chip .dot{background:#c4788b}'),
     'BM9: agent mode no longer recolors the status lights');
@@ -2895,9 +2896,9 @@ function testIterationBM9Contracts() {
     'BM10: folders animate via the JS waltz alone — no CSS transition fighting it at the end');
   // BM10: степень корня — ниже и левее: не залезает за черту корня;
   // корень в ЗНАМЕНАТЕЛЕ дроби опущен (не наезжает на знак дроби)
-  assert(css.includes('.msqrt .msq-i{position:absolute;left:-.16em;width:.34em') &&
-    css.includes('top:-.55em') && css.includes('.mfr-d .msqrt{margin-top:.22em}'),
-    'BM10: the root degree sits low and left; a root in the denominator drops below the fraction bar');
+  assert(css.includes('.msqrt .msq-i{position:absolute;left:-.24em;width:.34em') &&
+    css.includes('top:-.44em') && css.includes('.mfr-d .msqrt{margin-top:.22em}'),
+    'BM11: the root degree sits lower still and slightly more left — never touching the bar; a root in the denominator drops below the fraction bar');
   // BM9: 3D — ЛКМ вращает, ПКМ пан; короткий ПКМ — обычное меню
   const p3 = js.split('function buildPlot3Panel(')[1].split('\nfunction ')[0];
   assert(p3.includes("(e.button === 0 || e.button === 1) ? 'rot' : (e.button === 2 ? 'pan' : null)"),
@@ -2921,26 +2922,26 @@ function testIterationBM9Contracts() {
 }
 
 function testIterationBM10Contracts() {
-  // BM10: КАРКАС ПРОСТРАНСТВ (идея из Arc) — CHAT/LIVE + мини-иконки
+  // BM10/BM11: КАРКАС ПРОСТРАНСТВ (идея из Arc) — LIVE + мини-иконки
   assert(html.includes('id="spacesBar"') &&
-    html.includes('id="spModeChat"') && html.includes('id="spModeLive"') &&
+    !html.includes('id="spModeChat"') && html.includes('id="spModeLive"') &&
     html.includes('data-space="chat"') && html.includes('data-space="math"') &&
     html.includes('data-space="music"') && html.includes('id="view-space"'),
-    'BM10: the spaces shell lives above the separator — two big modes (CHAT/LIVE) and three space mini-icons');
+    'BM11: the spaces bar keeps LIVE alone — the big CHAT button is gone, chat lives among the mini-icons');
   // переключение кликом И свайпом двумя пальцами; старт всегда в CHAT
   assert(js.includes("const SPACES = ['chat', 'math', 'music'];") &&
     js.includes('function setSpace(name, dir)') &&
     js.includes('function initSpaces()') &&
     js.includes("window.addEventListener('wheel'") &&
-    js.includes('Math.abs(e.deltaX) < 55') &&
+    js.includes('Math.abs(e.deltaX) < 38') &&
     js.includes("spaceApply('chat');"),
-    'BM10: spaces switch by tap or two-finger swipe; the app always boots into CHAT');
-  // под чертой — вкладки пространства; CHAT-иконка базовая (светлее)
+    'BM11: spaces switch by tap or a fast two-finger swipe; the app always boots into CHAT');
+  // под чертой — вкладки пространства; чат — базовое: заполнен и синий
   assert(js.includes("$$('.nav, .chats-block').forEach((n) => n.classList.toggle('space-off', !isChat));") &&
-    css.includes('.sp-ico.base{color:var(--tx2)}') &&
-    css.includes('.sp-ico.sel::after') &&
+    css.includes('.sp-ico.base{color:var(--cy2)}') &&
+    !css.includes('.sp-ico.sel::after') &&
     css.includes('.sp-mode.active{'),
-    'BM10: below the line the tabs belong to the space; CHAT is the base and glows when selected');
+    'BM11: below the line the tabs belong to the space; the chat icon is the filled bright-blue base, the selected one glows with no underline');
   // BM10: МЕДИА ИЗ ИНТЕРНЕТА — нативные плееры в ответе
   const pyMedia = fs.readFileSync(path.join(root, 'app/jarvis/tools/media.py'), 'utf8');
   assert(pyMedia.includes('def show_media(url: str)') &&
@@ -2961,10 +2962,73 @@ function testIterationBM10Contracts() {
   assert(!pyAgent.includes('НЕ показывай ui для') &&
     pyAgent.includes('НЕ выставляй панель'),
     'BM10: interactives are never banned — the only ban is repeating an already-answered panel');
-  // BM10: кнопка лимита — одной ширины с ускорением, ровно под ним
-  assert(css.includes('.budget-btn{position:relative;width:30px;height:28px;') &&
-    css.includes('margin-right:50px}'),
-    'BM10: the budget button matches the boost button width and sits exactly beneath it');
+  // BM11: кнопка лимита — под ускорением, радиус как у тумблера
+  assert(css.includes('.budget-btn{position:relative;width:30px;height:28px;border-radius:20px;') &&
+    css.includes('margin-right:51px}') &&
+    html.indexOf('id="swAgent"') < html.indexOf('id="tgBudget"'),
+    'BM11: the budget button is the rightmost control (after AGENT), pill-radius like the toggles, right edge exactly beneath the boost button');
+}
+
+function testIterationBM11Contracts() {
+  // ДОК: пространств в доке нет — вкладки как раньше + LIVE + текущее
+  assert(html.includes('id="spDock"') && html.includes('id="spdLive"') &&
+    html.includes('id="spdCur"') && html.includes('id="spdFly"') &&
+    css.includes('.app.collapsed .spaces{display:none}') &&
+    css.includes('.app.collapsed .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;'),
+    'BM11: the dock stays as it was — tabs plus a LIVE icon and the current-space icon with a flyout');
+  // выплывающая панель: наведение плавно выплывает вправо
+  assert(css.includes('.spd-cur-wrap:hover .spd-fly,.spd-fly:hover{opacity:1;pointer-events:auto;') &&
+    css.includes('left:calc(100% + 14px)'),
+    'BM11: hovering the current-space icon slides a small panel out to the right');
+  // настройки — с правого края иконок (в ряду и в выпадающей панели)
+  assert(html.includes('id="spSettings"') &&
+    css.includes('.sp-ico.sp-set{margin-left:auto') &&
+    html.includes('data-view="settings" data-tip="настройки"'),
+    'BM11: a settings gear sits at the right edge of the space icons — in the bar and in the flyout');
+  // ГЛАЙДЕР: подсветка морфом перетекает на выбранную иконку
+  assert(html.includes('id="spGlider"') &&
+    js.includes('function spaceGlider()') &&
+    css.includes('.sp-glider{position:absolute;top:0;height:34px;border-radius:10px;') &&
+    css.includes('transition:left .34s cubic-bezier(.3,1.35,.42,1),width .34s cubic-bezier(.3,1.35,.42,1),'),
+    'BM11: the highlight glider liquidly morphs onto the newly selected space icon');
+  // анимация направленная: старое уплывает в сторону движения, новое — с противоположной
+  assert(js.includes("translateX(' + (-56 * way) + 'px)'") &&
+    js.includes("translateX(' + (56 * way) + 'px)'"),
+    'BM11: old space exits toward the swipe direction, the new one enters from the opposite side');
+  // свайп быстрее: порог 38, пауза 450
+  assert(js.includes('Math.abs(e.deltaX) < 38 || Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.35') &&
+    js.includes('if (now - lastSwipe < 450) return;'),
+    'BM11: the swipe reacts faster — lower threshold, shorter pause between swipes');
+  // ЧИПЫ: универсальный запас вместо шаблона; ожидание покрывает бюджет
+  assert(pyAgent.includes('Уточни главное') &&
+    pyAgent.includes('Предложи варианты развития') &&
+    pyAgent.includes('Как это применить?') &&
+    !pyAgent.includes('Расскажи подробнее'),
+    'BM11: the local chip fallback is universal (clarify / develop / apply) — fit for any answer, no dead template');
+  const fr = extractFunction(js, 'fetchReplies');
+  assert(fr.includes('}, 18000);') && !fr.includes('}, 15000);'),
+    'BM11: the chip skeleton outlives the whole nano budget (14s) — chips never vanish on a slow provider');
+  // МЕДИА: модель знает про show_media и не отказывается
+  assert(pyAgent.includes('show_media — картинка, аудио или видео из интернета') &&
+    pyAgent.includes('НИКОГДА не говори «не могу передать') &&
+    pyAgent.includes('RuTube,\n   VK Видео или прямую ссылку'),
+    'BM11: the tool list carries show_media and the prompt forbids the old «cannot transfer audio/video» excuse');
+  // ГРАФИК: пустая плоскость запрещена — окно по фактическим точкам
+  assert(js.includes('panel._emptyGuard') &&
+    js.includes('ДАННЫЕ ВАЖНЕЕ диапазона из спеки') &&
+    js.includes('ПУСТАЯ ПЛОСКОСТЬ ЗАПРЕЩЕНА'),
+    'BM11: a data plot aims its window at the real points, and an all-NaN formula says so honestly instead of an empty plane');
+  // МИНИ-ВКЛАДКИ: фенс + карточка с мини-интерфейсом
+  assert(markdown.includes("lang === 'embed'") &&
+    markdown.includes('class="embed-panel" data-embed=') &&
+    js.includes('function mountEmbedPanels(') &&
+    js.includes('const EMBED_VIEWS = {') &&
+    js.includes('function buildEmbedPanel(panel, spec)') &&
+    css.includes('.embed-card{margin:14px 0;max-width:440px;border-radius:13px;'),
+    'BM11: a ```embed fence renders a thin-frame mini-tab card (AUTO/Файлы/Память/Сценарии) with limited interaction');
+  assert(pyAgent.includes('МИНИ-ВКЛАДКИ') &&
+    pyAgent.includes('```embed'),
+    'BM11: the agent prompt knows the embed block — mini-tabs appear when the answer discusses tasks/files/memory');
 }
 
 function testIterationAXContracts() {
@@ -3324,7 +3388,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.80'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.81'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -3777,8 +3841,9 @@ function testIterationBHContracts() {
   testIterationBM8Contracts();
   testIterationBM9Contracts();
   testIterationBM10Contracts();
+  testIterationBM11Contracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 54 regression groups passed');
+  console.log('package28_frontend_runtime: 55 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
