@@ -771,6 +771,8 @@ function testRepeatedPlanEventReplacesOwnership() {
     updateResponseMeta() {},
     undockPlan() { completionOrder.push('plan'); },
     queueResponseFinish() { completionOrder.push('typing'); },
+    // BM13: живая AUTO-карточка и её сверка после done — тут только заглушки
+    embedLiveAuto() {}, embedLiveAutoSettle() {},
   });
   const ui = {
     node: { body }, statusEl: status, planDock: oldDock, planCard: oldCard,
@@ -2665,15 +2667,19 @@ function testIterationBKContracts() {
     css.includes('.msqrt::after{content:\'\';position:absolute;left:.35em;right:0;top:-.7px;') &&
     css.includes('height:1.4px;background:rgba(190,235,255,.85)') &&
     !css.includes('.msq-b') && !css.includes('aspect-ratio:11/24') && !css.includes('border-top:1.4px') &&
-    css.includes('.msqrt .msq-i{position:absolute;left:-.36em;width:.34em;text-align:right;'),
-    'BM3: the svg is cropped at the tip (no dead width — the radicand sits right behind the nose), the bar starts at the tip, and a wide root index grows LEFT, never onto the stroke');
+    css.includes('.msqrt .msq-i{position:absolute;top:0;font-size:.58em;') &&
+    css.includes('.msqrt.msqrt-i{padding-left:1.46em}') &&
+    css.includes('.msqrt.msqrt-i .msq-i{left:auto;right:calc(100% - .98em);width:auto}') &&
+    markdown.includes("msqrt' + (root ? ' msqrt-i' : ''"),
+    'BM3/BM13: the svg is cropped at the tip, the bar starts at the tip; the root index lives INSIDE the root box — it never overlaps the bracket on the left');
   // BK: ГРАФИК-ИНТЕРПРЕТАТОР — z(x,y)=, юникод-математика, спасение формул
   assert(js.includes("src.replace(/(^|[^\\w])([a-zA-Z])\\s*\\(([^)]*)\\)\\s*=/g,") &&
     js.includes(".replace(/[·×]/g, '*')") &&
     js.includes('.replace(/−|–|—/g, '-')') &&
     js.includes("if (tk.length === 1) { implicit(); out.push('x');") &&
-    js.includes('const cand = Array.isArray(v) ? v.find((s) => typeof s === \'string\') : v;'),
-    'BK: the plot interpreter reads f(x,y)= definitions, unicode math, and salvages formulas');
+    js.includes('function plotCollectFormulas(spec)') &&
+    js.includes('spec.f = fl.filter((e) => e !== surface);'),
+    'BK/BM13: the plot interpreter reads f(x,y)= definitions, unicode math, and collects curves from ALL spec keys (2x and 3 both drawn)');
   // BK: ПАН ПЕРЕЖИВАЕТ ПЕЧАТЬ — пересборка хвоста возвращает pointer capture
   assert((js.match(/panel\._recapture = \(\) =>/g) || []).length === 3 &&
     js.includes('savedPlots.forEach((p) => { if (p._recapture) p._recapture(); });'),
@@ -2736,6 +2742,61 @@ function testIterationBMContracts() {
     bmr('\\[ x <= y \\]').includes('≤') &&
     bmr('\\[ a \\times b \\]').includes('<span class="mop">\u00d7</span>'),
     'BM3: bare >=/<= fuse into one ≥/≤; operators like × get real air');
+}
+
+function testIterationBM13Contracts() {
+  // ЧИПЫ: nano-модель недоступна — llm фолбэкит на base, подсказки живые
+  const pyLlm = fs.readFileSync(path.join(root, 'app/jarvis/llm.py'), 'utf8');
+  assert(pyLlm.includes('model = pick_model("base", prov)'),
+    'BM13: a missing nano model at the provider falls back to the BASE model inside chat() — chips never die');
+  // ГРАФИК: кривые собираются со ВСЕХ ключей — поведенческий прогон
+  const pc = loadFunctions(['mathParseExpr', 'mathCompile', 'plotCollectFormulas'], { Math });
+  const spec1 = pc.plotCollectFormulas({ f: ['2x'], y: ['3'] });
+  assert(JSON.stringify(spec1.f) === '["2x","3"]',
+    'BM13: {f:["2x"], y:["3"]} draws BOTH curves — the y-row is a curve even when f is occupied');
+  const spec2 = pc.plotCollectFormulas({ f: '2x и 3' });
+  assert(JSON.stringify(spec2.f) === '["2x","3"]',
+    'BM13: «график 2x и 3» in ONE string splits into two curves');
+  const spec3 = pc.plotCollectFormulas({ functions: ['2x', '3'] });
+  assert(JSON.stringify(spec3.f) === '["2x","3"]',
+    'BM13: nonstandard keys (functions/g/equation) also feed the curves');
+  const spec4 = pc.plotCollectFormulas({ z: 'sin(x)*cos(y)', x: [-3, 3], y: [-3, 3] });
+  assert(spec4.z === 'sin(x)*cos(y)' && !spec4.f,
+    'BM13: a surface (with the y variable) stays z; numeric axis ranges are untouched');
+  const spec5 = pc.plotCollectFormulas({ f: ['2x'], data: [{ label: 't', points: [[0, 1]] }], title: 'T' });
+  assert(JSON.stringify(spec5.f) === '["2x"]' && !!spec5.data && spec5.title === 'T',
+    'BM13: data series and titles never leak into the formulas');
+  // ЖИВАЯ AUTO-КАРТОЧКА: в момент tool_result schedule_task, сверка после done
+  assert(js.includes("ev.name === 'schedule_task'") &&
+    js.includes('function embedLiveAuto(ui)') &&
+    js.includes('function embedLiveAutoSettle(ui)') &&
+    js.includes("const inText = (ui.mdEl && $$('.embed-panel', ui.mdEl)"),
+    'BM13: the AUTO card appears the MOMENT a task starts (live tool_result), and settles after done without duplicating the server card');
+  // ПАМЯТЬ: карточка честная — сбой не маскируется под «память пуста»
+  const memPart = js.split("} else if (spec.view === 'memory')")[1]
+    .split("} else if (spec.view === 'scenarios')")[0];
+  assert(memPart.includes('Память собирается дольше обычного') &&
+    memPart.includes("fail(new Error('не удалось открыть память'))"),
+    'BM13: the memory card reports failures honestly and never waits forever');
+  // ПРОСТРАНСТВА: чат не скрывается; свайп один; панель — стекло
+  const loader = js.split('function spacesVisibleLoad()')[1].split('\nfunction ')[0];
+  assert(loader.includes("n !== 'chat'") && js.includes('chat-fixed'),
+    'BM13: CHAT is not hideable — the visibility list holds only non-chat spaces');
+  assert(css.includes('backdrop-filter:blur(16px) saturate(1.35)') &&
+    css.includes('.sp-set-title{') &&
+    css.includes('.sp-mode:hover::after{transform:scale(2.6)}') &&
+    css.includes('.chat-list.scr::-webkit-scrollbar-thumb{background:rgba(0,190,255,.24)}') &&
+    js.includes("cl.classList.add('scr')"),
+    'BM13: glass settings panel with a badge title, LIVE fills with light from the center, the chat-list scrollbar wakes only while scrolling');
+  assert(html.includes('data-space="chat" data-tip="CHAT"') &&
+    html.includes('data-space="math" data-tip="MATH"') &&
+    html.includes('data-space="music" data-tip="MUSIC"') &&
+    html.includes('data-tip="настройки отображения"'),
+    'BM13: CAPS names CHAT/MATH/MUSIC in tooltips, the gear reads «настройки отображения»');
+  const setsp = js.split('function setSpace(name, dir)')[1].split('\nfunction ')[0];
+  assert(setsp.includes("name !== 'chat' && S.spacesVisible.indexOf(name) < 0") &&
+    js.split('function spaceToggleVisible(name)')[1].split('\nfunction ')[0].includes("setSpace('chat')"),
+    'BM13: chat is always reachable; hiding the CURRENT space returns you to chat');
 }
 
 function testIterationAOContracts() {
@@ -2896,9 +2957,10 @@ function testIterationBM9Contracts() {
     'BM10: folders animate via the JS waltz alone — no CSS transition fighting it at the end');
   // BM10: степень корня — ниже и левее: не залезает за черту корня;
   // корень в ЗНАМЕНАТЕЛЕ дроби опущен (не наезжает на знак дроби)
-  assert(css.includes('.msqrt .msq-i{position:absolute;left:-.36em;width:.34em') &&
-    css.includes('top:0;font-size:.62em') && css.includes('.mfr-d .msqrt{margin-top:.22em}'),
-    'BM12: the root degree stays INSIDE the root bounds — its top never above the root top; a root in the denominator drops below the fraction bar');
+  assert(css.includes('.msqrt .msq-i{position:absolute;top:0;font-size:.58em;') &&
+    css.includes('.msqrt.msqrt-i .msq-i{left:auto;right:calc(100% - .98em);width:auto}') &&
+    css.includes('.mfr-d .msqrt{margin-top:.22em}'),
+    'BM12/BM13: the root degree stays INSIDE the root bounds (BM13: also inside the box — never onto the bracket); a root in the denominator drops below the fraction bar');
   // BM9: 3D — ЛКМ вращает, ПКМ пан; короткий ПКМ — обычное меню
   const p3 = js.split('function buildPlot3Panel(')[1].split('\nfunction ')[0];
   assert(p3.includes("(e.button === 0 || e.button === 1) ? 'rot' : (e.button === 2 ? 'pan' : null)"),
@@ -2933,18 +2995,20 @@ function testIterationBM10Contracts() {
     js.includes('function setSpace(name, dir)') &&
     js.includes('function initSpaces()') &&
     js.includes("window.addEventListener('wheel'") &&
-    js.includes('Math.abs(e.deltaX) < 24') &&
+    js.includes('const dx = Math.abs(e.deltaX);') &&
+    js.includes('if (dx < 10) { swipeArmed = true; return; }') &&
     js.includes("spaceApply('chat');"),
-    'BM12: spaces switch by tap or a fast two-finger swipe; the app always boots into CHAT');
+    'BM12/BM13: spaces switch by tap or a fast two-finger swipe — ONE transition per gesture (arm/disarm); the app always boots into CHAT');
   // под чертой — вкладки пространства; чат — базовое: заполнен и синий
   assert(js.includes("$$('.nav, .chats-block').forEach((n) => n.classList.toggle('space-off', !isChat));") &&
-    css.includes('.sp-ico.base{color:var(--cy2);background:rgba(0,212,255,.05);') &&
+    css.includes('.sp-ico.base{color:var(--tx3);') &&
+    css.includes('.sp-ico.base.sel{filter:none}') &&
     !css.includes('.sp-ico.sel::after') &&
     css.includes('.sp-mode.active{'),
     'BM11: below the line the tabs belong to the space; the chat icon is the filled bright-blue base, the selected one glows with no underline');
   // BM10: МЕДИА ИЗ ИНТЕРНЕТА — нативные плееры в ответе
   const pyMedia = fs.readFileSync(path.join(root, 'app/jarvis/tools/media.py'), 'utf8');
-  assert(pyMedia.includes('def show_media(url: str)') &&
+  assert(pyMedia.includes('def show_media(url: str, _depth: int = 0)') &&
     pyMedia.includes('_YOUTUBE_RE') &&
     pyMedia.includes('RuTube/VK Видео'),
     'BM10: the show_media tool fetches direct media and honestly refuses YouTube (blocked in RF)');
@@ -2983,8 +3047,8 @@ function testIterationBM11Contracts() {
     'BM12: the flyout grows out of the button and stays while the cursor is anywhere inside (bridge covers the gap)');
   // настройки — маленькая абсолютная кнопка + панель видимости
   assert(html.includes('id="spSettings"') && html.includes('id="spSetPanel"') &&
-    css.includes('.sp-ico.sp-set{position:absolute;right:3px;top:56px;width:28px;height:26px;'),
-    'BM12: a small settings button sits at the right edge of the icons row, opening the visibility panel');
+    css.includes('.sp-ico.sp-set{position:absolute;right:3px;top:56px;width:23px;height:21px;'),
+    'BM12/BM13: a smaller settings button sits at the right edge of the icons row, opening the glass visibility panel');
   // ГЛАЙДЕР: подсветка морфом перетекает на выбранную иконку
   assert(html.includes('id="spGlider"') &&
     js.includes('function spaceGlider()') &&
@@ -2996,9 +3060,10 @@ function testIterationBM11Contracts() {
     js.includes("translateX(' + (56 * way) + 'px)'"),
     'BM11: old space exits toward the swipe direction, the new one enters from the opposite side');
   // свайп быстрее: BM12 — порог 24, пауза 280
-  assert(js.includes('Math.abs(e.deltaX) < 24 || Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.15') &&
-    js.includes('if (now - lastSwipe < 280) return;'),
-    'BM12: the swipe reacts faster — lower threshold, shorter pause between swipes');
+  assert(js.includes('if (dx < 24 || dx < Math.abs(e.deltaY) * 1.15) return;') &&
+    js.includes('if (now - lastSwipe < 280) return;') &&
+    js.includes('swipeArmed = false;'),
+    'BM12/BM13: the swipe reacts fast and fires ONCE per gesture — a super-long swipe is still a single transition');
   // ЧИПЫ: универсальный запас вместо шаблона; ожидание покрывает бюджет
   assert(pyAgent.includes('Уточни главное') &&
     pyAgent.includes('Предложи варианты развития') &&
@@ -3011,7 +3076,7 @@ function testIterationBM11Contracts() {
   // МЕДИА: модель знает про show_media и не отказывается
   assert(pyAgent.includes('show_media — картинка, аудио или видео из интернета') &&
     pyAgent.includes('НИКОГДА не говори «не могу передать') &&
-    pyAgent.includes('RuTube,\n   VK Видео или прямую ссылку'),
+    pyAgent.includes('предложи RuTube,\n   VK Видео или другой источник'),
     'BM11: the tool list carries show_media and the prompt forbids the old «cannot transfer audio/video» excuse');
   // ГРАФИК: пустая плоскость запрещена — окно по фактическим точкам
   assert(js.includes('panel._emptyGuard') &&
@@ -3047,16 +3112,18 @@ function testIterationBM12Contracts() {
     'BM12: a long news digest without fences never gets code chips — only real fences make an artifact');
   // МЕДИА: файлом, а не ссылкой
   assert(pyAgent.includes('МЕДИА ИЗ ИНТЕРНЕТА — ФАЙЛОМ, А НЕ ССЫЛКОЙ') &&
-    pyAgent.includes('голая ссылка вместо файла — ошибка'),
+    pyAgent.includes('Голая ссылка вместо файла — ошибка') &&
+    pyAgent.includes('попробуй другой сайт или поисковый запрос, а не\n   сдавайся'),
     'BM12: media arrives as a FILE in the chat (like a messenger), a bare link instead is an error');
   // КОРЕНЬ: степень внутри границ корня
-  assert(css.includes('left:-.36em;width:.34em') &&
-    css.includes('top:0;font-size:.62em'),
-    'BM12: the root degree is down and left, its top edge never above the root itself');
+  assert(css.includes('.msqrt.msqrt-i{padding-left:1.46em}') &&
+    css.includes('top:0;font-size:.58em') &&
+    css.includes('.msqrt.msqrt-i .msq-i{left:auto;right:calc(100% - .98em);width:auto}'),
+    'BM12/BM13: the root degree is down and left, never above the root, and (BM13) always inside the root box — never onto the bracket');
   // СВАЙП: распознание быстрее; кнопки реагируют мгновенно
-  assert(js.includes('Math.abs(e.deltaX) < 24 || Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.15') &&
+  assert(js.includes('if (dx < 24 || dx < Math.abs(e.deltaY) * 1.15) return;') &&
     js.includes('if (now - lastSwipe < 280) return;'),
-    'BM12: swipe recognition is fast — low threshold, gentle vertical guard, short pause');
+    'BM12/BM13: swipe recognition is fast, and one gesture fires exactly one transition');
   assert(js.includes('function updateSpaceChrome(name)') &&
     js.split('function setSpace(name, dir)')[1].split('\nfunction ')[0].includes('updateSpaceChrome(name);'),
     'BM12: tapping a space updates icons and the glider INSTANTLY, not after the slide animation');
@@ -3070,24 +3137,27 @@ function testIterationBM12Contracts() {
   assert(css.includes('.sp-ico.off{display:none}') &&
     css.includes('.sp-eye.off::after') &&
     css.includes('.sp-set-row.off{opacity:.4;filter:saturate(.3)}') &&
-    css.includes('.spaces.no-spaces .sp-row{display:none}') &&
+    css.includes('.spaces.no-spaces .sp-row{opacity:0;transform:scale(.42);') &&
     css.includes('.spaces.no-spaces .sp-ico.sp-set{top:14px}') &&
     css.includes('.spaces.no-spaces .sp-modes{padding-right:36px}'),
-    'BM12: hidden rows grey out with a crossed eye; with all spaces hidden the gear slides up beside LIVE and LIVE narrows left');
+    'BM12/BM13: hidden rows grey out with a crossed eye; with only chat left, the row (chat included) fades out ANIMATED, the gear slides up beside LIVE');
   // СЖАТИЕ ДОКА: плавное, зеркально разворачиванию; вкладки в доке всегда
   assert(js.includes("setTimeout(() => app.classList.add('docked'), 640);") &&
     js.includes("classList.add('collapsed', 'docked');") &&
     css.includes('.side-folding .spaces{opacity:0;transform:scale(.42);') &&
     css.includes('.app.collapsed .space-future{display:none!important}') &&
-    css.includes('.app.collapsed .nav.space-off{display:flex!important}'),
-    'BM12: collapsing SQUEEZES the spaces row smoothly (docked only after the animation); in the dock tabs always show, no dialogs note');
+    !css.includes('.app.collapsed .nav.space-off{display:flex!important}') &&
+    css.includes('.app.collapsed .sp-dock::before{') &&
+    css.includes('filter:blur(4px)'),
+    'BM12/BM13: collapsing SQUEEZES the spaces row smoothly (docked only after the animation); in the dock only the CURRENT space tabs show (no chat tabs abroad) and a full-width blurred strip backs the buttons');
   // LIVE ярче + чат — базовое в тихой рамке
   assert(css.includes('text-shadow:0 0 9px rgba(0,212,255,.35)') &&
     css.includes('radial-gradient(circle at 50% 50%,rgba(0,212,255,.11)'),
     'BM12: LIVE glows from its center, brighter text and border');
-  assert(css.includes('.sp-ico.base{color:var(--cy2);background:rgba(0,212,255,.05);') &&
+  assert(css.includes('.sp-ico.base{color:var(--tx3);') &&
+    css.includes('.sp-ico.base.sel{filter:none}') &&
     !css.includes('.spf-ico.base'),
-    'BM12: the chat icon always carries a quiet frame (base space); in the dock flyout it is not singled out');
+    'BM12/BM13: the chat icon is hollow and quiet — like the others, with a barely visible transparent frame; no glow when selected; not singled out in the flyout');
   // ФЛАЙАУТ ДОКА: вылетает из кнопки, иконки разлетаются по местам
   assert(html.includes('id="spdCurWrap"') && html.includes('class="spd-dash"') &&
     js.includes('function dockFlyIcons()') &&
@@ -3924,8 +3994,9 @@ function testIterationBHContracts() {
   testIterationBM10Contracts();
   testIterationBM11Contracts();
   testIterationBM12Contracts();
+  testIterationBM13Contracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 56 regression groups passed');
+  console.log('package28_frontend_runtime: 57 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

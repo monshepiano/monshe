@@ -229,7 +229,10 @@
              none (vector-effect держит толщину 1.4px при любом растяжении);
              черта — border-top ТОГО ЖЕ цвета и ТОЙ ЖЕ толщины 1.4px, что
              штрих носика: одна непрерывная линия при любом размере */
-          out += '<span class="msqrt">' +
+          /* BM13: класс msqrt-i — у корня есть степень: CSS резервирует
+             ей место СЛЕВА внутри рамки корня, чтобы индекс никогда
+             не наезжал на скобку или знак слева от корня */
+          out += '<span class="msqrt' + (root ? ' msqrt-i' : '') + '">' +
             (root ? '<span class="msq-i">' + mesc(root) + '</span>' : '') +
             '<svg class="msq-svg" viewBox="0 0 6.6 24" preserveAspectRatio="none" aria-hidden="true"><path d="M.8 13.9 L3.3 16 L5.9 0" fill="none" stroke="rgba(190,235,255,.85)" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
             '<span class="msq-r">' + mathRender(g.text, inline) + '</span></span>';

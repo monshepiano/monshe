@@ -1150,11 +1150,11 @@ function renderBalance(b) {
    быстрый свайп двумя пальцами. Под чертой — вкладки пространства. */
 const SPACES = ['chat', 'math', 'music'];
 const SPACE_META = {
-  chat: { name: 'CHAT', label: 'Чат', tip: 'чат',
-    ico: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 3.6c-4.9 0-8.9 3.3-8.9 7.5 0 2.3 1.3 4.4 3.3 5.8-.2 1.1-.8 2.2-1.7 3.1 1.7-.2 3.3-.9 4.4-1.8 1 .3 1.9.4 2.9.4 4.9 0 8.9-3.4 8.9-7.5S16.9 3.6 12 3.6z"/></svg>' },
-  math: { name: 'MATH', label: 'Математика', tip: 'математика',
+  chat: { name: 'CHAT', label: 'CHAT', tip: 'CHAT',
+    ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.2c-4.7 0-8.5 3.1-8.5 6.9 0 2.2 1.2 4.1 3.2 5.4-.2 1.1-.8 2.2-1.7 3.1 1.7-.2 3.3-.8 4.5-1.7.8.2 1.6.3 2.5.3 4.7 0 8.5-3.1 8.5-6.9S16.7 4.2 12 4.2z"/></svg>' },
+  math: { name: 'MATH', label: 'MATH', tip: 'MATH',
     ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 4H9.8l4.9 8-4.9 8h7.7"/></svg>' },
-  music: { name: 'MUSIC', label: 'Музыка', tip: 'музыка',
+  music: { name: 'MUSIC', label: 'MUSIC', tip: 'MUSIC',
     ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5.6l10-2V16"/><circle cx="6.6" cy="18" r="2.6"/><circle cx="16.6" cy="16" r="2.6"/></svg>' },
 };
 const SPACE_EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
@@ -1167,8 +1167,13 @@ S.space = 'chat';
 function spacesVisibleLoad() {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem('jarvis.spaces.visible') || 'null'); } catch (e) {}
-  /* пустой массив — законное состояние «все скрыты», не сбрасываем */
-  return Array.isArray(saved) ? saved.filter((n) => SPACES.indexOf(n) >= 0) : SPACES.slice();
+  /* BM13: ЧАТ НЕ СКРЫВАЕТСЯ — он основной, без него программа не работает.
+     В списке видимости живут только НЕ-чатовые пространства; пустой
+     массив («кроме чата ничего») — законное состояние: ряд исчезает целиком */
+  const list = Array.isArray(saved)
+    ? saved.filter((n) => SPACES.indexOf(n) >= 0 && n !== 'chat')
+    : SPACES.filter((n) => n !== 'chat');
+  return list;
 }
 S.spacesVisible = spacesVisibleLoad();
 function spacesSave() {
@@ -1198,7 +1203,10 @@ function updateSpaceChrome(name) {
   $$('.sp-ico[data-space]').forEach((b) => {
     b.classList.toggle('sel', b.dataset.space === name);
     b.classList.toggle('base', b.dataset.space === 'chat');
-    b.classList.toggle('off', S.spacesVisible.indexOf(b.dataset.space) < 0);
+    /* чат скрывается только вместе со всем рядом (когда кроме него
+       ничего не показано) — сам по себе он не выключается */
+    b.classList.toggle('off', S.spacesVisible.indexOf(b.dataset.space) < 0
+      && !(b.dataset.space === 'chat' && S.spacesVisible.length));
   });
   spaceGlider();
   const bar = $('#spacesBar');
@@ -1240,7 +1248,8 @@ function spaceApply(name) {
 
 function setSpace(name, dir) {
   if (name === S.space || !SPACE_META[name]) return;
-  if (S.spacesVisible.indexOf(name) < 0) return;   // скрытое не выбирается
+  /* скрытое не выбирается; чат — основное, доступен всегда */
+  if (name !== 'chat' && S.spacesVisible.indexOf(name) < 0) return;
   if (S.streaming) { toast('Дождись конца ответа — потом переключу', 'warn'); return; }
   const way = dir || ((SPACES.indexOf(name) > SPACES.indexOf(S.space)) ? 1 : -1);
   /* BM12: ХРОМ МГНОВЕННО — иконки и глайдер реагируют в кадр клика */
@@ -1276,8 +1285,20 @@ function buildSpaceSettings() {
   const panel = $('#spSetPanel');
   if (!panel || panel.dataset.built === '1') return;
   panel.dataset.built = '1';
+  const title = el('div', 'sp-set-title', 'настройки отображения');
+  panel.appendChild(title);
   SPACES.forEach((n) => {
     const meta = SPACE_META[n] || {};
+    /* BM13: ЧАТ — основное: жирная строка без глазика, скрыть нельзя */
+    if (n === 'chat') {
+      const row = el('div', 'sp-set-row chat-fixed');
+      row.id = 'ssr_chat';
+      row.innerHTML = '<span class="ssr-ico">' + (meta.ico || '') + '</span>'
+        + '<b>' + esc(meta.label || 'CHAT') + '</b>'
+        + '<i class="ssr-lock">основное</i>';
+      panel.appendChild(row);
+      return;
+    }
     const row = el('div', 'sp-set-row');
     row.id = 'ssr_' + n;
     row.innerHTML = '<span class="ssr-ico">' + (meta.ico || '') + '</span>'
@@ -1336,11 +1357,15 @@ function spaceToggleVisible(name) {
   spacesFlip(() => {
     S.spacesVisible = hide
       ? S.spacesVisible.filter((n) => n !== name)
-      : SPACES.filter((n) => n === name || S.spacesVisible.indexOf(n) >= 0);
+      : SPACES.filter((n) => (n === name && n !== 'chat')
+        || S.spacesVisible.indexOf(n) >= 0);
     spacesSave();
     updateSpaceChrome(S.space);
   });
   syncSpaceSettings();
+  /* скрыли пространство, в котором стоим, — честно возвращаемся в чат:
+     застрять в невидимом пространстве нельзя */
+  if (hide && S.space === name) setSpace('chat');
 }
 
 /* BM12: ФЛАЙАУТ ДОКА — окошко ВЫЛЕТАЕТ из кнопки текущего пространства:
@@ -1373,17 +1398,22 @@ function initDockFly() {
     if (!S.spacesVisible.length) return;
     dockFlyIcons();
     wrap.classList.add('open');
+    /* BM13: панель открывается НА МЕСТЕ кнопки; с кнопки НА СВОЁ место
+       в меню вылетает только ИКОНКА ТЕКУЩЕГО пространства — остальные
+       уже стоят на своих местах */
     const btn = $('#spdCur').getBoundingClientRect();
-    $$('.spf-ico', $('#spdFly')).forEach((b, i) => {
-      const r = b.getBoundingClientRect();
-      if (!r.width || !b.animate) return;
-      const dx = (btn.left + btn.width / 2) - (r.left + r.width / 2);
-      const dy = (btn.top + btn.height / 2) - (r.top + r.height / 2);
-      b.animate(
-        [{ transform: 'translate(' + dx + 'px,' + dy + 'px) scale(.4)', opacity: 0 },
-         { transform: 'none', opacity: 1 }],
-        { duration: 340, delay: 40 + i * 60, easing: 'cubic-bezier(.22,1.25,.36,1)', fill: 'backwards' });
-    });
+    const sel = $('#spdFly .spf-ico.sel');
+    if (sel && sel.animate) {
+      const r = sel.getBoundingClientRect();
+      if (r.width) {
+        const dx = (btn.left + btn.width / 2) - (r.left + r.width / 2);
+        const dy = (btn.top + btn.height / 2) - (r.top + r.height / 2);
+        sel.animate(
+          [{ transform: 'translate(' + dx + 'px,' + dy + 'px) scale(.6)', opacity: 0 },
+           { transform: 'none', opacity: 1 }],
+          { duration: 320, delay: 60, easing: 'cubic-bezier(.22,1.25,.36,1)', fill: 'backwards' });
+      }
+    }
   });
   wrap.addEventListener('pointerleave', () => {
     clearTimeout(closeT);
@@ -1391,14 +1421,33 @@ function initDockFly() {
   });
 }
 
+/* BM13: СКРОЛЛБАР ЧАТ-ЛИСТА ЖИВЁТ ТОЛЬКО ВО ВРЕМЯ СКРОЛЛА —
+   класс .scr держится 650мс после последнего движения и гаснет */
+(function () {
+  const cl = document.querySelector('.chat-list');
+  if (!cl) return;
+  let t = null;
+  cl.addEventListener('scroll', () => {
+    cl.classList.add('scr');
+    clearTimeout(t);
+    t = setTimeout(() => cl.classList.remove('scr'), 650);
+  }, { passive: true });
+})();
+
 function initSpaces() {
   $$('.sp-ico[data-space]').forEach((b) => b.addEventListener('click', () => setSpace(b.dataset.space)));
-  /* настройки: маленькая кнопка справа от иконок — панель видимости */
+  /* настройки: маленькая кнопка справа от иконок — панель видимости.
+     BM13: закрывается и тапом ВНЕ панели */
   const set = $('#spSettings');
-  if (set) set.addEventListener('click', () => {
+  const setPanel = $('#spSetPanel');
+  if (set) set.addEventListener('click', (ev) => {
+    ev.stopPropagation();
     buildSpaceSettings();
-    const panel = $('#spSetPanel');
-    if (panel) panel.classList.toggle('open');
+    if (setPanel) setPanel.classList.toggle('open');
+  });
+  if (setPanel) setPanel.addEventListener('click', (ev) => ev.stopPropagation());
+  document.addEventListener('click', () => {
+    if (setPanel) setPanel.classList.remove('open');
   });
   const liveToast = () => toast('Лайф-режим — финальный этап плана, готовим позже', 'info', 'LIVE');
   $('#spModeLive').addEventListener('click', liveToast);
@@ -1406,17 +1455,24 @@ function initSpaces() {
   if (spdLive) spdLive.addEventListener('click', liveToast);
   initDockFly();
   // СВАЙП ДВУМЯ ПАЛЬЦАМИ по горизонтали (как в Arc): колёсико с deltaX.
-  // BM12: РАСПОЗНАНИЕ БЫСТРЕЕ — низкий порог, мягче к вертикали, пауза
-  // между свайпами короче; свайп идёт ТОЛЬКО по видимым пространствам
+  // BM13: ОДИН ПЕРЕХОД ЗА ЖЕСТ — даже супердлинный свайп перелистывает
+  // одну область: после срабатывания свайпы глушатся, пока жест не
+  // кончится (первое тихое событие колеса взводит обратно)
   let lastSwipe = 0;
+  let swipeArmed = true;
   window.addEventListener('wheel', (e) => {
-    if (Math.abs(e.deltaX) < 24 || Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.15) return;
+    const dx = Math.abs(e.deltaX);
+    if (dx < 10) { swipeArmed = true; return; }
+    if (!swipeArmed) return;
+    if (dx < 24 || dx < Math.abs(e.deltaY) * 1.15) return;
     if (e.target && e.target.closest && e.target.closest(
       '.qt-detail, .fprev-body, .plan-dock, .plot-bar, pre, .modal, .sbx-files')) return;
     const now = Date.now();
     if (now - lastSwipe < 280) return;
     lastSwipe = now;
-    const vis = S.spacesVisible;
+    swipeArmed = false;
+    /* навигация: чат ↔ видимые пространства (чат — базовое, слева) */
+    const vis = ['chat'].concat(S.spacesVisible);
     const i = vis.indexOf(S.space);
     const next = e.deltaX > 0 ? i + 1 : i - 1;
     if (next >= 0 && next < vis.length) setSpace(vis[next], e.deltaX > 0 ? 1 : -1);
@@ -4290,6 +4346,61 @@ function plotParseSpec(raw) {
   return out;
 }
 
+/* BM13: КРИВЫЕ СОБИРАЮТСЯ СО ВСЕХ КЛЮЧЕЙ. Модель раскладывает графики по
+   разным местам спеки: {"f":["2x"],"y":["3"]}, {"functions":[…]},
+   {"g": "x/2"}, а «2x и 3» — одной строкой. Прежние правила брали y
+   только при ПУСТОМ f, а «спасение» — только ПЕРВУЮ компилируемую
+   строку: вторая кривая пропадала («нарисовал только 2x»). Теперь все
+   строковые значения всех ключей (кроме осей и заголовков) проходят
+   компиляцию и собираются в f; поверхность (с y) при пустом f станет z */
+function plotCollectFormulas(spec) {
+  const RESERVED = { f: 1, z: 1, x: 1, yy: 1, yrange: 1, range: 1, domain: 1,
+    title: 1, data: 1, series: 1, points: 1, label: 1, name: 1, kind: 1,
+    step: 1, unit: 1, labels: 1, view: 1, tab: 1 };
+  const have = (v) => { try { mathCompile(v); return true; } catch (e) { return false; } };
+  const pieces = (v) => {
+    if (typeof v !== 'string' || !v.trim()) return [];
+    /* «2x и 3» одной строкой — части обязаны компилироваться все */
+    const parts = v.split(/\s*(?:,|;|\sи\s)\s*/).filter(Boolean);
+    if (parts.length > 1 && parts.every(have)) return parts;
+    return [v.trim()];
+  };
+  const out = [];
+  const push = (src) => {
+    const seen = out.some((e) => String(e) === String(src));
+    if (!seen) out.push(src);
+  };
+  /* сам f тоже нормализуем: «2x и 3» одной строкой делится на кривые */
+  if (spec.f != null) {
+    (Array.isArray(spec.f) ? spec.f : [spec.f]).forEach((e) => {
+      if (typeof e === 'string' && e.trim()) pieces(e).forEach(push);
+    });
+  }
+  Object.keys(spec || {}).forEach((k) => {
+    if (RESERVED[k] || k === 'y') return;
+    const v = spec[k];
+    if (typeof v === 'string') pieces(v).forEach(push);
+    else if (Array.isArray(v)) v.forEach((e) => {
+      if (typeof e === 'string' && e.trim()) pieces(e).forEach(push);
+    });
+  });
+  /* y: строки — кривые (числовой y — колонки данных/диапазон оси, не трогаем) */
+  if (spec.y != null) {
+    const ys = Array.isArray(spec.y) ? spec.y : [spec.y];
+    if (ys.length && ys.every((v) => typeof v === 'string')) {
+      ys.forEach((e) => pieces(String(e)).forEach(push));
+      delete spec.y;
+    }
+  }
+  const fl = out.filter(have);
+  if (!fl.length) return spec;
+  /* поверхность: есть y-переменная и нет явного f — это z */
+  const surface = fl.find((e) => /(^|[^a-z])y([^a-z]|$)/i.test(String(e)));
+  if (!spec.f && !spec.z && surface && fl.length === 1) { spec.z = surface; return spec; }
+  spec.f = fl.filter((e) => e !== surface);
+  return spec;
+}
+
 function mountPlotPanels(root) {
   $$('.plot-panel', root).forEach((panel) => {
     if (panel.dataset.live === '1') return;
@@ -4304,37 +4415,10 @@ function mountPlotPanels(root) {
         : '<div class="plot-err">' + esc(e.message || String(e)) + '</div>';
       return;
     }
-    /* синонимы: модель пишет "y"/"func"/"formula" вместо "f" (строки —
-     это кривые; числовой массив в y — диапазон оси для поверхности) */
-    if (!spec.f && !spec.z && spec.y != null) {
-      const ys = Array.isArray(spec.y) ? spec.y : [spec.y];
-      if (ys.length && ys.every((v) => typeof v === 'string')) {
-        spec.f = Array.isArray(spec.y) ? spec.y : spec.y;
-        delete spec.y;
-      }
-    }
-    if (!spec.f && (spec.func || spec.formula || spec.fn)) {
-      spec.f = spec.func || spec.formula || spec.fn;
-    }
-    /* BK: СПАСЕНИЕ ФОРМУЛЫ. Ключи могут быть совсем нестандартными
-       (equation, expr, surface…). Если f/z так и не нашлись — ищем
-       среди ВСЕХ строковых значений первую, что компилируется: с y —
-       поверхность, без — кривая. Раньше это валилось в «нет формул» */
-    if (!spec.f && !spec.z) {
-      for (const key of Object.keys(spec)) {
-        const v = spec[key];
-        const cand = Array.isArray(v) ? v.find((s) => typeof s === 'string') : v;
-        if (typeof cand !== 'string' || !/[a-zA-Z]/.test(cand)) continue;
-        try {
-          const fn = mathCompile(cand);
-          let ok = false;
-          for (let i = 0; i <= 8 && !ok; i++) ok = isFinite(fn(-3 + i, -2 + i * .5));
-          if (!ok) continue;
-          if (/y/.test(cand)) spec.z = cand; else spec.f = [cand];
-          break;
-        } catch (e) { /* не формула — идём дальше */ }
-      }
-    }
+    /* BM13: кривые собираются со ВСЕХ ключей спеки (y-строки, func,
+       g, functions…), «2x и 3» одной строкой делится на две кривые.
+       Прежне «спасение» брало первую компилируемую — вторая пропадала */
+    spec = plotCollectFormulas(spec);
     const kind = panel.dataset.kind || (spec.z ? 'plot3' : 'plot');
     const liveMsg = !!(S.streaming && panel.closest &&
       panel.closest('.msg-ai.live'));
@@ -4402,6 +4486,43 @@ function embedParseSpec(raw) {
   return spec;
 }
 
+/* BM13: ЖИВАЯ КАРТОЧКА AUTO в печатающемся ответе — в момент запуска
+   задачи. Финальный рендер принесёт свою (серверную) карточку — дубль
+   не ставим */
+function embedLiveAuto(ui) {
+  if (!ui || !ui.mdEl || !ui.mdEl.isConnected || ui._liveAuto) return;
+  /* панель живёт в body ПОСЛЕ mdEl: тайпер пересобирает детей mdEl
+     каждый такт — внутрь его вставлять нельзя, сотрёт */
+  const panel = el('div', 'embed-panel');
+  panel.dataset.embed = '{"view": "auto", "title": "что я делаю в фоне"}';
+  ui.mdEl.parentNode.insertBefore(panel, ui.mdEl.nextSibling);
+  /* строим карточку СРАЗУ (в обход отложенного mountEmbedPanels,
+     который во время печати показывает «собираю вкладку…») */
+  let spec = null;
+  try { spec = embedParseSpec(panel.dataset.embed); } catch (e) { spec = null; }
+  if (spec && spec.view) buildEmbedPanel(panel, spec);
+  ui._liveAuto = panel;
+  if (ui.node && ui.node.root && ui.node.root.isConnected) {
+    chaseBottom(msgHost(), ui);
+  }
+}
+
+/* BM13: финальный сверильщик живой AUTO-карточки: серверная вставка
+   пришла в тексте — живая уходит (без дубля); НЕ пришла — живая
+   переезжает В mdEl и остаётся с сообщением как полноценная карточка */
+function embedLiveAutoSettle(ui) {
+  if (!ui || !ui._liveAuto) return;
+  const live = ui._liveAuto;
+  ui._liveAuto = null;
+  setTimeout(() => {
+    if (!live.isConnected) return;
+    const inText = (ui.mdEl && $$('.embed-panel', ui.mdEl)
+      .some((p) => (p.dataset.embed || '').indexOf('"auto"') >= 0));
+    if (inText || !ui.mdEl || !ui.mdEl.isConnected) { live.remove(); return; }
+    ui.mdEl.appendChild(live);
+  }, 1200);
+}
+
 function mountEmbedPanels(root) {
   $$('.embed-panel', root).forEach((panel) => {
     if (panel.dataset.live === '1') return;
@@ -4446,7 +4567,9 @@ function buildEmbedPanel(panel, spec) {
     body.innerHTML = '<div class="emb-empty">' + esc(t) + '</div>';
   };
   if (spec.view === 'auto') {
-    api('/api/tasks').then((r) => {
+    /* BM13: ЖИВАЯ СИНХРОНИЗАЦИЯ. Удалил задачу во вкладке AUTO — карточка
+       в диалоге обновляется сама (раз в 4с, пока карточка на экране) */
+    const draw = (r) => {
       const ts = (r && r.tasks) || [];
       if (!ts.length) { emptyNote('Задач пока нет — попроси меня сделать что-то в фоне.'); return; }
       ts.slice(0, 4).forEach((t) => {
@@ -4478,7 +4601,20 @@ function buildEmbedPanel(panel, spec) {
         row.addEventListener('click', () => showView('auto'));
         body.appendChild(row);
       });
-    }, fail);
+    };
+    api('/api/tasks').then(draw, fail);
+    if (!panel._embSync) {
+      panel._embSync = setInterval(() => {
+        if (!panel.isConnected) { clearInterval(panel._embSync); panel._embSync = null; return; }
+        api('/api/tasks').then((r) => {
+          if (!panel.isConnected) return;
+          const fp = JSON.stringify((r && r.tasks) || []);
+          if (fp === panel._embFp) return;
+          panel._embFp = fp;
+          buildEmbedPanel(panel, spec);
+        }, () => {});
+      }, 4000);
+    }
   } else if (spec.view === 'files') {
     const q = '/api/files/browse?dir=' + (S.chatId
       ? '&chat_id=' + encodeURIComponent(S.chatId) : '');
@@ -4495,7 +4631,17 @@ function buildEmbedPanel(panel, spec) {
       });
     }, fail);
   } else if (spec.view === 'memory') {
+    /* BM13: сбой — честная ошибка (не «память пуста»), вечного ожидания
+       нет: через 8с появляется кнопка повтора */
+    let done = false;
+    const timer = setTimeout(() => {
+      if (!done && !body.children.length) {
+        body.innerHTML = '<div class="emb-empty">Память собирается дольше обычного.</div>';
+      }
+    }, 8000);
     api('/api/memory').then((r) => {
+      done = true; clearTimeout(timer);
+      if (!r || r.ok === false) { fail(new Error('не удалось открыть память')); return; }
       const ms = (r && r.memory) || [];
       if (!ms.length) { emptyNote('Память пуста — расскажи о себе в диалоге, я запомню.'); return; }
       ms.slice(0, 6).forEach((m) => {
@@ -4507,7 +4653,7 @@ function buildEmbedPanel(panel, spec) {
         row.addEventListener('click', () => showView('memory'));
         body.appendChild(row);
       });
-    }, fail);
+    }, (e) => { done = true; clearTimeout(timer); fail(e); });
   } else if (spec.view === 'scenarios') {
     api('/api/scenarios').then((r) => {
       const scs = (r && r.ok && r.scenarios) || [];
@@ -9207,7 +9353,10 @@ function queueResponseFinish(ui, content, success) {
       // появляются в кадре в том же lifecycle, без закрытия диалога.
       if (ui.node.root.isConnected) {
         scrollDown(false, ui);
-        if (panels.length) followGrowingPanel(ui.replyLive || ui.mdEl, 900, ui);
+        /* BM13: финальный рендер растит не только ui-панели: таблицы,
+           графики и мини-вкладки тоже добавляют высоту ПОСЛЕ печати —
+           прежде экран оставался наверху. Догоняет ВСЁ, что выросло */
+        followGrowingPanel(ui.replyLive || ui.mdEl, 1200, ui);
       }
     } finally {
       settleVisualDone(ui);
@@ -9787,6 +9936,11 @@ function handleEvent(ev, ui) {
     }
 
     case 'tool_result': {
+      /* BM13: задача ушла в фон — карточка AUTO появляется В ЖИВОМ ответе
+         сразу, не дожидаясь конца: человек видит задачу в момент старта */
+      if (ev.name === 'schedule_task' && ev.result && ev.result.ok !== false) {
+        embedLiveAuto(ui);
+      }
       if (ui.silent[ev.id || ev.name]) {
         delete ui.silent[ev.id || ev.name];
         termLine((ev.result && ev.result.ok !== false ? '✓ ' : '✕ ') + ev.name, 'sys');
@@ -9999,6 +10153,7 @@ function handleEvent(ev, ui) {
       // допечатывается. Зеленеет и уезжает во вкладку только из финала
       // typer (queueResponseFinish → onTyped) — иначе план «выполнен»
       // раньше, чем прочитан сам ответ. undockPlan идемпотентен.
+      embedLiveAutoSettle(ui);
       queueResponseFinish(ui, ev.content || ui.buffer, true);
       break;
     }
@@ -10006,6 +10161,7 @@ function handleEvent(ev, ui) {
     case 'error':
       showError(ui, ev.error || 'неизвестная ошибка');
       flushTools(ui);
+      embedLiveAutoSettle(ui);
       queueResponseFinish(ui, ui.buffer, false);
       break;
 

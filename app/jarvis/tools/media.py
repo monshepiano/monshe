@@ -1004,12 +1004,47 @@ def _ext_of(url: str, content_type: str) -> str:
                                                   else ".mp3" if ct.startswith("audio/") else "")
 
 
-def show_media(url: str) -> Dict[str, Any]:
+# BM13: ЧТО МОЖЕТ БЫТЬ МЕДИА ВНУТРИ СТРАНИЦЫ. Модель даёт обычную ссылку
+# на страницу (новость, плеер, страницу минусовки) — инструмент сам находит
+# в HTML прямой файл: og:video/og:audio, <video src>, <source src>,
+# <audio src> и голые ссылки на медиа-файлы
+_PAGE_MEDIA_RE = re.compile(
+    r"""(?:property|name)=["'](?:og:video(?::secure_url|:url)?|og:audio(?::secure_url|:url)?|"""
+    r"""twitter:player:stream)["']\s+content=["']([^"']+)["']|"""
+    r"""content=["']([^"']+)["']\s+(?:property|name)=["'](?:og:video(?::secure_url|:url)?|og:audio(?::secure_url|:url)?|twitter:player:stream)["']|"""
+    r"""<(?:video|audio|source)[^>]+src=["']([^"']+)["']|"""
+    r"""["'](https?://[^"'\s]+\.(?:mp4|webm|mov|m4v|mp3|wav|m4a|ogg|opus|aac|flac)(?:\?[^"'\s]*)?)["']""",
+    re.IGNORECASE)
+_PAGE_HTML_LIMIT = 3 * 1024 * 1024   # читаем до 3 МБ html — глубже медиа не лежит
+
+
+def _media_from_page(html: str, base: str) -> str:
+    """Первая прямая медиа-ссылка, найденная в HTML страницы."""
+    for m in _PAGE_MEDIA_RE.finditer(html or ""):
+        for group in m.groups():
+            cand = (group or "").strip()
+            if not cand:
+                continue
+            cand = urllib.parse.urljoin(base, cand)
+            if _YOUTUBE_RE.search(cand):
+                continue
+            low = urllib.parse.urlparse(cand).path.lower()
+            if any(low.endswith("." + e) for e in
+                   ("mp4", "webm", "mov", "m4v", "mp3", "wav", "m4a",
+                    "ogg", "opus", "aac", "flac")):
+                return cand
+            # og:video без расширения — всё равно файл, верим разметке
+            return cand
+    return ""
+
+
+def show_media(url: str, _depth: int = 0) -> Dict[str, Any]:
     """Показать человеку медиа из интернета: картинку, аудио или видео.
 
     Видео открывается нативным плеером и сразу воспроизводится (без звука).
-    Нужна ПРЯМАЯ ссылка на файл; YouTube в России заблокирован — честно
-    отказываем и предлагаем RuTube/VK Видео или прямую ссылку."""
+    Принимает И прямую ссылку на файл, И обычную страницу — сам находит
+    в ней медиа (og:video, плеер, ссылку на файл). YouTube в России
+    заблокирован — честно отказываем и предлагаем RuTube/VK Видео."""
     src = str(url or "").strip()
     if not src:
         return {"ok": False, "error": "нужна ссылка на медиа"}
@@ -1028,6 +1063,30 @@ def show_media(url: str) -> Dict[str, Any]:
             ctype = str(resp.headers.get("Content-Type") or "")
             declared = int(resp.headers.get("Content-Length") or 0)
             low = ctype.split(";")[0].lower()
+            # BM13: ОБЫЧНАЯ СТРАНИЦА — не отказ, а поиск. Читаем html и
+            # достаём прямую ссылку на медиа (og:video, плеер, файл)
+            if ("html" in low or "xml" in low or "json" in low):
+                html = b""
+                while len(html) < _PAGE_HTML_LIMIT:
+                    chunk = resp.read(256 * 1024)
+                    if not chunk:
+                        break
+                    html += chunk
+                text = html.decode("utf-8", "replace")
+                deep = _media_from_page(text, src)
+                if not deep:
+                    return {"ok": False,
+                            "error": "на этой странице не нашлось медиа-файла "
+                                     "(плеер внешний или защищён). Дай прямую "
+                                     "ссылку на файл (mp4/mp3) или другую "
+                                     "страницу — например, RuTube/VK Видео."}
+                # нашли — идём за файлом (страницы-ссылки-на-страницы
+                # ограничены глубиной, цикл A→B→A невозможен)
+                if _depth >= 2:
+                    return {"ok": False,
+                            "error": "слишком много переходов страниц — дай "
+                                     "прямую ссылку на медиа-файл"}
+                return show_media(deep, _depth + 1)
             if low.startswith("image/"):
                 kind = "image"
             elif low.startswith("audio/"):

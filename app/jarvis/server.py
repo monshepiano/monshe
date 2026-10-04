@@ -351,7 +351,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/notifications":
             return self._json({"ok": True, "notifications": db.list_notifications()})
         if path == "/api/memory":
-            agent.repair_legacy_automatic_memories()
+            # BM13: repair сканирует ВСЕ user-сообщения — на пути запроса
+            # он держал открытие мини-вкладки памяти на секунды. Уходил
+            # в фоновый поток при старте (см. run()); здесь — только чтение
             return self._json({"ok": True, "memory": db.recall()})
         if path == "/api/scenarios":
             return self._json({"ok": True, "scenarios": db.list_scenarios()})
@@ -722,9 +724,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # --------------------------------------------------------------- состояние
     def _state(self, day_start: float = 0.0) -> Dict[str, Any]:
-        # Убираем legacy-дубли памяти до первого показа карточек. Функция
-        # process-local idempotent и после первого state-запроса ничего не делает.
-        agent.repair_legacy_automatic_memories()
+        # BM13: legacy-дубли памяти чистятся ФОНОМ при старте (run()),
+        # а не на пути state-запроса: карточки открываются мгновенно
         tasks = db.list_tasks(limit=50)
         active = [t for t in tasks if t.get("status") in ("running", "queued", "scheduled", "paused")]
         # UI glow означает именно выполняемую сейчас работу. Очередь и расписание
@@ -1169,10 +1170,17 @@ class Handler(BaseHTTPRequestHandler):
             # файл или сохранил факт — сервер прикладывает живую мини-вкладку
             # к ответу, не полагаясь на память модели
             mem_now = _memory_mark()
+            # memory_facts: входной parser сохранил факт ДО снимка mem_mark —
+            # сравнение его не видит, берём из факта сохранения напрямую
+            try:
+                facts_saved = bool(memory_facts)
+            except NameError:
+                facts_saved = False
             final_text = agent.auto_embed_block(
                 final_text, used_tools,
-                memory_changed=bool(mem_mark is not None and mem_now is not None
-                                    and mem_mark != mem_now))
+                memory_changed=(facts_saved or
+                                bool(mem_mark is not None and mem_now is not None
+                                     and mem_mark != mem_now)))
             # ХОД-ВОПРОС НЕ ПРОПАДАЕТ: ask_user и ходы с инструментами часто
             # не имеют текста вовсе — раньше такой ответ не сохранялся, и при
             # открытии диалога исчезали вопрос, интерактивная панель и трасса.
@@ -1360,6 +1368,11 @@ def run() -> None:
     # экрана они уже в кэше; дальше обновляются фоном раз в сутки
     threading.Thread(target=ideas.refresh_ai_async, name="jarvis-ideas",
                      daemon=True).start()
+    # BM13: ЧИСТКА LEGACY-ПАМЯТИ — фоном при старте, а не в первом же
+    # /api/memory или /api/state: скан всех сообщений не должен
+    # задерживать открытие мини-вкладки памяти
+    threading.Thread(target=agent.repair_legacy_automatic_memories,
+                     name="jarvis-mem-repair", daemon=True).start()
     # BM6: дозор провайдеров — зонд каждые 45 секунд (при сбое каждые 10).
     # Мёртвый провайдер обходится сразу, восстановление подхватывается само.
     try:

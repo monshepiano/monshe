@@ -3263,7 +3263,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.83", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.84", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -5453,7 +5453,9 @@ class IterationBFTests(unittest.TestCase):
         # скудная тема не выкидывает живые реплики; таймаут nano 9с
         fn = ag.split("def suggest_replies_ai(")[1].split("\ndef ")[0]
         self.assertIn("items = themed or parsed", fn)
-        self.assertIn('tier="nano", timeout=14', fn)  # BM10: медленный провайдер не убивает подсказки
+        # BM13: вызов вынесен в _ask_suggestions(system, tier) — nano + retry base
+        self.assertIn("def _ask_suggestions(system_text, tier):", fn)
+        self.assertIn("tier=tier, timeout=14", fn)  # BM10: медленный провайдер не убивает подсказки
 
     def test_bf3_dot_higher_always_visible_solid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5950,9 +5952,10 @@ class IterationBKTests(unittest.TestCase):
         self.assertIn(".replace(/[·×]/g, '*')", js)
         self.assertIn(".replace(/[−–—]/g, '-')", js)
         self.assertIn("if (tk.length === 1) { implicit(); out.push('x');", js)
-        # спасение формулы из нестандартного ключа
-        self.assertIn(
-            "const cand = Array.isArray(v) ? v.find((s) => typeof s === 'string') : v;", js)
+        # BM13: формулы собираются со ВСЕХ ключей спеки (y-строки, g,
+        # functions…), «2x и 3» одной строкой — две кривые
+        self.assertIn("function plotCollectFormulas(spec)", js)
+        self.assertIn("spec.f = fl.filter((e) => e !== surface);", js)
 
     def test_bk7_pan_survives_rebuild(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -6287,7 +6290,8 @@ class IterationBM4Tests(unittest.TestCase):
     def test_side_calls_marked_background(self) -> None:
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
         self.assertIn('operation="planner",' + chr(10) + '                   background=True', src)
-        self.assertIn('operation="reply_suggestions_ai",' + chr(10) + '           background=True', src)
+        self.assertIn('operation="reply_suggestions_ai",' + chr(10)
+                      + '               background=True', src)
         ideas_src = Path("app/jarvis/ideas.py").read_text(encoding="utf-8")
         self.assertIn('operation="welcome_ideas", background=True', ideas_src)
 
@@ -7085,8 +7089,10 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn("const SPACES = ['chat', 'math', 'music'];", js)
         self.assertIn("function setSpace(name, dir)", js)
         self.assertIn("initSpaces();", js)
-        # свайп двумя пальцами: колесо с deltaX, быстрый порог
-        self.assertIn("Math.abs(e.deltaX) < 24", js)
+        # свайп двумя пальцами: колесо с deltaX, быстрый порог;
+        # BM13: ОДИН переход за жест — arm/disarm
+        self.assertIn("const dx = Math.abs(e.deltaX);", js)
+        self.assertIn("if (dx < 10) { swipeArmed = true; return; }", js)
         self.assertIn("if (now - lastSwipe < 280) return;", js)
         # старт всегда в CHAT
         self.assertIn("spaceApply('chat');", js)
@@ -7101,9 +7107,12 @@ class IterationBM8Tests(unittest.TestCase):
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
         self.assertIn("show_media — картинка, аудио или видео из интернета", src)
         flat = " ".join(src.split())
+        # BM13: страница — тоже валидный вход; отказ без попытки запрещён
         self.assertIn(
             "НИКОГДА не говори «не могу передать аудио- или видеоконтент» "
-            "— show_media это умеет", flat)
+            "и «не смог найти прямую ссылку» без попытки show_media "
+            "со страницей", flat)
+        self.assertIn("он сам найдёт медиа внутри страницы", flat)
 
     def test_bm11_embed_rule_and_fences(self) -> None:
         """Мини-вкладки: правило в промпте + фенс в markdown + карточка в app.js."""
@@ -7143,8 +7152,12 @@ class IterationBM8Tests(unittest.TestCase):
     def test_bm11_root_degree_lower(self) -> None:
         """Степень корня в границах самого корня: ниже и левее."""
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("left:-.36em;width:.34em", css)
-        self.assertIn("top:0;font-size:.62em", css)
+        md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
+        # BM13: степень живёт ВНУТРИ рамки корня — не наезжает на скобку слева
+        self.assertIn("msqrt' + (root ? ' msqrt-i' : ''", md)
+        self.assertIn(".msqrt.msqrt-i{padding-left:1.46em}", css)
+        self.assertIn(".msqrt.msqrt-i .msq-i{left:auto;right:calc(100% - .98em);width:auto}", css)
+        self.assertIn("top:0;font-size:.58em", css)
         self.assertIn(".mfr-d .msqrt{margin-top:.22em}", css)
 
     def test_bm11_dock_untouched_spaces_flyout(self) -> None:
@@ -7201,9 +7214,11 @@ class IterationBM8Tests(unittest.TestCase):
         # промпт: перечисление и вопросы о состоянии — всегда карточкой
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
         flat = " ".join(src.split())
-        self.assertIn("текстовый перечень этих сущностей запрещён", flat)
+        # BM13: B-смягчение — текст допустим, карточка дополняет
+        self.assertIn("текст допустим, но живая карточка дополнит его состоянием", flat)
         self.assertIn("ВОПРОС О СОСТОЯНИИ", flat)
-        self.assertIn("никогда одним текстовым списком", flat)
+        self.assertIn("ничего не запускай и не создавай по своей инициативе", flat)
+        self.assertIn("вставь ```embed auto СРАЗУ в этот же ответ", flat)
 
     def test_bm12_implicit_multiplication(self) -> None:
         """Парсер формул понимает «2x», «2sin(x)», «-2x» — прежде молча NaN."""
@@ -7231,7 +7246,8 @@ class IterationBM8Tests(unittest.TestCase):
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
         flat = " ".join(src.split())
         self.assertIn("МЕДИА ИЗ ИНТЕРНЕТА — ФАЙЛОМ, А НЕ ССЫЛКОЙ", flat)
-        self.assertIn("голая ссылка вместо файла — ошибка", flat)
+        self.assertIn("Голая ссылка вместо файла — ошибка", flat)
+        self.assertIn("попробуй другой сайт или поисковый запрос, а не сдавайся", flat)
         reg = Path("app/jarvis/tools/__init__.py").read_text(encoding="utf-8")
         self.assertIn("ФАЙЛОМ прямо в диалоге", " ".join(reg.split()))
 
@@ -7249,8 +7265,9 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn(".sp-ico.off{display:none}", css)
         self.assertIn(".sp-eye.off::after", css)
         self.assertIn(".sp-set-row.off{opacity:.4;filter:saturate(.3)}", css)
-        # все пространства скрыты: ряд пуст, шестерёнка вверх к LIVE
-        self.assertIn(".spaces.no-spaces .sp-row{display:none}", css)
+        # все НЕ-чатовые скрыты: ряд с чатом исчезает С АНИМАЦИЕЙ (BM13),
+        # шестерёнка вверх к LIVE
+        self.assertIn(".spaces.no-spaces .sp-row{opacity:0;transform:scale(.42);", css)
         self.assertIn(".spaces.no-spaces .sp-ico.sp-set{top:14px}", css)
 
     def test_bm12_dock_collapse_squeeze(self) -> None:
@@ -7263,7 +7280,11 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn(".side-folding .spaces{opacity:0;transform:scale(.42);", css)
         self.assertIn(".app.docked .spaces{display:none}", css)
         self.assertIn(".app.collapsed .space-future{display:none!important}", css)
-        self.assertIn(".app.collapsed .nav.space-off{display:flex!important}", css)
+        # BM13: в чужих пространствах вкладки чата в доке НЕ показываем;
+        # под кнопками дока — полоса на всю ширину с размытой границей
+        self.assertNotIn(".app.collapsed .nav.space-off{display:flex!important}", css)
+        self.assertIn(".app.collapsed .sp-dock::before{", css)
+        self.assertIn("filter:blur(4px)", css)
 
     def test_bm12_space_chrome_instant(self) -> None:
         """Клик по пространству красит иконки/глайдер мгновенно, не после анимации."""
@@ -7288,6 +7309,289 @@ class IterationBM8Tests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         self.assertIn("day_start=' + dayStart", js)
         self.assertIn("getFullYear(), d.getMonth(), d.getDate()", js)
+
+
+class IterationBM13Tests(unittest.TestCase):
+    """BM13 — чипы (несуществующая nano-модель → фолбэк base), все кривые
+    графика, корень без наездов, скролл-догон, живая AUTO-карточка,
+    мгновенная память, пространства по 10 пунктам, медиа со страниц."""
+
+    def test_bm13_nano_fallback_to_base_model(self) -> None:
+        """Чипы: несуществующая у провайдера nano-модель не убивает подсказки."""
+        llm_src = Path("app/jarvis/llm.py").read_text(encoding="utf-8")
+        # фолбэк прямо в chat(): tier≠base без каталога → модель base
+        self.assertIn("model = pick_model(\"base\", prov)", llm_src)
+        cfg = Path("app/jarvis/config.py").read_text(encoding="utf-8")
+        # первопричина: чужое имя в первом pref nano оставляем как есть —
+        # фолбэк обязан работать ДАЖЕ с кривым списком
+        self.assertIn("ai-sage/GigaChat3-10B-A1.8B", cfg)
+
+    def test_bm13_suggestions_retry_with_base(self) -> None:
+        """Nano упал — ОДИН повтор базовой моделью; обе упали — шаблоны."""
+        from jarvis import agent as ag
+        calls = []
+
+        def fake_chat(messages, tier="base", **kw):
+            calls.append(tier)
+            if tier == "nano":
+                raise RuntimeError("404 model not found")
+            return {"content": '["открой график продаж", '
+                               '"сравни с прошлым месяцем", "посчитай итог"]'}
+
+        long_answer = ("Вот подробный анализ графика продаж за квартал "
+                       "с выводами и прогнозом на следующий месяц.")
+        with mock.patch.object(ag.llm, "chat", side_effect=fake_chat):
+            items = ag.suggest_replies_ai("посмотри график", long_answer,
+                                          tools_used=["run_python"])
+        self.assertEqual(calls, ["nano", "base"])
+        self.assertTrue(items)
+        self.assertIn("открой график продаж", items)
+
+        # nano жива — base не дёргается вовсе
+        calls.clear()
+
+        def ok_chat(messages, tier="base", **kw):
+            calls.append(tier)
+            return {"content": '["открой график продаж", '
+                               '"сравни с прошлым месяцем", "посчитай итог"]'}
+
+        with mock.patch.object(ag.llm, "chat", side_effect=ok_chat):
+            ag.suggest_replies_ai("посмотри график", long_answer,
+                                  tools_used=["run_python"])
+        self.assertEqual(calls, ["nano"])
+
+        # обе модели легли — честный шаблонный запас, не пусто
+        calls.clear()
+
+        def dead_chat(messages, tier="base", **kw):
+            calls.append(tier)
+            raise RuntimeError("provider down")
+
+        with mock.patch.object(ag.llm, "chat", side_effect=dead_chat):
+            items = ag.suggest_replies_ai("посмотри график", long_answer,
+                                          tools_used=["run_python"])
+        self.assertEqual(calls, ["nano", "base"])
+        self.assertTrue(items)
+
+    def test_bm13_media_from_page(self) -> None:
+        """Страница — валидный вход: og:video → файл; пустая — внятный отказ."""
+        import jarvis.tools.media as med
+        import pathlib, tempfile
+
+        page = ('<html><head><meta property="og:video" '
+                'content="https://cdn.example.net/cat.mp4"/></head>'
+                '<body>player</body></html>').encode("utf-8")
+
+        class Resp:
+            def __init__(self, body, ctype):
+                self._b = body
+                self.headers = {"Content-Type": ctype,
+                                "Content-Length": str(len(body))}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self, n=-1):
+                # честный потоковый read: буфер исчерпывается, циклы
+                # чтения страницы/файла заканчиваются, а не крутятся вечно
+                if n and n > 0:
+                    out, self._b = self._b[:n], self._b[n:]
+                else:
+                    out, self._b = self._b, b""
+                return out
+
+        tmpdir = pathlib.Path(tempfile.mkdtemp())
+
+        def fake_urlopen(req, timeout=0, context=None):
+            if req.full_url.endswith(".mp4"):
+                return Resp(b"FAKEVIDEOBYTES123", "video/mp4")
+            if req.full_url.endswith(".html"):
+                return Resp(page, "text/html; charset=utf-8")
+            raise AssertionError("unexpected url " + req.full_url)
+
+        class FakeSandbox:
+            @staticmethod
+            def safe_path(name): return tmpdir / name
+            @staticmethod
+            def dl(name): return "/dl/" + name
+
+        with mock.patch.object(med.urllib.request, "urlopen",
+                               side_effect=fake_urlopen), \
+             mock.patch.object(med, "sandbox", FakeSandbox):
+            res = med.show_media("https://example.com/watch.html")
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["kind"], "video")
+        self.assertTrue((tmpdir / res["name"]).exists())
+        self.assertEqual((tmpdir / res["name"]).read_bytes(),
+                         b"FAKEVIDEOBYTES123")
+
+        # страница без медиа — внятный отказ с подсказкой, что дать вместо
+        empty = Resp(b"<html><body>just text</body></html>",
+                     "text/html; charset=utf-8")
+
+        def fake_empty(req, timeout=0, context=None):
+            return empty
+
+        with mock.patch.object(med.urllib.request, "urlopen",
+                               side_effect=fake_empty):
+            res2 = med.show_media("https://example.com/nowatch.html")
+        self.assertFalse(res2["ok"])
+        self.assertIn("не нашлось медиа-файла", res2["error"])
+        self.assertIn("прямую", res2["error"])
+
+    def test_bm13_plot_draws_all_curves(self) -> None:
+        """«2x и 3» — обе кривые: сбор со всех ключей спеки, без break."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        collector = js.split("function plotCollectFormulas(spec)")[1] \
+            .split("\nfunction ")[0]
+        # «2x и 3» одной строкой делится на две кривые
+        self.assertIn("split(/\\s*(?:,|;|\\sи\\s)\\s*/)", collector)
+        # y-строки — кривые даже при занятом f (прежде: только если f пуст)
+        self.assertIn("ys.every((v) => typeof v === 'string')", collector)
+        # поверхность с y-переменной при пустом f — это z
+        self.assertIn("spec.z = surface;", collector)
+        # числовой y (диапазон оси) не превращается в кривую
+        self.assertIn("delete spec.y", collector)
+        self.assertIn("spec = plotCollectFormulas(spec);", js)
+
+    def test_bm13_root_degree_inside_box(self) -> None:
+        """Степень корня — внутри рамки корня: не наезжает на скобку слева."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
+        self.assertIn("msqrt' + (root ? ' msqrt-i' : ''", md)
+        self.assertIn(".msqrt.msqrt-i{padding-left:1.46em}", css)
+        self.assertIn(".msqrt.msqrt-i .msq-i{left:auto;right:calc(100% - .98em)",
+                      css)
+        # прежний вынос за левый край — запрещён (правило, не комментарий)
+        self.assertNotIn(".msq-i{position:absolute;top:0;left:-.36em", css)
+        self.assertNotIn("left:-.36em;width", css)
+
+    def test_bm13_scroll_catches_final_render_growth(self) -> None:
+        """Финальный рендер (таблицы/графики/вкладки) — экран догоняет."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("ui.onTyped = () => {", js)
+        # onTyped встречается дважды (typeAutoReply и главный) — берём хвост
+        typed = js.split("ui.onTyped = () => {").pop()
+        self.assertIn("followGrowingPanel(ui.replyLive || ui.mdEl, 1200, ui)",
+                      typed)
+
+    def test_bm13_live_auto_card_at_task_start(self) -> None:
+        """AUTO-карточка появляется В МОМЕНТ запуска задачи, не после ответа."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("function embedLiveAuto(ui)", js)
+        self.assertIn("function embedLiveAutoSettle(ui)", js)
+        self.assertIn("ev.name === 'schedule_task'", js)
+        live_spec = ("panel.dataset.embed = '{"
+                     + '"view": "auto", "title": "что я делаю в фоне"'
+                     + "}'")
+        self.assertIn(live_spec, js)
+        # дубль не ставим: серверная карточка пришла — живая уходит
+        self.assertIn("const inText = (ui.mdEl && $$('.embed-panel', ui.mdEl)", js)
+    def test_bm13_auto_card_realtime_sync(self) -> None:
+        """Удаление фоновой задачи видно в карточке без перезагрузки."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        auto_part = js.split("if (spec.view === 'auto')")[1] \
+            .split("} else if (spec.view === 'files')")[0]
+        self.assertIn("setInterval", auto_part)
+        self.assertIn("panel._embFp", auto_part)
+        self.assertIn("clearInterval(panel._embSync)", auto_part)
+
+    def test_bm13_memory_tab_instant(self) -> None:
+        """/api/memory без тяжёлого repair: чистка уехала в фон при старте."""
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        mem_block = srv.split('if path == "/api/memory":')[1] \
+            .split('if path == "/api/scenarios"')[0]
+        self.assertNotIn("repair_legacy_automatic_memories()", mem_block)
+        self.assertIn('name="jarvis-mem-repair"', srv)
+        # компакция — по отпечатку данных, а не на каждый recall
+        dbs = Path("app/jarvis/db.py").read_text(encoding="utf-8")
+        self.assertIn("COALESCE(MAX(updated_at), 0)", dbs)
+        self.assertIn("COALESCE(MAX(rowid), 0) FROM memory", dbs)
+        self.assertIn("if fp is not None and fp == _COMPACT_FP:", dbs)
+
+    def test_bm13_spaces_chat_not_hideable(self) -> None:
+        """Чат не скрывается: в списке видимости только НЕ-чат."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        loader = js.split("function spacesVisibleLoad()")[1] \
+            .split("\nfunction ")[0]
+        self.assertIn("n !== 'chat'", loader)
+        self.assertIn("n !== 'chat'", js.split("SPACES.filter((n) => "
+                                               "n !== 'chat')")[0]
+                     if "SPACES.filter((n) => n !== 'chat')" in js else loader)
+        settings = js.split("function buildSpaceSettings()")[1] \
+            .split("\nfunction ")[0]
+        self.assertIn("chat-fixed", settings)
+        self.assertIn("настройки отображения", settings)
+        # скрыли текущее — возврат в чат
+        toggle = js.split("function spaceToggleVisible(name)")[1] \
+            .split("\nfunction ")[0]
+        self.assertIn("setSpace('chat')", toggle)
+        # чат доступен всегда
+        setsp = js.split("function setSpace(name, dir)")[1] \
+            .split("\nfunction ")[0]
+        self.assertIn("name !== 'chat' && S.spacesVisible.indexOf(name) < 0",
+                      setsp)
+
+    def test_bm13_spaces_glass_settings_and_close_outside(self) -> None:
+        """Панель настроек — стекло + заголовок + закрытие тапом вне."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("backdrop-filter:blur(16px) saturate(1.35)", css)
+        self.assertIn(".sp-set-title{", css)
+        self.assertIn("transform:scale(.55);transform-origin:100% 0", css)
+        self.assertIn(".sp-set-row.chat-fixed{", css)
+        # закрытие тапом вне
+        init = js.split("function initSpaces()")[1].split("\nfunction ")[0]
+        self.assertIn("document.addEventListener('click', () => {", init)
+        self.assertIn("setPanel.classList.remove('open')", init)
+
+    def test_bm13_caps_names_and_hollow_chat_icon(self) -> None:
+        """Имена капсом CHAT/MATH/MUSIC; иконка чата полая и тихая."""
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn('data-space="chat" data-tip="CHAT"', html)
+        self.assertIn('data-space="math" data-tip="MATH"', html)
+        self.assertIn('data-space="music" data-tip="MUSIC"', html)
+        self.assertIn('data-tip="настройки отображения"', html)
+        # полая иконка: stroke вместо fill в SPACE_META и в html
+        chat_block = js.split("chat: { name: 'CHAT'")[1].split("},")[0]
+        self.assertIn('fill="none" stroke="currentColor"', chat_block)
+        # тихая: без ярко-синей заливки и свечения
+        self.assertIn(".sp-ico.base{color:var(--tx3);", css)
+        self.assertIn(".sp-ico.base.sel{filter:none}", css)
+        self.assertIn(".spd-cur{color:var(--tx3)}", css)
+
+    def test_bm13_live_fill_from_center(self) -> None:
+        """LIVE hover — заливка светом из центра, однородно."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn(".sp-mode::after{", css)
+        self.assertIn("border-radius:50%", css)
+        self.assertIn("transform:scale(0)", css)
+        self.assertIn(".sp-mode:hover::after{transform:scale(2.6)}", css)
+
+    def test_bm13_chat_list_scrollbar_only_while_scrolling(self) -> None:
+        """Скроллбар списка диалогов живёт только во время скролла."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("scrollbar-color:transparent transparent", css)
+        self.assertIn(".chat-list.scr{", css)
+        self.assertIn("mask-image:linear-gradient(180deg,transparent 0,"
+                      "#000 14px", css)
+        self.assertIn("cl.classList.add('scr')", js)
+
+    def test_bm13_embed_head_dense(self) -> None:
+        """Шапка мини-вкладок плотнее — как вкладки инструментов агента."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn(".emb-head{display:flex;align-items:center;gap:7px;"
+                      "padding:5px 10px", css)
+        self.assertIn("font:600 9.5px/1 var(--ff);letter-spacing:1.9px", css)
+
+    def test_bm13_memory_embed_honest_errors(self) -> None:
+        """Карточка памяти: сбой — честная ошибка, не «память пуста»; таймаут."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        mem = js.split("} else if (spec.view === 'memory')")[1] \
+            .split("} else if (spec.view === 'scenarios')")[0]
+        self.assertIn("Память собирается дольше обычного", mem)
+        self.assertIn("fail(new Error('не удалось открыть память'))", mem)
 
 
 if __name__ == "__main__":

@@ -1086,6 +1086,17 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
             continue
         pctx = _ssl_ctx_for(conf)
         payload = _build_payload(model, messages, tools, False, temperature, max_tokens, prov, tier)
+        # BM13: НАЗВАНИЕ МОДЕЛИ МОЖЕТ НЕ СУЩЕСТВОВАТЬ у этого провайдера:
+        # в nano-списке имена чужих площадок (ai-sage/…), и без каталога
+        # выбиралось первое предпочтение — 404 на КАЖДОМ вызове. Пока
+        # каталог не пришёл, tier != base честно пробует БАЗОВУЮ модель
+        # (она отвечает — главные ответы работают), а не умирает
+        with _CACHE_LOCK:
+            _have_models = bool(_META_CACHE.get(prov))
+        if tier != "base" and not _have_models:
+            model = pick_model("base", prov)
+            payload = _build_payload(model, messages, tools, False,
+                                     temperature, max_tokens, prov, "base")
         for attempt in range(2):
             t_attempt = time.monotonic()
             remaining = deadline - time.monotonic()

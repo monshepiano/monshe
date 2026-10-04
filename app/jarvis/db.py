@@ -615,9 +615,30 @@ def canonical_memory(kind: str, key: str, value: str) -> tuple[str, str, str, st
     return clean_kind, clean_key, clean_value, clean_kind + ":" + token
 
 
+_COMPACT_FP: Any = None
+
+
 def _compact_memory() -> None:
-    """Схлопнуть алиасы уже существующей базы при первом открытии новой версии."""
+    """Схлопнуть алиасы уже существующей базы при первом открытии новой версии.
+
+    BM13: тяжёлая компакция (полный скан memory + группировка) больше не
+    выполняется на КАЖДЫЙ recall(): перед ней — дешёвый отпечаток таблицы
+    (COUNT + MAX(updated_at) + MAX(rowid)). Данные не менялись с прошлой
+    компакции — мгновенный выход; изменились (в т.ч. прямым SQL) —
+    компакция обязательна. recall держит открытие мини-вкладки памяти
+    и обязан быть быстрым."""
+    global _COMPACT_FP
     with _LOCK:
+        try:
+            row = _CONN.execute(
+                "SELECT COUNT(*), COALESCE(MAX(updated_at), 0), "
+                "COALESCE(MAX(rowid), 0) FROM memory").fetchone()
+            fp = tuple(row) if row else None
+        except Exception:
+            fp = None
+        if fp is not None and fp == _COMPACT_FP:
+            return
+        _COMPACT_FP = fp
         rows = [dict(row) for row in _CONN.execute("SELECT * FROM memory").fetchall()]
         groups: Dict[str, List[Dict[str, Any]]] = {}
         for row in rows:
