@@ -1862,10 +1862,14 @@ class DirectDelayedDeliveryTests(unittest.TestCase):
         headless.assert_not_called()
         notify.assert_not_called()
         update.assert_any_call("timer-1", status="done", resume_status="", progress=1.0, result="привет")
-        add_message.assert_called_once_with(
-            "chat-1", "assistant", "привет",
-            {"task_id": "timer-1", "from_auto": True, "files": [], "title": "Приветствие"},
-        )
+        # BM12: тихий прогон прикладывает карточку AUTO сам
+        sent_content = add_message.call_args[0][2]
+        self.assertIn("привет", sent_content)
+        self.assertIn('```embed', sent_content)
+        self.assertIn('"view": "auto"', sent_content)
+        self.assertEqual(add_message.call_args[0][3],
+                         {"task_id": "timer-1", "from_auto": True,
+                          "files": [], "title": "Приветствие"})
         self.assertNotIn("timer-1", auto._RUNNING)
 
 
@@ -3259,7 +3263,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.82", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.83", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4611,8 +4615,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.82", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.82", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.83", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.83", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5863,7 +5867,7 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.82", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.83", html)
 
 
 
@@ -5963,7 +5967,7 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.82", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.83", html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -7161,6 +7165,45 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn("ДАННЫЕ ВАЖНЕЕ диапазона из спеки", js)
         self.assertIn("ПУСТАЯ ПЛОСКОСТЬ ЗАПРЕЩЕНА", js)
         self.assertIn("panel._emptyGuard", js)
+
+    def test_bm12_auto_embed_after_tool_run(self) -> None:
+        """Карточка вкладки — сама после прогона с изменениями (A+B+D)."""
+        # задача запущена — карточка AUTO
+        out = agent.auto_embed_block("Поставил задачу.", ["schedule_task"])
+        self.assertIn('```embed', out)
+        self.assertIn('"view": "auto"', out)
+        self.assertIn('"title": "что я делаю в фоне"', out)
+        # файл создан — карточка ФАЙЛОВ
+        out = agent.auto_embed_block("Готово.", ["write_file", "run_python"])
+        self.assertIn('"view": "files"', out)
+        # факт сохранён (инструментом или фоновым parser'ом) — карточка ПАМЯТИ
+        self.assertIn('"view": "memory"',
+                      agent.auto_embed_block("Запомнил.", ["remember"]))
+        self.assertIn('"view": "memory"',
+                      agent.auto_embed_block("Запомнил.", [], memory_changed=True))
+        # модель уже дала карточку — дубль не создаём
+        done = "вот\n```embed\n{}\n```"
+        self.assertEqual(agent.auto_embed_block(done, []), done)
+        # ничего не изменилось — ответ не трогаем
+        self.assertEqual(agent.auto_embed_block("просто ответ", []), "просто ответ")
+        # пустой ответ с задачей — карточка и так живёт
+        self.assertTrue(agent.auto_embed_block("", ["schedule_task"])
+                        .startswith("```embed"))
+
+    def test_bm12_auto_embed_wired_everywhere(self) -> None:
+        """Авто-карточка подключена: чат-прогон, тихий прогон, промпт."""
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertIn("def _memory_mark():", srv)
+        self.assertIn("mem_mark = _memory_mark()", srv)
+        self.assertIn("final_text = agent.auto_embed_block(", srv)
+        auto = Path("app/jarvis/auto.py").read_text(encoding="utf-8")
+        self.assertIn('agent.auto_embed_block(content, ["schedule_task"])', auto)
+        # промпт: перечисление и вопросы о состоянии — всегда карточкой
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        flat = " ".join(src.split())
+        self.assertIn("текстовый перечень этих сущностей запрещён", flat)
+        self.assertIn("ВОПРОС О СОСТОЯНИИ", flat)
+        self.assertIn("никогда одним текстовым списком", flat)
 
     def test_bm12_implicit_multiplication(self) -> None:
         """Парсер формул понимает «2x», «2sin(x)», «-2x» — прежде молча NaN."""

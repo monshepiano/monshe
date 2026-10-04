@@ -249,6 +249,9 @@ def _execute_reserved(task: Dict[str, Any], cancelled: threading.Event) -> None:
         # Результат показываем ОДИН раз. Уведомление нужно только тогда, когда
         # ответ некуда положить — если задача пришла из диалога, ответ и есть оно.
         if task.get("chat_id"):
+            # BM12: тихий прогон тоже меняет вкладку AUTO — карточка
+            # прикладывается к результату сама
+            content = agent.auto_embed_block(content, ["schedule_task"])
             db.add_message(task["chat_id"], "assistant", content,
                            {"task_id": task_id, "from_auto": True,
                             "files": files, "title": task.get("title", "")})

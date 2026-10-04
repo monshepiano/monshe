@@ -973,6 +973,9 @@ class Handler(BaseHTTPRequestHandler):
                 "ответь только на новое сообщение."})
         messages.append(user_message)
 
+        # BM12: память ДО прогона — сравнение после ответа покажет, был ли
+        # сохранён новый факт (включая фоновую структуризацию на входе)
+        mem_mark = _memory_mark()
         # Регистрация прогона для Stop: флаг отмены + контрольная функция.
         # Обрыв соединения отменяет только computer-use (кликать по экрану без
         # зрителя нельзя); обычный чат по-прежнему доигрывается молча и
@@ -1162,6 +1165,14 @@ class Handler(BaseHTTPRequestHandler):
                     _RUN_EVENTS.pop(chat_id, None)
             if not final_text:
                 final_text = _canonical_response_content(partial, "")
+            # BM12: КАРТОЧКА ВКЛАДКИ — САМА. Прогон запустил задачу, создал
+            # файл или сохранил факт — сервер прикладывает живую мини-вкладку
+            # к ответу, не полагаясь на память модели
+            mem_now = _memory_mark()
+            final_text = agent.auto_embed_block(
+                final_text, used_tools,
+                memory_changed=bool(mem_mark is not None and mem_now is not None
+                                    and mem_mark != mem_now))
             # ХОД-ВОПРОС НЕ ПРОПАДАЕТ: ask_user и ходы с инструментами часто
             # не имеют текста вовсе — раньше такой ответ не сохранялся, и при
             # открытии диалога исчезали вопрос, интерактивная панель и трасса.
@@ -1212,6 +1223,20 @@ class Handler(BaseHTTPRequestHandler):
                 "error" if run_error else "ok", model=runner.model_used,
                 tier=selected_tier, tool_count=len(used_tools),
                 error_type=run_error or None)
+
+
+def _memory_mark():
+    """Снимок памяти до прогона: (число фактов, самая свежая метка).
+
+    BM12: если за время ответа память изменилась (локальный parser сохранил
+    новый факт в фоне) — к ответу автоматически прикладывается карточка
+    вкладки памяти."""
+    try:
+        rows = db.query("SELECT COUNT(*) AS c, COALESCE(MAX(created_at), 0) AS m "
+                        "FROM memory")
+        return (int(rows[0]["c"]), rows[0]["m"]) if rows else (0, 0)
+    except Exception:
+        return None
 
 
 # BM3: SINGLE-FLIGHT ПОДСКАЗОК. Раньше на один ответ поднимались ДВА
