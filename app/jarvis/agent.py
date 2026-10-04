@@ -2824,8 +2824,8 @@ class Agent:
                     # попытку и запрос ушёл к резервному. Человек видит честную
                     # строку вместо мёртвого «думаю» — и знает, что это
                     # провайдер тормозит, а не он сам что-то сломал
-                    label = {"cloudru": "Cloud.ru", "deepseek": "DeepSeek"}.get(
-                        str(event.get("from") or ""), str(event.get("from") or "провайдер"))
+                    label = llm.provider_display(
+                        str(event.get("from") or "")) or "провайдер"
                     yield {"type": "status",
                            "text": "%s отвечает медленно — пробую резервную модель" % label,
                            "phase": "think"}

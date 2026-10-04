@@ -340,6 +340,108 @@ def _gateway_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
         raise GigaChatError("не удалось связаться с облачной генерацией: %s" % exc) from None
 
 
+# BM6: ГЕНЕРАЦИЯ КАРТИНОК ЧЕРЕЗ YANDEX AI STUDIO — тот же ключ и folder_id,
+# что у текстового провайдера yandex. YandexART работает асинхронно:
+# ставим операцию в очередь, затем опрашиваем до готовности. Долгая
+# генерация — не ошибка (BM5), ждём до трёх минут.
+_YANDEX_ASYNC_URL = ("https://ai.api.cloud.yandex.net/foundationModels"
+                     "/v1/imageGenerationAsync")
+_YANDEX_OPERATIONS_URL = "https://operation.api.cloud.yandex.net/operations/"
+
+
+def _gcd(a: int, b: int) -> int:
+    while b:
+        a, b = b, a % b
+    return a or 1
+
+
+def _yandex_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
+    """Картинка через YandexART: ключ берём у провайдера yandex из конфига."""
+    conf = CONFIG.get("providers.yandex", {}) or {}
+    api_key = str(conf.get("api_key") or "").strip()
+    folder = str(conf.get("folder_id") or "").strip()
+    if not api_key or not folder:
+        raise GigaChatError("для Яндекса нужен ключ и folder_id "
+                            "(Настройки → Yandex AI Studio)")
+    model = str(CONFIG.get("media.yandex_image_model", "yandex-art")
+                or "yandex-art").strip().rstrip("/")
+    w = max(256, min(int(width or 1024), 2048))
+    h = max(256, min(int(height or 1024), 2048))
+    g = _gcd(w, h)
+    payload = {
+        "modelUri": "art://%s/%s/latest" % (folder, model),
+        "generationOptions": {
+            "aspectRatio": {"widthRatio": str(w // g), "heightRatio": str(h // g)},
+        },
+        "messages": [{"text": str(prompt or "")[:500]}],
+    }
+
+    def _post(auth_scheme: str) -> Dict[str, Any]:
+        headers = {"Content-Type": "application/json", "User-Agent": _UA}
+        headers["Authorization"] = ((auth_scheme + " ") + api_key)
+        req = urllib.request.Request(
+            _YANDEX_ASYNC_URL, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=30, context=_ssl_context()) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    try:
+        op = _post("Api-Key")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:      # редкая конфигурация шлюза — пробуем Bearer
+            op = _post("Bearer")
+        else:
+            raise
+    op_id = str(op.get("id") or "")
+    if not op_id:
+        raise GigaChatError("Яндекс не принял запрос на генерацию")
+
+    deadline = time.monotonic() + 170.0
+    poll_errors = 0
+    while time.monotonic() < deadline:
+        time.sleep(2.0)
+        req = urllib.request.Request(
+            _YANDEX_OPERATIONS_URL + op_id,
+            headers={"Authorization": "Api-Key " + api_key, "User-Agent": _UA})
+        try:
+            with urllib.request.urlopen(req, timeout=20,
+                                        context=_ssl_context()) as resp:
+                st = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            # короткий сбой сети при опросе — не приговор: операция уже
+            # стоит в очереди Яндекса, пробуем ещё (до трёх подряд)
+            poll_errors += 1
+            if poll_errors >= 3:
+                raise GigaChatError("Яндекс: не удаётся дождаться результата")
+            continue
+        poll_errors = 0
+        if st.get("error"):
+            raise GigaChatError("Яндекс: %s" % (st.get("error") or "ошибка генерации"))
+        if not st.get("done"):
+            continue
+        b64 = str(((st.get("response") or {}).get("image")) or "")
+        image = base64.b64decode(b64) if b64 else b""
+        if not image:
+            raise GigaChatError("Яндекс вернул пустую картинку")
+        if len(image) > _MAX_IMAGE_BYTES:
+            raise GigaChatError("картинка Яндекса слишком большая")
+        name = "yandex_image_%s.jpeg" % op_id[:8]
+        target = sandbox.safe_path(name)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_bytes(image)
+        tmp.replace(target)
+        return {
+            "ok": True,
+            "path": name,
+            "name": name,
+            "size": len(image),
+            "download_url": sandbox.dl(name),
+            "model": model,
+            "provider": "yandex",
+        }
+    raise GigaChatError("Яндекс не успел нарисовать за 3 минуты — попробуйте ещё раз")
+
+
 # Y: ЦЕПОЧКА БЕСПЛАТНЫХ МОДЕЛЕЙ — от свежих к старым. Прежний безымянный
 # дефолт рисованием напоминал «первые ИИ-модели»: Z-Image Turbo делает
 # картинку с 2x-апскейлом, FLUX.2 Klein — новое поколение, классический
@@ -443,7 +545,7 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: st
     provider = str(CONFIG.get("media.image_provider", "auto") or "auto")
     if provider == "off":
         return {"ok": False, "error": "генерация изображений выключена в настройках"}
-    if provider not in ("auto", "gateway", "gigachat", "free"):
+    if provider not in ("auto", "gateway", "yandex", "gigachat", "free"):
         return {"ok": False, "error": "неподдерживаемый провайдер изображений: " + provider}
     clean = (str(prompt or "") + ((", " + str(style).strip()) if str(style or "").strip() else "")).strip()
     if not clean:
@@ -455,6 +557,16 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: st
                            CONFIG.get("media.image_gateway_token", ""))
         if provider == "gateway" or (provider == "auto" and has_gateway):
             return _gateway_image(refined, int(width or 1024), int(height or 1024))
+        yandex_ready = bool(
+            str((CONFIG.get("providers.yandex") or {}).get("api_key") or "").strip()
+            and str((CONFIG.get("providers.yandex") or {}).get("folder_id") or "").strip())
+        if provider == "yandex" or (provider == "auto" and yandex_ready):
+            try:
+                return _yandex_image(refined, int(width or 1024), int(height or 1024))
+            except GigaChatError:
+                if provider == "yandex":
+                    raise
+                # Яндекс не ответил — тихо едем дальше по цепочке
         if provider == "free":
             return _free_image(refined, int(width or 1024), int(height or 1024))
         if not str(CONFIG.get("media.gigachat_auth_key", "") or "").strip():

@@ -2764,6 +2764,50 @@ function testIterationAOContracts() {
     'AO: no click blackout on the toggle, repaint guarded against double-fire');
 }
 
+function testIterationBM6Contracts() {
+  // BM6: НАСТРОЙКИ ПРОВАЙДЕРОВ ДИНАМИЧЕСКИЕ — любой провайдер из конфига
+  // получает поле ключа сам; Яндекс ещё и folder_id; роль задаёт порядок
+  const rs = js.split('function renderSettings(')[1].split('\nfunction ')[0];
+  assert(rs.includes('const provs = Object.entries(p).sort((a, b) =>') &&
+    rs.includes("Number((a[1] || {}).priority)") &&
+    rs.includes("id=\"k_' + name") &&
+    rs.includes("'folder_id' in pc") &&
+    rs.includes("id=\"fid_' + name") &&
+    rs.includes("id=\"r_' + name") &&
+    rs.includes('ROLE_OPTS') &&
+    !rs.includes('kCloud'),
+    'BM6: provider settings come from the config itself — key, folder_id and role per provider, nothing hardcoded');
+  // BM6: «ПРОВЕРИТЬ ПРОВАЙДЕРОВ» — точный снимок зонда, а не только каталог
+  assert(rs.includes("api('/api/providers')") &&
+    rs.includes("'жив — зонд '") &&
+    rs.includes("'НЕ ОТВЕЧАЕТ — обхожу запасным'") &&
+    rs.includes("'зонд падает…'") &&
+    rs.includes('med_ttft_s') && rs.includes('med_cps'),
+    'BM6: the probe button shows the exact state — alive with latency, dead and bypassed, or failing probes');
+  // BM6: онбординг больше не привязан к cloudru
+  assert(js.includes("Object.values(S.config.providers || {}).some((x) => (x || {}).has_key)"),
+    'BM6: the «insert a key» toast fires only when NO provider has a key');
+  // BM6: сервер отдаёт снимок и запускает дозор
+  assert(pyServer.includes('"/api/providers"') &&
+    pyServer.includes('llm.providers_status()') &&
+    pyServer.includes('llm.start_prober()'),
+    'BM6: /api/providers endpoint + background prober started with the server');
+  // BM6: распознавание — зонд, мёртвый обходит очередь, приоритеты
+  assert(pyLlm.includes('def probe_provider(') &&
+    pyLlm.includes('def _probe_dead(') &&
+    pyLlm.includes('def start_prober(') &&
+    pyLlm.includes('def providers_status(') &&
+    pyLlm.includes('def provider_headers(') &&
+    pyLlm.includes('def _gigachat_token(') &&
+    pyLlm.includes('penalty += 10') &&
+    pyLlm.includes('def active_providers()'),
+    'BM6: probes mark a provider dead (2 fails) and it is skipped at once; any provider joins by config priority');
+  // BM6: картинки через Яндекс + статус-строка с именем провайдера из конфига
+  assert(pyLlm.includes('def provider_display(') &&
+    pyAgent.includes('llm.provider_display('),
+    'BM6: the switch status line names the provider from its config label');
+}
+
 function testIterationAXContracts() {
   // AX: скоординированный уход — всё одной длительности 620мс
   assert(js.includes('function welcomeExit(') &&
@@ -3121,7 +3165,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.74'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.75'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -3570,8 +3614,9 @@ function testIterationBHContracts() {
   testIterationBKContracts();
   testIterationBLContracts();
   testIterationBMContracts();
+  testIterationBM6Contracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 50 regression groups passed');
+  console.log('package28_frontend_runtime: 51 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

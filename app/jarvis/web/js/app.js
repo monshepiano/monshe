@@ -11933,42 +11933,68 @@ function renderSettings() {
   const grid = $('#settingsGrid');
   grid.innerHTML = '';
 
-  // Провайдеры
+  // Провайдеры — BM6: список динамический, из конфига. Любой
+  // OpenAI-совместимый провайдер появляется здесь сам; порядок = приоритет.
   const prov = el('div', 'sset');
+  const provs = Object.entries(p).sort((a, b) =>
+    (Number((a[1] || {}).priority) || 100) - (Number((b[1] || {}).priority) || 100));
+  const ROLE_OPTS = [[0, 'Основной'], [10, 'Запасной 1'], [20, 'Запасной 2'], [30, 'Дальний резерв']];
   prov.innerHTML = '<h3>Модели и ключи</h3>' +
-    '<div class="sd">Основной провайдер — Cloud.ru (Сбер, работает из России без VPN). DeepSeek — резерв.</div>' +
-    '<div class="prov-state"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:' +
-    ((p.cloudru || {}).has_key ? 'var(--green)' : 'var(--red)') + '"></span> Cloud.ru: ' +
-    ((p.cloudru || {}).has_key ? 'ключ установлен' : 'нет ключа') + '</div>' +
-    '<div class="field"><label>API-ключ Cloud.ru</label><input id="kCloud" placeholder="' +
-    esc((p.cloudru || {}).api_key || 'вставь ключ') + '"></div>' +
-    '<div class="prov-state"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:' +
-    ((p.deepseek || {}).has_key ? 'var(--green)' : 'var(--tx3)') + '"></span> DeepSeek: ' +
-    ((p.deepseek || {}).has_key ? 'ключ установлен' : 'нет ключа') + '</div>' +
-    '<div class="field"><label>API-ключ DeepSeek</label><input id="kDeep" placeholder="' +
-    esc((p.deepseek || {}).api_key || 'вставь ключ') + '"></div>' +
+    '<div class="sd">Первая строка с ключом — основной, остальные запасные (сверху вниз). Вставь ключ — провайдер включится сам. Yandex AI Studio: ключ + folder_id из консоли облака.</div>' +
+    provs.map(([name, pc]) => {
+      pc = pc || {};
+      const cur = Number(pc.priority); const curRole = ROLE_OPTS.some((o) => o[0] === cur) ? cur : 0;
+      return '<div class="prov-state"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:' +
+        (pc.has_key ? 'var(--green)' : 'var(--tx3)') + '"></span> ' + esc(pc.label || name) + ': ' +
+        (pc.has_key ? 'ключ установлен' : 'нет ключа') + '</div>' +
+        '<div class="field"><label>API-ключ ' + esc(pc.label || name) + '</label><input id="k_' + name +
+        '" placeholder="' + esc(pc.api_key || 'вставь ключ') + '"></div>' +
+        ('folder_id' in pc ? '<div class="field"><label>folder_id (' + esc(pc.label || name) + ')</label><input id="fid_' + name +
+          '" placeholder="' + esc(pc.folder_id || 'идентификатор каталога') + '"></div>' : '') +
+        '<div class="field"><label>Роль ' + esc(pc.label || name) + '</label><select id="r_' + name + '">' +
+        ROLE_OPTS.map((o) => '<option value="' + o[0] + '"' + (curRole === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+        '</select></div>';
+    }).join('') +
     '<div class="field"><label>Уровень модели</label><select id="fTier">' +
     ['', 'nano', 'base', 'smart', 'coder'].map((t) =>
       '<option value="' + t + '"' + (((c.orchestrator || {}).force_tier || '') === t ? ' selected' : '') + '>' +
       (t ? TIER_LABEL[t] || t : 'авто — выбирает JARVIS') + '</option>').join('') +
     '</select></div>' +
     '<button class="btn primary" id="saveProv">Сохранить</button> ' +
-    '<button class="btn" id="testProv">Проверить связь</button>';
+    '<button class="btn" id="testProv">Проверить провайдеров</button>';
   grid.appendChild(prov);
   $('#saveProv', prov).addEventListener('click', async () => {
     const patch = { providers: {}, orchestrator: { force_tier: $('#fTier', prov).value } };
-    const kc = $('#kCloud', prov).value.trim(), kd = $('#kDeep', prov).value.trim();
-    if (kc) patch.providers.cloudru = { api_key: kc };
-    if (kd) patch.providers.deepseek = { api_key: kd };
+    provs.forEach(([name, pc]) => {
+      const part = {};
+      const kv = $('#k_' + name, prov).value.trim();
+      if (kv) part.api_key = kv;
+      const fidEl = $('#fid_' + name, prov);
+      if (fidEl && fidEl.value.trim()) part.folder_id = fidEl.value.trim();
+      const role = Number($('#r_' + name, prov).value);
+      if (role !== (Number((pc || {}).priority) || 100)) part.priority = role;
+      if (Object.keys(part).length) patch.providers[name] = part;
+    });
     const r = await api('/api/config/update', { patch });
     S.config = r.config || S.config;
     toast('Настройки сохранены', 'success'); renderSettings(); refreshState();
   });
   $('#testProv', prov).addEventListener('click', async () => {
     toast('Проверяю…', 'info');
-    const h = await api('/api/health');
-    const lines = Object.entries(h.providers || {}).map(([k, v]) =>
-      k + ': ' + (v.ok ? '✓ ' + (v.models || 0) + ' моделей' : '✕ ' + (v.error || 'нет доступа'))).join('\n');
+    const h = await api('/api/providers');
+    const lines = Object.entries(h.providers || {}).sort((a, b) =>
+      (a[1].order < 0 ? 99 : a[1].order) - (b[1].order < 0 ? 99 : b[1].order)).map(([k, v]) => {
+      const pr = v.probe || {};
+      let st = 'ещё не проверялся';
+      if (pr.probed) st = pr.ok ? ('жив — зонд ' + (pr.probe_ms || 0) + ' мс')
+        : (pr.dead ? 'НЕ ОТВЕЧАЕТ — обхожу запасным' : 'зонд падает…');
+      let extra = '';
+      if (v.med_ttft_s !== undefined) extra = ', отклик ~' + v.med_ttft_s + ' с';
+      if (v.med_cps !== undefined) extra += ', печать ~' + v.med_cps + ' зн/с';
+      if (v.penalty > 0) extra += ', штраф ' + v.penalty;
+      return (v.order >= 0 ? (v.order + 1) + '. ' : '· ') + (v.label || k) + ': ' +
+        (!v.has_key ? 'нет ключа' : st + extra);
+    }).join('\n');
     modal('<h3>Состояние провайдеров</h3><pre class="out">' + esc(lines || 'нет данных') + '</pre>' +
       '<div class="modal-acts"><button class="btn primary" onclick="document.getElementById(\'modalBack\').classList.remove(\'open\')">Ок</button></div>');
   });
@@ -12220,7 +12246,7 @@ window.addEventListener('keydown', (e) => {
   await Promise.all([refreshState(), loadChats()]);
   if (BOOT_DONE) BOOT_DONE();
   setInterval(refreshState, 4000);
-  if (!(S.config.providers || {}).cloudru || !S.config.providers.cloudru.has_key) {
+  if (!Object.values(S.config.providers || {}).some((x) => (x || {}).has_key)) {
     setTimeout(() => {
       toast('Открой Настройки и вставь API-ключ, чтобы я заработал.', 'warn', 'Нужен ключ');
     }, 2600);

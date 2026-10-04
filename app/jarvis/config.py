@@ -24,17 +24,46 @@ DEFAULTS: Dict[str, Any] = {
     "server": {"host": "127.0.0.1", "port": 8765, "open_browser": True},
     "user": {"name": "", "city": "", "lang": "ru", "about": ""},
     "providers": {
+        # BM6: порядок выбора = priority (меньше = первым). Любой
+        # OpenAI-совместимый провайдер добавляется сюда же и подхватывается
+        # автоматически. "auth": bearer | api-key (Yandex) | gigachat (Сбер).
         "cloudru": {
             "enabled": True,
+            "priority": 0,
             "base_url": "https://foundation-models.api.cloud.ru/v1",
             "api_key": "",
-            "label": "Cloud.ru Foundation Models",
+            "label": "Cloud.ru",
         },
         "deepseek": {
             "enabled": True,
+            "priority": 10,
             "base_url": "https://api.deepseek.com/v1",
             "api_key": "",
-            "label": "DeepSeek (резерв)",
+            "label": "DeepSeek",
+        },
+        "yandex": {
+            "enabled": False,
+            "priority": 5,
+            "auth": "api-key",
+            "base_url": "https://llm.api.cloud.yandex.net/v1",
+            "api_key": "",
+            "folder_id": "",
+            "label": "Yandex AI Studio",
+        },
+        "gigachat": {
+            "enabled": False,
+            "priority": 20,
+            "auth": "gigachat",
+            "base_url": "https://gigachat.devices.sber.ru/v1",
+            "api_key": "",
+            "label": "GigaChat",
+        },
+        "aitunnel": {
+            "enabled": False,
+            "priority": 30,
+            "base_url": "https://api.aitunnel.ru/v1",
+            "api_key": "",
+            "label": "AITunnel",
         },
     },
     # Предпочтения по моделям для каждого «уровня». Поиск идёт по подстроке
@@ -136,6 +165,7 @@ DEFAULTS: Dict[str, Any] = {
         "gigachat_auth_key": "",
         "gigachat_scope": "GIGACHAT_API_PERS",
         "gigachat_model": "GigaChat",
+        "yandex_image_model": "yandex-art",
         # Короткую просьбу превращаем в точный художественный промпт дешёвой
         # моделью; если она недоступна, генерация продолжится с исходным текстом.
         "enhance_prompt": True,
@@ -178,6 +208,16 @@ def _migrate(raw: Dict[str, Any]) -> Dict[str, Any]:
     cu = raw.get("computer_use")
     if isinstance(cu, dict):
         cu.pop("max_steps", None)
+    # BM6: старые длинные метки провайдеров укорачиваем — они попадают в
+    # строку состояния «X отвечает медленно» и должны читаться с одного
+    # взгляда. Меняются только точные старые значения, свои метки не трогаем.
+    provs = raw.get("providers")
+    if isinstance(provs, dict):
+        for name, short in (("cloudru", "Cloud.ru"), ("deepseek", "DeepSeek")):
+            conf = provs.get(name)
+            if isinstance(conf, dict) and conf.get("label") in (
+                    "Cloud.ru Foundation Models", "DeepSeek (резерв)"):
+                conf["label"] = short
     # В model_tiers.audio раньше лежали ОБРЫВКИ слов («whisper», «audio»),
     # по которым модель угадывалась подстрокой — и выбиралась посторонняя.
     # Теперь тут только точные имена; старые обрывки убираем, иначе
@@ -276,6 +316,11 @@ class Config:
     def update(self, patch: Dict[str, Any]) -> None:
         with _LOCK:
             self._data = _merge(self._data, patch)
+            # BM6: вставленный ключ автоматически включает провайдера —
+            # не заставляем человека править config.json руками
+            for name, conf in (self._data.get("providers") or {}).items():
+                if isinstance(conf, dict) and str(conf.get("api_key") or "").strip():
+                    conf["enabled"] = True
             self.save()
 
     def public(self) -> Dict[str, Any]:

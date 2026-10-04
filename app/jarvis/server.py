@@ -313,6 +313,10 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:  # pragma: no cover - защита полосы
                 status = {"ok": False, "error": "Самопроверка не удалась: %s" % exc}
             return self._json({"ok": True, "computer": status})
+        if path == "/api/providers":
+            # BM6: точный снимок «кто сейчас жив» — зонд сети, здоровье
+            # (TTFT/скорость печати) и штраф очереди по каждому провайдеру
+            return self._json({"ok": True, "providers": llm.providers_status()})
         if path == "/api/models":
             provider = (params.get("provider") or ["cloudru"])[0]
             return self._json({"ok": True, "models": llm.list_models(provider, force=True),
@@ -1313,6 +1317,12 @@ def run() -> None:
     # экрана они уже в кэше; дальше обновляются фоном раз в сутки
     threading.Thread(target=ideas.refresh_ai_async, name="jarvis-ideas",
                      daemon=True).start()
+    # BM6: дозор провайдеров — зонд каждые 45 секунд (при сбое каждые 10).
+    # Мёртвый провайдер обходится сразу, восстановление подхватывается само.
+    try:
+        llm.start_prober()
+    except Exception:
+        pass
     httpd = Server((host, port), Handler)
     url = "http://%s:%d/" % ("localhost" if host in ("127.0.0.1", "0.0.0.0") else host, port)
     banner = """

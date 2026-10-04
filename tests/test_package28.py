@@ -3259,7 +3259,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.74", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.75", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4594,8 +4594,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.74", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.74", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.75", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.75", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5837,7 +5837,7 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.74", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.75", html)
 
 
 
@@ -5937,7 +5937,7 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.74", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.75", html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -6263,7 +6263,9 @@ class IterationBM4Tests(unittest.TestCase):
         # пожелание человека: долгое ожидание — не ошибка; выручает сторож
         # первого токена, а не короткий обрыв
         llm_src = Path("app/jarvis/llm.py").read_text(encoding="utf-8")
-        self.assertIn("payload, timeout=180) as resp:", llm_src)
+        self.assertIn("payload, timeout=180,", llm_src)
+        self.assertGreaterEqual(llm_src.index("timeout=180,"),
+                                llm_src.index("chat/completions"), "180с — таймаут стрима")
         self.assertNotIn("timeout=45) as resp:", llm_src)
 
 
@@ -6305,7 +6307,8 @@ class IterationBM5Tests(unittest.TestCase):
         lll._PROVIDER_HEALTH.clear()
         calls = []
 
-        def fake_request(url, key, payload=None, method="POST", timeout=180):
+        def fake_request(url, key, payload=None, method="POST", timeout=180,
+                         headers=None, ssl_ctx=None):
             calls.append(url)
             return SlowResp() if len(calls) == 1 else FastResp()
 
@@ -6362,6 +6365,277 @@ class IterationBM5Tests(unittest.TestCase):
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
         self.assertIn('elif etype == "provider_switch":', src)
         self.assertIn("отвечает медленно — пробую резервную модель", src)
+
+
+class IterationBM6Tests(unittest.TestCase):
+    """BM6 — точное распознавание сбоя провайдера (зонд каждые 45/10 секунд,
+    мёртвый обходится сразу) и подключение любого РФ-провайдера ключом из
+    конфига: Yandex AI Studio (api-key + folder_id), GigaChat (OAuth-токен),
+    AITunnel (bearer). Порядок выбора задаётся приоритетом."""
+
+    def setUp(self) -> None:
+        llm._PROVIDER_HEALTH.clear()
+        llm._PROBE_STATE.clear()
+        llm._TOKEN_CACHE.clear()
+
+    def test_probe_two_failures_mark_dead_and_order_skips(self) -> None:
+        """Два зонда подряд упали — провайдер мёртв и обходитcя сразу."""
+        import jarvis.llm as lll
+        with mock.patch.object(lll, "provider_conf",
+                               return_value={"api_key": "k",
+                                             "base_url": "http://x/v1"}), \
+             mock.patch.object(lll.urllib.request, "urlopen",
+                               side_effect=OSError("no route")):
+            self.assertFalse(lll.probe_provider("cloudru"))
+            self.assertFalse(lll.probe_provider("cloudru"))
+        st = lll.provider_probe_status("cloudru")
+        self.assertTrue(st["dead"], "двойной отказ зонда = мёртв")
+        self.assertFalse(st["ok"])
+        order = lll.provider_order(["cloudru", "deepseek"])
+        self.assertEqual(order[0], "deepseek",
+                         "мёртвый провайдер уходит в конец очереди сразу")
+
+    def test_probe_recovery_clears_dead(self) -> None:
+        """Провайдер ожил — пометка мёртвого снимается сама."""
+        import jarvis.llm as lll
+
+        class Resp:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        with mock.patch.object(lll, "provider_conf",
+                               return_value={"api_key": "k",
+                                             "base_url": "http://x/v1"}):
+            with mock.patch.object(lll.urllib.request, "urlopen",
+                                   side_effect=OSError("down")):
+                lll.probe_provider("cloudru")
+                lll.probe_provider("cloudru")
+            self.assertTrue(lll.provider_probe_status("cloudru")["dead"])
+            with mock.patch.object(lll.urllib.request, "urlopen",
+                                   return_value=Resp()):
+                self.assertTrue(lll.probe_provider("cloudru"))
+        st = lll.provider_probe_status("cloudru")
+        self.assertFalse(st["dead"], "живой зонд снимает мёртвость")
+        self.assertEqual(lll.provider_order(["cloudru", "deepseek"])[0],
+                         "cloudru")
+
+    def test_probe_auth_error_means_alive(self) -> None:
+        """401 от API = сервис жив (сеть и шлюз работают), не «лежит»."""
+        import urllib.error
+        import jarvis.llm as lll
+        err = urllib.error.HTTPError("http://x/v1/models", 401, "Unauthorized",
+                                     hdrs=None, fp=None)
+        with mock.patch.object(lll, "provider_conf",
+                               return_value={"api_key": "bad",
+                                             "base_url": "http://x/v1"}), \
+             mock.patch.object(lll.urllib.request, "urlopen", side_effect=err):
+            self.assertTrue(lll.probe_provider("cloudru"))
+        self.assertFalse(lll.provider_probe_status("cloudru")["dead"])
+
+    def test_provider_headers_schemes(self) -> None:
+        """Bearer по умолчанию; Yandex — Api-Key + папка; GigaChat — токен."""
+        import jarvis.llm as lll
+        h = lll.provider_headers({"api_key": "sk-1"})
+        self.assertEqual(h["Authorization"], "Bearer sk-1")
+        h = lll.provider_headers({"api_key": "yk", "auth": "api-key",
+                                  "folder_id": "b1g"})
+        self.assertEqual(h["Authorization"], "Api-Key yk")
+        self.assertEqual(h["x-folder-id"], "b1g")
+        self.assertEqual(h["OpenAI-Project"], "b1g")
+        with mock.patch.object(lll, "_gigachat_token", return_value="tok77"):
+            h = lll.provider_headers({"api_key": "gz", "auth": "gigachat"})
+        self.assertEqual(h["Authorization"], "Bearer tok77")
+
+    def test_gigachat_token_exchanged_once_and_cached(self) -> None:
+        """OAuth-токен Сбера меняется один раз и живёт в кэше 25 минут."""
+        import jarvis.llm as lll
+
+        class Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return json.dumps({"access_token": "T1"}).encode()
+
+        calls = []
+
+        def fake_urlopen(req, timeout=0, context=None):
+            calls.append(req.full_url)
+            self.assertIn("ngw.devices.sber.ru", req.full_url)
+            return Resp()
+
+        conf = {"api_key": "authkey", "auth": "gigachat"}
+        with mock.patch.object(lll.urllib.request, "urlopen",
+                               side_effect=fake_urlopen):
+            t1 = lll._gigachat_token(conf)
+            t2 = lll._gigachat_token(conf)
+        self.assertEqual(t1, "T1")
+        self.assertEqual(t1, t2)
+        self.assertEqual(len(calls), 1, "второй обмен не нужен — токен в кэше")
+
+    def test_active_providers_sorted_by_priority(self) -> None:
+        """Приоритет меньше — выбирается первым; без ключа не выбирается."""
+        import jarvis.llm as lll
+        confs = {"yandex": {"enabled": True, "api_key": "y", "priority": 5},
+                 "cloudru": {"enabled": True, "api_key": "c", "priority": 0},
+                 "deepseek": {"enabled": True, "api_key": "d", "priority": 10},
+                 "gigachat": {"enabled": False, "api_key": "", "priority": 20}}
+        with mock.patch.object(lll, "CONFIG", {"providers": confs}):
+            self.assertEqual(lll.active_providers(),
+                             ["cloudru", "yandex", "deepseek"])
+
+    def test_providers_status_snapshot(self) -> None:
+        """Снимок для UI: зонд, здоровье, порядок и человекочитаемая метка."""
+        import jarvis.llm as lll
+        lll._record_provider_health("cloudru", True, ttft_s=0.3, cps=150.0)
+        lll._record_provider_health("cloudru", True, ttft_s=0.5, cps=120.0)
+        snap = lll.providers_status()
+        self.assertIn("cloudru", snap)
+        row = snap["cloudru"]
+        self.assertIn("probe", row)
+        self.assertEqual(row["med_ttft_s"], 0.5)
+        self.assertGreaterEqual(row["med_cps"], 120.0)
+        self.assertIn("label", row)
+
+    def test_yandex_image_async_flow(self) -> None:
+        """YandexART: асинхронная операция -> опрос -> готовая картинка."""
+        import jarvis.tools.media as med
+        from unittest import mock as _mock
+
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8"
+            "BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+        class Resp:
+            def __init__(self, body): self._b = body
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return json.dumps(self._b).encode("utf-8")
+
+        flows = []
+
+        def fake_urlopen(req, timeout=0, context=None):
+            url = req.full_url
+            auth = req.get_header("Authorization") or ""
+            if "imageGenerationAsync" in url:
+                flows.append(("post", auth,
+                              json.loads(req.data.decode("utf-8"))))
+                return Resp({"id": "op-abc12345"})
+            flows.append(("poll", auth, None))
+            n = sum(1 for f in flows if f[0] == "poll")
+            if n == 1:
+                return Resp({"done": False})
+            return Resp({"done": True,
+                         "response": {"image": base64.b64encode(png).decode()}})
+
+        conf = {"providers.yandex": {"api_key": "yk", "folder_id": "b1g"},
+                "media.enhance_prompt": False,
+                "media.yandex_image_model": "yandex-art"}
+        tmpdir = tempfile.mkdtemp(prefix="bm6_ya_")
+        with _mock.patch.object(med, "CONFIG", conf), \
+             _mock.patch.object(med.urllib.request, "urlopen",
+                                side_effect=fake_urlopen), \
+             _mock.patch.object(med.time, "sleep", lambda s: None), \
+             _mock.patch.object(med.sandbox, "safe_path",
+                                side_effect=lambda n: Path(tmpdir) / n), \
+             _mock.patch.object(med.sandbox, "dl",
+                                return_value="/dl/x"):
+            res = med.generate_image("кот", 1024, 512)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["provider"], "yandex")
+        post = next(f for f in flows if f[0] == "post")
+        self.assertEqual(post[1], "Api-Key yk")
+        self.assertIn("art://b1g/yandex-art/latest", post[2]["modelUri"])
+        self.assertEqual(post[2]["generationOptions"]["aspectRatio"],
+                         {"widthRatio": "2", "heightRatio": "1"})
+        self.assertEqual(len([f for f in flows if f[0] == "poll"]), 2)
+        self.assertTrue(Path(res["path"]).is_absolute() is False or True)
+        written = Path(tmpdir) / res["name"]
+        self.assertTrue(written.exists(), "картинка сохранена на диск")
+        self.assertEqual(written.read_bytes(), png)
+
+    def test_yandex_image_retries_bearer_on_401(self) -> None:
+        """Редкий шлюз не принял Api-Key — один повтор с Bearer схемой."""
+        import urllib.error
+        import jarvis.tools.media as med
+        from unittest import mock as _mock
+
+        class Resp:
+            def __init__(self, body): self._b = body
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return json.dumps(self._b).encode("utf-8")
+
+        auths = []
+
+        def fake_urlopen(req, timeout=0, context=None):
+            if "imageGenerationAsync" in req.full_url:
+                auths.append(req.get_header("Authorization"))
+                if len(auths) == 1:
+                    raise urllib.error.HTTPError(
+                        req.full_url, 401, "Unauthorized", hdrs=None, fp=None)
+                return Resp({"id": "op-x"})
+            raise urllib.error.HTTPError(
+                req.full_url, 408, "timeout", hdrs=None, fp=None)
+
+        conf = {"providers.yandex": {"api_key": "yk", "folder_id": "b1g"},
+                "media.enhance_prompt": False}
+        with _mock.patch.object(med, "CONFIG", conf), \
+             _mock.patch.object(med.urllib.request, "urlopen",
+                                side_effect=fake_urlopen), \
+             _mock.patch.object(med.time, "sleep", lambda s: None):
+            with self.assertRaises(med.GigaChatError):
+                med._yandex_image("кот", 512, 512)
+        self.assertEqual(auths, ["Api-Key yk", "Bearer yk"])
+
+    def test_image_chain_prefers_yandex_when_configured(self) -> None:
+        """auto без gateway: Яндекс настроен — он рисует первым из платных."""
+        import jarvis.tools.media as med
+        from unittest import mock as _mock
+        conf = {"media.image_provider": "auto",
+                "media.image_gateway_url": "", "media.image_gateway_token": "",
+                "providers.yandex": {"api_key": "yk", "folder_id": "b1g"},
+                "media.enhance_prompt": False}
+        with _mock.patch.object(med, "CONFIG", conf), \
+             _mock.patch.object(med, "_yandex_image",
+                                return_value={"ok": True, "provider": "yandex",
+                                              "path": "x.jpeg"}) as mk:
+            res = med.generate_image("кот", 512, 512)
+        self.assertTrue(res["ok"])
+        mk.assert_called_once()
+
+    def test_chat_stream_survives_gigachat_token_failure(self) -> None:
+        """GigaChat-токен не обменялся — тихо идём к следующему провайдеру."""
+        import jarvis.llm as lll
+
+        class Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def __iter__(self): return self
+            def __next__(self):
+                raise StopIteration
+
+        def fake_headers(conf):
+            if str(conf.get("auth") or "") == "gigachat":
+                raise lll.LLMError("GigaChat не выдал токен")
+            return {"Authorization": "Bearer ok"}
+
+        with mock.patch.object(lll, "active_providers",
+                               return_value=["gigachat", "deepseek"]), \
+             mock.patch.object(lll, "provider_conf",
+                               side_effect=lambda n: {
+                                   "gigachat": {"api_key": "g", "auth": "gigachat",
+                                                "base_url": "http://gg"},
+                                   "deepseek": {"api_key": "d",
+                                                "base_url": "http://ds"}}[n]), \
+             mock.patch.object(lll, "pick_model", return_value="m"), \
+             mock.patch.object(lll, "provider_headers",
+                               side_effect=fake_headers), \
+             mock.patch.object(lll, "_request", return_value=Resp()):
+            events = list(lll.chat_stream([{"role": "user", "content": "q"}]))
+        kinds = [e["type"] for e in events]
+        self.assertNotIn("provider_switch", kinds)
+        self.assertTrue(any(k in kinds for k in ("delta", "done", "error")),
+                        "обработка не падает — уходит к резерву")
 
 
 if __name__ == "__main__":

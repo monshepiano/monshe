@@ -13,8 +13,11 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from collections import deque
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
+
+from pathlib import Path
 
 from .config import CONFIG, LOG_DIR
 from . import db, telemetry
@@ -91,10 +94,94 @@ def _headers(api_key: str) -> Dict[str, str]:
     }
 
 
-def _request(url: str, api_key: str, payload: Optional[Dict] = None, method: str = "POST", timeout: int = 180):
+# ------------------------------------------------ схемы авторизации провайдеров
+# BM6: ЛЮБОЙ OpenAI-совместимый провайдер подключается ключом из конфига.
+# Схемы: bearer (по умолчанию: Cloud.ru, DeepSeek, AITunnel, GPTunnel...),
+# api-key (Yandex AI Studio: Authorization: Api-Key + папка), gigachat
+# (Сбер: Authorization Key меняется на короткоживущий OAuth-токен).
+_GIGA_SSL_CTX: Optional[ssl.SSLContext] = None
+
+
+def _gigachat_ssl_ctx() -> ssl.SSLContext:
+    """Сбер использует собственный корневой сертификат."""
+    global _GIGA_SSL_CTX
+    if _GIGA_SSL_CTX is None:
+        ctx = ssl.create_default_context()
+        ca = Path(__file__).resolve().parent / "certs" / "russian_trusted_root_ca.pem"
+        try:
+            ctx.load_verify_locations(castr := str(ca))
+        except Exception:
+            pass
+        _GIGA_SSL_CTX = ctx
+    return _GIGA_SSL_CTX
+
+
+_TOKEN_CACHE: Dict[str, Tuple[float, str]] = {}
+_TOKEN_LOCK = threading.Lock()
+
+
+def _ssl_ctx_for(conf: Dict[str, Any]) -> ssl.SSLContext:
+    return _gigachat_ssl_ctx() if str(conf.get("auth") or "") == "gigachat" else _SSL_CTX
+
+
+def _gigachat_token(conf: Dict[str, Any]) -> str:
+    """Authorization Key Сбера -> короткоживущий OAuth-токен (кэш 25 мин)."""
+    key = str(conf.get("api_key") or "")
+    now = time.time()
+    with _TOKEN_LOCK:
+        hit = _TOKEN_CACHE.get(key)
+        if hit and hit[0] > now:
+            return hit[1]
+    req = urllib.request.Request(
+        "https://ngw.devices.sber.ru:9443/api/v2/oauth",
+        data=b"scope=GIGACHAT_API_PERS",
+        headers={
+            "Authorization": "Basic " + key,
+            "Content-Type": "application/x-www-form-urlencoded",
+            "RqUID": str(uuid.uuid4()),
+            "User-Agent": "JARVIS/1.0",
+        },
+        method="POST")
+    with urllib.request.urlopen(req, timeout=12,
+                                context=_gigachat_ssl_ctx()) as resp:
+        token = str(json.load(resp).get("access_token") or "")
+    if not token:
+        raise LLMError("GigaChat не выдал токен")
+    with _TOKEN_LOCK:
+        _TOKEN_CACHE[key] = (now + 25 * 60, token)
+    return token
+
+
+def provider_headers(conf: Dict[str, Any]) -> Dict[str, str]:
+    """Заголовки авторизации под схему конкретного провайдера."""
+    scheme = str(conf.get("auth") or "bearer").lower()
+    key = str(conf.get("api_key") or "")
+    out = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "JARVIS/1.0",
+    }
+    if scheme == "api-key":
+        # Yandex AI Studio: ключ сервиса + папка облака
+        out["Authorization"] = "Api-Key " + key
+        folder = str(conf.get("folder_id") or "")
+        if folder:
+            out["x-folder-id"] = folder
+            out["OpenAI-Project"] = folder
+    elif scheme == "gigachat":
+        out["Authorization"] = "Bearer " + _gigachat_token(conf)
+    else:
+        out["Authorization"] = "Bearer " + key
+    return out
+
+
+def _request(url: str, api_key: str, payload: Optional[Dict] = None, method: str = "POST",
+             timeout: int = 180, headers: Optional[Dict[str, str]] = None,
+             ssl_ctx: Optional[ssl.SSLContext] = None):
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
-    req = urllib.request.Request(url, data=data, headers=_headers(api_key), method=method)
-    return urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX)
+    req = urllib.request.Request(
+        url, data=data, headers=headers or _headers(api_key), method=method)
+    return urllib.request.urlopen(req, timeout=timeout, context=ssl_ctx or _SSL_CTX)
 
 
 # ------------------------------------------------- приоритет главного ответа
@@ -177,14 +264,19 @@ def _provider_penalty(prov: str) -> int:
         rows = [(ok, ttft, cps) for (ts, ok, ttft, cps)
                 in _PROVIDER_HEALTH.get(prov, ())
                 if now - ts < _HEALTH_TTL]
+    penalty = 0
+    if _probe_dead(prov):
+        # BM6: зонд дважды упал — обходим сразу, даже если истории
+        # разговоров ещё нет (раньше ранний выход по малой выборке
+        # прятал это, и мёртвый провайдер упрямо оставался первым)
+        penalty += 10
     if len(rows) < _HEALTH_MIN_SAMPLES:
-        return 0
+        return penalty
     ok_rate = sum(1 for r in rows if r[0]) / float(len(rows))
     ttfts = sorted(r[1] for r in rows if r[0] and r[1] > 0)
     cps_all = sorted(r[2] for r in rows if r[0] and r[2] > 0)
     med_ttft = ttfts[len(ttfts) // 2] if ttfts else 0.0
     med_cps = cps_all[len(cps_all) // 2] if cps_all else 0.0
-    penalty = 0
     if ok_rate < 0.6:
         penalty += 2
     if med_ttft > _HEALTH_DEGRADED_TTFT:
@@ -201,6 +293,124 @@ def _ttft_watchdog_fire(resp: Any, fired: List[bool]) -> None:
         resp.close()
     except Exception:
         pass
+
+
+# --------------------------------------------------------- зонды провайдеров
+# BM6: ТОЧНОЕ РАСПОЗНАВАНИЕ СБОЯ ПРОВАЙДЕРА. Сторож первого токена (BM5)
+# ловит зависание ВО ВРЕМЯ ответа; зонд ловит ситуацию «сайт провайдера
+# лежит целиком» ДО того, как человек нажмёт Enter: бесплатный GET /models
+# каждые 45 секунд (при сбое — каждые 10, до восстановления). Два зонда
+# подряд упали — провайдер помечен мёртвым и обходится СРАЗУ, без 12 секунд
+# ожидания. Ответил — вернулся в строй сам.
+_PROBE_STATE: Dict[str, Dict[str, Any]] = {}
+_PROBE_LOCK = threading.Lock()
+_PROBER_STOP = threading.Event()
+_PROBER: Optional[threading.Thread] = None
+
+
+def probe_provider(name: str, timeout: float = 4.0) -> bool:
+    """Бесплатный зонд доступности API: GET /models с коротким таймаутом.
+
+    401/403 — сервис ЖИВ (сеть и API работают, вопрос только в ключе);
+    таймаут/обрыв/5xx — провайдер недоступен. Возвращает True, если жив."""
+    conf = provider_conf(name)
+    base = str(conf.get("base_url") or "").rstrip("/")
+    if not base or not str(conf.get("api_key") or "").strip():
+        return False
+    ok = False
+    ms = 0.0
+    try:
+        t0 = time.monotonic()
+        req = urllib.request.Request(base + "/models", method="GET",
+                                     headers=provider_headers(conf))
+        with urllib.request.urlopen(req, timeout=timeout,
+                                    context=_ssl_ctx_for(conf)) as r:
+            ok = r.status < 500
+        ms = (time.monotonic() - t0) * 1000.0
+    except urllib.error.HTTPError as exc:
+        ok = exc.code < 500          # 401/403/404: API отвечает — провайдер жив
+        ms = 0.0
+    except Exception:
+        ok = False
+    with _PROBE_LOCK:
+        st = _PROBE_STATE.setdefault(
+            name, {"fails": 0, "ok": None, "ms": 0.0, "at": 0.0, "flap": 0})
+        was_dead = st["fails"] >= 2
+        st["at"] = time.monotonic()
+        st["ms"] = ms
+        if ok:
+            st["fails"] = 0
+            st["ok"] = True
+        else:
+            st["fails"] += 1
+            st["ok"] = False
+        now_dead = st["fails"] >= 2
+    if was_dead != now_dead:
+        telemetry.emit("provider_probe", status=("down" if now_dead else "up"),
+                       provider=name, probe_ms=round(ms, 1))
+    return ok
+
+
+def provider_probe_status(name: str) -> Dict[str, Any]:
+    """Снимок состояния зонда провайдера (для /api/providers)."""
+    with _PROBE_LOCK:
+        st = dict(_PROBE_STATE.get(name) or {})
+    fresh = st and (time.monotonic() - float(st.get("at") or 0.0)) < 300
+    return {
+        "probed": bool(fresh),
+        "ok": bool(fresh and st.get("ok")),
+        "dead": bool(fresh and int(st.get("fails") or 0) >= 2),
+        "probe_ms": round(float(st.get("ms") or 0.0), 1),
+        "fails": int(st.get("fails") or 0) if fresh else 0,
+    }
+
+
+def _probe_dead(prov: str) -> bool:
+    with _PROBE_LOCK:
+        st = _PROBE_STATE.get(prov)
+    if not st:
+        return False
+    if time.monotonic() - float(st.get("at") or 0.0) > 300:
+        return False            # данные старше 5 минут — не осуждаем
+    return int(st.get("fails") or 0) >= 2
+
+
+def start_prober() -> None:
+    """Фоновый дозор: опрашивает провайдеров, пока жив сервер.
+
+    Обычный темп — раз в 45 секунд; если кто-то помечен мёртвым,
+    темп поднимается до 10 секунд: восстановление замечается быстро."""
+    global _PROBER
+    if _PROBER and _PROBER.is_alive():
+        return
+
+    def loop() -> None:
+        while not _PROBER_STOP.wait(45.0):
+            names = active_providers()
+            for name in names:
+                if _PROBER_STOP.is_set():
+                    break
+                try:
+                    probe_provider(name)
+                except Exception:
+                    pass
+            # кто-то мёртв — опрашиваем чаще, чтобы поймать восстановление
+            if any(_probe_dead(n) for n in names):
+                deadline = time.monotonic() + 35.0
+                while (time.monotonic() < deadline
+                       and not _PROBER_STOP.wait(10.0)):
+                    for name in names:
+                        if _PROBER_STOP.is_set():
+                            break
+                        try:
+                            probe_provider(name)
+                        except Exception:
+                            pass
+                    if not any(_probe_dead(n) for n in names):
+                        break
+
+    _PROBER = threading.Thread(target=loop, daemon=True, name="jarvis-prober")
+    _PROBER.start()
 
 
 def provider_order(candidates: List[str]) -> List[str]:
@@ -225,7 +435,8 @@ _POOL_TLS = threading.local()
 _POOL_PER_KEY = 4
 
 
-def _pool_take(key: tuple, timeout: float) -> http.client.HTTPConnection:
+def _pool_take(key: tuple, timeout: float,
+               ssl_ctx: Optional[ssl.SSLContext] = None) -> http.client.HTTPConnection:
     pool = getattr(_POOL_TLS, "pool", None)
     if pool is None:
         pool = _POOL_TLS.pool = {}
@@ -234,7 +445,8 @@ def _pool_take(key: tuple, timeout: float) -> http.client.HTTPConnection:
         return conns.pop()
     scheme, host, port = key
     if scheme == "https":
-        return http.client.HTTPSConnection(host, port, timeout=timeout, context=_SSL_CTX)
+        return http.client.HTTPSConnection(host, port, timeout=timeout,
+                                           context=ssl_ctx or _SSL_CTX)
     return http.client.HTTPConnection(host, port, timeout=timeout)
 
 
@@ -295,7 +507,9 @@ class _PooledResponse:
 
 
 def _request_pooled(url: str, api_key: str, payload: Optional[Dict] = None,
-                    method: str = "POST", timeout: int = 180):
+                    method: str = "POST", timeout: int = 180,
+                    headers: Optional[Dict[str, str]] = None,
+                    ssl_ctx: Optional[ssl.SSLContext] = None):
     """Keep-alive запрос; при любой проблеме молча возвращаем None -> urllib-путь."""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
@@ -304,11 +518,11 @@ def _request_pooled(url: str, api_key: str, payload: Optional[Dict] = None,
            parsed.port or (443 if parsed.scheme == "https" else 80))
     target = parsed.path + (("?" + parsed.query) if parsed.query else "")
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
-    headers = dict(_headers(api_key))
+    hdrs = dict(headers or _headers(api_key))
     try:
-        conn = _pool_take(key, timeout)
+        conn = _pool_take(key, timeout, ssl_ctx)
         try:
-            conn.request(method, target, body=data, headers=headers)
+            conn.request(method, target, body=data, headers=hdrs)
             resp = conn.getresponse()
         except Exception:
             # соединение из пула могло протухнуть: закрываем и уходим в urllib
@@ -327,12 +541,25 @@ def provider_conf(name: str) -> Dict[str, Any]:
 
 
 def active_providers() -> List[str]:
-    out = []
-    for name in ("cloudru", "deepseek"):
-        conf = provider_conf(name)
-        if conf.get("enabled") and conf.get("api_key"):
-            out.append(name)
-    return out
+    """Все включённые провайдеры с ключом, по приоритету (меньше = раньше).
+
+    BM6: список больше не зашит — любой OpenAI-совместимый провайдер
+    (Yandex AI Studio, GigaChat, AITunnel, GPTunnel...) добавляется в
+    конфиг и подхватывается сам. "priority" задаёт порядок основного
+    выбора: 0 — основной, больше — запасные."""
+    confs = CONFIG.get("providers", {}) or {}
+    rows = []
+    for idx, (name, conf) in enumerate(confs.items()):
+        if not isinstance(conf, dict):
+            continue
+        if conf.get("enabled") and str(conf.get("api_key") or "").strip():
+            try:
+                prio = float(conf.get("priority", 100))
+            except (TypeError, ValueError):
+                prio = 100
+            rows.append((prio, idx, name))
+    rows.sort()
+    return [name for _, _, name in rows]
 
 
 def list_models_meta(provider: str, force: bool = False) -> List[Dict[str, Any]]:
@@ -367,9 +594,13 @@ def list_models_meta(provider: str, force: bool = False) -> List[Dict[str, Any]]
         # таймаут короткий: каталог — вспомогательные данные, а не ответ
         # пользователю. Не дождались — уйдём на предпочтения из настроек.
         models_url = conf["base_url"].rstrip("/") + "/models"
-        mresp = _request_pooled(models_url, conf["api_key"], None, "GET", timeout=6)
+        mresp = _request_pooled(models_url, conf["api_key"], None, "GET", timeout=6,
+                                headers=provider_headers(conf),
+                                ssl_ctx=_ssl_ctx_for(conf))
         if mresp is None:
-            mresp = _request(models_url, conf["api_key"], None, "GET", timeout=6)
+            mresp = _request(models_url, conf["api_key"], None, "GET", timeout=6,
+                             headers=provider_headers(conf),
+                             ssl_ctx=_ssl_ctx_for(conf))
         with mresp as resp:
             body = json.loads(resp.read().decode("utf-8"))
         items = [m for m in body.get("data", []) if m.get("id")]
@@ -689,6 +920,14 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
             continue
         model = pick_model(tier, prov)
         last_provider, last_model = prov, model
+        try:
+            pheaders = provider_headers(conf)
+        except Exception as exc:
+            # GigaChat-токен не обменялся — идём к следующему провайдеру
+            last_error = exc
+            span.retried()
+            continue
+        pctx = _ssl_ctx_for(conf)
         payload = _build_payload(model, messages, tools, False, temperature, max_tokens, prov, tier)
         for attempt in range(2):
             t_attempt = time.monotonic()
@@ -698,10 +937,12 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
             try:
                 url = conf["base_url"].rstrip("/") + "/chat/completions"
                 resp = _request_pooled(url, conf["api_key"], payload, "POST",
-                                       timeout=max(0.1, remaining))
+                                       timeout=max(0.1, remaining),
+                                       headers=pheaders, ssl_ctx=pctx)
                 if resp is None:
                     resp = _request(url, conf["api_key"], payload,
-                                    timeout=max(0.1, remaining))
+                                    timeout=max(0.1, remaining),
+                                    headers=pheaders, ssl_ctx=pctx)
                 with resp:
                     raw_body = resp.read().decode("utf-8")
                 try:
@@ -783,6 +1024,14 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
         model = pick_model(tier, prov)
         last_provider, last_model = prov, model
         span.fields.update({"provider": prov, "model": model})
+        try:
+            pheaders = provider_headers(conf)
+        except Exception as exc:
+            # GigaChat-токен не обменялся — идём к следующему провайдеру
+            last_error = exc
+            span.retried()
+            continue
+        pctx = _ssl_ctx_for(conf)
         # BM5: сторож armed только при наличии резерва — если резервного
         # провайдера нет, ждать можно долго: поздний ответ лучше никакого
         has_fallback = prov_idx < len(providers) - 1
@@ -804,7 +1053,8 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
                 # запрос уходит к резервному провайдеру. Живая печать сторож
                 # не трогает — первый же токен его отменяет.
                 with _request(conf["base_url"].rstrip("/") + "/chat/completions",
-                              conf["api_key"], payload, timeout=180) as resp:
+                              conf["api_key"], payload, timeout=180,
+                              headers=pheaders, ssl_ctx=pctx) as resp:
                     if has_fallback:
                         wd["timer"] = threading.Timer(
                             TTFT_WATCHDOG_S, _ttft_watchdog_fire,
@@ -1023,14 +1273,55 @@ def vision(prompt: str, image_data_url: str, tier: str = "vision") -> str:
     raise LLMError("зрение не ответило: %s" % last)
 
 
+def provider_display(name: str) -> str:
+    """Человеческое имя провайдера для строк состояния."""
+    label = str(provider_conf(name).get("label") or name)
+    return label.split("(")[0].strip() or name
+
+
+def providers_status() -> Dict[str, Any]:
+    """Полный снимок состояния всех сконфигурированных провайдеров.
+
+    Сходится всё, что нужно для точного ответа «кто сейчас жив»:
+    зонд (сеть/API), здоровье (TTFT и скорость печати) и штраф очереди."""
+    out: Dict[str, Any] = {}
+    for name, conf in (CONFIG.get("providers") or {}).items():
+        if not isinstance(conf, dict):
+            continue
+        probe = provider_probe_status(name)
+        act = active_providers()
+        sample = {"label": provider_display(name),
+                  "enabled": bool(conf.get("enabled")),
+                  "has_key": bool(str(conf.get("api_key") or "").strip()),
+                  "order": act.index(name) if name in act else -1,
+                  "probe": probe,
+                  "penalty": _provider_penalty(name)}
+        now = time.monotonic()
+        with _HEALTH_LOCK:
+            rows = [(ok, ttft, cps) for (ts, ok, ttft, cps)
+                    in _PROVIDER_HEALTH.get(name, ()) if now - ts < _HEALTH_TTL]
+        if rows:
+            ttfts = sorted(t for (ok, t, _) in rows if ok and t > 0)
+            cps = [c for (ok, _, c) in rows if ok and c > 0]
+            sample["ok_rate"] = round(sum(1 for r in rows if r[0]) / float(len(rows)), 2)
+            sample["samples"] = len(rows)
+            if ttfts:
+                sample["med_ttft_s"] = round(ttfts[len(ttfts) // 2], 2)
+            if cps:
+                sample["med_cps"] = round(sorted(cps)[len(cps) // 2], 1)
+        out[name] = sample
+    return out
+
+
 def health() -> Dict[str, Any]:
     out = {}
-    for name in ("cloudru", "deepseek"):
+    for name in active_providers() or ["cloudru"]:
         conf = provider_conf(name)
         if not conf.get("api_key"):
             out[name] = {"ok": False, "reason": "нет ключа", "models": 0}
             continue
         models = list_models(name, force=True)
         out[name] = {"ok": bool(models), "models": len(models),
-                     "reason": "" if models else "нет ответа от API"}
+                     "reason": "" if models else "нет ответа от API",
+                     "label": provider_display(name)}
     return out
