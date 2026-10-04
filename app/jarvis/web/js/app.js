@@ -1657,13 +1657,15 @@ function chaseBottom(box, run) {
     const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
     if (gap <= 1) { box.classList.remove('pin-instant'); st.chaseV = 0; return; }
     st.autoPend += 1;
-    /* BM2: ПОТИШЕ И БЕЗ СРЫВОВ. Прежний потолок 11px/кадр начинался МГНОВЕННО:
-       большой скачок высоты (карточка агента) разгонял ленту рывком с места.
-       Теперь (1) потолок 7px/кадр (420px/с — быстрее любого принтера),
-       (2) скорость меняется не быстрее чем на 0.55px/кадр — старт с места
-       мягкий, а у дна ход затухает экспоненциально, как у печати */
-    const target = Math.min(7, Math.max(1, gap * 0.14));
-    const v = Math.min(target, (st.chaseV || 0) + 0.55);
+    /* BM3: ДОГОН ВСЕГДА БЫСТРЕЕ ПРИНТЕРА. Потолок обязан быть выше
+       калибровки автопрокрутки (2000 зн/с хвоста кода = 660px/с): при
+       7px/кадр лента отставала от печати, текст рос ПОД экраном — хвост
+       ответа «полз» отдельные секунды. Теперь потолок 12px/кадр (720px/с),
+       скорость — доля остатка (у дна затухает сама), со старта скорость
+       нарастает мягко, за ~100мс: карточка не бьёт рывком с места,
+       но и печать никогда не ждёт прокрутку */
+    const target = Math.min(12, Math.max(1.2, gap * 0.16));
+    const v = Math.min(target, (st.chaseV || 0) + 2.2);
     st.chaseV = v;
     box.scrollTop = box.scrollTop + v;
     if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) {
@@ -3958,46 +3960,59 @@ function plotHiDpi(cv, ctx) {
    каждая {label, points:[[x,y],…]} | {label, values:[…]} | {label, x:[…],
    y:[…]}; голый массив точек (или чисел) — одна серия. Формулы остались
    для математики, данные — для жизни */
+/* BM3: КОЛОНОЧНЫЕ ДАННЫЕ — самая естественная форма («вот колонки: время,
+   температура, ветер»). Пара {"x": [...], "y": [...]} — частый случай, и
+   прежде парсер её ОТКАЗЫВАЛСЯ понимать: "y" не числился колонкой, оси не
+   находилось — график валился в лекцию «нет данных». Ось — колонка
+   x/t/time/время/час/день/дата (или первая колонка подписей), остальные
+   колонки — ряды. Охрана: колонка длиннее ДВУХ значений — диапазон
+   [-6, 6] функции колонкой не считается */
+function plotColumnarSeries(obj) {
+  const AXIS = ['x', 't', 'time', 'время', 'час', 'часы', 'день', 'дни', 'дата'];
+  const SKIP = ['f', 'z', 'yy', 'title', 'range', 'domain', 'points'];
+  const isCol = (k) => Array.isArray(obj[k]) && obj[k].length > 2 &&
+    obj[k].every((v) => v == null || typeof v !== 'object');
+  const keys = Object.keys(obj).filter((k) => isCol(k) && SKIP.indexOf(k) < 0);
+  let axisKey = AXIS.find((k) => keys.indexOf(k) >= 0) || null;
+  if (!axisKey && keys.length >= 2 &&
+      obj[keys[0]].every((v) => typeof v === 'string' || !isFinite(+v))) {
+    axisKey = keys[0];       // первая колонка — подписи (даты, дни недели)
+  }
+  if (!axisKey || !keys.some((k) => k !== axisKey)) return [];
+  const axis = obj[axisKey].map((v, i) => {
+    const n = +v;
+    return (typeof v !== 'string' && isFinite(n)) ? n : i;
+  });
+  const out = [];
+  keys.forEach((k) => {
+    if (k === axisKey) return;
+    const c = obj[k];
+    const pts = [];
+    for (let i = 0; i < Math.min(axis.length, c.length); i++) {
+      if (isFinite(+c[i])) pts.push([+axis[i], +c[i]]);
+    }
+    if (pts.length) {
+      out.push({ label: k === 'y' ? String(obj.title || 'y') : String(k), pts });
+    }
+  });
+  return out;
+}
+
 function plotParseSeries(spec) {
   const raw = spec.data != null ? spec.data : (spec.series != null ? spec.series : null);
-  if (raw == null) {
-    /* BM2: КОЛОНОЧНЫЙ ФОРМАТ — самый естественный для модели («вот колонки:
-       время, температура, ветер»): {"x": [...], "temp": [...], "wind": [...]}.
-       Прежний парсер не понимал его вовсе — график данных валился в лекцию
-       про строгий JSON. Ось — первая колонка из x/t/time/час/день/дата
-       (или общий префикс); если значения не числа — индексы 0..n-1 */
-    const keys = Object.keys(spec).filter((k) => Array.isArray(spec[k]) &&
-      spec[k].length && ['x', 'y', 'yy', 'title', 'range', 'domain'].indexOf(k) < 0);
-    let axisKey = ['x', 't', 'time', 'время', 'час', 'часы', 'день', 'дни', 'дата']
-      .find((k) => Array.isArray(spec[k]) && spec[k].length > 2) || null;
-    if (!axisKey && keys.length >= 2 &&
-        spec[keys[0]].every((v) => typeof v === 'string' || !isFinite(+v))) {
-      axisKey = keys[0];       // первая колонка — подписи (время, даты)
-    }
-    if (!axisKey || axisKey === 'y' || !keys.some((k) => k !== axisKey)) return [];
-    const axisRaw = spec[axisKey];
-    const axis = axisRaw.map((v, i) => {
-      const n = +v;
-      return (typeof v !== 'string' && isFinite(n)) ? n : i;
-    });
-    const out = [];
-    keys.forEach((k) => {
-      if (k === axisKey) return;
-      const col = spec[k];
-      const pts = [];
-      for (let i = 0; i < Math.min(axis.length, col.length); i++) {
-        if (isFinite(+col[i])) pts.push([+axis[i], +col[i]]);
-      }
-      if (pts.length) out.push({ label: String(k), pts });
-    });
-    return out;
-  }
+  if (raw == null) return plotColumnarSeries(spec);
   const one = (v, idx) => {
     let label = '', pts = null;
     if (Array.isArray(v)) {
       if (v.length && Array.isArray(v[0])) {
-        pts = v.filter((p) => Array.isArray(p) && p.length >= 2 &&
-          isFinite(+p[0]) && isFinite(+p[1])).map((p) => [+p[0], +p[1]]);
+        /* BM3: подпись вместо числа в x («пн», «12:00») — не мусор, а
+           ось: точка живёт, x становится индексом. Прежний фильтр
+           выбрасывал такие точки ЦЕЛИКОМ — серия пустела и график
+           падал в «нет данных» */
+        pts = v.map((p, i) => [p[0], p[1], i])
+          .filter((p) => Array.isArray(p) && p.length >= 2 &&
+            p[1] != null && isFinite(+p[1]))
+          .map((p) => [isFinite(+p[0]) ? +p[0] : p[2], +p[1]]);
       } else if (v.length && typeof v[0] === 'number') {
         pts = v.map((y, i) => [i, +y]).filter((p) => isFinite(p[1]));
       }
@@ -4005,12 +4020,18 @@ function plotParseSeries(spec) {
     } else if (v && typeof v === 'object') {
       label = String(v.label || v.name || 'ряд ' + (idx + 1));
       if (Array.isArray(v.points)) {
-        /* BM2: точки бывают объектами {x, y} — модель так тоже пишет */
-        pts = v.points.map((p) => Array.isArray(p) ? p :
-          [(p && p.x != null) ? p.x : (p && p.t != null) ? p.t : 0,
-           (p && p.y != null) ? p.y : (p && p.v != null) ? p.v : null])
-          .filter((p) => p[1] != null && isFinite(+p[0]) && isFinite(+p[1]))
-          .map((p) => [+p[0], +p[1]]);
+        /* BM2: точки бывают объектами {x, y}; BM3: подпись вместо числа
+           в x — точка живёт, x становится индексом */
+        pts = v.points.map((p, i) => {
+          if (Array.isArray(p)) return [p[0], p[1], i];
+          if (p && typeof p === 'object') {
+            return [(p.x != null ? p.x : (p.t != null ? p.t : null)),
+                    (p.y != null ? p.y : (p.v != null ? p.v : null)), i];
+          }
+          return [null, null, i];
+        })
+          .filter((p) => p[1] != null && isFinite(+p[1]))
+          .map((p) => [isFinite(+p[0]) ? +p[0] : p[2], +p[1]]);
       } else if (Array.isArray(v.values)) {
         pts = v.values.map((y, i) => [i, +y]).filter((p) => isFinite(p[1]));
       } else if (Array.isArray(v.x) && Array.isArray(v.y)) {
@@ -4029,6 +4050,9 @@ function plotParseSeries(spec) {
       !Array.isArray(raw[0])) {
     raw.forEach((sv, i) => { const r = one(sv, i); if (r) list.push(r); });
   } else if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    /* BM3: колонки могут лежать и внутри data: {"x": [...], "y": [...]} */
+    const cols = plotColumnarSeries(raw);
+    if (cols.length) return cols;
     /* BM2: именованная карта {"температура": [[0,-3],...], "ветер": [...]} */
     Object.keys(raw).forEach((k, i) => {
       const r = one(typeof raw[k] === 'object' && !Array.isArray(raw[k]) && !raw[k].label
@@ -6040,6 +6064,12 @@ async function fetchReplies() {
   const ticket = (S.replyTicket = (S.replyTicket || 0) + 1);
   /* BM: сначала префетч — он стартовал ещё в момент done и почти всегда
      уже готов: подсказки встают в полосу сразу, без единой заглушки */
+  /* BM3: ОДИН ЗАКАЗ НА ОТВЕТ. Прежний код при пустом префетче стрелял
+     ВТОРЫМ /api/replies — а на сервере каждый запрос поднимал свой вызов
+     nano: два конкурентных запроса к провайдеру душат друг друга (и главный
+     ответ тоже), срываются по таймауту — и прилетает шаблонная тройка.
+     Теперь ровно один заказ: префетч из ai_msg, а если его не было —
+     один живой запрос. Сервер не считает одно и то же дважды */
   const pre = (S.replyPrefetch && S.replyPrefetch.chat === chat) ? S.replyPrefetch : null;
   if (pre) S.replyPrefetch = null;
   const load = pre ? pre.p :
@@ -6049,9 +6079,6 @@ async function fetchReplies() {
     new Promise((res) => setTimeout(() => res({}), 400)),
   ]);
   if (S.replyTicket !== ticket) return;
-  /* BM2: ПУСТОЙ ИЛИ УПАВШИЙ ПРЕФЕТЧ — НЕ ОТВЕТ. Прежний код показывал
-     «ничего» и больше не пробовал: сбой nano один раз — и подсказок нет
-     вовсе. Пусто/ошибка — считаем заново живым запросом */
   if (quick.items && quick.items.length) {
     if (activeChatId() === chat) showReplies(quick.items);
     return;
@@ -6060,14 +6087,13 @@ async function fetchReplies() {
   box.innerHTML = '<span class="reply-skel"></span><span class="reply-skel"></span>' +
                   '<span class="reply-skel"></span>';
   // Заглушки не должны светиться дольше, чем это выглядит осмысленно.
-  // Сервер ждёт модель максимум 20 с; если она молчит — убираем полосу сами,
-  // не оставляя мигать «вечную загрузку».
+  // Сервер держит запрос максимум ~12 с (nano с запасом); если модель
+  // молчит — убираем полосу сами, не оставляя мигать «вечную загрузку».
   const bail = setTimeout(() => {
     if (S.replyTicket === ticket) showReplies([]);
-  }, 22000);
+  }, 15000);
   try {
-    const items = await (quick.items ? load :
-      api('/api/replies', { chat_id: chat }).then((r) => ((r && r.items) || [])));
+    const items = await load;
     if (S.replyTicket !== ticket) return;
     if (activeChatId() !== chat) { showReplies([]); return; }
     showReplies(items && items.length ? items : []);
@@ -8353,9 +8379,6 @@ function settleVisualDone(ui) {
 function queueResponseFinish(ui, content, success) {
   if (ui.doneReceived) return;
   ui.doneReceived = true;
-  /* BM: подсказки заказываем СРАЗУ в момент done — пока печать дописывает
-     ответ, они уже считаются; к концу печати будут готовы мгновенно */
-  prefetchReplies();
   // Ответ уже ПОЛУЧИСТ целиком. Хвост из кода, таблиц и списков не должен
   // «досматриваться» в медленном темпе — плотный контент ускоряется.
   // Разговорный текст после done печатается как живой: с прежним темпом
@@ -8592,6 +8615,12 @@ function handleEvent(ev, ui) {
       if (ui.node && ui.node.root && !ui.node.root.dataset.msgId) {
         ui.node.root.dataset.msgId = ev.id;
       }
+      /* BM3: подсказки заказываем здесь, а не в done: событие done уходит
+         ДО записи ответа в базу — /api/replies тогда видел последней
+         реплику ВОПРОС и возвращал пусто. ai_msg приходит строго после
+         сохранения: пока печать дописывает ответ, nano уже считает
+         продолжения, и к концу печати чипы готовы мгновенно */
+      prefetchReplies();
       break;
     }
 

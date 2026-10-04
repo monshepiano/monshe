@@ -1169,22 +1169,27 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    содержимым. Базовая линия = базовая линия подкоренного: корень
    стоит на строке при любой высоте содержимого */
 .msqrt{position:relative;display:inline-block;line-height:0;
-  padding-left:.62em;margin:0 1px}
-.msqrt .msq-svg{position:absolute;left:0;top:0;width:.62em;height:100%;
+  padding-left:.40em;margin:0 1px}
+.msqrt .msq-svg{position:absolute;left:0;top:0;width:.40em;height:100%;
   overflow:visible;pointer-events:none;display:block}
 /* черта — та же линия, что носик: одна толщина 1.4px, один цвет */
 .msqrt .msq-r{display:inline-block;line-height:1.5;min-height:1em;
-  padding:0 .18em}
-/* BM2: ЧЕРТА — ТОТ ЖЕ САМЫЙ Штрих, что носик. Прежний border-top сидел на
-   0.7px НИЖЕ штриха svg (штрих центрирован на верхней кромке, бордюр —
-   под ней) и начинался после отступа — стык был ниже и тоньше. Теперь
-   черта — псевдоэлемент НА ТОЙ ЖЕ ЛИНИИ: центр на верхней кромке, те же
-   1.4px, тот же цвет, начинается от кончика носика — сплошная линия */
-.msqrt::after{content:'';position:absolute;left:.3em;right:0;top:-.7px;
+  padding:0 .18em 0 .05em}
+/* BM3: НОСИК БЕЗ МЁРТВОЙ ШИРИНЫ. Прежний viewBox был шире штриха на
+   половину: после кончика оставалось ~46% пустого svg — подкоренное
+   начиналось с большим отступом слева. Теперь svg обрезан по кончик
+   (viewBox 6.6), буква стоит сразу за носиком, черта начинается ровно
+   от кончика — одна сплошная линия */
+.msqrt::after{content:'';position:absolute;left:.35em;right:0;top:-.7px;
   height:1.4px;background:rgba(190,235,255,.85);pointer-events:none}
-/* СТЕПЕНЬ КОРНЯ — над хвостом знака, не залезая на него */
-.msqrt .msq-i{position:absolute;left:-.02em;top:-.58em;font-size:.62em;
-  opacity:.85;z-index:1;line-height:1}
+/* BM3: СТЕПЕНЬ КОРНЯ ПРАВЫМ КРАЕМ У КОНЧИКА. Прежний левый угол
+   (-.02em) при широком индексе («10», «k+1») наезжал на штрих носика.
+   Теперь индекс выровнен по правому краю узкой зоны у кончика:
+   узкий стоит у носика, широкий растёт ВЛЕВО — как в настоящей
+   математике, и никогда не задевает штрих */
+.msqrt .msq-i{position:absolute;left:0;width:.30em;text-align:right;
+  top:-.6em;font-size:.62em;opacity:.85;z-index:1;line-height:1;
+  white-space:nowrap}
 .math-block .mop,.math-inline .mop{padding:0 3px;color:#9fd8f2}
 .mfn{font-style:normal;padding:0 2px 0 4px}
 .mtext{font-style:normal}

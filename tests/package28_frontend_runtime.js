@@ -2497,7 +2497,7 @@ function testIterationBIContracts() {
 function testIterationBJContracts() {
   // BJ: СКРОЛЛ — ровный ход без разгона: скорость пропорциональна остатку
   const chase = js.split('function chaseBottom(')[1].split('\nfunction ')[0];
-  assert(chase.includes('const target = Math.min(7, Math.max(1, gap * 0.14));') && chase.includes('const v = Math.min(target, (st.chaseV || 0) + 0.55);') &&
+  assert(chase.includes('const target = Math.min(12, Math.max(1.2, gap * 0.16));') && chase.includes('const v = Math.min(target, (st.chaseV || 0) + 2.2);') &&
     !js.includes('st.v') &&
     js.split('function followLiveStream(')[1].split('\nfunction ')[0]
       .includes('chaseBottom(box, run);'),
@@ -2595,7 +2595,7 @@ function testIterationBLContracts() {
     'BL: column widths chase their new proportions smoothly — like the scroll');
   // BL: СКРОЛЛ — потолок ниже: карточки входят одним куском высоты
   assert(js.split('function chaseBottom(')[1].split('\nfunction ')[0]
-      .includes('const target = Math.min(7, Math.max(1, gap * 0.14));') &&
+      .includes('const target = Math.min(12, Math.max(1.2, gap * 0.16));') &&
     !js.includes('Math.min(24,'),
     'BL: the chase ceiling is gentle (11px/frame) — agent cards no longer glide-jerk');
   // BL: ГРАФИКИ — умный старт, ноль всегда в кадре, плавный ±
@@ -2656,13 +2656,15 @@ function testIterationBKContracts() {
     markdown.includes('stroke="rgba(190,235,255,.85)"') &&
     markdown.includes('<span class="msq-r">') &&
     markdown.includes('vector-effect="non-scaling-stroke"') &&
-    css.includes('padding-left:.62em') &&
+    markdown.includes('viewBox="0 0 6.6 24"') &&
+    css.includes('padding-left:.40em') &&
     css.includes('.msqrt .msq-r{display:inline-block;line-height:1.5;min-height:1em;') &&
-    css.includes('.msqrt::after{content:\'\';position:absolute;left:.3em;right:0;top:-.7px;') &&
+    css.includes('padding:0 .18em 0 .05em') &&
+    css.includes('.msqrt::after{content:\'\';position:absolute;left:.35em;right:0;top:-.7px;') &&
     css.includes('height:1.4px;background:rgba(190,235,255,.85)') &&
     !css.includes('.msq-b') && !css.includes('aspect-ratio:11/24') && !css.includes('border-top:1.4px') &&
-    css.includes('.msqrt .msq-i{position:absolute;left:-.02em;top:-.58em;font-size:.62em;'),
-    'BM2: the bar is a CSS ::after ON the stroke line (same 1.4px, same color, top on the line); the nose has no H-tail — the radicand is never covered');
+    css.includes('.msqrt .msq-i{position:absolute;left:0;width:.30em;text-align:right;'),
+    'BM3: the svg is cropped at the tip (no dead width — the radicand sits right behind the nose), the bar starts at the tip, and a wide root index grows LEFT, never onto the stroke');
   // BK: ГРАФИК-ИНТЕРПРЕТАТОР — z(x,y)=, юникод-математика, спасение формул
   assert(js.includes("src.replace(/(^|[^\\w])([a-zA-Z])\\s*\\(([^)]*)\\)\\s*=/g,") &&
     js.includes(".replace(/[·×]/g, '*')") &&
@@ -2680,10 +2682,12 @@ function testIterationBMContracts() {
   // BM: ПОДСКАЗКИ — предзагрузка до того, как юзер их увидит
   const fr = js.split('async function fetchReplies(')[1].split('\nfunction ')[0];
   assert(js.includes('function prefetchReplies()') &&
-    js.includes('prefetchReplies();') &&
+    js.split('case \'ai_msg\':')[1].split('\n    case ')[0].includes('prefetchReplies();') &&
+    !js.split('function queueResponseFinish(')[1].split('\nfunction ')[0].includes('prefetchReplies();') &&
     fr.includes('S.replyPrefetch') &&
-    fr.includes("if (S.streaming) return;"),
-    'BM: replies are prefetched right after an answer — the user never sees them load');
+    fr.includes("if (S.streaming) return;") &&
+    pyServer.includes('_reply_job_result('),
+    'BM3: replies are prefetched at ai_msg (AFTER the save, not the racy done) and the server never runs two suggestion jobs for one answer');
   // BM: ГРАФИК ПО-ЧЕЛОВЕЧЕСКИ — данные это данные, окно по точкам, аспект «авто»
   const p2 = js.split('function buildPlot2Panel(')[1].split('\nfunction ')[0];
   assert(js.includes('function plotParseSeries(') &&
@@ -2721,10 +2725,15 @@ function testIterationBMContracts() {
     bmr('\\[ a \\le b \\]').includes('≤') &&
     markdown.includes("le:'\\u2264', ge:'\\u2265',"),
     'BM: ge/le render as real ≥/≤ symbols; superscripts survive');
-  // BM: КОРЕНЬ — svg на .62em, содержимое в потоке (см. BK-блок выше)
+  // BM3: КОРЕНЬ — svg-оверлей фиксированной ширины .40em, содержимое в потоке
   assert(css.includes('.msqrt{position:relative;display:inline-block;line-height:0;') &&
-    css.includes('.msqrt .msq-svg{position:absolute;left:0;top:0;width:.62em;height:100%;'),
-    'BM: the radical sign is a fixed .62em overlay — stable at any content size');
+    css.includes('.msqrt .msq-svg{position:absolute;left:0;top:0;width:.40em;height:100%;'),
+    'BM3: the radical sign is a fixed .40em overlay (cropped at the tip) — stable at any content size');
+  // BM3: отношения и операции — с воздухом; «>=» — один знак
+  assert(bmr('\\[ a >= n \\]').includes('≥') && !bmr('\\[ a >= n \\]').includes('&gt;') &&
+    bmr('\\[ x <= y \\]').includes('≤') &&
+    bmr('\\[ a \\times b \\]').includes('<span class="mop">\u00d7</span>'),
+    'BM3: bare >=/<= fuse into one ≥/≤; operators like × get real air');
 }
 
 function testIterationAOContracts() {
@@ -2966,7 +2975,7 @@ function testIterationBEContracts() {
     'BE: the JS engine rotates shapes — 4D figures turn inside out in XW/ZW planes');
   // BE/BG: скролл — плавный догон; прилипание у дна — ПЕРВЫМ делом
   assert(js.includes('function chaseBottom(') &&
-    js.includes('const target = Math.min(7, Math.max(1, gap * 0.14));') &&
+    js.includes('const target = Math.min(12, Math.max(1.2, gap * 0.16));') &&
     js.includes('function followGrowingPanel(') &&
     js.includes('if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }') &&
     js.includes('if (run && h - top - box.clientHeight < 48) {') &&
@@ -3112,7 +3121,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.71'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.72'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -3415,7 +3424,7 @@ function testIterationBGContracts() {
   assert(js.includes('if (run && h - top - box.clientHeight < 48) {') &&
     js.includes('st.autoPend = 0;') &&
     js.includes('function followGrowingPanel(') &&
-    js.includes('const target = Math.min(7, Math.max(1, gap * 0.14));'),
+    js.includes('const target = Math.min(12, Math.max(1.2, gap * 0.16));'),
     'BG: bottom-stick check comes first; collapsing panels are chased smoothly');
   // BG: математика — правило 11, мини-LaTeX и живые панели plot/geo
   assert(pyAgent.includes('11. МАТЕМАТИКА') && pyAgent.includes('```plot') &&
@@ -3443,7 +3452,7 @@ function testIterationBHContracts() {
     js.split('function followGrowingPanel(')[1].split('\nfunction ')[0]
       .includes('chaseBottom(box, run);') &&
     js.split('function chaseBottom(')[1].split('\nfunction ')[0]
-      .includes('const target = Math.min(7, Math.max(1, gap * 0.14));') &&
+      .includes('const target = Math.min(12, Math.max(1.2, gap * 0.16));') &&
     !js.includes('st.v ='),
     'BI: agent and panel scroll share one chaseBottom engine — no separate steps');
   // BH: уведомление режима остаётся ПОСЕРЕДИНЕ ответа

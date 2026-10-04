@@ -3254,7 +3254,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.71", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.72", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4589,8 +4589,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.71", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.71", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.72", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.72", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5350,7 +5350,7 @@ class IterationBETests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         # догоняющий скролл вместо мгновенных прыжков
         self.assertIn("function chaseBottom(", js)
-        self.assertIn("const target = Math.min(7, Math.max(1, gap * 0.14));", js)
+        self.assertIn("const target = Math.min(12, Math.max(1.2, gap * 0.16));", js)
         # уход вверх ЛЮБЫМ способом (скроллбар, клавиши) снимает прилипание:
         # наш догоняющий кадр scrollTop уменьшить не может
         self.assertIn("if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }", js)
@@ -5556,7 +5556,7 @@ class IterationBGTests(unittest.TestCase):
         self.assertIn("st.autoPend = 0;", js)
         # свёртка панели — плавный догон, без резких прыжков
         self.assertIn("function followGrowingPanel(", js)
-        self.assertIn("const target = Math.min(7, Math.max(1, gap * 0.14));", js)
+        self.assertIn("const target = Math.min(12, Math.max(1.2, gap * 0.16));", js)
 
     def test_bg6_math_latex_and_live_panels(self) -> None:
         with mock.patch.object(agent.db, "recall", return_value=[]), \
@@ -5611,8 +5611,8 @@ class IterationBHTests(unittest.TestCase):
         # BJ: РОВНЫЙ ХОД — скорость пропорциональна остатку, без разгона:
         # большая карточка догоняется постоянным ходом, у дна плавно замирает
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const target = Math.min(7, Math.max(1, gap * 0.14));", chase)
-        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 0.55);", chase)
+        self.assertIn("const target = Math.min(12, Math.max(1.2, gap * 0.16));", chase)
+        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 2.2);", chase)
         self.assertNotIn("st.v =", chase)
 
     def test_bh2_mode_note_stays_mid_answer(self) -> None:
@@ -5732,8 +5732,8 @@ class IterationBJTests(unittest.TestCase):
         # скорость пропорциональна остатку и ограничена сверху — ни разгона,
         # ни ступенек: одна кривая для печати, карточек и панелей
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const target = Math.min(7, Math.max(1, gap * 0.14));", chase)
-        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 0.55);", chase)
+        self.assertIn("const target = Math.min(12, Math.max(1.2, gap * 0.16));", chase)
+        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 2.2);", chase)
         self.assertNotIn("st.v =", js)
 
     def test_bj2_mode_note_before_any_text(self) -> None:
@@ -5832,7 +5832,7 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.71", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.72", html)
 
 
 
@@ -5905,7 +5905,7 @@ class IterationBKTests(unittest.TestCase):
         self.assertIn(
             ".msqrt .msq-r{display:inline-block;line-height:1.5;min-height:1em;", css)
         self.assertIn(
-            ".msqrt .msq-svg{position:absolute;left:0;top:0;width:.62em;height:100%;", css)
+            ".msqrt .msq-svg{position:absolute;left:0;top:0;width:.40em;height:100%;", css)
         self.assertNotIn("aspect-ratio:11/24", css)
 
     def test_bk6_plot_interpreter_unicode_and_defs(self) -> None:
@@ -5932,7 +5932,7 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.71", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.72", html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -5965,7 +5965,7 @@ class IterationBLTests(unittest.TestCase):
         self.assertIn("host._tblStamp = ++TABLE_HOST_STAMP;", js)
         # потолок скролла ниже — карточки входят одним куском высоты
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const target = Math.min(7, Math.max(1, gap * 0.14));", chase)
+        self.assertIn("const target = Math.min(12, Math.max(1.2, gap * 0.16));", chase)
         self.assertNotIn("Math.min(24,", js)
 
     def test_bl3_dot_centered_and_bigger(self) -> None:
@@ -6055,13 +6055,23 @@ class IterationBM2Tests(unittest.TestCase):
         self.assertIn("```ui-sent\ntiles Да | Нет\n```", out)
 
     def test_suppress_repeated_panels_only_answered(self) -> None:
-        old = "Вопрос\n\n```ui-sent\ntiles Формат: PDF | Word\n```"
+        # BM3: единственный повтор — ЖИВОЙ: модель имеет право переспросить
+        once = "Вопрос\n\n```ui-sent\ntiles Формат: PDF | Word\n```"
         repeat = "Продолжаю.\n\n```ui\ntiles Формат: PDF | Word\n```\nГотово."
-        out = agent.suppress_repeated_panels(old, repeat)
+        self.assertEqual(agent.suppress_repeated_panels(once, repeat), repeat)
+        # третья копия той же панели — цикл, гасим
+        twice = once + "\n\n```ui-sent\ntiles Формат: PDF | Word\n```"
+        out = agent.suppress_repeated_panels(twice, repeat)
         self.assertEqual(out.count("```ui-sent"), 1)
         self.assertNotIn("```ui\n", out)
-        fresh = agent.suppress_repeated_panels(old, "```ui\ntiles Стиль: А | Б\n```")
-        self.assertIn("```ui\n", fresh)   # новая панель остаётся живой
+        # дубль внутри одного продолжения — тоже цикл
+        dup = "```ui\ntiles Да | Нет\n```\nтекст\n```ui\ntiles Да | Нет\n```"
+        out2 = agent.suppress_repeated_panels(once, dup)
+        self.assertEqual(out2.count("```ui\n"), 1)
+        self.assertEqual(out2.count("```ui-sent"), 1)
+        # новая панель остаётся живой
+        fresh = agent.suppress_repeated_panels(once, "```ui\ntiles Стиль: А | Б\n```")
+        self.assertIn("```ui\n", fresh)
 
     def test_run_shell_deletion_asked_others_silent(self) -> None:
         self.assertIsNone(agent.needs_approval("run_shell", {"command": "cp a b"}))
@@ -6100,6 +6110,58 @@ class IterationBM2Tests(unittest.TestCase):
         with mock.patch.object(agent.llm, "chat", side_effect=RuntimeError("down")):
             items = agent.suggest_replies_ai("как дела?", "Нормально.")
             self.assertTrue(items and isinstance(items, list))
+
+
+class IterationBM3Tests(unittest.TestCase):
+    """BM3 — причины, не симптомы: single-flight подсказок (никаких
+    двойных nano-запросов), три РАЗНЫЕ подсказки, подавление только
+    настоящего цикла панелей, простые формы графиков в промпте."""
+
+    def test_reply_job_single_flight(self) -> None:
+        # две «одновременные» задачи на одно сообщение = один вызов nano
+        import threading as _th
+        import jarvis.server as srv
+        calls = []
+        released = _th.Event()
+
+        def fake_ai(user_text, answer, tools_used=None, history=None):
+            calls.append(1)
+            released.wait(2.0)
+            return ["Живой вопрос один", "Живой вопрос два", "Живой вопрос три"]
+
+        msg = {"id": "m_single", "chat_id": "c1", "role": "assistant",
+               "content": "ответ", "meta": {}}
+        with mock.patch.object(db, "get_message", return_value=msg), \
+             mock.patch.object(db, "get_recent_messages", return_value=[]), \
+             mock.patch.object(db, "update_message_meta", return_value=None), \
+             mock.patch.object(agent, "suggest_replies_ai", side_effect=fake_ai), \
+             mock.patch.object(agent, "suggest_replies",
+                               return_value=["Расскажи подробнее",
+                                             "Покажи на примере", "Что дальше?"]):
+            srv._prefetch_replies("m_single", "вопрос", "ответ")
+            # первый заказ ещё бежит — второй не должен подниматься
+            srv._prefetch_replies("m_single", "вопрос", "ответ")
+            got = srv._reply_job_result("m_single")
+            released.set()
+        self.assertEqual(len(calls), 1, "nano вызывается ровно один раз")
+        self.assertTrue(got and len(got) == 3, got)
+
+    def test_suggestions_dedupe(self) -> None:
+        with mock.patch.object(agent.llm, "chat",
+                               return_value='["Сравни поставщиков оборудования",'
+                                            '"Сравни поставщиков оборудования",'
+                                            '"Посчитай бюджет проекта"]'):
+            items = agent.suggest_replies_ai(
+                "вопрос", "ответ про проект и сроки поставки оборудования",
+                history=[{"role": "user", "content": "q"},
+                         {"role": "assistant", "content": "a"}])
+        self.assertEqual(items, ["Сравни поставщиков оборудования",
+                                 "Посчитай бюджет проекта"])
+
+    def test_prompt_admits_xy_columns(self) -> None:
+        # правило графиков живёт в системном промпте агента
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        self.assertIn('"x": [0, 3, 6], "y": [-3, -1, 2]', src)
 
 
 if __name__ == "__main__":

@@ -508,27 +508,54 @@ class Handler(BaseHTTPRequestHandler):
             # Подсказки формирует ИИ-модель по сути ответа. После AGENT-прогона
             # сбой модели честно падает в проактивные шаги по фактам работы —
             # это решает suggest_replies_ai внутри себя.
-            # BM2: ЛЮБОЙ СБОЙ НЕ ОСТАВЛЯЕТ ЧЕЛОВЕКА БЕЗ КНОПОК. Прежний код
-            # ронял запрос 500-й (исключение из nano) — фронт кэшировал пустоту
-            # и подсказок не было вовсе. Теперь исключение отдаёт локальный
-            # запас, а пустой ответ — тоже запас: чипы есть ВСЕГДА.
+            # BM3: НЕ СЧИТАЕМ ДВАЖДЫ. В момент сохранения ответа сервер уже
+            # запустил фоновый nano-расчёт (см. _prefetch_replies). Раньше
+            # здесь поднимался ВТОРОЙ конкурентный запрос — провайдер с
+            # лимитом параллелизма душил их оба: таймаут, шаблонная тройка,
+            # а следующий главный ответ ждал в очереди. Бегущий расчёт
+            # ждём, а не повторяем.
+            waited = _reply_job_result(last["id"])
+            if waited:
+                return self._json({"ok": True, "items": waited})
+            with _REPLY_JOBS_LOCK:
+                job = _REPLY_JOBS.get(last["id"])
+                if not job:
+                    job = {"event": threading.Event(), "items": None}
+                    _REPLY_JOBS[last["id"]] = job
+                    compute = True
+                else:
+                    compute = False
+            if not compute:
+                job["event"].wait(timeout=11.0)
+                return self._json({"ok": True, "items": job.get("items") or []})
             try:
-                items = agent.suggest_replies_ai(
-                    asked, last.get("content", ""),
-                    meta.get("tools") if meta.get("agent") else None,
-                    history=msgs) or []
-            except Exception:
-                items = []
-            if not items:
-                items = agent.suggest_replies(asked, last.get("content", ""))
-            # BD: ШАБЛОНЫ НЕ КЭШИРУЮТСЯ. Один сбой nano раньше записывал
-            # шаблонную тройку в meta навсегда — чипы «опять шаблонные».
-            # Кэшируем только живые ИИ-подсказки; шаблон увидим один раз,
-            # при следующем заходе пересчитаем
-            if items and items != agent.suggest_replies(asked, last.get("content", "")):
-                meta["replies"] = items
-                db.update_message_meta(last["id"], meta)
-            return self._json({"ok": True, "items": items})
+                # BM2: ЛЮБОЙ СБОЙ НЕ ОСТАВЛЯЕТ ЧЕЛОВЕКА БЕЗ КНОПОК. Прежний код
+                # ронял запрос 500-й (исключение из nano) — фронт кэшировал
+                # пустоту и подсказок не было вовсе. Теперь исключение отдаёт
+                # локальный запас, а пустой ответ — тоже запас: чипы есть ВСЕГДА.
+                try:
+                    items = agent.suggest_replies_ai(
+                        asked, last.get("content", ""),
+                        meta.get("tools") if meta.get("agent") else None,
+                        history=msgs) or []
+                except Exception:
+                    items = []
+                if not items:
+                    items = agent.suggest_replies(asked, last.get("content", ""))
+                job["items"] = items
+                # BD: ШАБЛОНЫ НЕ КЭШИРУЮТСЯ. Один сбой nano раньше записывал
+                # шаблонную тройку в meta навсегда — чипы «опять шаблонные».
+                # Кэшируем только живые ИИ-подсказки; шаблон увидим один раз,
+                # при следующем заходе пересчитаем
+                if items and items != agent.suggest_replies(asked, last.get("content", "")):
+                    meta["replies"] = items
+                    db.update_message_meta(last["id"], meta)
+                return self._json({"ok": True, "items": items})
+            finally:
+                job["event"].set()
+                with _REPLY_JOBS_LOCK:
+                    if _REPLY_JOBS.get(last["id"]) is job:
+                        del _REPLY_JOBS[last["id"]]
         if path == "/api/questions/answer":
             db.answer_question(body.get("id", ""), str(body.get("answer", ""))[:300])
             return self._json({"ok": True})
@@ -1165,6 +1192,32 @@ class Handler(BaseHTTPRequestHandler):
                 error_type=run_error or None)
 
 
+# BM3: SINGLE-FLIGHT ПОДСКАЗОК. Раньше на один ответ поднимались ДВА
+# конкурентных nano-запроса: фоновый тред (в момент сохранения) и свой
+# вызов из /api/replies (фронт спрашивал чуть позже и не находил готового).
+# Провайдер с лимитом параллелизма душил их друг об друга — оба срывались
+# по таймауту, фронт получал шаблонную тройку, а следующий главный ответ
+# («думает и печатает медленно») вставал в очередь за ними. Теперь задача
+# живёт в реестре: /api/replies ЖДЁТ уже бегущий расчёт, а не повторяет его.
+_REPLY_JOBS: Dict[str, Dict[str, Any]] = {}
+_REPLY_JOBS_LOCK = threading.Lock()
+
+
+def _reply_job_result(msg_id: str) -> Optional[List[str]]:
+    """Подождать бегущий расчёт подсказок и вернуть его результат (или None).
+
+    Вызывается только из /api/replies, когда meta ещё пуста: значит, nano
+    считает прямо сейчас — ждать дешевле и честнее, чем пускать второй
+    конкурентный запрос в того же провайдера."""
+    with _REPLY_JOBS_LOCK:
+        job = _REPLY_JOBS.get(msg_id)
+    if not job:
+        return None
+    job["event"].wait(timeout=11.0)
+    items = job.get("items")
+    return items if isinstance(items, list) and items else None
+
+
 def _prefetch_replies(msg_id: str, user_text: str, answer: str,
                       tools_used: Optional[List[str]] = None) -> None:
     """Фоновая подготовка кнопок-подсказок для только что сохранённого ответа.
@@ -1177,26 +1230,39 @@ def _prefetch_replies(msg_id: str, user_text: str, answer: str,
     """
     if not msg_id:
         return
+    with _REPLY_JOBS_LOCK:
+        if msg_id in _REPLY_JOBS:
+            return                # уже считается — второго запроса не будет
+        job: Dict[str, Any] = {"event": threading.Event(), "items": None}
+        _REPLY_JOBS[msg_id] = job
 
     def work() -> None:
         try:
             msg = db.get_message(msg_id)
-            if not msg:
-                return
-            meta = msg.get("meta") or {}
-            if isinstance(meta.get("replies"), list):
-                return          # уже посчитано (перечитали историю и т.п.)
-            # AY: генератор видит ПОСЛЕДНИЕ РЕПЛИКИ переписки — подсказки
-            # стали развитием разговора, а не реакцией на один ответ
-            history = db.get_recent_messages(msg.get("chat_id", ""), limit=8) or []
-            items = agent.suggest_replies_ai(user_text, answer, tools_used,
-                                             history=history)
-            # BD: шаблоны в meta не пишем — переживём сбой без вечных clichés
-            if items and items != agent.suggest_replies(user_text, answer):
-                meta["replies"] = items
-                db.update_message_meta(msg_id, meta)
+            if msg:
+                meta = msg.get("meta") or {}
+                if not isinstance(meta.get("replies"), list):
+                    # AY: генератор видит ПОСЛЕДНИЕ РЕПЛИКИ переписки —
+                    # подсказки стали развитием разговора, а не реакцией
+                    # на один ответ
+                    history = db.get_recent_messages(
+                        msg.get("chat_id", ""), limit=8) or []
+                    items = agent.suggest_replies_ai(user_text, answer,
+                                                     tools_used,
+                                                     history=history)
+                    job["items"] = items
+                    # BD: шаблоны в meta не пишем — переживём сбой без
+                    # вечных clichés; их отдаст сам job один раз
+                    if items and items != agent.suggest_replies(user_text, answer):
+                        meta["replies"] = items
+                        db.update_message_meta(msg_id, meta)
         except Exception:
             pass
+        finally:
+            job["event"].set()
+            with _REPLY_JOBS_LOCK:
+                if _REPLY_JOBS.get(msg_id) is job:
+                    del _REPLY_JOBS[msg_id]
 
     threading.Thread(target=work, daemon=True,
                      name="jarvis-replies").start()

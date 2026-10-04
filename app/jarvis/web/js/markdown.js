@@ -39,6 +39,9 @@
     phi:'\u03c6', chi:'\u03c7', psi:'\u03c8', omega:'\u03c9',
     Gamma:'\u0393', Delta:'\u0394', Theta:'\u0398', Lambda:'\u039b', Xi:'\u039e',
     Pi:'\u03a0', Sigma:'\u03a3', Phi:'\u03a6', Psi:'\u03a8', Omega:'\u03a9' };
+  /* BM3: знаки, которым нужен воздух по бокам (отношения и операции);
+     стрелки — отдельная история (.mrel), большие операторы — свои правила */
+  var MATH_OPS = '\u2265\u2264\u2260\u2248\u223c\u2261\u221d\u00d7\u00b7\u00f7\u00b1\u2213\u2282\u2286\u2208\u2209\u222a\u2229\u22a5\u2225\u2223';
   var SYM = { triangle:'\u25b3', angle:'\u2220', perp:'\u22a5', parallel:'\u2225',
     cdot:'\u00b7', times:'\u00d7', div:'\u00f7', pm:'\u00b1', mp:'\u2213',
     leq:'\u2264', geq:'\u2265', neq:'\u2260', ne:'\u2260', approx:'\u2248',
@@ -228,7 +231,7 @@
              штрих носика: одна непрерывная линия при любом размере */
           out += '<span class="msqrt">' +
             (root ? '<span class="msq-i">' + mesc(root) + '</span>' : '') +
-            '<svg class="msq-svg" viewBox="0 0 11 24" preserveAspectRatio="none" aria-hidden="true"><path d="M.8 13.9 L3.3 16 L5.9 0" fill="none" stroke="rgba(190,235,255,.85)" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+            '<svg class="msq-svg" viewBox="0 0 6.6 24" preserveAspectRatio="none" aria-hidden="true"><path d="M.8 13.9 L3.3 16 L5.9 0" fill="none" stroke="rgba(190,235,255,.85)" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
             '<span class="msq-r">' + mathRender(g.text, inline) + '</span></span>';
           continue;
         }
@@ -268,6 +271,10 @@
              общий паддинг прижимал ⇒ к словам, и знак читался неряшливо */
           if (/[←-⇿⟴-⟿↦]/.test(SYM[name])) {
             out += '<span class="mrel">' + SYM[name] + '</span>';
+          } else if (MATH_OPS.indexOf(SYM[name]) >= 0) {
+            /* BM3: ОТНОШЕНИЯ И ЗНАКИ ОПЕРАЦИЙ — тоже с воздухом: «a≥n»
+               без просветов читалось слипшимся, как и «a×b» */
+            out += '<span class="mop">' + SYM[name] + '</span>';
           } else {
             out += SYM[name];
           }
@@ -291,6 +298,15 @@
         continue;
       }
       if (ch === '&') { i += 1; continue; }   /* вне окружений & не показываем */
+      /* BM3: модель пишет «a >= n» и без слэшей — склеиваем в ОДИН знак:
+         прежде «>» и «=» рендерились двумя отдельными знаками с дыркой */
+      if (i + 1 < s.length && s[i + 1] === '=' &&
+          (ch === '>' || ch === '<' || ch === '!')) {
+        out += '<span class="mop">' +
+          (ch === '>' ? '\u2265' : ch === '<' ? '\u2264' : '\u2260') + '</span>';
+        i += 2;
+        continue;
+      }
       if ('=<>+-*/'.indexOf(ch) >= 0 && ch !== ' ') {
         out += '<span class="mop">' + mesc(ch) + '</span>';
         i += 1;

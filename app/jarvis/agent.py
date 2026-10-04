@@ -9,6 +9,7 @@ import concurrent.futures
 import contextvars
 import json
 import re
+from collections import Counter
 import threading
 import time
 from typing import Any, Callable, Dict, Generator, List, Optional
@@ -414,40 +415,47 @@ def mark_answered_fences(content: str) -> str:
     return _ANSWERABLE_FENCE.sub(lambda m: "```ui-sent\n", text)
 
 
-def _fence_specs(text: str, sent_only: bool) -> set:
-    """Нормализованные тела фенсов (для распознавания повторов)."""
-    specs = set()
+def _fence_spec_counts(text: str, sent_only: bool) -> "Counter[str]":
+    """Нормализованные тела фенсов и сколько раз каждое уже встретилось."""
+    counts: "Counter[str]" = Counter()
     pattern = (r"```[ \t]*ui-sent[ \t]*\n([\s\S]*?)```" if sent_only
                else r"```[ \t]*(?:ui[\w-]*|интерфейс|панель|выбор)[ \t]*\n([\s\S]*?)```")
     for m in re.finditer(pattern, text, re.IGNORECASE):
         body = "\n".join(line.strip() for line in m.group(1).splitlines()
                          if line.strip())
         if body:
-            specs.add(body)
-    return specs
+            counts[body] += 1
+    return counts
 
 
 def suppress_repeated_panels(old_content: str, addition: str) -> str:
-    """Повтор уже отвеченной панели в продолжении — тоже отвеченная.
+    """Гасить только НАСТОЯЩИЙ цикл: третью и дальше копию той же панели.
 
-    Модель нередко дословно повторяет фенс панели, на которую только что
-    ответил человек. Такой фенс помечаем отправленным: лента не предлагает
-    одно и то же бесконечно."""
-    answered = _fence_specs(str(old_content or ""), sent_only=True)
+    Однократный повтор — легитимное право модели переспросить уточнение,
+    если ответ на панель не снял вопрос. Гасим фенс только когда
+    идентичная панель уже отвечена ДВАЖДЫ (третья копия — это цикл),
+    либо когда модель повторила её дважды в одном продолжении.
+    Причину зацикливания убирают mark_answered_fences и правило промпта:
+    на уже сделанный выбор вторую панель не выставлять."""
+    answered = _fence_spec_counts(str(old_content or ""), sent_only=True)
     if not answered:
         return str(addition or "")
     out = []
     pos = 0
+    active_here: set = set()
     text = str(addition or "")
     for m in re.finditer(
             r"```[ \t]*(ui[\w-]*|интерфейс|панель|выбор)[ \t]*\n([\s\S]*?)```",
             text, re.IGNORECASE):
         body = "\n".join(line.strip() for line in m.group(2).splitlines()
                          if line.strip())
-        if body in answered:
+        loop = bool(body) and (answered.get(body, 0) >= 2 or body in active_here)
+        if loop:
             out.append(text[pos:m.start()])
             out.append("```ui-sent\n" + m.group(2) + "```")
             pos = m.end()
+        elif body:
+            active_here.add(body)
     out.append(text[pos:])
     return "".join(out)
 
@@ -857,7 +865,9 @@ ui. Если вариантов нет, но ответ человека всё 
    ```
    Правило простое: математическая функция — "f"/"z" с формулой; реальные
    данные — "data" с точками. Просьба «график температуры» НИКОГДА не
-   превращается в формулу temp(x).
+   превращается в формулу temp(x). Числа колонками пиши проще всего
+   парами "x"/"y" (или именованными колонками):
+   {{{{"x": [0, 3, 6], "y": [-3, -1, 2], "title": "Температура"}}}}
    ВНУТРИ блока plot — СТРОГО ОДИН JSON-объект и СТРОГО в ДВОЙНЫХ
    кавычках: {{{{"f": ["sin(x)"], "x": [-6, 6]}}}}. Никаких одинарных
    кавычек ('f'), голых ключей без кавычек, висячих запятых, комментариев
@@ -1451,9 +1461,19 @@ def suggest_replies_ai(user_text: str, answer: str,
         else:
             themed = [x for x in parsed if _topic_words(x) & topic]
             items = themed or parsed
-        if items:
-            span.finish("ok", count=len(items))
-            return items[:3]
+        # BM3: ВСЕГДА РАЗНЫЕ. Модель иногда повторяет одну фразу дважды —
+        # чипы-дубли выглядят сломанными. Убираем повторы; возвращаем
+        # столько живых, сколько есть (две хорошие лучше трёх шаблонных)
+        seen: set = set()
+        uniq: List[str] = []
+        for one in items:
+            key = re.sub(r"\s+", " ", str(one).strip().lower())
+            if key and key not in seen:
+                seen.add(key)
+                uniq.append(re.sub(r"\s+", " ", str(one).strip()))
+        if uniq:
+            span.finish("ok", count=len(uniq))
+            return uniq[:3]
         # BE: модель ушла в сторону — тоже сбой: запас честнее чужой темы
         if parsed:
             span.finish("off_topic")
