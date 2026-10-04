@@ -3259,7 +3259,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.75", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.76", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4594,8 +4594,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.75", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.75", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.76", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.76", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5837,7 +5837,7 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.75", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.76", html)
 
 
 
@@ -5937,7 +5937,7 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.75", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.76", html)
 
 
 class IterationBLTests(unittest.TestCase):

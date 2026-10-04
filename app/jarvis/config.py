@@ -27,6 +27,8 @@ DEFAULTS: Dict[str, Any] = {
         # BM6: порядок выбора = priority (меньше = первым). Любой
         # OpenAI-совместимый провайдер добавляется сюда же и подхватывается
         # автоматически. "auth": bearer | api-key (Yandex) | gigachat (Сбер).
+        # Порядок запасных (решение человека, BM6): Yandex -> ГигаЧат ->
+        # DeepSeek. Основной определяется ролью в Настройках (priority 0).
         "cloudru": {
             "enabled": True,
             "priority": 0,
@@ -34,16 +36,9 @@ DEFAULTS: Dict[str, Any] = {
             "api_key": "",
             "label": "Cloud.ru",
         },
-        "deepseek": {
-            "enabled": True,
-            "priority": 10,
-            "base_url": "https://api.deepseek.com/v1",
-            "api_key": "",
-            "label": "DeepSeek",
-        },
         "yandex": {
             "enabled": False,
-            "priority": 5,
+            "priority": 10,
             "auth": "api-key",
             "base_url": "https://llm.api.cloud.yandex.net/v1",
             "api_key": "",
@@ -58,9 +53,16 @@ DEFAULTS: Dict[str, Any] = {
             "api_key": "",
             "label": "GigaChat",
         },
+        "deepseek": {
+            "enabled": True,
+            "priority": 30,
+            "base_url": "https://api.deepseek.com/v1",
+            "api_key": "",
+            "label": "DeepSeek",
+        },
         "aitunnel": {
             "enabled": False,
-            "priority": 30,
+            "priority": 40,
             "base_url": "https://api.aitunnel.ru/v1",
             "api_key": "",
             "label": "AITunnel",
