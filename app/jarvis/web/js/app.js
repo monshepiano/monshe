@@ -607,6 +607,7 @@ const BOOT_MIN_MS = 900;
 
 /* ============================ навигация ============================ */
 function showView(name) {
+  S.view = name;                       // BM10: возврат в CHAT восстановит вкладку
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + name));
   $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
   const titles = { chat: 'Диалог', auto: 'AUTO · фоновые задачи', files: 'Файлы',
@@ -1120,6 +1121,92 @@ function renderBalance(b) {
     ? 'Биллинг-API недоступен' + (b.error ? ': ' + b.error : '') + '. Показан мой собственный подсчёт.'
     : 'Моя оценка расхода за 30 дней. Подключи биллинг Cloud.ru в Настройках, ' +
       'чтобы видеть данные из личного кабинета.';
+}
+
+/* ================== BM10: ПРОСТРАНСТВА (идея из Arc) ==================
+   Над чертой сайдбара — переключатель: большие CHAT/LIVE и мини-иконки
+   пространств (CHAT — базовое). Переключение кликом или свайпом двумя
+   пальцами по горизонтали; контент уезжает вбок, новый въезжает.
+   Всё, что под чертой (вкладки, диалоги), принадлежит пространству. */
+const SPACES = ['chat', 'math', 'music'];
+const SPACE_META = {
+  chat: { name: 'CHAT', ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.8A3.8 3.8 0 017.8 3h8.4A3.8 3.8 0 0120 6.8v5.4a3.8 3.8 0 01-3.8 3.8H9.2l-5.2 4v-4.7A3.8 3.8 0 014 6.8z"/></svg>' },
+  math: { name: 'MATH', ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 4H9.8l4.9 8-4.9 8h7.7"/></svg>' },
+  music: { name: 'MUSIC', ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5.6l10-2V16"/><circle cx="6.6" cy="18" r="2.6"/><circle cx="16.6" cy="16" r="2.6"/></svg>' },
+};
+S.space = 'chat';
+
+function spaceApply(name) {
+  document.body.dataset.space = name;
+  const isChat = name === 'chat';
+  // под чертой: вкладки и диалоги принадлежат пространству
+  $$('.nav, .chats-block').forEach((n) => n.classList.toggle('space-off', !isChat));
+  let fut = $('#spaceFuture');
+  if (!isChat && !fut) {
+    fut = el('div', 'space-future', 'Диалоги этого пространства появятся позже — '
+      + 'пока всё живёт в CHAT.');
+    fut.id = 'spaceFuture';
+    $('.spaces').after(fut);
+  }
+  if (fut) fut.classList.toggle('space-off', isChat);
+  // иконки: активная светится и подчёркнута; CHAT всегда чуть светлее
+  $$('.sp-ico').forEach((b) => {
+    b.classList.toggle('sel', b.dataset.space === name);
+    b.classList.toggle('base', b.dataset.space === 'chat');
+  });
+  // центр: CHAT = обычные вкладки, будущее = заглушка
+  if (isChat) {
+    showView(S.view || 'chat');
+  } else {
+    $$('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-space'));
+    $('#spaceHolderIco').innerHTML = (SPACE_META[name] || {}).ico || '';
+    $('#spaceHolderName').textContent = (SPACE_META[name] || {}).name || name;
+    $('#topTitle').textContent = 'Пространство';
+    $$('.nav-item').forEach((b) => b.classList.remove('active'));
+  }
+}
+
+function setSpace(name, dir) {
+  if (name === S.space || !SPACE_META[name]) return;
+  if (S.streaming) { toast('Дождись конца ответа — потом переключу', 'warn'); return; }
+  const from = SPACES.indexOf(S.space);
+  const way = dir || ((SPACES.indexOf(name) > from) ? 1 : -1);
+  S.space = name;
+  // анимация: активное содержимое уезжает в сторону УХОДА, новое въезжает
+  // с противоположной — как в Arc
+  const parts = [$$('.view').find((v) => v.classList.contains('active')), $('.nav'), $('.chats-block')];
+  parts.forEach((n) => { if (n) { n.classList.add('sp-slide', way > 0 ? 'sp-out-l' : 'sp-out-r'); } });
+  setTimeout(() => {
+    spaceApply(name);
+    parts.forEach((n) => {
+      if (!n) return;
+      n.classList.remove('sp-out-l', 'sp-out-r');
+      n.classList.add(way > 0 ? 'sp-out-r' : 'sp-out-l');
+      void n.offsetWidth;                       // reflow: старт въезда из-за края
+      n.classList.remove('sp-out-l', 'sp-out-r');
+    });
+  }, 265);
+}
+
+function initSpaces() {
+  $$('.sp-ico').forEach((b) => b.addEventListener('click', () => setSpace(b.dataset.space)));
+  $('#spModeChat').addEventListener('click', () => setSpace('chat'));
+  $('#spModeLive').addEventListener('click', () =>
+    toast('Лайф-режим — финальный этап плана, готовим позже', 'info', 'LIVE'));
+  // СВАЙП ДВУМЯ ПАЛЬЦАМИ по горизонтали (как в Arc): колёсико с deltaX
+  let lastSwipe = 0;
+  window.addEventListener('wheel', (e) => {
+    if (Math.abs(e.deltaX) < 55 || Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.7) return;
+    if (e.target && e.target.closest && e.target.closest(
+      '.qt-detail, .fprev-body, .plan-dock, .plot-bar, pre, .modal, .sbx-files')) return;
+    const now = Date.now();
+    if (now - lastSwipe < 900) return;
+    lastSwipe = now;
+    const i = SPACES.indexOf(S.space);
+    const next = e.deltaX > 0 ? i + 1 : i - 1;
+    if (next >= 0 && next < SPACES.length) setSpace(SPACES[next], e.deltaX > 0 ? 1 : -1);
+  }, { passive: true });
+  spaceApply('chat');
 }
 
 function setChip(sel, cls, text) {
@@ -1765,12 +1852,13 @@ function chaseBottom(box, run) {
        скорость — доля остатка (у дна затухает сама), со старта скорость
        нарастает мягко, за ~100мс: карточка не бьёт рывком с места,
        но и печать никогда не ждёт прокрутку */
-    /* BM9: ЕЩЁ ПЛАВНЕЕ. Разгон +1.1/кадр (было 2.2 — рывок с места за
-       100мс), доля остатка 0.12 (было 0.16 — резкое торможение у дна).
-       Потолок 11px/кадр = 660px/с — всё ещё быстрее принтера (2000 зн/с),
-       но старт и остановка теперь скольжение, а не прыжок */
-    const target = Math.min(11, Math.max(0.9, gap * 0.12));
-    const v = Math.min(target, (st.chaseV || 0) + 1.1);
+    /* BM10: ПЛЫВЁТ И НЕ ОТСТАЁТ. Потолок 13px/кадр (780px/с) — строго
+       выше принтера (2000 зн/с ≈ 660px/с): при потолке 11 догон ровно
+       равнялся принтеру и «не успевал» — экран оставался выше. Разгон
+       1.4/кадр мягкий (не рывок), доля остатка 0.13 — торможение у дна
+       пологое */
+    const target = Math.min(13, Math.max(0.9, gap * 0.13));
+    const v = Math.min(target, (st.chaseV || 0) + 1.4);
     st.chaseV = v;
     box.scrollTop = box.scrollTop + v;
     if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) {
@@ -2710,6 +2798,32 @@ function dlCorner(host, f) {
 }
 
 function attachFileChip(container, f) {
+  /* BM10: НАТИВНЫЕ ПЛЕЕРЫ. Видео из интернета открывается сразу
+     воспроизведением (autoplay muted — звук человек включит сам),
+     аудио — стандартным плеером */
+  if (f.kind === 'video' || /\.(mp4|webm|mov|m4v)$/i.test(f.name || '')) {
+    const vw = el('div', 'img-wrap media-wrap');
+    const v = el('video', 'video-out');
+    v.src = f.url; v.controls = true; v.autoplay = true; v.muted = true;
+    v.playsInline = true; v.preload = 'metadata';
+    vw.appendChild(v);
+    dlCorner(vw, f);
+    container.appendChild(vw);
+    const a = el('a', 'file-chip');
+    a.href = f.url;
+    a.innerHTML = '<span class="fi">' + fileIcon(f.name) + '</span><span>' + esc(f.name) +
+      '</span><small>' + fmtSize(f.size) + '</small>';
+    a.addEventListener('click', (e) => { e.preventDefault(); openPreview(f); });
+    container.appendChild(a);
+    return;
+  }
+  if (f.kind === 'audio' || /\.(mp3|m4a|wav|ogg|opus|aac|flac)$/i.test(f.name || '')) {
+    const aw = el('div', 'media-audio');
+    const au = el('audio');
+    au.src = f.url; au.controls = true; au.preload = 'metadata';
+    aw.appendChild(au);
+    container.appendChild(aw);
+  }
   if (isImg(f.name)) {
     // обёртка нужна, чтобы кнопку можно было поставить в угол картинки
     const wrap = el('div', 'img-wrap');
@@ -4000,17 +4114,22 @@ function mountPlotPanels(root) {
       }
     }
     const kind = panel.dataset.kind || (spec.z ? 'plot3' : 'plot');
-    const liveMsg = !!(panel.closest && panel.closest('.msg-ai.live'));
+    const liveMsg = !!(S.streaming && panel.closest &&
+      panel.closest('.msg-ai.live'));
     try {
       if (kind === 'geo') buildGeoPanel(panel, spec);
       else if (spec.z) buildPlot3Panel(panel, spec);
       else buildPlot2Panel(panel, spec);
     } catch (e) {
-      /* BM9: ВО ВРЕМЯ ПЕЧАТИ спека ещё не дописана — «ошибка» на
-         недописанном JSON пугала раньше графика. Живому сообщению —
-         загрузку; ошибка честно покажется только в финальном рендере */
+      /* BM9/BM10: ВО ВРЕМЯ ПЕЧАТИ спека ещё не дописана — «ошибка» на
+         недописанном JSON пугала раньше графика. Живой печати — загрузка;
+         ошибка покажется в финальном рендере. НО панель нельзя помечать
+         собранной: финальный рендер обязан попробовать снова (иначе
+         спиннер висел вечно — регрессия BM9) */
       if (liveMsg) {
         panel.innerHTML = '<div class="plot-load"><i></i><span>строю график…</span></div>';
+        panel.dataset.live = '';
+        panel._jarvisPlot = false;
       } else {
         panel.innerHTML = '<div class="plot-err">' + esc(e.message || String(e)) + '</div>';
       }
@@ -4064,12 +4183,11 @@ function plotShell(panel, title) {
   cv.addEventListener('pointerup', lift);
   cv.addEventListener('pointercancel', lift);
   cv.addEventListener('contextmenu', (e) => {
-    const now = Date.now();
-    const afterDrag = now - (cv._dragAt || 0) < 900;        // драг ПКМ только что кончился
-    const longHold = (cv._holdMs || 0) > 350;               // долгое зажатие = жест пана
-    const touchHold = now - (cv._touchAt || 0) < 1400;      // длинное нажатие пальцем
-    if (afterDrag || longHold || touchHold) e.preventDefault();
-    // короткий клик ПКМ без движения — обычное меню браузера на месте
+    /* BM10: поверхность графика — как карта: правая кнопка всегда жест
+       пана, нативное меню здесь не нужно. macOS открывает меню ещё на
+       НАЖАТИИ, «показать после отпускания» браузер не умеет — поэтому
+       единственный честный вариант без конфликтов: не показывать вовсе */
+    e.preventDefault();
   });
   const ctx = cv.getContext('2d');
   return { cv, ctx, read, bar };
@@ -12415,6 +12533,8 @@ window.addEventListener('keydown', (e) => {
   };
   provTick();
   setInterval(provTick, 15000);
+  // BM10: каркас пространств — старт всегда в CHAT
+  initSpaces();
   if (!Object.values(S.config.providers || {}).some((x) => (x || {}).has_key)) {
     setTimeout(() => {
       toast('Открой Настройки и вставь API-ключ, чтобы я заработал.', 'warn', 'Нужен ключ');

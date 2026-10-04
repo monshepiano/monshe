@@ -1879,7 +1879,7 @@ class VisionUiContractTests(unittest.TestCase):
         self.assertIn("Никогда не создавай\n`text`/`area`", contract)
         self.assertIn("«Свой вариант»", contract)
         self.assertIn("Если стиль уже\nявно задан", contract)
-        self.assertIn("ПОСЛЕ сводки новостей или погоды\nпанель наоборот уместна", contract)
+        self.assertIn("Единственное железное\nограничение: НЕ выставляй панель", contract)
 
     def test_image_contract_and_payload_share_one_ordered_model_call(self) -> None:
         """The UI reminder is a message in the vision request, not a preflight LLM."""
@@ -3202,7 +3202,7 @@ class IterationXTests(unittest.TestCase):
         self.assertIn("m.role === 'assistant' && m.id === lastAiId", js)
         self.assertNotIn("answered.has", js)
         self.assertIn("shell.dataset.agHold = '1'", js)
-        self.assertIn(".qt-folder.open .qt-kids{grid-template-rows:1fr", css)
+        self.assertIn(".qt-folder.open .qt-kids{display:flex}", css)
         self.assertNotIn(".qt-folder.open .qt-kids{display:flex;margin:2px 0 4px}", css)
         self.assertIn("LEAD = 70", js)
 
@@ -3259,7 +3259,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.79", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.80", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4596,8 +4596,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.79", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.79", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.80", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.80", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5357,7 +5357,7 @@ class IterationBETests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         # догоняющий скролл вместо мгновенных прыжков
         self.assertIn("function chaseBottom(", js)
-        self.assertIn("const target = Math.min(11, Math.max(0.9, gap * 0.12));", js)
+        self.assertIn("const target = Math.min(13, Math.max(0.9, gap * 0.13));", js)
         # уход вверх ЛЮБЫМ способом (скроллбар, клавиши) снимает прилипание:
         # наш догоняющий кадр scrollTop уменьшить не может
         self.assertIn("if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }", js)
@@ -5425,7 +5425,7 @@ class IterationBFTests(unittest.TestCase):
         # скудная тема не выкидывает живые реплики; таймаут nano 9с
         fn = ag.split("def suggest_replies_ai(")[1].split("\ndef ")[0]
         self.assertIn("items = themed or parsed", fn)
-        self.assertIn('tier="nano", timeout=9', fn)
+        self.assertIn('tier="nano", timeout=14', fn)  # BM10: медленный провайдер не убивает подсказки
 
     def test_bf3_dot_higher_always_visible_solid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5563,7 +5563,7 @@ class IterationBGTests(unittest.TestCase):
         self.assertIn("st.autoPend = 0;", js)
         # свёртка панели — плавный догон, без резких прыжков
         self.assertIn("function followGrowingPanel(", js)
-        self.assertIn("const target = Math.min(11, Math.max(0.9, gap * 0.12));", js)
+        self.assertIn("const target = Math.min(13, Math.max(0.9, gap * 0.13));", js)
 
     def test_bg6_math_latex_and_live_panels(self) -> None:
         with mock.patch.object(agent.db, "recall", return_value=[]), \
@@ -5618,8 +5618,8 @@ class IterationBHTests(unittest.TestCase):
         # BJ: РОВНЫЙ ХОД — скорость пропорциональна остатку, без разгона:
         # большая карточка догоняется постоянным ходом, у дна плавно замирает
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const target = Math.min(11, Math.max(0.9, gap * 0.12));", chase)
-        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 1.1);", chase)
+        self.assertIn("const target = Math.min(13, Math.max(0.9, gap * 0.13));", chase)
+        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 1.4);", chase)
         self.assertNotIn("st.v =", chase)
 
     def test_bh2_mode_note_stays_mid_answer(self) -> None:
@@ -5739,8 +5739,8 @@ class IterationBJTests(unittest.TestCase):
         # скорость пропорциональна остатку и ограничена сверху — ни разгона,
         # ни ступенек: одна кривая для печати, карточек и панелей
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const target = Math.min(11, Math.max(0.9, gap * 0.12));", chase)
-        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 1.1);", chase)
+        self.assertIn("const target = Math.min(13, Math.max(0.9, gap * 0.13));", chase)
+        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 1.4);", chase)
         self.assertNotIn("st.v =", js)
 
     def test_bj2_mode_note_before_any_text(self) -> None:
@@ -5839,7 +5839,7 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.79", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.80", html)
 
 
 
@@ -5939,7 +5939,7 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.79", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.80", html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -5972,7 +5972,7 @@ class IterationBLTests(unittest.TestCase):
         self.assertIn("host._tblStamp = ++TABLE_HOST_STAMP;", js)
         # потолок скролла ниже — карточки входят одним куском высоты
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const target = Math.min(11, Math.max(0.9, gap * 0.12));", chase)
+        self.assertIn("const target = Math.min(13, Math.max(0.9, gap * 0.13));", chase)
         self.assertNotIn("Math.min(24,", js)
 
     def test_bl3_dot_centered_and_bigger(self) -> None:
@@ -6971,10 +6971,103 @@ class IterationBM8Tests(unittest.TestCase):
         # голые оценки запрещены
         self.assertIn("стоит посмотреть", seg)
 
+    def test_bm10_show_media_tool(self) -> None:
+        """Медиа из интернета: прямые ссылки качаются, YouTube честно
+        отказывает (РФ), тип определяется по Content-Type."""
+        import jarvis.tools.media as med
+        from unittest import mock as _mock
+
+        # YouTube — честный отказ без сети
+        res = med.show_media("https://www.youtube.com/watch?v=abc")
+        self.assertFalse(res["ok"])
+        self.assertIn("YouTube", res["error"])
+
+        res = med.show_media("ftp://x/file.mp4")
+        self.assertFalse(res["ok"])
+        res = med.show_media("")
+        self.assertFalse(res["ok"])
+
+        # прямое видео: качается, тип video, файл в песочнице
+        mp4 = b"\x00\x00\x00\x18ftypmp42" + b"\x01" * 4000
+
+        class Resp:
+            headers = {"Content-Type": "video/mp4", "Content-Length": str(len(mp4))}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self, n=-1):
+                out, mp4.__class__ = mp4[:n], None  # noqa
+                return out
+
+        data = {"buf": mp4}
+        class Resp2:
+            headers = {"Content-Type": "video/mp4",
+                       "Content-Length": str(len(data["buf"]))}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self, n=-1):
+                out = data["buf"][:n]
+                data["buf"] = data["buf"][len(out):] if n > 0 else b""
+                return out
+
+        tmpdir = tempfile.mkdtemp(prefix="bm10_media_")
+        with _mock.patch.object(med.urllib.request, "urlopen", return_value=Resp2()), \
+             _mock.patch.object(med.sandbox, "safe_path",
+                                side_effect=lambda n: Path(tmpdir) / n), \
+             _mock.patch.object(med.sandbox, "dl", return_value="/dl/x"):
+            res = med.show_media("https://example.com/clip.mp4")
+        self.assertTrue(res, res if not res.get("ok") else "")
+        self.assertEqual(res["kind"], "video")
+        self.assertTrue((Path(tmpdir) / res["name"]).exists())
+        self.assertTrue(res["name"].endswith(".mp4"))
+
+    def test_bm10_file_info_carries_media_kind(self) -> None:
+        """Файловая карточка несёт kind видео/аудио — фронт ставит плеер."""
+        from jarvis import agent as ag
+        info = ag._file_info_of({"download_url": "/dl/x", "path": "media_a1.mp4",
+                                 "size": 5, "kind": "video"})
+        self.assertEqual(info["kind"], "video")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("v.autoplay = true; v.muted = true;", js)
+
+    def test_bm10_suggestions_ask_jarvis(self) -> None:
+        """Подсказки — обращения к JARVIS (вопрос/просьба), не «могу…»."""
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        self.assertIn("обращение ", src)
+        self.assertIn("могу выбрать ", src)   # запрет пример прямо в промпте
+
+    def test_bm10_interactives_not_banned(self) -> None:
+        """Интерактивы не запрещены: единственный запрет — повтор уже
+        отвеченной панели (первопричина бесконечного цикла)."""
+        from jarvis import agent as ag
+        c = ag.PROACTIVE_UI_CONTRACT
+        self.assertNotIn("НЕ показывай ui для", c)
+        self.assertIn("НЕ выставляй панель", c)
+
+    def test_bm10_spaces_shell(self) -> None:
+        """Каркас пространств: CHAT/LIVE + мини-иконки, свайп, анимация."""
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn('id="spacesBar"', html)
+        self.assertIn('id="spModeLive"', html)
+        self.assertIn('data-space="math"', html)
+        self.assertIn('data-space="music"', html)
+        self.assertIn('id="view-space"', html)
+        self.assertIn("const SPACES = ['chat', 'math', 'music'];", js)
+        self.assertIn("function setSpace(name, dir)", js)
+        self.assertIn("initSpaces();", js)
+        # свайп двумя пальцами: колесо с deltaX
+        self.assertIn("Math.abs(e.deltaX) < 55", js)
+        # старт всегда в CHAT
+        self.assertIn("spaceApply('chat');", js)
+        self.assertIn('.sp-ico.sel::after', css)
+        self.assertIn('.sp-mode.active', css)
+
     def test_bm9_interactive_panels_after_news(self) -> None:
         """После сводки новостей/погоды панели выбора снова уместны."""
         from jarvis import agent as ag
-        self.assertIn("ПОСЛЕ сводки новостей", ag.PROACTIVE_UI_CONTRACT)
+        self.assertIn("Единственное железное", ag.PROACTIVE_UI_CONTRACT)
+        self.assertIn("уже сделал в", ag.PROACTIVE_UI_CONTRACT)
         self.assertNotIn("НЕ показывай ui для\nфактического вопроса, сводки новостей",
                          ag.PROACTIVE_UI_CONTRACT)
 

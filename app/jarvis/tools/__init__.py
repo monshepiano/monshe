@@ -196,6 +196,14 @@ register("generate_image", media.generate_image,
           "style": S("стиль, например cinematic, 3d render")},
          "safe", "media", "Генерация изображения", wait_visual=True)
 
+register("show_media", media.show_media,
+         "Показать человеку медиа из интернета по ПРЯМОЙ ссылке: картинку, "
+         "аудио или видео. Видео сразу воспроизводится встроенным плеером "
+         "(без звука). YouTube недоступен в РФ — проси прямую ссылку или "
+         "RuTube/VK Видео.",
+         {"url": S("прямая ссылка на медиа-файл", True)},
+         "safe", "media", "Медиа из интернета", wait_visual=True)
+
 register("analyze_image", media.analyze_image,
          "Посмотреть на изображение (файл, кадр камеры, скриншот) и ответить на вопрос о нём.",
          {"image_ref": S("путь к файлу или data-url", True), "question": S("что нужно понять")},

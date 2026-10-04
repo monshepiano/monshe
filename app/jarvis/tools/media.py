@@ -973,6 +973,114 @@ def _transcribe_with(src: Path, language: str) -> Dict[str, Any]:
                      "сейчас недоступны. Попробуй ещё раз или набери текст."}
 
 
+# BM10: МЕДИА ИЗ ИНТЕРНЕТА. Джарвис приносит человеку картинку, аудио или
+# видео по прямой ссылке и открывает их НАТИВНО в ответе (видео — сразу
+# воспроизводится, по умолчанию без звука). YouTube в РФ без VPN недоступен
+# на уровне серверов Google — честно говорим об этом и предлагаем прямые
+# ссылки либо RuTube/VK Видео.
+_MEDIA_KINDS = {
+    "image": ((".png", ".jpg", ".jpeg", ".gif", ".webp"), 25 * 1024 * 1024),
+    "audio": ((".mp3", ".m4a", ".wav", ".ogg", ".opus", ".aac", ".flac"), 60 * 1024 * 1024),
+    "video": (".mp4 .webm .mov .m4v".split(), 250 * 1024 * 1024),
+}
+_YOUTUBE_RE = re.compile(
+    r"(?i)(youtube\.com|youtu\.be|youtube-nocookie\.com)")
+
+
+def _ext_of(url: str, content_type: str) -> str:
+    path = urllib.parse.urlparse(url).path.lower()
+    for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp3", ".m4a",
+                ".wav", ".ogg", ".opus", ".aac", ".flac", ".mp4", ".webm",
+                ".mov", ".m4v"):
+        if path.endswith(ext):
+            return ext
+    ct = str(content_type or "").split(";")[0].strip().lower()
+    return {".png": "image/png", ".jpg": "image/jpeg", ".gif": "image/gif",
+            ".webp": "image/webp", ".mp3": "audio/mpeg", ".m4a": "audio/mp4",
+            ".wav": "audio/wav", ".ogg": "audio/ogg", ".opus": "audio/ogg",
+            ".flac": "audio/flac", ".mp4": "video/mp4", ".webm": "video/webm",
+            ".mov": "video/quicktime"}.get(ct) or (".jpg" if ct.startswith("image/")
+                                                  else ".mp4" if ct.startswith("video/")
+                                                  else ".mp3" if ct.startswith("audio/") else "")
+
+
+def show_media(url: str) -> Dict[str, Any]:
+    """Показать человеку медиа из интернета: картинку, аудио или видео.
+
+    Видео открывается нативным плеером и сразу воспроизводится (без звука).
+    Нужна ПРЯМАЯ ссылка на файл; YouTube в России заблокирован — честно
+    отказываем и предлагаем RuTube/VK Видео или прямую ссылку."""
+    src = str(url or "").strip()
+    if not src:
+        return {"ok": False, "error": "нужна ссылка на медиа"}
+    if _YOUTUBE_RE.search(src):
+        return {"ok": False,
+                "error": "YouTube в России без VPN недоступен — видео не "
+                         "загрузить ни встроенно, ни скачиванием. Дай прямую "
+                         "ссылку на файл (mp4) либо ссылку RuTube/VK Видео."}
+    parsed = urllib.parse.urlparse(src)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return {"ok": False, "error": "ссылка должна начинаться с http:// или https://"}
+
+    req = urllib.request.Request(src, headers={"User-Agent": _UA})
+    try:
+        with urllib.request.urlopen(req, timeout=30, context=_CTX) as resp:
+            ctype = str(resp.headers.get("Content-Type") or "")
+            declared = int(resp.headers.get("Content-Length") or 0)
+            low = ctype.split(";")[0].lower()
+            if low.startswith("image/"):
+                kind = "image"
+            elif low.startswith("audio/"):
+                kind = "audio"
+            elif low.startswith("video/"):
+                kind = "video"
+            else:
+                # тип не сказали — пробуем угадать по расширению пути
+                ext0 = _ext_of(src, "")
+                kind = next((k for k, (exts, _) in _MEDIA_KINDS.items()
+                             if ext0 in exts), "")
+                if not kind:
+                    return {"ok": False,
+                            "error": "это не медиа-файл (тип: %s). Нужна "
+                                     "прямая ссылка на картинку, аудио или "
+                                     "видео" % (ctype or "неизвестен")}
+            exts, cap = _MEDIA_KINDS[kind]
+            if declared and declared > cap:
+                return {"ok": False,
+                        "error": "файл слишком большой (%s) — максимум %d МБ"
+                                 % (fmt_mb(declared), cap // 1024 // 1024)}
+            ext = _ext_of(src, ctype) or exts[0]
+            data = b""
+            while True:
+                chunk = resp.read(1024 * 512)
+                if not chunk:
+                    break
+                data += chunk
+                if len(data) > cap:
+                    return {"ok": False,
+                            "error": "файл больше %d МБ — обрываю загрузку"
+                                     % (cap // 1024 // 1024)}
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "error": "сервер ответил HTTP %s по этой ссылке" % exc.code}
+    except Exception as exc:
+        return {"ok": False, "error": "не удалось скачать: %s" % str(exc)[:160]}
+    if not data:
+        return {"ok": False, "error": "по ссылке пустой файл"}
+
+    name = "media_%s%s" % (hashlib.sha256(data).hexdigest()[:12], ext)
+    target = sandbox.safe_path(name)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(target)
+    return {"ok": True, "path": name, "name": name, "kind": kind,
+            "size": len(data), "download_url": sandbox.dl(name),
+            "source_url": src[:300]}
+
+
+def fmt_mb(n: int) -> str:
+    return "%.1f МБ" % (n / 1024 / 1024)
+
+
 def analyze_image(image_ref: str, question: str = "Что на изображении? Опиши подробно.") -> Dict[str, Any]:
     """Понять, что на картинке/кадре камеры/скриншоте."""
     from .. import llm

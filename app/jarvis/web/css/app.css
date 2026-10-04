@@ -242,6 +242,66 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   padding:0;line-height:1}
 .collapse-btn svg{width:14px;height:14px;display:block}
 
+/* ================= BM10: ПРОСТРАНСТВА (идея из Arc) =================
+   Над чертой — переключатель (всегда одинаков), под чертой — вкладки
+   конкретного пространства. Активная иконка светится и подчёркнута;
+   CHAT — базовое, всегда чуть светлее остальных. */
+.brand{border-bottom:0}
+.spaces{display:flex;flex-direction:column;gap:9px;padding:10px 6px 12px;
+  border-bottom:1px solid var(--line)}
+.sp-modes{display:flex;gap:8px}
+.sp-mode{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;
+  height:34px;border:1px solid var(--line);border-radius:12px;background:transparent;
+  color:var(--tx3);font:600 10.5px/1 var(--ff);letter-spacing:2.2px;cursor:pointer;
+  transition:all .22s ease;padding:0}
+.sp-mode svg{width:14px;height:14px}
+.sp-mode:hover{border-color:var(--line2);color:var(--tx2)}
+.sp-mode.active{border-color:rgba(0,212,255,.45);color:var(--tx);
+  background:linear-gradient(180deg,rgba(0,212,255,.14),rgba(0,212,255,.04));
+  box-shadow:0 0 14px rgba(0,212,255,.12),inset 0 0 10px rgba(0,212,255,.05)}
+/* CHAT: светящийся круглешок БЕЗ анимации — спокойный свет */
+.sp-orb{width:9px;height:9px;border-radius:50%;flex:none;
+  background:radial-gradient(circle,#fff,var(--cy2) 55%,#0389b8);
+  box-shadow:0 0 8px var(--cy),0 0 16px rgba(0,212,255,.45)}
+.sp-row{display:flex;gap:6px;justify-content:center}
+.sp-ico{position:relative;width:36px;height:34px;border:1px solid transparent;
+  border-radius:10px;background:transparent;color:var(--tx3);cursor:pointer;
+  display:grid;place-items:center;transition:all .22s ease;padding:0}
+.sp-ico svg{width:17px;height:17px}
+/* CHAT — базовое: всегда чуть светлее */
+.sp-ico.base{color:var(--tx2)}
+.sp-ico:hover{background:rgba(0,212,255,.08);color:var(--tx)}
+.sp-ico.sel{color:var(--cy2);background:rgba(0,212,255,.12);
+  box-shadow:inset 0 0 9px rgba(0,212,255,.09),0 0 10px rgba(0,212,255,.1)}
+.sp-ico.sel::after{content:'';position:absolute;left:10px;right:10px;bottom:-5px;
+  height:2px;border-radius:2px;background:var(--cy);
+  box-shadow:0 0 7px var(--cy)}
+/* имя пространства при наведении */
+.sp-ico[data-tip]::before{content:attr(data-tip);position:absolute;
+  left:50%;top:calc(100% + 8px);transform:translateX(-50%);white-space:nowrap;
+  font:10.5px/1 var(--ff);letter-spacing:.3px;color:var(--tx2);
+  background:rgba(8,16,28,.96);border:1px solid var(--line2);border-radius:8px;
+  padding:6px 9px;opacity:0;pointer-events:none;transition:opacity .18s ease;
+  z-index:80;box-shadow:0 8px 22px rgba(0,0,0,.5)}
+.sp-ico:hover::before{opacity:1}
+/* содержимое сайдбара ПОД чертой принадлежит пространству */
+.space-off{display:none!important}
+.space-future{padding:16px 14px;font-size:11.5px;color:var(--tx3);line-height:1.5}
+/* заглушка-вью будущих пространств */
+.view-space{display:none;align-items:center;justify-content:center}
+.view-space.active{display:flex}
+.space-holder{display:flex;flex-direction:column;align-items:center;gap:14px;
+  opacity:0;transform:translateY(8px);animation:spaceIn .5s cubic-bezier(.2,.7,.3,1) forwards}
+@keyframes spaceIn{to{opacity:1;transform:none}}
+.space-holder-ico{width:54px;height:54px;color:var(--tx3);opacity:.85}
+.space-holder-ico svg{width:100%;height:100%}
+.space-holder-name{font:300 26px/1 var(--ff);letter-spacing:10px;color:var(--tx2)}
+.space-holder-sub{font-size:12.5px;color:var(--tx3)}
+/* анимация смены пространства: контент уезжает вбок, новый въезжает */
+.sp-slide{transition:transform .26s cubic-bezier(.4,.1,.2,1),opacity .26s ease}
+.sp-out-l{transform:translateX(-56px);opacity:0}
+.sp-out-r{transform:translateX(56px);opacity:0}
+
 .nav{display:flex;flex-direction:column;gap:3px}
 .nav-item{display:flex;align-items:center;gap:11px;padding:10px 12px;border:0;border-radius:11px;
   background:transparent;color:var(--tx2);font-size:13.5px;cursor:pointer;position:relative;
@@ -1200,9 +1260,14 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    Теперь индекс выровнен по правому краю узкой зоны у кончика:
    узкий стоит у носика, широкий растёт ВЛЕВО — как в настоящей
    математике, и никогда не задевает штрих */
-.msqrt .msq-i{position:absolute;left:-.14em;width:.34em;text-align:right;
-  top:-.74em;font-size:.62em;opacity:.85;z-index:1;line-height:1;
+.msqrt .msq-i{position:absolute;left:-.16em;width:.34em;text-align:right;
+  top:-.55em;font-size:.62em;opacity:.85;z-index:1;line-height:1;
   white-space:nowrap}
+/* BM10: СТЕПЕНЬ НИЖЕ — почти не залезает за верхнюю черту корня.
+   И корень в ЗНАМЕНАТЕЛЕ дроби чуть опущен: его черта больше не
+   наезжает на знак дроби */
+.mfr-d .msqrt{margin-top:.22em}
+.mfr-d .msqrt .msq-i{top:-.5em}
 .math-block .mop,.math-inline .mop{padding:0 3px;color:#9fd8f2}
 .mfn{font-style:normal;padding:0 2px 0 4px}
 .mtext{font-style:normal}
@@ -1280,6 +1345,11 @@ sup.msup,sub.msub{font-size:.72em}
 .plot-pop button:hover{color:var(--cy2);border-color:var(--cy)}
 .plot-pop button.on{color:var(--cy2);border-color:var(--cy);background:rgba(0,190,255,.12)}
 .plot-err{padding:12px 14px;font-size:12px;color:var(--tx2)}
+.video-out{display:block;max-width:100%;border-radius:14px;
+  border:1px solid var(--line2);background:#000}
+.media-wrap{position:relative;max-width:560px;margin:2px 0}
+.media-audio{max-width:420px;margin:2px 0}
+.media-audio audio{width:100%;height:36px}
 .plot-load{padding:14px;font-size:12px;color:var(--tx3);display:flex;
   align-items:center;gap:9px}
 .plot-load i{width:13px;height:13px;border-radius:50%;border:2px solid
@@ -1568,18 +1638,14 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .qt-flowline.qt-wait{opacity:0;animation:none}
 @keyframes qtRise{from{opacity:0;transform:translateY(15px)}}
 /* ПАПКА семейства: без полосы; дети выплывают из неё по одному */
-/* BM9: папка раскрыта — grid-строка едет от 0fr к 1fr (правило .qt-kids) */
+.qt-folder .qt-kids{display:none}
 /* X: БЕЗ вертикальных margin — они включались вместе с .open и выключались
    вместе с ним: в первый кадр открытия всё снизу прыгало на 6px вниз, в
    последний кадр закрытия — на 6px вверх. Тот самый «микролюфт». Внешняя
    геометрия теперь спокойна, зазор живёт внутри тела (padding у .qt-rows). */
 /* BM9: ПЛАВНОЕ РАСКРЫТИЕ ПАПКИ. Прежний display:none→flex открывался
    мгновенно и подлагивал; теперь высота едет grid-строкой 0fr→1fr */
-.qt-folder.open .qt-kids{grid-template-rows:1fr;pointer-events:auto}
-.qt-kids{align-items:stretch;display:grid;grid-template-columns:1px 1fr;
-  grid-template-rows:0fr;transition:grid-template-rows .3s cubic-bezier(.25,.7,.3,1);
-  pointer-events:none}
-.qt-kids>*{min-height:0;overflow:hidden}
+.qt-folder.open .qt-kids{display:flex}
 .qt-kids>.qt-rail{flex:0 0 1px;background:rgba(154,202,219,.35);margin-left:6px}
 .qt-kids>.qt-rows{flex:1;margin-left:11px;display:flex;flex-direction:column;gap:2px;
   padding:2px 0 3px}
@@ -3129,9 +3195,11 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 /* AGENT: буква A стоит на самом круглешке (см. .agent-switch-track i) */
 
 /* ================= лимит ₽ ================= */
-.budget-btn{position:relative;width:34px;height:28px;border-radius:20px;border:1px solid var(--line);
+.budget-btn{position:relative;width:30px;height:28px;border-radius:11px;border:1px solid var(--line);
   background:transparent;cursor:pointer;color:var(--tx3);display:flex;align-items:center;
-  justify-content:center;padding:0;transition:all .2s ease}
+  justify-content:center;padding:0;transition:all .2s ease;
+  /* BM10: ровно ПОД кнопкой ускорения (та же ширина 30px, сдвиг на Send) */
+  margin-right:50px}
 .budget-btn:hover{border-color:var(--line2);color:var(--tx2)}
 .budget-coin{font-weight:800;font-size:14px;line-height:1}
 /* активный лимит: жёлтая монета + пульс ТОЧЬ-В-ТОЧЬ как у точки
