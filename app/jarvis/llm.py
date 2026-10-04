@@ -66,19 +66,51 @@ def _reasoning_increment(seen_tail: str, piece: str) -> str:
 _CAPABILITY_FIELDS = {"reasoning_effort", "stream_options", "tools", "tool_choice"}
 
 # Ориентировочные цены (₽ за 1 млн токенов) — для счётчика расходов в UI.
-PRICES_RUB = {
-    "ai-sage/GigaChat3-10B-A1.8B": (12.2, 12.2),
-    "openai/gpt-oss-120b": (15.86, 61.0),
-    "openai/gpt-oss-20b": (7.0, 25.0),
-    "Qwen/Qwen3-30B-A3B": (13.9, 55.6),
-    "Qwen/Qwen3.6-35B-A3B": (219.6, 329.4),
-    "zai-org/GLM-4.7": (549.0, 793.0),
-    "MiniMaxAI/MiniMax-M2.5": (353.8, 475.8),
-    "Qwen/Qwen3-Coder-Next": (122.0, 244.0),
-    "Qwen/Qwen3-VL-8B-Instruct": (30.7, 119.6),
-    "deepseek-chat": (25.0, 100.0),
+# BM7: Ориентировочные цены (₽ за 1 млн токенов) — РАЗДЕЛЕНЫ ПО
+# ПРОВАЙДЕРАМ: одна и та же модель у разных провайдеров стоит по-разному
+# (gpt-oss-120b: Cloud.ru 15.9₽, Яндекс ~300₽ вход). У провайдеров нет
+# машиночитаемого прайса — таблица курируется и обновляется с релизами.
+PRICES_RUB: Dict[str, Dict[str, Tuple[float, float]]] = {
+    "cloudru": {
+        "ai-sage/GigaChat3-10B-A1.8B": (12.2, 12.2),
+        "openai/gpt-oss-120b": (15.86, 61.0),
+        "openai/gpt-oss-20b": (5.888, 27.5),
+        "Qwen/Qwen3-30B-A3B": (13.9, 55.6),
+        "Qwen/Qwen3.6-35B-A3B": (219.6, 329.4),
+        "zai-org/GLM-4.7": (549.0, 793.0),
+        "MiniMaxAI/MiniMax-M2.5": (353.8, 475.8),
+        "Qwen/Qwen3-Coder-Next": (122.0, 244.0),
+        "Qwen/Qwen3-VL-8B-Instruct": (30.7, 119.6),
+        "GigaChat3.5-432B": (96.22, 288.6),
+        "GigaChat-3-Pro": (73.03, 176.39),
+        "GLM-5.2": (173.15, 606.05),
+        "GPT 4o Mini": (29.46, 117.85),
+    },
+    "yandex": {   # синхронный режим, ₽/1М; асинхронный вдвое дешевле
+        "gpt-oss-120b": (300.0, 450.0),
+        "gpt-oss-20b": (100.0, 150.0),
+        "yandexgpt": (800.0, 1200.0),       # Pro 5.1
+        "yandexgpt-lite": (200.0, 300.0),
+        "qwen3": (500.0, 750.0),
+        "aliceai": (500.0, 1200.0),         # Alice AI LLM
+    },
+    "deepseek": {
+        "deepseek-chat": (25.0, 100.0),
+    },
+    "gigachat": {},      # бесплатный грант 1M токенов/год
+    "aitunnel": {},      # наценка агрегатора ×2-2.3 от базовых цен
 }
-DEFAULT_PRICE = (30.0, 90.0)
+# Цена по умолчанию для модели без своей строки — у каждого провайдера своя
+DEFAULT_PRICE: Dict[str, Tuple[float, float]] = {
+    "cloudru": (30.0, 90.0),
+    "yandex": (300.0, 600.0),
+    "deepseek": (25.0, 100.0),
+    "gigachat": (0.0, 0.0),
+    "aitunnel": (60.0, 180.0),
+}
+_PRICE_ANY = {m: v for tab in PRICES_RUB.values() for m, v in tab.items()}
+_PRICE_FALLBACK = (30.0, 90.0)
+TARIFFS_UPDATED = "2026-10-04"
 
 
 class LLMError(Exception):
@@ -317,6 +349,10 @@ def probe_provider(name: str, timeout: float = 4.0) -> bool:
     base = str(conf.get("base_url") or "").rstrip("/")
     if not base or not str(conf.get("api_key") or "").strip():
         return False
+    # GigaChat: первый зонд обменивает OAuth-токен (отдельный round-trip
+    # на порт 9443) — 4 секунды на всё не хватает, отдаём больше
+    if str(conf.get("auth") or "") == "gigachat":
+        timeout = max(timeout, 10.0)
     ok = False
     ms = 0.0
     try:
@@ -349,6 +385,59 @@ def probe_provider(name: str, timeout: float = 4.0) -> bool:
         telemetry.emit("provider_probe", status=("down" if now_dead else "up"),
                        provider=name, probe_ms=round(ms, 1))
     return ok
+
+
+_GEN_PROBE_STATE: Dict[str, Dict[str, float]] = {}
+_GEN_PROBE_GAP_S = 120.0        # генерационный зонд — не чаще, чем раз в 2 минуты
+
+
+def generation_probe(prov: str, timeout: float = 12.0) -> Optional[float]:
+    """BM7: микро-запрос генерации — измеряет НАСТОЯЩУЮ скорость модели.
+
+    Первопричина «зонд говорит жив, а отвечать не может»: GET /models
+    обслуживает шлюз, генерацию — inference-кластер, и деградирует именно
+    он. Один токен на самой дешевой модели: тайминги честные, цена ≈ 0.
+    Результат пишется в здоровье провайдера: медленный, но «живой»
+    провайдер понижается в очереди ещё до того, как человек успеет
+    пожаловаться на медленный ответ."""
+    conf = provider_conf(prov)
+    base = str(conf.get("base_url") or "").rstrip("/")
+    if not base or not str(conf.get("api_key") or "").strip():
+        return None
+    try:
+        model = pick_model("nano", prov)
+        payload = {"model": model,
+                   "messages": [{"role": "user", "content": "ок"}],
+                   "max_tokens": 8, "stream": False}
+        t0 = time.monotonic()
+        resp = _request(base + "/chat/completions", conf["api_key"], payload,
+                        "POST", timeout=int(timeout),
+                        headers=provider_headers(conf),
+                        ssl_ctx=_ssl_ctx_for(conf))
+        with resp:
+            resp.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            _record_provider_health(prov, False)   # перегружен — это деградация
+        # 401/403/404/400: API отвечает, вопрос в ключе или имени модели —
+        # это НЕ деградация провайдера, здоровье не портим
+        return None
+    except Exception:
+        _record_provider_health(prov, False)
+        return None
+    ttft = time.monotonic() - t0
+    _record_provider_health(prov, True, ttft_s=ttft)
+    _GEN_PROBE_STATE[prov] = {"ttft": ttft, "at": time.monotonic()}
+    return ttft
+
+
+def _gen_probe_due(prov: str, names: List[str]) -> bool:
+    """Генерационный зонд нужен основному (и тому, кто под штрафом)."""
+    last = _GEN_PROBE_STATE.get(prov)
+    if last and time.monotonic() - float(last.get("at") or 0.0) < _GEN_PROBE_GAP_S:
+        return False
+    order = provider_order(names)
+    return prov == order[0] if order else False
 
 
 def provider_probe_status(name: str) -> Dict[str, Any]:
@@ -394,6 +483,15 @@ def start_prober() -> None:
                     probe_provider(name)
                 except Exception:
                     pass
+                # BM7: сайт жив — проверяем и ГЕНЕРАЦИЮ (микро-запрос).
+                # Основной и оштрафованный провайдеры: медленный, но живой
+                # сайт больше не обманывает очередь
+                if not _probe_dead(name):
+                    try:
+                        if _gen_probe_due(name, names) or _provider_penalty(name) > 0:
+                            generation_probe(name)
+                    except Exception:
+                        pass
             # кто-то мёртв — опрашиваем чаще, чтобы поймать восстановление
             if any(_probe_dead(n) for n in names):
                 deadline = time.monotonic() + 35.0
@@ -753,8 +851,28 @@ def pick_model(tier: str, provider: str = "cloudru") -> str:
     return available[0]
 
 
-def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    price_in, price_out = PRICES_RUB.get(model, DEFAULT_PRICE)
+def _price_for(model: str, provider: str) -> Tuple[float, float]:
+    """Цена модели у КОНКРЕТНОГО провайдера: точное имя, потом подстрока
+    в обе стороны (у Cloud.ru каталог с префиксами openai/..., у Яндекса
+    без), потом дефолт провайдера. Чужая таблица не используется: одна и
+    та же модель у разных провайдеров стоит по-разному."""
+    prov = str(provider or "").lower()
+    table = PRICES_RUB.get(prov) or {}
+    if model in table:
+        return table[model]
+    low = model.lower()
+    for key, price in table.items():
+        k = key.lower()
+        if k in low or low in k:
+            return price
+    if not prov and model in _PRICE_ANY:   # старый вызов без провайдера
+        return _PRICE_ANY[model]
+    return DEFAULT_PRICE.get(prov, _PRICE_FALLBACK)
+
+
+def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int,
+                  provider: str = "") -> float:
+    price_in, price_out = _price_for(str(model or ""), provider)
     return prompt_tokens / 1e6 * price_in + completion_tokens / 1e6 * price_out
 
 
@@ -958,7 +1076,8 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
                 usage = body.get("usage") or {}
                 pt = int(usage.get("prompt_tokens") or 0)
                 ct = int(usage.get("completion_tokens") or 0)
-                db.log_usage(prov, model, tier, pt, ct, estimate_cost(model, pt, ct))
+                db.log_usage(prov, model, tier, pt, ct,
+                             estimate_cost(model, pt, ct, prov))
                 _report_usage(model, pt, ct)
                 choice = (body.get("choices") or [{}])[0]
                 message = choice.get("message") or {}
@@ -1142,7 +1261,8 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
                 pt = int((usage or {}).get("prompt_tokens") or 0)
                 ct = int((usage or {}).get("completion_tokens") or 0)
                 if pt or ct:
-                    db.log_usage(prov, model, tier, pt, ct, estimate_cost(model, pt, ct))
+                    db.log_usage(prov, model, tier, pt, ct,
+                             estimate_cost(model, pt, ct, prov))
                     _report_usage(model, pt, ct)
                 calls = []
                 for idx in sorted(tool_acc):
@@ -1290,11 +1410,14 @@ def providers_status() -> Dict[str, Any]:
             continue
         probe = provider_probe_status(name)
         act = active_providers()
+        gen = _GEN_PROBE_STATE.get(name)
         sample = {"label": provider_display(name),
                   "enabled": bool(conf.get("enabled")),
                   "has_key": bool(str(conf.get("api_key") or "").strip()),
                   "order": act.index(name) if name in act else -1,
                   "probe": probe,
+                  "gen_ttft_s": (round(float(gen.get("ttft") or 0.0), 2)
+                                 if gen and time.monotonic() - float(gen.get("at") or 0.0) < 600 else None),
                   "penalty": _provider_penalty(name)}
         now = time.monotonic()
         with _HEALTH_LOCK:

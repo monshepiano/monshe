@@ -3259,7 +3259,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.76", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.77", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4594,8 +4594,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.76", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.76", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.77", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.77", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5837,7 +5837,7 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.76", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.77", html)
 
 
 
@@ -5937,7 +5937,7 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.76", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.77", html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -6636,6 +6636,164 @@ class IterationBM6Tests(unittest.TestCase):
         self.assertNotIn("provider_switch", kinds)
         self.assertTrue(any(k in kinds for k in ("delta", "done", "error")),
                         "обработка не падает — уходит к резерву")
+
+
+class IterationBM7Tests(unittest.TestCase):
+    """BM7 — зонд обязан измерять ГЕНЕРАЦИЮ, а не только «сайт жив»
+    (первопричина «пишет что всё норм, а отвечать не может»); тарифы
+    разделены по провайдерам; Яндекс рисует раньше бесплатного gateway;
+    провайдер виден в чипе и в шапке каждого ответа."""
+
+    def setUp(self) -> None:
+        llm._PROVIDER_HEALTH.clear()
+        llm._PROBE_STATE.clear()
+        llm._GEN_PROBE_STATE.clear()
+        llm._TOKEN_CACHE.clear()
+
+    def test_gen_probe_demotes_slow_but_alive_site(self) -> None:
+        """Сайт отвечает быстро, генерация деградировала — понижение."""
+        import jarvis.llm as lll
+
+        class Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return b"{}"
+
+        clock = {"t": 1000.0}
+
+        def fake_monotonic():
+            v = clock["t"]
+            clock["t"] += 8.0        # каждый замер «длится» 8 секунд
+            return v
+
+        # часы фейковые: и замер, и чтение здоровья — в одном времени
+        with mock.patch.object(lll, "provider_conf",
+                               return_value={"api_key": "k",
+                                             "base_url": "http://x/v1"}), \
+             mock.patch.object(lll, "pick_model", return_value="m"), \
+             mock.patch.object(lll, "_request", return_value=Resp()), \
+             mock.patch.object(lll.time, "monotonic", side_effect=fake_monotonic):
+            t1 = lll.generation_probe("cloudru")
+            t2 = lll.generation_probe("cloudru")
+            self.assertEqual(t1, 8.0)
+            self.assertEqual(t2, 8.0)
+            # сайт при этом ЖИВ: /models отвечает мгновенно — старый зонд
+            # говорил бы «всё норм», а генерационный понижает в очереди
+            self.assertEqual(lll.provider_order(["cloudru", "deepseek"])[0],
+                             "deepseek", "медленная генерация = понижение")
+
+    def test_gen_probe_429_counts_as_degradation(self) -> None:
+        """429 (перегружен) — это деградация, а 401 (нет ключа) — нет."""
+        import urllib.error
+        import jarvis.llm as lll
+
+        def boom_429(url, key, payload=None, method="POST", timeout=180,
+                     headers=None, ssl_ctx=None):
+            raise urllib.error.HTTPError(url, 429, "Too Many Requests",
+                                         hdrs=None, fp=None)
+
+        with mock.patch.object(lll, "provider_conf",
+                               return_value={"api_key": "k",
+                                             "base_url": "http://x/v1"}), \
+             mock.patch.object(lll, "pick_model", return_value="m"), \
+             mock.patch.object(lll, "_request", side_effect=boom_429):
+            self.assertIsNone(lll.generation_probe("cloudru"))
+            self.assertIsNone(lll.generation_probe("cloudru"))
+        self.assertEqual(lll.provider_order(["cloudru", "deepseek"])[0],
+                         "deepseek", "429 дважды — провайдер перегружен")
+
+    def test_estimate_cost_per_provider(self) -> None:
+        """Одна модель — разные цены у разных провайдеров."""
+        self.assertAlmostEqual(llm.estimate_cost("gpt-oss-120b", 1e6, 0, "cloudru"),
+                               15.86)
+        self.assertAlmostEqual(llm.estimate_cost("gpt-oss-120b", 1e6, 0, "yandex"),
+                               300.0)
+        self.assertAlmostEqual(
+            llm.estimate_cost("qwen3-235b-a3b-instruct", 1e6, 0, "yandex"), 500.0)
+        self.assertAlmostEqual(llm.estimate_cost("GigaChat-Pro", 1e6, 1e6, "gigachat"),
+                               0.0)
+        self.assertAlmostEqual(llm.estimate_cost("deepseek-chat", 1e6, 0, "deepseek"),
+                               25.0)
+        # старый вызов без провайдера продолжает работать
+        self.assertAlmostEqual(llm.estimate_cost("deepseek-chat", 1e6, 0), 25.0)
+
+    def test_image_chain_yandex_before_gateway(self) -> None:
+        """Яндекс настроен — он рисует ПЕРВЫМ, бесплатный gateway запасной."""
+        import jarvis.tools.media as med
+        from unittest import mock as _mock
+        conf = {"media.image_provider": "auto",
+                "media.image_gateway_url": "https://gw.example",
+                "media.image_gateway_token": "tok",
+                "providers.yandex": {"api_key": "yk", "folder_id": "b1g"},
+                "media.enhance_prompt": False}
+        with _mock.patch.object(med, "CONFIG", conf), \
+             _mock.patch.object(med, "_yandex_image",
+                                return_value={"ok": True, "provider": "yandex",
+                                              "path": "x.jpeg"}) as mk_ya, \
+             _mock.patch.object(med, "_gateway_image",
+                                return_value={"ok": True}) as mk_gw:
+            res = med.generate_image("кот", 512, 512)
+        self.assertTrue(res["ok"])
+        mk_ya.assert_called_once()
+        mk_gw.assert_not_called()
+
+    def test_yandex_image_cost_logged(self) -> None:
+        """Картинка Яндекса стоит 2.23₽ — попадает в счётчик расходов."""
+        import base64 as _b64
+        import jarvis.tools.media as med
+        from unittest import mock as _mock
+
+        png = _b64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8"
+            "BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+        class Resp:
+            def __init__(self, body): self._b = body
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return json.dumps(self._b).encode("utf-8")
+
+        def fake_urlopen(req, timeout=0, context=None):
+            if "imageGenerationAsync" in req.full_url:
+                return Resp({"id": "op-cost123"})
+            return Resp({"done": True,
+                         "response": {"image": _b64.b64encode(png).decode()}})
+
+        conf = {"providers.yandex": {"api_key": "yk", "folder_id": "b1g"},
+                "media.enhance_prompt": False}
+        tmpdir = tempfile.mkdtemp(prefix="bm7_cost_")
+        with _mock.patch.object(med, "CONFIG", conf), \
+             _mock.patch.object(med.urllib.request, "urlopen",
+                                side_effect=fake_urlopen), \
+             _mock.patch.object(med.time, "sleep", lambda s: None), \
+             _mock.patch.object(med.sandbox, "safe_path",
+                                side_effect=lambda n: Path(tmpdir) / n), \
+             _mock.patch.object(med.sandbox, "dl", return_value="/dl/x"), \
+             _mock.patch.object(med.db, "log_usage") as mk_log:
+            res = med._yandex_image("кот", 512, 512)
+        self.assertTrue(res["ok"])
+        self.assertAlmostEqual(res["cost_rub"], 2.23)
+        mk_log.assert_called_once()
+        args = mk_log.call_args[0]
+        self.assertEqual(args[0], "yandex")
+        self.assertEqual(args[1], "yandex-art")
+        self.assertEqual(args[2], "image")
+        self.assertAlmostEqual(args[5], 2.23)
+
+    def test_agent_model_event_carries_provider(self) -> None:
+        """Событие model несёт провайдера — фронт покажет в шапке ответа."""
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        self.assertIn('self.provider_used = str(event.get("provider") or "")', src)
+        self.assertIn('"provider": self.provider_used', src)
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("if (prov) parts.push(prov);", js)
+
+    def test_providers_status_shows_gen_probe(self) -> None:
+        """Снимок для UI включает и генерационный зонд."""
+        import jarvis.llm as lll
+        lll._GEN_PROBE_STATE["cloudru"] = {"ttft": 3.2, "at": time.monotonic()}
+        snap = lll.providers_status()
+        self.assertEqual(snap["cloudru"]["gen_ttft_s"], 3.2)
 
 
 if __name__ == "__main__":

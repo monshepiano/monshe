@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .. import llm, sandbox
+from .. import db, llm, sandbox
 from ..config import CONFIG
 
 _GIGACHAT_OAUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
@@ -346,6 +346,7 @@ def _gateway_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
 # генерация — не ошибка (BM5), ждём до трёх минут.
 _YANDEX_ASYNC_URL = ("https://ai.api.cloud.yandex.net/foundationModels"
                      "/v1/imageGenerationAsync")
+_YANDEX_IMAGE_PRICE_RUB = 2.23      # фикс. цена запроса YandexART
 _YANDEX_OPERATIONS_URL = "https://operation.api.cloud.yandex.net/operations/"
 
 
@@ -430,6 +431,10 @@ def _yandex_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
         tmp = target.with_suffix(target.suffix + ".tmp")
         tmp.write_bytes(image)
         tmp.replace(target)
+        try:   # BM7: картинка стоит денег — попадает в счётчик расходов
+            db.log_usage("yandex", model, "image", 0, 0, _YANDEX_IMAGE_PRICE_RUB)
+        except Exception:
+            pass
         return {
             "ok": True,
             "path": name,
@@ -438,6 +443,7 @@ def _yandex_image(prompt: str, width: int, height: int) -> Dict[str, Any]:
             "download_url": sandbox.dl(name),
             "model": model,
             "provider": "yandex",
+            "cost_rub": _YANDEX_IMAGE_PRICE_RUB,
         }
     raise GigaChatError("Яндекс не успел нарисовать за 3 минуты — попробуйте ещё раз")
 
@@ -555,8 +561,9 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: st
         refined = _enhance_prompt(clean, int(width or 1024), int(height or 1024))
         has_gateway = bool(CONFIG.get("media.image_gateway_url", "") and
                            CONFIG.get("media.image_gateway_token", ""))
-        if provider == "gateway" or (provider == "auto" and has_gateway):
-            return _gateway_image(refined, int(width or 1024), int(height or 1024))
+        # BM7: настроенный Яндекс рисует ПЕРВЫМ — у него нет водяных знаков
+        # и это выбор человека; release gateway (бесплатный pollinations)
+        # теперь ЗАПАСНОЙ, а не основной маршрут
         yandex_ready = bool(
             str((CONFIG.get("providers.yandex") or {}).get("api_key") or "").strip()
             and str((CONFIG.get("providers.yandex") or {}).get("folder_id") or "").strip())
@@ -567,6 +574,8 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, style: st
                 if provider == "yandex":
                     raise
                 # Яндекс не ответил — тихо едем дальше по цепочке
+        if provider == "gateway" or (provider == "auto" and has_gateway):
+            return _gateway_image(refined, int(width or 1024), int(height or 1024))
         if provider == "free":
             return _free_image(refined, int(width or 1024), int(height or 1024))
         if not str(CONFIG.get("media.gigachat_auth_key", "") or "").strip():

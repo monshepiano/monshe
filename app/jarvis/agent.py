@@ -2182,6 +2182,7 @@ class Agent:
         self.created_files: List[Dict[str, Any]] = []
         self.used_tools: List[str] = []
         self.model_used = ""
+        self.provider_used = ""
         self.plan_len = 0          # сколько шагов в плане (0 — плана нет)
         self.plan_at = 0           # какой шаг идёт сейчас
         self._plan_marked = False  # модель уже помечала шаги через [ШАГ N]
@@ -2408,7 +2409,8 @@ class Agent:
             if prompt_tokens or completion_tokens:
                 self._spent_rub += llm.estimate_cost(
                     str(model or self.model_used or ""),
-                    int(prompt_tokens), int(completion_tokens))
+                    int(prompt_tokens), int(completion_tokens),
+                    getattr(self, "provider_used", "") or "")
         except Exception:
             pass
 
@@ -2818,7 +2820,9 @@ class Agent:
                         yield out
                 if etype == "model":
                     self.model_used = event.get("model", "")
-                    yield {"type": "model", "model": event.get("model"), "tier": tier}
+                    self.provider_used = str(event.get("provider") or "")
+                    yield {"type": "model", "model": event.get("model"),
+                           "provider": self.provider_used, "tier": tier}
                 elif etype == "provider_switch":
                     # BM5: провайдер молчал до первого токена — сторож закрыл
                     # попытку и запрос ушёл к резервному. Человек видит честную
@@ -3800,7 +3804,8 @@ class Agent:
                 ct = int(approx_completion_chars / 3)
             if pt or ct:
                 self._spent_rub += llm.estimate_cost(
-                    str(model or self.model_used or ""), pt, ct)
+                    str(model or self.model_used or ""), pt, ct,
+                    getattr(self, "provider_used", "") or "")
         except Exception:
             pass
 

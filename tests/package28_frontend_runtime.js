@@ -2778,12 +2778,30 @@ function testIterationBM6Contracts() {
     !rs.includes('kCloud'),
     'BM6: provider settings come from the config itself — key, folder_id and role per provider, nothing hardcoded');
   // BM6: «ПРОВЕРИТЬ ПРОВАЙДЕРОВ» — точный снимок зонда, а не только каталог
-  assert(rs.includes("api('/api/providers')") &&
-    rs.includes("'жив — зонд '") &&
-    rs.includes("'НЕ ОТВЕЧАЕТ — обхожу запасным'") &&
-    rs.includes("'зонд падает…'") &&
-    rs.includes('med_ttft_s') && rs.includes('med_cps'),
+  // BM7: снимок вынесен в showProvidersState — им же живёт чип в верхней панели
+  const sps = extractFunction(js, 'showProvidersState');
+  assert(js.includes("api('/api/providers')") &&
+    sps.includes("'жив — зонд '") &&
+    sps.includes("'НЕ ОТВЕЧАЕТ — обхожу запасным'") &&
+    sps.includes("'зонд падает…'") &&
+    sps.includes('med_ttft_s') && sps.includes('med_cps') &&
+    sps.includes('gen_ttft_s'),
     'BM6: the probe button shows the exact state — alive with latency, dead and bypassed, or failing probes');
+  // BM7: КОМПАКТНЫЙ АККОРДЕОН — строка на провайдера, клик разворачивает
+  assert(rs.includes('prov-row') && rs.includes('prov-head') &&
+    rs.includes('prov-fields') && rs.includes("row.classList.toggle('open')") &&
+    rs.includes('refreshProvRows(prov)'),
+    'BM7: provider settings collapsed to one row each — click expands keys, live probe state in the row');
+  // BM7: провайдер в шапке ответа — между режимом и моделью
+  const urm = extractFunction(js, 'updateResponseMeta');
+  assert(urm.includes('ui.providerName') && urm.includes('if (prov) parts.push(prov);'),
+    'BM7: the answer passport shows WHO answered — provider between mode and model');
+  // BM7: чип в верхней панели — кто отвечает, клик открывает снимок
+  assert(html.includes('id="chipProv"') &&
+    js.includes("function setProvChip(name)") &&
+    js.includes("$('#chipProv').addEventListener('click', () => showProvidersState());") &&
+    css.includes('#chipProv'),
+    'BM7: top bar carries a live provider chip — click opens the exact state of everyone');
   // BM6: онбординг больше не привязан к cloudru
   assert(js.includes("Object.values(S.config.providers || {}).some((x) => (x || {}).has_key)"),
     'BM6: the «insert a key» toast fires only when NO provider has a key');
@@ -3165,7 +3183,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.76'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.77'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&

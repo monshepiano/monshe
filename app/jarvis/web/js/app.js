@@ -1126,6 +1126,75 @@ function setChip(sel, cls, text) {
   chip.querySelector('span').textContent = text;
 }
 
+/* ================== BM7: провайдер перед глазами ================== */
+const PROV_SHORT = { cloudru: 'Cloud.ru', yandex: 'Yandex', gigachat: 'GigaChat',
+                     deepseek: 'DeepSeek', aitunnel: 'AITunnel' };
+
+/* Снимок «кто сейчас жив»: зонд сайта + ГЕНЕРАЦИОННЫЙ зонд (микро-запрос
+   1 токен) + здоровье по живым ответам. Один источник для чипа, строк
+   настроек и модального окна. */
+async function fetchProvidersSnapshot() {
+  try {
+    const h = await api('/api/providers');
+    S.providers = h.providers || {};
+    return S.providers;
+  } catch (e) { return S.providers || {}; }
+}
+
+function setProvChip(name) {
+  const label = PROV_SHORT[name] || name || 'провайдер';
+  S.lastProvider = name || '';
+  const snap = S.providers || {};
+  const row = snap[name];
+  let cls = 'ok';
+  if (row && row.probe && row.probe.probed && row.probe.dead) cls = 'err';
+  else if (row && row.penalty > 0) cls = 'warn';
+  setChip('#chipProv', cls, label);
+}
+
+/* Живые индикаторы в свёрнутых строках настроек: зонд, генерация, штраф */
+function refreshProvRows(scope) {
+  const provs = S.providers || {};
+  Object.entries(provs).forEach(([name, v]) => {
+    const st = (scope || document).querySelector('#pst_' + name);
+    if (!st) return;
+    const pr = v.probe || {};
+    let txt = !v.has_key ? 'нет ключа'
+      : !pr.probed ? 'ещё не проверялся'
+      : pr.dead ? 'НЕ ОТВЕЧАЕТ'
+      : pr.ok ? 'жив · зонд ' + Math.round(pr.probe_ms || 0) + ' мс'
+      : 'зонд падает…';
+    if (v.has_key && v.gen_ttft_s != null) txt += ' · ген. ' + v.gen_ttft_s + ' с';
+    else if (v.has_key && v.med_ttft_s !== undefined) txt += ' · отклик ' + v.med_ttft_s + ' с';
+    if (v.penalty > 0) txt += ' · штраф ' + v.penalty;
+    st.textContent = txt;
+    st.style.color = (!v.has_key || pr.dead) ? 'var(--red)' : (pr.ok ? 'var(--green)' : '');
+  });
+}
+
+/* Точный снимок всех провайдеров — по клику на чип и кнопке в настройках */
+async function showProvidersState() {
+  toast('Проверяю…', 'info');
+  const provs = await fetchProvidersSnapshot();
+  const lines = Object.entries(provs).sort((a, b) =>
+    ((a[1].order < 0 ? 99 : a[1].order) - (b[1].order < 0 ? 99 : b[1].order))).map(([k, v]) => {
+    const pr = v.probe || {};
+    let st = 'ещё не проверялся';
+    if (pr.probed) st = pr.ok ? ('жив — зонд ' + Math.round(pr.probe_ms || 0) + ' мс')
+      : (pr.dead ? 'НЕ ОТВЕЧАЕТ — обхожу запасным' : 'зонд падает…');
+    let extra = '';
+    if (v.gen_ttft_s != null) extra = ', генерация ~' + v.gen_ttft_s + ' с';
+    if (v.med_ttft_s !== undefined) extra += ', отклик ~' + v.med_ttft_s + ' с';
+    if (v.med_cps !== undefined) extra += ', печать ~' + v.med_cps + ' зн/с';
+    if (v.penalty > 0) extra += ', штраф ' + v.penalty;
+    return (v.order >= 0 ? (v.order + 1) + '. ' : '· ') + (v.label || k) + ': ' +
+      (!v.has_key ? 'нет ключа' : st + extra);
+  }).join('\n');
+  modal('<h3>Состояние провайдеров</h3><pre class="out">' + esc(lines || 'нет данных') + '</pre>' +
+    '<div class="modal-acts"><button class="btn primary" onclick="document.getElementById(\'modalBack\').classList.remove(\'open\')">Ок</button></div>');
+  if (S.lastProvider) setProvChip(S.lastProvider);
+}
+
 /* ============================ чаты ============================ */
 async function loadChats() {
   const r = await api('/api/chats');
@@ -2184,7 +2253,8 @@ function updateResponseMeta(ui) {
   if (!ui || !ui.node || !ui.node.root) return;
   const scenario = ui.routeTier ? (TIER_LABEL[ui.routeTier] || ui.routeTier) : '';
   const model = String(ui.modelName || '').trim();
-  if (!scenario && !model) return;
+  const prov = String(ui.providerName || '').trim();
+  if (!scenario && !model && !prov) return;
   if (!ui.routeEl || !ui.routeEl.isConnected) {
     ui.routeEl = el('span', 'ai-route');
     const head = ui.node.root.querySelector('.ai-name');
@@ -2194,6 +2264,9 @@ function updateResponseMeta(ui) {
   // Это тихий технический паспорт ответа, не заголовок: сценарий намеренно
   // остаётся со строчной буквы, как и просил пользователь.
   if (scenario) parts.push(scenario);
+  // BM7: между режимом и моделью — КТО отвечал. При деградации сразу видно,
+  // работал основной или запасной провайдер.
+  if (prov) parts.push(prov);
   if (model) parts.push(model);
   ui.routeEl.textContent = parts.join(' · ');
   ui.routeEl.title = ui.routeReason || parts.join(' · ');
@@ -8643,6 +8716,7 @@ function handleEvent(ev, ui) {
 
     case 'model':
       ui.modelName = ev.model || '';
+      if (ev.provider) { ui.providerName = ev.provider; setProvChip(ev.provider); }
       updateResponseMeta(ui);
       $('#footModel').textContent = ev.model || '—';
       break;
@@ -11939,21 +12013,29 @@ function renderSettings() {
   const provs = Object.entries(p).sort((a, b) =>
     (Number((a[1] || {}).priority) || 100) - (Number((b[1] || {}).priority) || 100));
   const ROLE_OPTS = [[0, 'Основной'], [10, 'Запасной 1'], [20, 'Запасной 2'], [30, 'Дальний резерв']];
+  // BM7: вкладка компактна — свёрнутая строка на провайдера (точка +
+  // имя + статус), клик разворачивает ключи и роль. Поля остаются в DOM,
+  // поэтому свёрнутые значения не теряются при сохранении.
   prov.innerHTML = '<h3>Модели и ключи</h3>' +
-    '<div class="sd">Первая строка с ключом — основной, остальные запасные (сверху вниз). Вставь ключ — провайдер включится сам. Yandex AI Studio: ключ + folder_id из консоли облака.</div>' +
+    '<div class="sd">Первая строка с ключом — основной, остальные запасные (сверху вниз). Вставь ключ — провайдер включится сам. Yandex AI Studio: ключ + folder_id.</div>' +
     provs.map(([name, pc]) => {
       pc = pc || {};
       const cur = Number(pc.priority); const curRole = ROLE_OPTS.some((o) => o[0] === cur) ? cur : 0;
-      return '<div class="prov-state"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:' +
-        (pc.has_key ? 'var(--green)' : 'var(--tx3)') + '"></span> ' + esc(pc.label || name) + ': ' +
-        (pc.has_key ? 'ключ установлен' : 'нет ключа') + '</div>' +
-        '<div class="field"><label>API-ключ ' + esc(pc.label || name) + '</label><input id="k_' + name +
+      const roleTxt = (ROLE_OPTS.find((o) => o[0] === curRole) || [0, ''])[1];
+      return '<div class="prov-row" id="prow_' + name + '">' +
+        '<div class="prov-head"><span class="dot" style="background:' +
+        (pc.has_key ? 'var(--green)' : 'var(--tx3)') + '"></span><b>' + esc(pc.label || name) + '</b>' +
+        '<span class="prov-st" id="pst_' + name + '">' +
+        (pc.has_key ? roleTxt + ' · ключ есть' : 'нет ключа') + '</span>' +
+        '<span class="prov-chev">▶</span></div>' +
+        '<div class="prov-fields">' +
+        '<div class="field"><label>API-ключ</label><input id="k_' + name +
         '" placeholder="' + esc(pc.api_key || 'вставь ключ') + '"></div>' +
-        ('folder_id' in pc ? '<div class="field"><label>folder_id (' + esc(pc.label || name) + ')</label><input id="fid_' + name +
+        ('folder_id' in pc ? '<div class="field"><label>folder_id</label><input id="fid_' + name +
           '" placeholder="' + esc(pc.folder_id || 'идентификатор каталога') + '"></div>' : '') +
-        '<div class="field"><label>Роль ' + esc(pc.label || name) + '</label><select id="r_' + name + '">' +
+        '<div class="field"><label>Роль</label><select id="r_' + name + '">' +
         ROLE_OPTS.map((o) => '<option value="' + o[0] + '"' + (curRole === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
-        '</select></div>';
+        '</select></div></div></div>';
     }).join('') +
     '<div class="field"><label>Уровень модели</label><select id="fTier">' +
     ['', 'nano', 'base', 'smart', 'coder'].map((t) =>
@@ -11963,6 +12045,13 @@ function renderSettings() {
     '<button class="btn primary" id="saveProv">Сохранить</button> ' +
     '<button class="btn" id="testProv">Проверить провайдеров</button>';
   grid.appendChild(prov);
+  provs.forEach(([name]) => {
+    const row = $('#prow_' + name, prov);
+    if (!row) return;
+    row.querySelector('.prov-head').addEventListener('click', () => row.classList.toggle('open'));
+  });
+  // живые индикаторы в свёрнутых строках: зонд и генерация каждого провайдера
+  refreshProvRows(prov);
   $('#saveProv', prov).addEventListener('click', async () => {
     const patch = { providers: {}, orchestrator: { force_tier: $('#fTier', prov).value } };
     provs.forEach(([name, pc]) => {
@@ -11979,25 +12068,7 @@ function renderSettings() {
     S.config = r.config || S.config;
     toast('Настройки сохранены', 'success'); renderSettings(); refreshState();
   });
-  $('#testProv', prov).addEventListener('click', async () => {
-    toast('Проверяю…', 'info');
-    const h = await api('/api/providers');
-    const lines = Object.entries(h.providers || {}).sort((a, b) =>
-      (a[1].order < 0 ? 99 : a[1].order) - (b[1].order < 0 ? 99 : b[1].order)).map(([k, v]) => {
-      const pr = v.probe || {};
-      let st = 'ещё не проверялся';
-      if (pr.probed) st = pr.ok ? ('жив — зонд ' + (pr.probe_ms || 0) + ' мс')
-        : (pr.dead ? 'НЕ ОТВЕЧАЕТ — обхожу запасным' : 'зонд падает…');
-      let extra = '';
-      if (v.med_ttft_s !== undefined) extra = ', отклик ~' + v.med_ttft_s + ' с';
-      if (v.med_cps !== undefined) extra += ', печать ~' + v.med_cps + ' зн/с';
-      if (v.penalty > 0) extra += ', штраф ' + v.penalty;
-      return (v.order >= 0 ? (v.order + 1) + '. ' : '· ') + (v.label || k) + ': ' +
-        (!v.has_key ? 'нет ключа' : st + extra);
-    }).join('\n');
-    modal('<h3>Состояние провайдеров</h3><pre class="out">' + esc(lines || 'нет данных') + '</pre>' +
-      '<div class="modal-acts"><button class="btn primary" onclick="document.getElementById(\'modalBack\').classList.remove(\'open\')">Ок</button></div>');
-  });
+  $('#testProv', prov).addEventListener('click', () => showProvidersState());
 
   // Изображения идут через российский release gateway. В ZIP лежит только
   // ограниченный revocable token; настоящий provider credential остаётся на
@@ -12246,6 +12317,21 @@ window.addEventListener('keydown', (e) => {
   await Promise.all([refreshState(), loadChats()]);
   if (BOOT_DONE) BOOT_DONE();
   setInterval(refreshState, 4000);
+  // BM7: провайдер перед глазами — стартовое состояние = основной, дальше
+  // показывает того, кто отвечал последним; клик — снимок всех
+  $('#chipProv').addEventListener('click', () => showProvidersState());
+  const provTick = async () => {
+    await fetchProvidersSnapshot();
+    refreshProvRows();
+    if (S.lastProvider) setProvChip(S.lastProvider);
+    else {
+      const prim = Object.entries(S.providers || {})
+        .filter(([, v]) => v && v.order >= 0).sort((a, b) => a[1].order - b[1].order)[0];
+      if (prim) setProvChip(prim[0]);
+    }
+  };
+  provTick();
+  setInterval(provTick, 15000);
   if (!Object.values(S.config.providers || {}).some((x) => (x || {}).has_key)) {
     setTimeout(() => {
       toast('Открой Настройки и вставь API-ключ, чтобы я заработал.', 'warn', 'Нужен ключ');
