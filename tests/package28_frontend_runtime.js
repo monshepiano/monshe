@@ -1220,6 +1220,7 @@ function testRussianImageAndHudFollowupContract() {
   const legacyModel = new MiniNode('span'); legacyModel.textContent = 'old';
   const metaCtx = loadFunctions(['updateResponseMeta'], {
     TIER_LABEL: { quality: 'качество' },
+    PROV_SHORT: { cloudru: 'cloud.ru' },   // BM9: провайдер в паспорте ответа
     el: miniEl,
   });
   const metaUi = {
@@ -1786,8 +1787,8 @@ function testQuietToolsBoostAskStylesAndAgentTheme() {
   assert(/\.qt-detail\{[^}]*overflow-y:auto;overflow-x:hidden/s.test(css) &&
     /white-space:pre-wrap;word-break:break-word/.test(css),
     'tool text scrolls VERTICALLY ONLY and wraps — no horizontal scrolling');
-  assert(/\.qt-folder \.qt-kids\{display:none\}/.test(css) &&
-    /\.qt-folder\.open \.qt-kids\{display:flex/.test(css) &&
+  assert(/\.qt-kids\{[^}]*grid-template-rows:0fr/.test(css) &&
+    /\.qt-folder\.open \.qt-kids\{grid-template-rows:1fr/.test(css) &&
     /\.qt-kids>\.qt-rail\{/.test(css) && /\.qt-rows\{/.test(css),
     'the folder has no rail when closed; opened, a rail runs down from the icon');
   const tf = extractFunction(js, 'qtToggleFolder');
@@ -2048,8 +2049,8 @@ function testIterationXContracts() {
     'X1: the flying tool aims its LABEL at the group TITLE line — dissolves in it, never below');
   // П.2: папки — внешний вертикальный margin тела убран (скачок 6px в первый
   // кадр открытия и в последний кадр закрытия), зазор живёт внутри
-  assert(/\.qt-folder\.open \.qt-kids\{display:flex\}/.test(css) &&
-    !/\.qt-folder\.open \.qt-kids\{display:flex;margin/.test(css) &&
+  assert(/\.qt-folder\.open \.qt-kids\{grid-template-rows:1fr/.test(css) &&
+    !/\.qt-folder\.open \.qt-kids\{[^}]*margin/.test(css) &&
     /\.qt-kids>\.qt-rows\{[^}]*padding:2px 0 3px/.test(css) &&
     /LEAD = 70/.test(js),
     'X2: folder body keeps its outer geometry calm — no 6px jump at open start / close end');
@@ -2485,7 +2486,7 @@ function testIterationBIContracts() {
     js.includes('const featureXs = () => {') &&
     // BL: жесты 3D — колесо = масштаб, левая кнопка = вращение, средняя = пан
     js.includes('zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12);') &&
-    js.includes("mode = (e.button === 0 || e.button === 1) ? 'pan' : (e.button === 2 ? 'rot' : null);") &&
+    js.includes("mode = (e.button === 0 || e.button === 1) ? 'rot' : (e.button === 2 ? 'pan' : null);") &&
     // BL: ось больше не обрезается пополам (граница цикла — тоже значение)
     js.includes('const x0t = Math.ceil(x0 / sx) * sx, x1t = Math.floor(x1 / sx) * sx;'),
     'BI: plots use mathematicians\' aspect ratios; axes carry real ticks on the WHOLE axis');
@@ -2497,7 +2498,7 @@ function testIterationBIContracts() {
 function testIterationBJContracts() {
   // BJ: СКРОЛЛ — ровный ход без разгона: скорость пропорциональна остатку
   const chase = js.split('function chaseBottom(')[1].split('\nfunction ')[0];
-  assert(chase.includes('const target = Math.min(12, Math.max(1.2, gap * 0.16));') && chase.includes('const v = Math.min(target, (st.chaseV || 0) + 2.2);') &&
+  assert(chase.includes('const target = Math.min(11, Math.max(0.9, gap * 0.12));') && chase.includes('const v = Math.min(target, (st.chaseV || 0) + 1.1);') &&
     !js.includes('st.v') &&
     js.split('function followLiveStream(')[1].split('\nfunction ')[0]
       .includes('chaseBottom(box, run);'),
@@ -2595,7 +2596,7 @@ function testIterationBLContracts() {
     'BL: column widths chase their new proportions smoothly — like the scroll');
   // BL: СКРОЛЛ — потолок ниже: карточки входят одним куском высоты
   assert(js.split('function chaseBottom(')[1].split('\nfunction ')[0]
-      .includes('const target = Math.min(12, Math.max(1.2, gap * 0.16));') &&
+      .includes('const target = Math.min(11, Math.max(0.9, gap * 0.12));') &&
     !js.includes('Math.min(24,'),
     'BL: the chase ceiling is gentle (11px/frame) — agent cards no longer glide-jerk');
   // BL: ГРАФИКИ — умный старт, ноль всегда в кадре, плавный ±
@@ -2603,7 +2604,8 @@ function testIterationBLContracts() {
   assert(p2.includes('const smartInit = () => {') &&
     p2.includes('const featureXs = () => {') &&
     p2.includes('if (a > 0) a = 0;') &&
-    p2.includes('const margin = Math.min(0.5, span0 * 0.06);') &&
+    p2.includes('const need = (yb - ya) * 1.16 + 0.5;') &&   // BM9: окно растёт под размах кривых
+    p2.includes('const xspan = span0 * w * aspect.r / h;') &&
     (js.match(/const ease = \(p\) => p \* p \* \(3 - 2 \* p\);/g) || []).length === 3 &&
     js.includes("mkBtn('+', () => { panel._zoom(1.3); });"),
     'BL: 2D opens on its important points with the origin always in frame; ± zooms animate smoothly (3 panels)');
@@ -2663,7 +2665,7 @@ function testIterationBKContracts() {
     css.includes('.msqrt::after{content:\'\';position:absolute;left:.35em;right:0;top:-.7px;') &&
     css.includes('height:1.4px;background:rgba(190,235,255,.85)') &&
     !css.includes('.msq-b') && !css.includes('aspect-ratio:11/24') && !css.includes('border-top:1.4px') &&
-    css.includes('.msqrt .msq-i{position:absolute;left:0;width:.30em;text-align:right;'),
+    css.includes('.msqrt .msq-i{position:absolute;left:-.14em;width:.34em;text-align:right;'),
     'BM3: the svg is cropped at the tip (no dead width — the radicand sits right behind the nose), the bar starts at the tip, and a wide root index grows LEFT, never onto the stroke');
   // BK: ГРАФИК-ИНТЕРПРЕТАТОР — z(x,y)=, юникод-математика, спасение формул
   assert(js.includes("src.replace(/(^|[^\\w])([a-zA-Z])\\s*\\(([^)]*)\\)\\s*=/g,") &&
@@ -2829,9 +2831,8 @@ function testIterationBM6Contracts() {
 function testIterationBM8Contracts() {
   // BM8: ЧИП-ОГОНЁК — роль ответившего, имя в подсказке, «никто» мигает
   const spc = extractFunction(js, 'setProvChip');
-  assert(spc.includes(".textContent = 'провайдer'".replace('er', 'ер')) ||
-    spc.includes(".textContent = 'провайдер'"),
-    'BM8: the chip says «провайдер» — the light carries the meaning');
+  assert(spc.includes("'провайдер: ' + (PROV_SHORT[S.lastProvider]"),
+    'BM8/BM9: the chip says «провайдер: cloud.ru» — the light carries the role, the text names it');
   assert(spc.includes("cur.order === 0 ? 'ok'") &&
     spc.includes("cur.order === 1 ? 'warn'") &&
     spc.includes("'err live'"),
@@ -2867,6 +2868,53 @@ function testIterationBM8Contracts() {
   const pyMedia = fs.readFileSync(path.join(root, 'app/jarvis/tools/media.py'), 'utf8');
   assert(pyMedia.includes('temperature=0.45, timeout=12'),
     'BM8: prompt enhancement cannot stall image generation (12s hard cap)');
+}
+
+function testIterationBM9Contracts() {
+  // BM9: провайдер в паспорте — доменной меткой (cloudru → cloud.ru)
+  const urm = extractFunction(js, 'updateResponseMeta');
+  assert(urm.includes('PROV_SHORT[provRaw] || provRaw'),
+    'BM9: the answer passport maps the provider id to its domain label');
+  // BM9: чип «провайдер: имя»; «модели готовы» убраны
+  assert(!html.includes('id="chipModel"') &&
+    js.includes("'провайдер: ' + (PROV_SHORT[S.lastProvider]"),
+    'BM9: the top bar says «провайдер: cloud.ru» — the old «модели готовы» chip is gone');
+  // BM9: агент не перекрашивает огоньки панели
+  assert(!css.includes('body.agent-on .status-chip .dot{background:#c4788b}'),
+    'BM9: agent mode no longer recolors the status lights');
+  // BM9: скролл плывёт — мягкий разгон и пологая доля остатка
+  const chase = extractFunction(js, 'chaseBottom');
+  assert(chase.includes('Math.min(11, Math.max(0.9, gap * 0.12))') &&
+    chase.includes('(st.chaseV || 0) + 1.1'),
+    'BM9: glide scroll — soft ramp (1.1px/frame), gentler share (0.12), ceiling 11px/frame');
+  // BM9: папки инструментов раскрываются плавно (grid 0fr→1fr)
+  assert(css.includes('.qt-folder.open .qt-kids{grid-template-rows:1fr') &&
+    css.includes('grid-template-columns:1px 1fr') &&
+    !css.includes('.qt-folder .qt-kids{display:none}'),
+    'BM9: tool folders animate open/close instead of display snapping');
+  // BM9: степень корня не наезжает на носик
+  assert(css.includes('.msqrt .msq-i{position:absolute;left:-.14em;width:.34em'),
+    'BM9: the root degree sits left of the radical stroke');
+  // BM9: 3D — ЛКМ вращает, ПКМ пан; короткий ПКМ — обычное меню
+  const p3 = js.split('function buildPlot3Panel(')[1].split('\nfunction ')[0];
+  assert(p3.includes("(e.button === 0 || e.button === 1) ? 'rot' : (e.button === 2 ? 'pan' : null)"),
+    'BM9: LMB-drag rotates, RMB-drag pans — as the person asked');
+  const shell = extractFunction(js, 'plotShell');
+  assert(shell.includes('longHold') && shell.includes('(cv._holdMs || 0) > 350'),
+    'BM9: short right-click keeps the normal context menu; a hold or drag suppresses it');
+  // BM9: график при печати — загрузка, ошибка только в финале
+  assert(js.includes("panel.closest('.msg-ai.live')") &&
+    js.includes('plot-load') && js.includes('строю график…'),
+    'BM9: a plot being typed shows a spinner — the error only appears in the final render');
+  // BM9: окно графика растёт под весь размах кривых
+  assert(js.includes('const need = (yb - ya) * 1.16 + 0.5;') &&
+    js.includes('const xspan = span0 * w * aspect.r / h;'),
+    'BM9: both curves and their intersection fit the first frame — the window grows, aspect stays honest');
+  // BM9: подсказки — починенный промпт (без дубля-мусора) и запрет голых оценок
+  assert(!pyAgent.includes('с глаголом. "\n                        "примере»'),
+    'BM9: the suggestion prompt no longer carries the duplicated garbage fragment');
+  assert(pyAgent.includes('стоит посмотреть'),
+    'BM9: bare evaluative chips like «стоит посмотреть» are banned in the prompt');
 }
 
 function testIterationAXContracts() {
@@ -3080,7 +3128,7 @@ function testIterationBEContracts() {
     'BE: the JS engine rotates shapes — 4D figures turn inside out in XW/ZW planes');
   // BE/BG: скролл — плавный догон; прилипание у дна — ПЕРВЫМ делом
   assert(js.includes('function chaseBottom(') &&
-    js.includes('const target = Math.min(12, Math.max(1.2, gap * 0.16));') &&
+    js.includes('const target = Math.min(11, Math.max(0.9, gap * 0.12));') &&
     js.includes('function followGrowingPanel(') &&
     js.includes('if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }') &&
     js.includes('if (run && h - top - box.clientHeight < 48) {') &&
@@ -3226,7 +3274,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.78'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.79'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -3529,7 +3577,7 @@ function testIterationBGContracts() {
   assert(js.includes('if (run && h - top - box.clientHeight < 48) {') &&
     js.includes('st.autoPend = 0;') &&
     js.includes('function followGrowingPanel(') &&
-    js.includes('const target = Math.min(12, Math.max(1.2, gap * 0.16));'),
+    js.includes('const target = Math.min(11, Math.max(0.9, gap * 0.12));'),
     'BG: bottom-stick check comes first; collapsing panels are chased smoothly');
   // BG: математика — правило 11, мини-LaTeX и живые панели plot/geo
   assert(pyAgent.includes('11. МАТЕМАТИКА') && pyAgent.includes('```plot') &&
@@ -3557,7 +3605,7 @@ function testIterationBHContracts() {
     js.split('function followGrowingPanel(')[1].split('\nfunction ')[0]
       .includes('chaseBottom(box, run);') &&
     js.split('function chaseBottom(')[1].split('\nfunction ')[0]
-      .includes('const target = Math.min(12, Math.max(1.2, gap * 0.16));') &&
+      .includes('const target = Math.min(11, Math.max(0.9, gap * 0.12));') &&
     !js.includes('st.v ='),
     'BI: agent and panel scroll share one chaseBottom engine — no separate steps');
   // BH: уведомление режима остаётся ПОСЕРЕДИНЕ ответа
@@ -3677,8 +3725,9 @@ function testIterationBHContracts() {
   testIterationBMContracts();
   testIterationBM6Contracts();
   testIterationBM8Contracts();
+  testIterationBM9Contracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 52 regression groups passed');
+  console.log('package28_frontend_runtime: 53 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

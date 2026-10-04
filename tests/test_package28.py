@@ -1879,7 +1879,7 @@ class VisionUiContractTests(unittest.TestCase):
         self.assertIn("Никогда не создавай\n`text`/`area`", contract)
         self.assertIn("«Свой вариант»", contract)
         self.assertIn("Если стиль уже\nявно задан", contract)
-        self.assertIn("НЕ показывай ui для\nфактического вопроса, сводки новостей", contract)
+        self.assertIn("ПОСЛЕ сводки новостей или погоды\nпанель наоборот уместна", contract)
 
     def test_image_contract_and_payload_share_one_ordered_model_call(self) -> None:
         """The UI reminder is a message in the vision request, not a preflight LLM."""
@@ -3202,7 +3202,7 @@ class IterationXTests(unittest.TestCase):
         self.assertIn("m.role === 'assistant' && m.id === lastAiId", js)
         self.assertNotIn("answered.has", js)
         self.assertIn("shell.dataset.agHold = '1'", js)
-        self.assertIn(".qt-folder.open .qt-kids{display:flex}", css)
+        self.assertIn(".qt-folder.open .qt-kids{grid-template-rows:1fr", css)
         self.assertNotIn(".qt-folder.open .qt-kids{display:flex;margin:2px 0 4px}", css)
         self.assertIn("LEAD = 70", js)
 
@@ -3259,7 +3259,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.78", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.79", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4596,8 +4596,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.78", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.78", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.79", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.79", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5357,7 +5357,7 @@ class IterationBETests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         # догоняющий скролл вместо мгновенных прыжков
         self.assertIn("function chaseBottom(", js)
-        self.assertIn("const target = Math.min(12, Math.max(1.2, gap * 0.16));", js)
+        self.assertIn("const target = Math.min(11, Math.max(0.9, gap * 0.12));", js)
         # уход вверх ЛЮБЫМ способом (скроллбар, клавиши) снимает прилипание:
         # наш догоняющий кадр scrollTop уменьшить не может
         self.assertIn("if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }", js)
@@ -5563,7 +5563,7 @@ class IterationBGTests(unittest.TestCase):
         self.assertIn("st.autoPend = 0;", js)
         # свёртка панели — плавный догон, без резких прыжков
         self.assertIn("function followGrowingPanel(", js)
-        self.assertIn("const target = Math.min(12, Math.max(1.2, gap * 0.16));", js)
+        self.assertIn("const target = Math.min(11, Math.max(0.9, gap * 0.12));", js)
 
     def test_bg6_math_latex_and_live_panels(self) -> None:
         with mock.patch.object(agent.db, "recall", return_value=[]), \
@@ -5618,8 +5618,8 @@ class IterationBHTests(unittest.TestCase):
         # BJ: РОВНЫЙ ХОД — скорость пропорциональна остатку, без разгона:
         # большая карточка догоняется постоянным ходом, у дна плавно замирает
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const target = Math.min(12, Math.max(1.2, gap * 0.16));", chase)
-        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 2.2);", chase)
+        self.assertIn("const target = Math.min(11, Math.max(0.9, gap * 0.12));", chase)
+        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 1.1);", chase)
         self.assertNotIn("st.v =", chase)
 
     def test_bh2_mode_note_stays_mid_answer(self) -> None:
@@ -5739,8 +5739,8 @@ class IterationBJTests(unittest.TestCase):
         # скорость пропорциональна остатку и ограничена сверху — ни разгона,
         # ни ступенек: одна кривая для печати, карточек и панелей
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const target = Math.min(12, Math.max(1.2, gap * 0.16));", chase)
-        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 2.2);", chase)
+        self.assertIn("const target = Math.min(11, Math.max(0.9, gap * 0.12));", chase)
+        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 1.1);", chase)
         self.assertNotIn("st.v =", js)
 
     def test_bj2_mode_note_before_any_text(self) -> None:
@@ -5839,7 +5839,7 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.78", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.79", html)
 
 
 
@@ -5939,7 +5939,7 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.78", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.79", html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -5972,7 +5972,7 @@ class IterationBLTests(unittest.TestCase):
         self.assertIn("host._tblStamp = ++TABLE_HOST_STAMP;", js)
         # потолок скролла ниже — карточки входят одним куском высоты
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const target = Math.min(12, Math.max(1.2, gap * 0.16));", chase)
+        self.assertIn("const target = Math.min(11, Math.max(0.9, gap * 0.12));", chase)
         self.assertNotIn("Math.min(24,", js)
 
     def test_bl3_dot_centered_and_bigger(self) -> None:
@@ -6001,7 +6001,9 @@ class IterationBLTests(unittest.TestCase):
         self.assertIn("const smartInit = () => {", p2)
         # ноль всегда в кадре — ось не уезжает за край
         self.assertIn("if (fns.length) {\n      if (a > 0) a = 0;", p2)
-        self.assertIn("const margin = Math.min(0.5, span0 * 0.06);", p2)
+        # BM9: окно растёт под весь размах кривых — важные точки в кадре
+        self.assertIn("const need = (yb - ya) * 1.16 + 0.5;", p2)
+        self.assertIn("const xspan = span0 * w * aspect.r / h;", p2)
         # ± плавные: smoothstep в трёх панелях (2D, 3D, geo)
         self.assertEqual(
             js.count("const ease = (p) => p * p * (3 - 2 * p);"), 3)
@@ -6017,7 +6019,7 @@ class IterationBLTests(unittest.TestCase):
         self.assertIn("const fitZoom = (w, h) => {", p3)
         self.assertIn("project(x1 - mcx, y1 - mcy, c00 - mcz)", p3)
         # жесты: колесо/пинч = зум, СКМ/два пальца = пан, ЛКМ = вращение
-        self.assertIn("mode = (e.button === 0 || e.button === 1) ? 'pan' : (e.button === 2 ? 'rot' : null);", p3)
+        self.assertIn("mode = (e.button === 0 || e.button === 1) ? 'rot' : (e.button === 2 ? 'pan' : null);", p3)
         self.assertIn("if (e.pointerType === 'touch') {", p3)
         self.assertIn("mode = 'pan';", p3)
         self.assertIn("zoomBy(dist / lastDist);", p3)
@@ -6949,11 +6951,32 @@ class IterationBM8Tests(unittest.TestCase):
         """Чип — слово «провайдер» и огонёк роли; имя в подсказке."""
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         spc = js.split("function setProvChip(name)")[1].split("\nfunction ")[0]
-        self.assertIn(".textContent = 'провайдер'", spc)
+        self.assertIn("'провайдер: ' + (PROV_SHORT[S.lastProvider]", spc)
         self.assertIn("cur.order === 0 ? 'ok'", spc)
         self.assertIn("'err live'", spc)
         self.assertIn("PROV_SHORT", spc)
         self.assertIn("cloud.ru", js.split("const PROV_SHORT")[1][:200])
+
+    def test_bm9_suggestion_prompt_repaired(self) -> None:
+        """Промпт подсказок больше не содержит задублированный мусорный
+        фрагмент, разрывавший инструкцию (первопричина шаблонов и
+        «стоит посмотреть»)."""
+        from jarvis import agent as ag
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        # двойной фрагмент удалён
+        self.assertNotIn('с глаголом. "\n                        "примере»', src)
+        seg = src.split("Ты придумаешь продолжение переписки")[1][:1600]
+        self.assertEqual(seg.count("что дальше»"), 1,
+                         "список запрещённых фраз встречается ровно один раз")
+        # голые оценки запрещены
+        self.assertIn("стоит посмотреть", seg)
+
+    def test_bm9_interactive_panels_after_news(self) -> None:
+        """После сводки новостей/погоды панели выбора снова уместны."""
+        from jarvis import agent as ag
+        self.assertIn("ПОСЛЕ сводки новостей", ag.PROACTIVE_UI_CONTRACT)
+        self.assertNotIn("НЕ показывай ui для\nфактического вопроса, сводки новостей",
+                         ag.PROACTIVE_UI_CONTRACT)
 
     def test_sidebar_today_spend(self) -> None:
         """Сайдбар: «Расход сегодня» от местной полуночи устройства."""

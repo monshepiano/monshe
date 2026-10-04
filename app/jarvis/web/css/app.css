@@ -1200,8 +1200,8 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    Теперь индекс выровнен по правому краю узкой зоны у кончика:
    узкий стоит у носика, широкий растёт ВЛЕВО — как в настоящей
    математике, и никогда не задевает штрих */
-.msqrt .msq-i{position:absolute;left:0;width:.30em;text-align:right;
-  top:-.6em;font-size:.62em;opacity:.85;z-index:1;line-height:1;
+.msqrt .msq-i{position:absolute;left:-.14em;width:.34em;text-align:right;
+  top:-.74em;font-size:.62em;opacity:.85;z-index:1;line-height:1;
   white-space:nowrap}
 .math-block .mop,.math-inline .mop{padding:0 3px;color:#9fd8f2}
 .mfn{font-style:normal;padding:0 2px 0 4px}
@@ -1280,6 +1280,12 @@ sup.msup,sub.msub{font-size:.72em}
 .plot-pop button:hover{color:var(--cy2);border-color:var(--cy)}
 .plot-pop button.on{color:var(--cy2);border-color:var(--cy);background:rgba(0,190,255,.12)}
 .plot-err{padding:12px 14px;font-size:12px;color:var(--tx2)}
+.plot-load{padding:14px;font-size:12px;color:var(--tx3);display:flex;
+  align-items:center;gap:9px}
+.plot-load i{width:13px;height:13px;border-radius:50%;border:2px solid
+  rgba(122,162,247,.25);border-top-color:rgba(122,162,247,.85);
+  animation:plotSpin 1s linear infinite;flex:none}
+@keyframes plotSpin{to{transform:rotate(360deg)}}
 .math-inline{font-family:'STIX Two Math','Cambria Math','Latin Modern Math',
     'Times New Roman',Georgia,serif;
   font-size:1.08em;color:#dbeaf6;padding:0 2px}
@@ -1562,13 +1568,18 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .qt-flowline.qt-wait{opacity:0;animation:none}
 @keyframes qtRise{from{opacity:0;transform:translateY(15px)}}
 /* ПАПКА семейства: без полосы; дети выплывают из неё по одному */
-.qt-folder .qt-kids{display:none}
+/* BM9: папка раскрыта — grid-строка едет от 0fr к 1fr (правило .qt-kids) */
 /* X: БЕЗ вертикальных margin — они включались вместе с .open и выключались
    вместе с ним: в первый кадр открытия всё снизу прыгало на 6px вниз, в
    последний кадр закрытия — на 6px вверх. Тот самый «микролюфт». Внешняя
    геометрия теперь спокойна, зазор живёт внутри тела (padding у .qt-rows). */
-.qt-folder.open .qt-kids{display:flex}
-.qt-kids{align-items:stretch}
+/* BM9: ПЛАВНОЕ РАСКРЫТИЕ ПАПКИ. Прежний display:none→flex открывался
+   мгновенно и подлагивал; теперь высота едет grid-строкой 0fr→1fr */
+.qt-folder.open .qt-kids{grid-template-rows:1fr;pointer-events:auto}
+.qt-kids{align-items:stretch;display:grid;grid-template-columns:1px 1fr;
+  grid-template-rows:0fr;transition:grid-template-rows .3s cubic-bezier(.25,.7,.3,1);
+  pointer-events:none}
+.qt-kids>*{min-height:0;overflow:hidden}
 .qt-kids>.qt-rail{flex:0 0 1px;background:rgba(154,202,219,.35);margin-left:6px}
 .qt-kids>.qt-rows{flex:1;margin-left:11px;display:flex;flex-direction:column;gap:2px;
   padding:2px 0 3px}
@@ -3424,7 +3435,9 @@ body.agent-on .work-wait .tw-caret{background:linear-gradient(180deg,#fff,#f0c4c
 body.agent-on .hello span{background:linear-gradient(90deg,#eec2ce,#d39aa9 42%,#e8c4cf 74%,#eec2ce);
   -webkit-background-clip:text;background-clip:text;color:transparent;
   filter:drop-shadow(0 0 22px rgba(196,84,104,.28))}
-body.agent-on .status-chip{border-color:rgba(196,84,104,.32)}
+/* BM9: в агентском режиме огоньки верхней панели НЕ меняют цвет —
+   зелёный/жёлтый/красный провайдера остаются честным сигналом */
+body.agent-on .status-chip{border-color:rgba(128,128,150,.18)}
 
 /* --- 13. ИНСТРУМЕНТЫ --- */
 body.agent-on .tool-card{border-color:rgba(196,84,104,.3)}
@@ -3494,7 +3507,7 @@ body.agent-on .brand-sub{color:#a97b86}
 body.agent-on .bell-btn:hover{background:rgba(168,50,72,.18);border-color:rgba(224,120,140,.4)}
 body.agent-on .bell-dot{background:#e87c92;box-shadow:0 0 8px rgba(224,120,140,.9)}
 body.agent-on .voice-btn:hover{background:rgba(168,50,72,.18);border-color:rgba(224,120,140,.4)}
-body.agent-on .status-chip .dot{background:#c4788b}
+
 body.agent-on .term-dot{background:rgba(224,120,140,.4)}
 body.agent-on .term-dot:first-child{background:#c4475e}
 body.agent-on .term-head{border-bottom:1px solid rgba(168,50,72,.24);color:#d3a0ac}

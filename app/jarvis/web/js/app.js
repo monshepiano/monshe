@@ -1026,9 +1026,6 @@ async function refreshState() {
   setChip('#chipAuto', running > 0 ? 'warn live' : (active > 0 ? 'warn' : 'ok'),
     running > 0 ? 'AUTO · выполняю ' + running : (active > 0 ? 'AUTO · ' + active : 'AUTO'));
 
-  setChip('#chipModel', st.providers_ready ? 'ok' : 'err',
-    st.providers_ready ? 'модели готовы' : 'нет ключа');
-
   const cost = ((st.usage || {}).total || {}).cost || 0;
   $('#footCost').textContent = cost.toFixed(2) + ' ₽';
   renderBalance(st.billing || {});
@@ -1175,7 +1172,9 @@ function setProvChip(name) {
   }
   chip.title = title;
   chip.querySelector('.dot').className = 'dot ' + cls;
-  chip.querySelector('span').textContent = 'провайдер';
+  // BM9: после слова — имя: «провайдер: cloud.ru». Роль несёт огонёк.
+  chip.querySelector('span').textContent = S.lastProvider
+    ? 'провайдер: ' + (PROV_SHORT[S.lastProvider] || S.lastProvider) : 'провайдер';
 }
 
 /* Живые индикаторы в свёрнутых строках настроек: зонд, генерация, штраф */
@@ -1766,8 +1765,12 @@ function chaseBottom(box, run) {
        скорость — доля остатка (у дна затухает сама), со старта скорость
        нарастает мягко, за ~100мс: карточка не бьёт рывком с места,
        но и печать никогда не ждёт прокрутку */
-    const target = Math.min(12, Math.max(1.2, gap * 0.16));
-    const v = Math.min(target, (st.chaseV || 0) + 2.2);
+    /* BM9: ЕЩЁ ПЛАВНЕЕ. Разгон +1.1/кадр (было 2.2 — рывок с места за
+       100мс), доля остатка 0.12 (было 0.16 — резкое торможение у дна).
+       Потолок 11px/кадр = 660px/с — всё ещё быстрее принтера (2000 зн/с),
+       но старт и остановка теперь скольжение, а не прыжок */
+    const target = Math.min(11, Math.max(0.9, gap * 0.12));
+    const v = Math.min(target, (st.chaseV || 0) + 1.1);
     st.chaseV = v;
     box.scrollTop = box.scrollTop + v;
     if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) {
@@ -2286,7 +2289,8 @@ function updateResponseMeta(ui) {
   if (!ui || !ui.node || !ui.node.root) return;
   const scenario = ui.routeTier ? (TIER_LABEL[ui.routeTier] || ui.routeTier) : '';
   const model = String(ui.modelName || '').trim();
-  const prov = String(ui.providerName || '').trim();
+  const provRaw = String(ui.providerName || '').trim();
+  const prov = PROV_SHORT[provRaw] || provRaw;
   if (!scenario && !model && !prov) return;
   if (!ui.routeEl || !ui.routeEl.isConnected) {
     ui.routeEl = el('span', 'ai-route');
@@ -3955,7 +3959,15 @@ function mountPlotPanels(root) {
     if (panel.dataset.live === '1') return;
     panel.dataset.live = '1';
     panel._jarvisPlot = true;
-    const spec = plotParseSpec(panel.dataset.plot);
+    let spec;
+    try { spec = plotParseSpec(panel.dataset.plot); }
+    catch (e) {
+      /* BM9: недописанная спека в живой печати — не ошибка, а загрузка */
+      panel.innerHTML = (panel.closest && panel.closest('.msg-ai.live'))
+        ? '<div class="plot-load"><i></i><span>строю график…</span></div>'
+        : '<div class="plot-err">' + esc(e.message || String(e)) + '</div>';
+      return;
+    }
     /* синонимы: модель пишет "y"/"func"/"formula" вместо "f" (строки —
      это кривые; числовой массив в y — диапазон оси для поверхности) */
     if (!spec.f && !spec.z && spec.y != null) {
@@ -3988,12 +4000,20 @@ function mountPlotPanels(root) {
       }
     }
     const kind = panel.dataset.kind || (spec.z ? 'plot3' : 'plot');
+    const liveMsg = !!(panel.closest && panel.closest('.msg-ai.live'));
     try {
       if (kind === 'geo') buildGeoPanel(panel, spec);
       else if (spec.z) buildPlot3Panel(panel, spec);
       else buildPlot2Panel(panel, spec);
     } catch (e) {
-      panel.innerHTML = '<div class="plot-err">' + esc(e.message || String(e)) + '</div>';
+      /* BM9: ВО ВРЕМЯ ПЕЧАТИ спека ещё не дописана — «ошибка» на
+         недописанном JSON пугала раньше графика. Живому сообщению —
+         загрузку; ошибка честно покажется только в финальном рендере */
+      if (liveMsg) {
+        panel.innerHTML = '<div class="plot-load"><i></i><span>строю график…</span></div>';
+      } else {
+        panel.innerHTML = '<div class="plot-err">' + esc(e.message || String(e)) + '</div>';
+      }
     }
   });
 }
@@ -4026,7 +4046,7 @@ function plotShell(panel, title) {
      открывает то же меню и ломает пан. Обычный клик — меню на месте */
   cv.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'touch') cv._touchAt = Date.now();
-    cv._down = { x: e.clientX, y: e.clientY, moved: 0 };
+    cv._down = { x: e.clientX, y: e.clientY, moved: 0, t0: Date.now() };
   });
   cv.addEventListener('pointermove', (e) => {
     if (!cv._down || !e.buttons) return;
@@ -4034,16 +4054,22 @@ function plotShell(panel, title) {
     cv._down.x = e.clientX; cv._down.y = e.clientY;
   });
   const lift = () => {
-    if (cv._down && cv._down.moved > 6) cv._dragAt = Date.now();
+    if (cv._down) {
+      // BM9: помним и дрейф, и длительность зажатия — оба глушат меню
+      if (cv._down.moved > 3) cv._dragAt = Date.now();
+      cv._holdMs = Date.now() - (cv._down.t0 || 0);
+    }
     cv._down = null;
   };
   cv.addEventListener('pointerup', lift);
   cv.addEventListener('pointercancel', lift);
   cv.addEventListener('contextmenu', (e) => {
     const now = Date.now();
-    const afterDrag = now - (cv._dragAt || 0) < 700;        // жест только что кончился
+    const afterDrag = now - (cv._dragAt || 0) < 900;        // драг ПКМ только что кончился
+    const longHold = (cv._holdMs || 0) > 350;               // долгое зажатие = жест пана
     const touchHold = now - (cv._touchAt || 0) < 1400;      // длинное нажатие пальцем
-    if (afterDrag || touchHold) e.preventDefault();
+    if (afterDrag || longHold || touchHold) e.preventDefault();
+    // короткий клик ПКМ без движения — обычное меню браузера на месте
   });
   const ctx = cv.getContext('2d');
   return { cv, ctx, read, bar };
@@ -4362,12 +4388,26 @@ function buildPlot2Panel(panel, spec) {
          данным, но обязано включать ноль — оси видны всегда */
       if (!panel._aspYInit) {
         panel._aspYInit = true;
-        const span0 = (x1 - x0) * h / (w * aspect.r);
+        /* BM9: ВАЖНЫЕ ТОЧКИ ОБЯЗАНЫ БЫТЬ В КАДРЕ. Прежний кламп зажимал
+           центр Y у нуля — второй график ниже первого оставался за кадром,
+           и пересечение приходилось искать отдалением. Теперь окно
+           РАСТЁТ под весь размах кривых (ноль включаем, только если он
+           рядом), а чтобы соотношение осей осталось честным, X растёт
+           вместе с Y */
         const [da, db] = autoY();
-        let yc = (da + db) / 2;
-        if (!isFinite(yc)) yc = 0;
-        const margin = Math.min(0.5, span0 * 0.06);
-        yc = Math.max(-span0 / 2 + margin, Math.min(span0 / 2 - margin, yc));
+        let ya = (isFinite(da) ? da : -1), yb = (isFinite(db) ? db : 1);
+        const spanData = yb - ya;
+        if (ya > 0 && ya <= spanData) ya = 0;          // ноль близко снизу — берём
+        if (yb < 0 && -yb <= spanData) yb = 0;         // ноль близко сверху — берём
+        let span0 = (x1 - x0) * h / (w * aspect.r);
+        const need = (yb - ya) * 1.16 + 0.5;
+        if (need > span0) {
+          span0 = need;
+          const xspan = span0 * w * aspect.r / h;      // аспект честен
+          const xc = (x0 + x1) / 2;
+          x0 = xc - xspan / 2; x1 = xc + xspan / 2;
+        }
+        const yc = (ya + yb) / 2;
         y0 = yc - span0 / 2; y1 = yc + span0 / 2;
       }
       const yc = (y0 + y1) / 2;
@@ -4810,11 +4850,11 @@ function buildPlot3Panel(panel, spec) {
     if (e.pointerType === 'touch') {
       mode = 'pan';
     } else {
-      /* BM2: ЗАЖАТИЕ ПЕРЕМЕЩАЕТ. ЛКМ-драг (и СКМ) — ПАН: на трекпаде Мак
-         средней кнопки нет, а «два пальца» — это колесо (зум): прежняя
-         карта делала пан недостижимым. Вращение — ПРАВЫМ драгом (зеркало
-         починено: тянем вправо — ближний край едет вправо) */
-      mode = (e.button === 0 || e.button === 1) ? 'pan' : (e.button === 2 ? 'rot' : null);
+      /* BM9: ЛКМ-ДРАГ — ВРАЩЕНИЕ (главный жест), ПКМ-ДРАГ — ПАН.
+         Прежняя карта (ЛКМ=пан) была неудобной — человек попросил
+         наоборот. Зеркало вращения починено ранее: тянем вправо —
+         ближний край едет вправо */
+      mode = (e.button === 0 || e.button === 1) ? 'rot' : (e.button === 2 ? 'pan' : null);
     }
     if (e.button === 1) e.preventDefault();     // без автоскролла средней кнопкой
     if (pts.size === 2) {
