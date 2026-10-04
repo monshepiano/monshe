@@ -508,9 +508,19 @@ class Handler(BaseHTTPRequestHandler):
             # Подсказки формирует ИИ-модель по сути ответа. После AGENT-прогона
             # сбой модели честно падает в проактивные шаги по фактам работы —
             # это решает suggest_replies_ai внутри себя.
-            items = agent.suggest_replies_ai(asked, last.get("content", ""),
-                                             meta.get("tools") if meta.get("agent") else None,
-                                             history=msgs)
+            # BM2: ЛЮБОЙ СБОЙ НЕ ОСТАВЛЯЕТ ЧЕЛОВЕКА БЕЗ КНОПОК. Прежний код
+            # ронял запрос 500-й (исключение из nano) — фронт кэшировал пустоту
+            # и подсказок не было вовсе. Теперь исключение отдаёт локальный
+            # запас, а пустой ответ — тоже запас: чипы есть ВСЕГДА.
+            try:
+                items = agent.suggest_replies_ai(
+                    asked, last.get("content", ""),
+                    meta.get("tools") if meta.get("agent") else None,
+                    history=msgs) or []
+            except Exception:
+                items = []
+            if not items:
+                items = agent.suggest_replies(asked, last.get("content", ""))
             # BD: ШАБЛОНЫ НЕ КЭШИРУЮТСЯ. Один сбой nano раньше записывал
             # шаблонную тройку в meta навсегда — чипы «опять шаблонные».
             # Кэшируем только живые ИИ-подсказки; шаблон увидим один раз,
@@ -740,11 +750,21 @@ class Handler(BaseHTTPRequestHandler):
         # выбор из интерактивной панели ```ui: модели он нужен, ленте — нет
         if body.get("silent"):
             user_meta["silent"] = True
-            # BM: панель ОТВЕЧЕНА — факт переживает перезагрузку. Фронт по
-            # этому ключу деактивирует интерактивчик при открытии диалога:
-            # отвеченная панель больше никогда не выглядит активной
+            # BM2: панель ОТВЕЧЕНА — помечаем её фенсы ПРЯМО В ТЕКСТЕ ответа
+            # (```ui-sent). Метка переживает всё: продолжение дописывается в
+            # то же сообщение, и прежде фенсы накапливались — после
+            # перезагрузки лента предлагала одни и те же панели снова, а
+            # свежая, неотвеченная панель выглядела выключенной. Теперь
+            # отвеченные панели законсервированы навсегда, активна только
+            # последняя настоящая
             if body.get("continue_of"):
                 user_meta["continue_of"] = str(body.get("continue_of") or "")
+                target = db.get_message(user_meta["continue_of"])
+                if target and target.get("chat_id") == chat_id:
+                    marked = agent.mark_answered_fences(
+                        str(target.get("content") or ""))
+                    if marked != str(target.get("content") or ""):
+                        db.update_message_content(target["id"], marked)
         edit_of = body.get("edit_of") or ""
         if edit_of and db.get_message(edit_of):
             # это правка: добавляем ВЕРСИЮ к старому сообщению и убираем
@@ -1117,6 +1137,12 @@ class Handler(BaseHTTPRequestHandler):
                 if continue_of:
                     target = db.get_message(continue_of)
                     if target and target.get("chat_id") == chat_id:
+                        # BM2: модель иногда дословно повторяет фенс панели,
+                        # на которой только что стоял ответ, — такой повтор
+                        # тоже становится отправленным, лента не предлагает
+                        # одно и то же бесконечно
+                        final_text = agent.suppress_repeated_panels(
+                            str(target.get("content") or ""), final_text)
                         saved_ai = db.append_message(continue_of, final_text, ai_meta)
                 if not saved_ai:
                     saved_ai = db.add_message(chat_id, "assistant", final_text, ai_meta)

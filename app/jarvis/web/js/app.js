@@ -263,16 +263,20 @@ function toast(text, kind, title) {
    границы, как пробел. Единственное исключение — знак «прилип» к букве
    или цифре: «3.14» и «т.д.» границами не считаются. Возврат — индекс
    среза: всё до него — законченные предложения */
+/* BM2: СЛЕДУЮЩИЙ чистый конец предложения ПОСЛЕ указанного места. Метка
+   режима обязана встать после ПЕРВОГО знака препинания за точкой включения:
+   всё, что напечатано позже, стоит уже ПОД меткой. Прежний вариант брал
+   последний конец — метка уезжала вниз на столько предложений, сколько
+   успело напечататься до ближайшего кадра */
 function lastSentenceEnd(text, from) {
   const t = String(text || '');
   const re = /[.!?…]+["'»)]*(?![0-9A-Za-zА-Яа-яЁё])/g;
-  let last = -1, m;
+  let m;
   while ((m = re.exec(t))) {
     if (m.index + m[0].length <= from) continue;   // уже в замороженной части
-    last = m.index + m[0].length;
-    re.lastIndex = m.index + m[0].length;
+    return m.index + m[0].length;
   }
-  return last;
+  return -1;
 }
 
 /* BL: ТАБЛИЦА — ТОЖЕ «ПРЕДЛОЖЕНИЕ». Метка не имеет права разрезать
@@ -324,14 +328,16 @@ function toolLine(kind, on) {
   }
   let markHost = null;
   if (liveUi && preText) {
-    if (!liveUi.marksEl || !liveUi.marksEl.isConnected) {
-      liveUi.marksEl = el('div', 'md-marks');
-      const body = liveUi.node.body;
-      const st = (liveUi.statusEl && body.contains(liveUi.statusEl))
-        ? liveUi.statusEl : null;
-      if (st) body.insertBefore(liveUi.marksEl, st);
-      else body.appendChild(liveUi.marksEl);
-    }
+    /* BM2: КАЖДОЕ событие ДО текста — СВОЙ слот. Прежний код клеил вторую
+       метку в слот первой: включение и отключение печатались подряд.
+       Слот вставляется перед строкой статуса — будущий текст напечатается
+       строго ПОД ним, и это место закрепляется навсегда */
+    liveUi.marksEl = el('div', 'md-marks');
+    const body = liveUi.node.body;
+    const st = (liveUi.statusEl && body.contains(liveUi.statusEl))
+      ? liveUi.statusEl : null;
+    if (st) body.insertBefore(liveUi.marksEl, st);
+    else body.appendChild(liveUi.marksEl);
     markHost = liveUi.marksEl;
   } else if (liveUi) {
     /* BM: КАЖДАЯ МЕТКА — НА СВОЁМ МЕСТЕ. Прежде toolLine сам замораживал
@@ -342,6 +348,12 @@ function toolLine(kind, on) {
        СВОЙ сегмент на конце СВОЕГО предложения и закрепляет метку за этой
        границей навсегда. Границы предыдущих меток неприкосновенны */
     liveUi.freezePending = true;
+    /* BM2: граница метки отсчитывается ОТ МЕСТА ТУМБЛЕРА, а не от начала
+       абзаца. Прежний код брал конец предложения ДО включения — метка
+       вставала выше уже напечатанного текста. Теперь слот ждёт первый
+       конец предложения ПОСЛЕ точки включения: метка встанет ровно там,
+       где режим включили, не разрывая текущее предложение */
+    liveUi.markFrom = (liveUi.shown || '').length;
     if (!liveUi.marksEl || !liveUi.marksEl.isConnected ||
         liveUi.marksEl.parentNode === liveUi.node.body) {
       liveUi.marksEl = el('div', 'md-marks');
@@ -363,7 +375,22 @@ function toolLine(kind, on) {
     '</span><span class="tm-name">' + (agent ? 'Агент' : 'Компьютер') + '</span>' +
     '<span class="tm-state">' + (on ? 'включён' : 'отключён') + '</span>';
   if (markHost) markHost.appendChild(row);
-  else box.appendChild(row);
+  else {
+    /* BM2: ЖИВОГО ПРОГОНА НЕТ (ответ допечатан, фоновая задача AUTO пишет в
+       старую карточку) — но лента не пуста. Прежний код бросал метку в самый
+       НИЗ ленты, ПОД уже напечатанный ответ: «включение внизу, текст выше».
+       Теперь метка встаёт в КОНЕЦ ПОСЛЕДНЕГО ответа — ровно там, где
+       произошло событие; любые будущие ответы напечатаются ниже неё */
+    const lastMsg = $$('.msg-ai', stream());
+    const host = lastMsg.length ? lastMsg[lastMsg.length - 1].querySelector('.ai-content') : null;
+    if (host) {
+      const slot = el('div', 'md-marks');
+      slot.appendChild(row);
+      host.appendChild(slot);
+    } else {
+      box.appendChild(row);
+    }
+  }
   scrollDown(false);
 }
 
@@ -1294,14 +1321,14 @@ function renderMessages(host, messages) {
   for (let i = msgs.length - 1; i >= 0; i--) {
     if (msgs[i].role === 'assistant') { lastAiId = msgs[i].id; break; }
   }
-  const answered = new Set();
-  msgs.forEach((m) => {
-    if (m.role === 'user' && (m.meta || {}).continue_of) {
-      answered.add(m.meta.continue_of);
-    }
-  });
+  /* BM2: «ОТВЕЧЕНА» БОЛЬШЕ НЕ УГАДЫВАЕТСЯ ПО СООБЩЕНИЯМ. Прежний набор
+     continue_of гасил ВСЕ панели сообщения — включая свежую, ещё не
+     отвеченную (продолжение дописывается в то же сообщение). Отвеченность
+     теперь живёт в самом тексте: сервер помечает фенс ```ui-sent — такая
+     панель рисуется законсервированной, активной остаётся только
+     последняя настоящая */
   msgs.forEach((m) => renderMessageInto(host, m,
-    m.role === 'assistant' && m.id === lastAiId && !answered.has(m.id)));
+    m.role === 'assistant' && m.id === lastAiId));
   S.forceHost = prevHost;
   fixTables(host);
   // Варианты продолжения принадлежат последнему ответу Джарвиса. Возвращаясь
@@ -1626,17 +1653,25 @@ function chaseBottom(box, run) {
      экспоненциально — та же кривая у печати, карточек и панелей */
   const frame = () => {
     st.chasing = false;
-    if (run && run.followOutput === false) { box.classList.remove('pin-instant'); return; }
+    if (run && run.followOutput === false) { box.classList.remove('pin-instant'); st.chaseV = 0; return; }
     const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
-    if (gap <= 1) { box.classList.remove('pin-instant'); return; }
+    if (gap <= 1) { box.classList.remove('pin-instant'); st.chaseV = 0; return; }
     st.autoPend += 1;
-    const v = Math.min(11, Math.max(1.2, gap * 0.16));
+    /* BM2: ПОТИШЕ И БЕЗ СРЫВОВ. Прежний потолок 11px/кадр начинался МГНОВЕННО:
+       большой скачок высоты (карточка агента) разгонял ленту рывком с места.
+       Теперь (1) потолок 7px/кадр (420px/с — быстрее любого принтера),
+       (2) скорость меняется не быстрее чем на 0.55px/кадр — старт с места
+       мягкий, а у дна ход затухает экспоненциально, как у печати */
+    const target = Math.min(7, Math.max(1, gap * 0.14));
+    const v = Math.min(target, (st.chaseV || 0) + 0.55);
+    st.chaseV = v;
     box.scrollTop = box.scrollTop + v;
     if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) {
       st.chasing = true;
       requestAnimationFrame(frame);
     } else {
       box.classList.remove('pin-instant');
+      st.chaseV = 0;
     }
   };
   requestAnimationFrame(frame);
@@ -3876,9 +3911,32 @@ function plotShell(panel, title) {
   panel.appendChild(cv);
   panel.appendChild(bar);
   panel.appendChild(read);
-  /* BM: ПРАВАЯ КНОПКА И ДОЛГОЕ ЗАЖАТИЕ НЕ ОТКРЫВАЮТ меню браузера
-     (сохранить картинку и т.д.) — жесты графика важнее контекстного меню */
-  cv.addEventListener('contextmenu', (e) => e.preventDefault());
+  /* BM2: КОНТЕКСТНОЕ МЕНЮ — КАК У БРАУЗЕРА. Прежний код глушил его НАВСЕГДА:
+     правый клик по графику не давал ни «сохранить картинку», ни ничего.
+     Глушим только ДВА случая: (1) только что был ЖЕСТ — драг паном/вращением
+     не должен заканчиваться меню; (2) тач-зажатие — длинное нажатие пальцем
+     открывает то же меню и ломает пан. Обычный клик — меню на месте */
+  cv.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch') cv._touchAt = Date.now();
+    cv._down = { x: e.clientX, y: e.clientY, moved: 0 };
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (!cv._down || !e.buttons) return;
+    cv._down.moved += Math.abs(e.clientX - cv._down.x) + Math.abs(e.clientY - cv._down.y);
+    cv._down.x = e.clientX; cv._down.y = e.clientY;
+  });
+  const lift = () => {
+    if (cv._down && cv._down.moved > 6) cv._dragAt = Date.now();
+    cv._down = null;
+  };
+  cv.addEventListener('pointerup', lift);
+  cv.addEventListener('pointercancel', lift);
+  cv.addEventListener('contextmenu', (e) => {
+    const now = Date.now();
+    const afterDrag = now - (cv._dragAt || 0) < 700;        // жест только что кончился
+    const touchHold = now - (cv._touchAt || 0) < 1400;      // длинное нажатие пальцем
+    if (afterDrag || touchHold) e.preventDefault();
+  });
   const ctx = cv.getContext('2d');
   return { cv, ctx, read, bar };
 }
@@ -3902,7 +3960,38 @@ function plotHiDpi(cv, ctx) {
    для математики, данные — для жизни */
 function plotParseSeries(spec) {
   const raw = spec.data != null ? spec.data : (spec.series != null ? spec.series : null);
-  if (raw == null) return [];
+  if (raw == null) {
+    /* BM2: КОЛОНОЧНЫЙ ФОРМАТ — самый естественный для модели («вот колонки:
+       время, температура, ветер»): {"x": [...], "temp": [...], "wind": [...]}.
+       Прежний парсер не понимал его вовсе — график данных валился в лекцию
+       про строгий JSON. Ось — первая колонка из x/t/time/час/день/дата
+       (или общий префикс); если значения не числа — индексы 0..n-1 */
+    const keys = Object.keys(spec).filter((k) => Array.isArray(spec[k]) &&
+      spec[k].length && ['x', 'y', 'yy', 'title', 'range', 'domain'].indexOf(k) < 0);
+    let axisKey = ['x', 't', 'time', 'время', 'час', 'часы', 'день', 'дни', 'дата']
+      .find((k) => Array.isArray(spec[k]) && spec[k].length > 2) || null;
+    if (!axisKey && keys.length >= 2 &&
+        spec[keys[0]].every((v) => typeof v === 'string' || !isFinite(+v))) {
+      axisKey = keys[0];       // первая колонка — подписи (время, даты)
+    }
+    if (!axisKey || axisKey === 'y' || !keys.some((k) => k !== axisKey)) return [];
+    const axisRaw = spec[axisKey];
+    const axis = axisRaw.map((v, i) => {
+      const n = +v;
+      return (typeof v !== 'string' && isFinite(n)) ? n : i;
+    });
+    const out = [];
+    keys.forEach((k) => {
+      if (k === axisKey) return;
+      const col = spec[k];
+      const pts = [];
+      for (let i = 0; i < Math.min(axis.length, col.length); i++) {
+        if (isFinite(+col[i])) pts.push([+axis[i], +col[i]]);
+      }
+      if (pts.length) out.push({ label: String(k), pts });
+    });
+    return out;
+  }
   const one = (v, idx) => {
     let label = '', pts = null;
     if (Array.isArray(v)) {
@@ -3916,8 +4005,12 @@ function plotParseSeries(spec) {
     } else if (v && typeof v === 'object') {
       label = String(v.label || v.name || 'ряд ' + (idx + 1));
       if (Array.isArray(v.points)) {
-        pts = v.points.filter((p) => Array.isArray(p) && p.length >= 2 &&
-          isFinite(+p[0]) && isFinite(+p[1])).map((p) => [+p[0], +p[1]]);
+        /* BM2: точки бывают объектами {x, y} — модель так тоже пишет */
+        pts = v.points.map((p) => Array.isArray(p) ? p :
+          [(p && p.x != null) ? p.x : (p && p.t != null) ? p.t : 0,
+           (p && p.y != null) ? p.y : (p && p.v != null) ? p.v : null])
+          .filter((p) => p[1] != null && isFinite(+p[0]) && isFinite(+p[1]))
+          .map((p) => [+p[0], +p[1]]);
       } else if (Array.isArray(v.values)) {
         pts = v.values.map((y, i) => [i, +y]).filter((p) => isFinite(p[1]));
       } else if (Array.isArray(v.x) && Array.isArray(v.y)) {
@@ -3935,6 +4028,13 @@ function plotParseSeries(spec) {
   if (Array.isArray(raw) && raw.length && typeof raw[0] === 'object' &&
       !Array.isArray(raw[0])) {
     raw.forEach((sv, i) => { const r = one(sv, i); if (r) list.push(r); });
+  } else if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    /* BM2: именованная карта {"температура": [[0,-3],...], "ветер": [...]} */
+    Object.keys(raw).forEach((k, i) => {
+      const r = one(typeof raw[k] === 'object' && !Array.isArray(raw[k]) && !raw[k].label
+        ? Object.assign({ label: k }, raw[k]) : raw[k], i);
+      if (r) list.push(r);
+    });
   } else {
     const r = one(raw, 0);
     if (r) list.push(r);
@@ -3953,16 +4053,28 @@ function plotParseSeries(spec) {
    — СООТНОШЕНИЕ ОСЕЙ: по умолчанию 1:1 (единичный квадрат — квадрат,
      окружность — круг), сбоку кнопка с выбором: авто, 1:1, 4:3, 3:2, 16:9. */
 function buildPlot2Panel(panel, spec) {
-  const fns = (Array.isArray(spec.f) ? spec.f : (spec.f ? [spec.f] : []))
-    .filter((e) => e != null && String(e).trim() !== '').map((e) => mathCompile(e));
+  /* BM2: НЕСОБРАВШАЯСЯ ФОРМУЛА НЕ УБИВАЕТ ГРАФИК. Прежний map(mathCompile)
+     падал на «temp» целиком — панель умирала лекцией про JSON, даже когда
+     рядом лежали честные данные. Не компилируется — просто пропускаем */
+  const fRaw = (Array.isArray(spec.f) ? spec.f : (spec.f ? [spec.f] : []))
+    .filter((e) => e != null && String(e).trim() !== '');
+  const fns = [];
+  const labels = [];
+  fRaw.forEach((e) => {
+    try { fns.push(mathCompile(e)); labels.push(String(e)); }
+    catch (err) { /* не формула (имя данных?) — данных путь скажет своё слово */ }
+  });
   const series = plotParseSeries(spec);
   if (!fns.length && !series.length) {
-    throw new Error('нет данных: функции — {"f": ["sin(x)"], "x": [-6, 6]}; ' +
-      'данные (температура, курсы, измерения) — {"data": [{"label": "имя", ' +
-      '"points": [[0, -3], [3, -1]]}]}; поверхность 3D — {"z": "sin(x)*cos(y)", ' +
-      '"x": [-3, 3], "y": [-3, 3]}');
+    throw new Error(fRaw.length
+      ? '«' + fRaw.map((e) => String(e)).join(', ') + '» — не формула и данных нет: ' +
+        'температура и ветер — это ИЗМЕРЕНИЯ. Собери числа (поиск/инструмент) ' +
+        'и рисуй ключом "data": {"data": [{"label": "температура", "points": [[0, -3], [3, -1]]}]}'
+      : 'нет данных: функции — {"f": ["sin(x)"], "x": [-6, 6]}; ' +
+        'данные (температура, курсы, измерения) — {"data": [{"label": "имя", ' +
+        '"points": [[0, -3], [3, -1]]}]}; поверхность 3D — {"z": "sin(x)*cos(y)", ' +
+        '"x": [-3, 3], "y": [-3, 3]}');
   }
-  const labels = (Array.isArray(spec.f) ? spec.f : [spec.f]).map((e) => String(e));
   const colors = ['#37d3ff', '#ffd489', '#8f86cf', '#3fbf95', '#e3798d'];
   const { cv, ctx, read, bar } = plotShell(panel, spec.title);
   const X0 = () => (spec.x && spec.x[0] != null) ? spec.x[0] : -6.28;
@@ -4391,8 +4503,9 @@ function buildPlot3Panel(panel, spec) {
     ((spec.yy && spec.yy.length === 2) ? spec.yy : [-3, 3]));
   const { cv, ctx, read } = plotShell(panel, spec.title);
   let alpha = -0.65, beta = 0.6, zoom = 1;
-  /* BI: ЖЕСТЫ как просил юзер: одна кнопка/палец — ВРАЩЕНИЕ,
-     колесо мышки / два пальца — ПАНорамирование, ± — масштаб */
+  /* BI/BM2: ЖЕСТЫ: зажатие (ЛКМ/СКМ/палец) — ПАН, правый драг — ВРАЩЕНИЕ,
+     колесо/пинч — МАСШТАБ, ± — кнопки. Пан обязан быть на ЖИВОЙ кнопке:
+     на трекпаде Мак средней кнопки нет, «два пальца» — это колесо (зум) */
   let panX = 0, panY = 0;
   const N = 42;
   /* BH: «ПОВЕРХНОСТЬ ПУСТА». Если функция определена не везде (корни,
@@ -4565,9 +4678,13 @@ function buildPlot3Panel(panel, spec) {
       try { cv.setPointerCapture(e.pointerId); } catch (err) { panel._recapture = null; }
     };
     if (e.pointerType === 'touch') {
-      mode = pts.size >= 2 ? 'pan' : 'rot';
+      mode = 'pan';
     } else {
-      mode = e.button === 1 ? 'pan' : (e.button === 0 ? 'rot' : null);
+      /* BM2: ЗАЖАТИЕ ПЕРЕМЕЩАЕТ. ЛКМ-драг (и СКМ) — ПАН: на трекпаде Мак
+         средней кнопки нет, а «два пальца» — это колесо (зум): прежняя
+         карта делала пан недостижимым. Вращение — ПРАВЫМ драгом (зеркало
+         починено: тянем вправо — ближний край едет вправо) */
+      mode = (e.button === 0 || e.button === 1) ? 'pan' : (e.button === 2 ? 'rot' : null);
     }
     if (e.button === 1) e.preventDefault();     // без автоскролла средней кнопкой
     if (pts.size === 2) {
@@ -4608,12 +4725,12 @@ function buildPlot3Panel(panel, spec) {
   const lift = (e) => {
     pts.delete(e.pointerId);
     if (pts.size < 2) { lastMid = null; lastDist = 0; }
-    if (pts.size === 1) mode = 'rot';
+    if (pts.size === 1) mode = 'pan';
     if (!pts.size) { panel._recapture = null; mode = null; }
   };
   cv.addEventListener('pointerup', lift);
   cv.addEventListener('pointercancel', lift);
-  /* колесо — МАСШТАБ (пан — средней кнопкой или двумя пальцами) */
+  /* колесо — МАСШТАБ (пан — зажатием: ЛКМ/СКМ/палец) */
   cv.addEventListener('wheel', (e) => {
     e.preventDefault();
     if (panel._zRaf) { cancelAnimationFrame(panel._zRaf); panel._zRaf = 0; }
@@ -4752,7 +4869,10 @@ function mountUiPanels(root, opts) {
     if (!items.length || !hasMeaningfulUiItems(items)) { box.remove(); return; }
     stripMirroredChoiceList(box, items);
     box.dataset.live = '1';
-    if (inert) box.classList.add('ui-inert');   // AD: законсервированная панель истории
+    /* BM2: панель с меткой ```ui-sent (на неё уже ответили) — законсервирована
+       навсегда: выглядит отправленной и не принимает кликов */
+    const sent = box.classList.contains('ui-sent');
+    if (inert || sent) box.classList.add('ui-inert');   // AD + BM2: история или отвечена
     box.innerHTML = '';
 
     // AA: ПАНЕЛЬ ПРИНАДЛЕЖИТ СВОЕМУ СООБЩЕНИЮ. Ответ на неё — продолжение
@@ -5898,7 +6018,9 @@ async function send(opts) {
 function prefetchReplies() {
   const chat = activeChatId();
   if (!chat) return;
-  if (S.replyPrefetch && S.replyPrefetch.chat === chat) return;
+  /* BM2: кэш живёт ровно ДО ближайшего fetchReplies — каждый новый ответ
+     заказывает СВЕЖИЕ подсказки. Прежний ранний выход мог подсунуть
+     чипы прошлого ответа после нового */
   const p = api('/api/replies', { chat_id: chat })
     .then((r) => ((r && r.items) || []), () => null);
   S.replyPrefetch = { chat, at: Date.now(), p };
@@ -5927,11 +6049,13 @@ async function fetchReplies() {
     new Promise((res) => setTimeout(() => res({}), 400)),
   ]);
   if (S.replyTicket !== ticket) return;
-  if (quick.items) {
+  /* BM2: ПУСТОЙ ИЛИ УПАВШИЙ ПРЕФЕТЧ — НЕ ОТВЕТ. Прежний код показывал
+     «ничего» и больше не пробовал: сбой nano один раз — и подсказок нет
+     вовсе. Пусто/ошибка — считаем заново живым запросом */
+  if (quick.items && quick.items.length) {
     if (activeChatId() === chat) showReplies(quick.items);
     return;
   }
-  /* префетч ещё в пути — считаем как раньше, с заглушками */
   box.hidden = false;
   box.innerHTML = '<span class="reply-skel"></span><span class="reply-skel"></span>' +
                   '<span class="reply-skel"></span>';
@@ -5942,10 +6066,11 @@ async function fetchReplies() {
     if (S.replyTicket === ticket) showReplies([]);
   }, 22000);
   try {
-    const items = await load;
+    const items = await (quick.items ? load :
+      api('/api/replies', { chat_id: chat }).then((r) => ((r && r.items) || [])));
     if (S.replyTicket !== ticket) return;
     if (activeChatId() !== chat) { showReplies([]); return; }
-    showReplies(items || []);
+    showReplies(items && items.length ? items : []);
   } catch (e) {
     if (S.replyTicket === ticket) showReplies([]);
   } finally {
@@ -6767,6 +6892,15 @@ function flushQt(ui) {
     if (!n.querySelector('.qt-mark').textContent) qtMark(n, t.ok, t.elapsed);
     pending.push(n);
   });
+  /* BM2: ОДИНОЧКЕ ПАПКА НЕ НУЖНА — тот же запрет, что у qtSweep. Прежний
+     flushTools складывал единственный инструмент в групповую папку:
+     «запись файла» превращалась в «группу» из одного. Группа — только для
+     ДВУХ и более */
+  if (pending.length === 1) {
+    const solo = pending[0];
+    if (!solo.dataset.mini) qtMiniaturize(solo);
+    return;
+  }
   pending.forEach((n, idx) => {
     setTimeout(() => qtFold(ui, n, idx === pending.length - 1), idx * 170);
   });
@@ -7150,6 +7284,7 @@ function closeMarkSegment(ui) {
   ui.marksEl = null;          // следующая метка получит новый слот
   ui.frozen = null;           // …и новую границу
   ui.freezePending = false;
+  ui.markFrom = 0;            // BM2: ожидание своей границы исчерпано
 }
 
 function renderTyped(ui) {
@@ -7168,8 +7303,12 @@ function renderTyped(ui) {
      Нашли — закрываем сегмент: эта граница закрепляется навсегда, и никакая
      будущая метка её уже не сдвинет */
   if (ui.freezePending) {
-    const k = lastSentenceEnd(text, src.length);
-    if (k > src.length) {
+    /* BM2: граница — первый конец предложения ПОСЛЕ МЕСТА ТУМБЛЕРА (и не
+       раньше текущей заморозки абзацев). Мета стоит там, где случилось
+       событие, предложение не разрывается */
+    const from = Math.max(src.length, ui.markFrom || 0);
+    const k = lastSentenceEnd(text, from);
+    if (k > from) {
       const head = text.slice(0, k);
       const mathOk = (head.match(/\\\[/g) || []).length ===
                      (head.match(/\\\]/g) || []).length;
@@ -7196,6 +7335,15 @@ function renderTyped(ui) {
       src = cand;
       html = MD.render(stripSteps(cand.slice(base)));
       ui.frozen = { src, html };
+      /* BM2: АБЗАЦ УЖЕ ПРОШЁЛ МЕСТО ТУМБЛЕРА — пустая строка и есть чистый
+         разрез. Не ждём точки в таблице или коде, которые начались позже:
+         метка встаёт ровно на границе абзаца, где и случилось событие */
+      if (ui.freezePending && src.length > (ui.markFrom || 0)) {
+        closeMarkSegment(ui);
+        base = segs[segs.length - 1].srcLen;
+        src = text.slice(0, base);
+        html = '';
+      }
     }
   }
 
@@ -9095,6 +9243,7 @@ function handleEvent(ev, ui) {
       }
       ui.marksEl = null;
       ui.freezePending = false;
+      ui.markFrom = 0;
       if (ui.mdEl) { ui.mdEl.remove(); ui.mdEl = null; }
       if (!ui.statusEl) {
         ui.statusEl = el('div', 'thinking-line');

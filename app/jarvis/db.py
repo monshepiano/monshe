@@ -251,6 +251,11 @@ def update_message_meta(msg_id: str, meta: Dict[str, Any]) -> None:
             (json.dumps(meta, ensure_ascii=False), msg_id))
 
 
+def update_message_content(msg_id: str, content: str) -> None:
+    """Переписать текст сообщения (пометка отвеченных панелей и т.п.)."""
+    execute("UPDATE messages SET content=? WHERE id=?", (str(content or ""), msg_id))
+
+
 def messages_after(chat_id: str, msg_id: str) -> List[Dict[str, Any]]:
     """Всё, что идёт в переписке после указанного сообщения."""
     msg = get_message(msg_id)

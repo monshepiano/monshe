@@ -228,7 +228,7 @@
              штрих носика: одна непрерывная линия при любом размере */
           out += '<span class="msqrt">' +
             (root ? '<span class="msq-i">' + mesc(root) + '</span>' : '') +
-            '<svg class="msq-svg" viewBox="0 0 11 24" preserveAspectRatio="none" aria-hidden="true"><path d="M.8 13.9 L3.3 16 L5.9 0 H11" fill="none" stroke="rgba(190,235,255,.85)" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+            '<svg class="msq-svg" viewBox="0 0 11 24" preserveAspectRatio="none" aria-hidden="true"><path d="M.8 13.9 L3.3 16 L5.9 0" fill="none" stroke="rgba(190,235,255,.85)" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
             '<span class="msq-r">' + mathRender(g.text, inline) + '</span></span>';
           continue;
         }
@@ -390,6 +390,12 @@
         // Любая метка, начинающаяся на «ui», и русские варианты — это панель.
         // Модель пишет то ```ui-panel, то ```UI, то ```интерфейс; ошибка в метке
         // не должна превращать органы управления в мёртвый листинг кода.
+        if (lang === 'ui-sent') {
+          /* BM2: панель, на которую уже ответили, — законсервированная:
+             app.js смонтирует её неактивной (зелёная кромка «отправлено») */
+          out.push('<div class="ui-panel ui-sent" data-ui="' + esc(buf.join('\n')) + '"></div>');
+          continue;
+        }
         if (/^ui/.test(lang) || lang === 'jarvis-ui' ||
             lang === 'интерфейс' || lang === 'панель' || lang === 'выбор') {
           out.push('<div class="ui-panel" data-ui="' + esc(buf.join('\n')) + '"></div>');

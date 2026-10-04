@@ -389,8 +389,69 @@ def turn_ui_contract(has_image: bool = False) -> str:
 
 
 _UI_FENCE = re.compile(
-    r"```\s*ui\s*\n([\s\S]*?)```", re.IGNORECASE
-)
+    r"```\s*ui\s*\n([\s\S]*?)```", re.IGNORECASE)
+
+# BM2: ПАНЕЛЬ, НА КОТОРУЮ ОТВЕТИЛИ. Открытие ui-фенса во всех вариантах,
+# которые понимает фронтенд (ui, ui-panel, UI, интерфейс, панель, выбор)
+_ANSWERABLE_FENCE = re.compile(
+    r"```[ \t]*(ui(?!-sent)[\w-]*|интерфейс|панель|выбор)[ \t]*\n",
+    re.IGNORECASE)
+
+
+def mark_answered_fences(content: str) -> str:
+    """Пометить все ui-фенсы текста как отвеченные (```ui-sent).
+
+    Вызывается в момент, когда человек ответил на панель. Прежнее поведение
+    хранило отвеченность только в meta чужого сообщения: продолжение
+    дописывалось в то же сообщение, фенсы накапливались — лента после
+    перезагрузки показывала СТЕК активных панелей («одни и те же
+    предлагаются бесконечно»), а фронт по continue_of гасил и СВЕЖУЮ,
+    ещё не отвеченную панель. Метка в самом тексте — единственный источник
+    истины, который переживает всё."""
+    text = str(content or "")
+    if "```" not in text:
+        return text
+    return _ANSWERABLE_FENCE.sub(lambda m: "```ui-sent\n", text)
+
+
+def _fence_specs(text: str, sent_only: bool) -> set:
+    """Нормализованные тела фенсов (для распознавания повторов)."""
+    specs = set()
+    pattern = (r"```[ \t]*ui-sent[ \t]*\n([\s\S]*?)```" if sent_only
+               else r"```[ \t]*(?:ui[\w-]*|интерфейс|панель|выбор)[ \t]*\n([\s\S]*?)```")
+    for m in re.finditer(pattern, text, re.IGNORECASE):
+        body = "\n".join(line.strip() for line in m.group(1).splitlines()
+                         if line.strip())
+        if body:
+            specs.add(body)
+    return specs
+
+
+def suppress_repeated_panels(old_content: str, addition: str) -> str:
+    """Повтор уже отвеченной панели в продолжении — тоже отвеченная.
+
+    Модель нередко дословно повторяет фенс панели, на которую только что
+    ответил человек. Такой фенс помечаем отправленным: лента не предлагает
+    одно и то же бесконечно."""
+    answered = _fence_specs(str(old_content or ""), sent_only=True)
+    if not answered:
+        return str(addition or "")
+    out = []
+    pos = 0
+    text = str(addition or "")
+    for m in re.finditer(
+            r"```[ \t]*(ui[\w-]*|интерфейс|панель|выбор)[ \t]*\n([\s\S]*?)```",
+            text, re.IGNORECASE):
+        body = "\n".join(line.strip() for line in m.group(2).splitlines()
+                         if line.strip())
+        if body in answered:
+            out.append(text[pos:m.start()])
+            out.append("```ui-sent\n" + m.group(2) + "```")
+            pos = m.end()
+    out.append(text[pos:])
+    return "".join(out)
+
+
 _CREATIVE_IMAGE_REQUEST = re.compile(
     r"(?:сдел(?:ай|ать)|созд(?:ай|ать)|преврат(?:и|ить)|нарис(?:уй|овать)|"
     r"сгенерир(?:уй|овать)|оформ(?:и|ить))[^\n]{0,60}"
@@ -723,6 +784,9 @@ ui. Если вариантов нет, но ответ человека всё 
    которую надо подобрать, — не описывай их словами и не нумеруй списком,
    а дай пользователю настоящие органы управления прямо в ответе.
    Для этого вставь блок кода с языком ui. Точно так, дословно:
+   ВАЖНО: на выбор, который человек УЖЕ сделал через панель, вторую панель
+   не выставляй — выбор сделан, продолжай работу. Одна развилка — одна
+   панель, повторять одно и то же предложение запрещено.
 
    ```ui
    confirm Скачать готовое фото вместо генерации?
@@ -1018,6 +1082,8 @@ def needs_approval(tool_name: str, args: Optional[Dict[str, Any]] = None,
         return None
     mapping = {
         "delete_file": ("confirm_delete", "удаление данных"),
+        # BM2: шелл песочницы молчит, КОГДА команда удаляет данные —
+        # тогда спрашиваем как за удаление (см. needs_approval ниже)
         "run_shell": ("confirm_shell", "выполнение команды в терминале"),
         "send_telegram": ("confirm_send_message", "отправка сообщения от твоего имени"),
         "telegram_send_file": ("confirm_send_message", "отправка файла в мессенджер"),
@@ -1045,6 +1111,16 @@ def needs_approval(tool_name: str, args: Optional[Dict[str, Any]] = None,
         # В режиме «Компьютер» шелл-команды управления машиной — часть работы,
         # на которую уже дано согласие тумблером. Удаления и отправка
         # сообщений по-прежнему спрашивают отдельно.
+        return None
+    # BM2: ШЕЛЛ ПЕСОЧНИЦЫ — ОБЫЧНАЯ РАБОТА, не событие. Команда «cp», «mv»,
+    # «sed», сборка, генерация файлов — всё это изменения ВНУТРИ песочницы,
+    # они не трогают компьютер человека. Подтверждение остаётся только у
+    # команд, которые УДАЛЯЮТ данные (rm/rmdir/unlink/shred) — как у
+    # инструмента delete_file
+    if tool_name == "run_shell":
+        cmd = str((args or {}).get("command") or "")
+        if re.search(r"\b(?:rm|rmdir|unlink|shred)\b", cmd):
+            return "удаление данных"
         return None
     if risk == "caution" and safety.get("auto_approve_readonly", True) and tool_name not in mapping:
         return None
@@ -3443,23 +3519,13 @@ class Agent:
                     external_without_computer = bool(
                         not self.computer_use and opens_external_ui(name, args))
                     reason = needs_approval(name, args, computer_use=self.computer_use)
-                    # АВТОНОМИЯ С ГРАНИЦАМИ: агент решает всё сам, КРОМЕ денег,
-                    # действующих санкций и ИЗМЕНЕНИЯ существующих файлов. Новый
-                    # файл создаётся свободно; правка уже существующего — видимое
-                    # подтверждение, один раз на прогон.
-                    write_target = ""
-                    if (self.agent_mode and name == "write_file"
-                            and not reason
-                            and str(args.get("path") or "").strip()):
-                        write_target = str(args["path"]).strip()
-                        if write_target not in self._owned_files:
-                            try:
-                                if sandbox.safe_path(write_target,
-                                                     self.sandbox_id).exists():
-                                    reason = ("изменение существующего файла «%s»"
-                                              % write_target)
-                            except Exception:
-                                pass
+                    # BM2: ИЗМЕНЕНИЕ ФАЙЛОВ В ПЕСОЧНИЦЕ — БЕЗ ПОДТВЕРЖДЕНИЯ.
+                    # Прежняя граница спрашивала разрешение на каждую правку
+                    # существующего файла песочницы. Песочница изолирована:
+                    # правки в ней не касаются компьютера человека. Граница
+                    # нужна была для файлов НАСТОЯЩЕЙ машины (computer-use) —
+                    # там она и остаётся (mouse/type/open_app). В песочнице
+                    # подтверждение живёт только у удаления (delete_file).
                     # approvals_auto используется у headless AUTO для обычных
                     # серверных шагов, но не является тайным разрешением выводить
                     # GUI на Mac. Внешнее окно без включённого «Компьютера» всегда
@@ -3472,8 +3538,6 @@ class Agent:
                                "args": args, "reason": reason, "style": style}
                         decision = self._wait_approval(name, args, reason, style=style)
                         yield {"type": "approval_done", "status": decision.get("status")}
-                        if decision.get("status") == "approved" and write_target:
-                            self._owned_files.add(write_target)
                         if decision.get("status") != "approved":
                             result: Dict[str, Any] = {
                                 "ok": False,

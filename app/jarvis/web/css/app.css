@@ -1174,7 +1174,14 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
   overflow:visible;pointer-events:none;display:block}
 /* черта — та же линия, что носик: одна толщина 1.4px, один цвет */
 .msqrt .msq-r{display:inline-block;line-height:1.5;min-height:1em;
-  border-top:1.4px solid rgba(190,235,255,.85);padding:0 .18em 0 .1em}
+  padding:0 .18em}
+/* BM2: ЧЕРТА — ТОТ ЖЕ САМЫЙ Штрих, что носик. Прежний border-top сидел на
+   0.7px НИЖЕ штриха svg (штрих центрирован на верхней кромке, бордюр —
+   под ней) и начинался после отступа — стык был ниже и тоньше. Теперь
+   черта — псевдоэлемент НА ТОЙ ЖЕ ЛИНИИ: центр на верхней кромке, те же
+   1.4px, тот же цвет, начинается от кончика носика — сплошная линия */
+.msqrt::after{content:'';position:absolute;left:.3em;right:0;top:-.7px;
+  height:1.4px;background:rgba(190,235,255,.85);pointer-events:none}
 /* СТЕПЕНЬ КОРНЯ — над хвостом знака, не залезая на него */
 .msqrt .msq-i{position:absolute;left:-.02em;top:-.58em;font-size:.62em;
   opacity:.85;z-index:1;line-height:1}
@@ -2798,7 +2805,8 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   background:linear-gradient(90deg,var(--cy),var(--violet));
   animation:uiArm .9s linear both}
 @keyframes uiArm{from{width:0}to{width:100%}}
-.ui-panel.ui-sent{border-color:rgba(63,191,149,.45);animation:uiSent .5s ease-out}
+.ui-panel.ui-sent{border-color:rgba(63,191,149,.45);animation:uiSent .5s ease-out;
+  pointer-events:none}
 @keyframes uiSent{0%{box-shadow:inset 0 0 30px rgba(63,191,149,.28)}100%{box-shadow:inset 0 0 24px rgba(0,200,240,.07)}}
 .ui-panel.ui-sent .ui-row{opacity:.75}
 

@@ -3194,7 +3194,8 @@ class IterationXTests(unittest.TestCase):
         self.assertIn("gate-hold", js)
         self.assertIn("function appendLivePlaceholder", js)
         self.assertIn("function appendFreshMessages", js)
-        self.assertIn("m.role === 'assistant' && m.id === lastAiId && !answered.has(m.id)", js)
+        self.assertIn("m.role === 'assistant' && m.id === lastAiId", js)
+        self.assertNotIn("answered.has", js)
         self.assertIn("shell.dataset.agHold = '1'", js)
         self.assertIn(".qt-folder.open .qt-kids{display:flex}", css)
         self.assertNotIn(".qt-folder.open .qt-kids{display:flex;margin:2px 0 4px}", css)
@@ -3253,7 +3254,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.70", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.71", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3620,7 +3621,8 @@ class IterationADTests(unittest.TestCase):
         # панели истории законсервированы, активна только последняя
         self.assertIn("mountUiPanels(node.body, { inert: !activePanel });", js)
         self.assertIn("let lastAiId = '';", js)
-        self.assertIn("if (inert) box.classList.add('ui-inert');", js)
+        self.assertIn("const sent = box.classList.contains('ui-sent');", js)
+        self.assertIn("if (inert || sent) box.classList.add('ui-inert');", js)
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         self.assertIn(".ui-panel.ui-inert{pointer-events:none;opacity:.5", css)
 
@@ -4154,7 +4156,7 @@ class AgentAutonomyTests(unittest.TestCase):
             base = agent._max_steps(True)
         self.assertGreaterEqual(max(base, 30), 30)
 
-    def test_existing_file_edit_requires_approval_in_agent(self) -> None:
+    def test_existing_file_edit_needs_no_approval_in_agent(self) -> None:
         route = {"tier": "base", "reason": "t", "score": 0.5,
                  "verbose": True, "offer_tools": True}
         schema = [{"type": "function", "function": {"name": "write_file",
@@ -4183,13 +4185,11 @@ class AgentAutonomyTests(unittest.TestCase):
             events = list(runner.run(
                 [{"role": "user", "content": "дополни заметки"}],
                 user_text="дополни заметки"))
-        self.assertTrue(wait.called, "editing an existing file must ask")
-        self.assertTrue(any(e.get("type") == "approval_wait" for e in events))
-        self.assertIn("notes.md",
-                      str(wait.call_args),
-                      "the approval names the file being changed")
-        # после разрешения файл становится «своим»: повторная правка молчит
-        self.assertIn("notes.md", runner._owned_files)
+        self.assertFalse(wait.called, "изменение файла песочницы — без вопроса")
+        self.assertFalse(any(e.get("type") == "approval_wait" for e in events))
+        # BM2: файлы песочницы — мои, подтверждение не спрашивается вовсе;
+        # спрашивается только удаление из песочницы и действия на компьютере
+        self.assertEqual(runner._owned_files, set())
 
 
 class AiReplySuggestionsTests(unittest.TestCase):
@@ -4589,8 +4589,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.70", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.70", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.71", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.71", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5350,7 +5350,7 @@ class IterationBETests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         # догоняющий скролл вместо мгновенных прыжков
         self.assertIn("function chaseBottom(", js)
-        self.assertIn("Math.min(11, Math.max(1.2, gap * 0.16))", js)
+        self.assertIn("const target = Math.min(7, Math.max(1, gap * 0.14));", js)
         # уход вверх ЛЮБЫМ способом (скроллбар, клавиши) снимает прилипание:
         # наш догоняющий кадр scrollTop уменьшить не может
         self.assertIn("if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }", js)
@@ -5556,7 +5556,7 @@ class IterationBGTests(unittest.TestCase):
         self.assertIn("st.autoPend = 0;", js)
         # свёртка панели — плавный догон, без резких прыжков
         self.assertIn("function followGrowingPanel(", js)
-        self.assertIn("Math.min(11, Math.max(1.2, gap * 0.16))", js)
+        self.assertIn("const target = Math.min(7, Math.max(1, gap * 0.14));", js)
 
     def test_bg6_math_latex_and_live_panels(self) -> None:
         with mock.patch.object(agent.db, "recall", return_value=[]), \
@@ -5611,8 +5611,9 @@ class IterationBHTests(unittest.TestCase):
         # BJ: РОВНЫЙ ХОД — скорость пропорциональна остатку, без разгона:
         # большая карточка догоняется постоянным ходом, у дна плавно замирает
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const v = Math.min(11, Math.max(1.2, gap * 0.16));", chase)
-        self.assertNotIn("st.v", chase)
+        self.assertIn("const target = Math.min(7, Math.max(1, gap * 0.14));", chase)
+        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 0.55);", chase)
+        self.assertNotIn("st.v =", chase)
 
     def test_bh2_mode_note_stays_mid_answer(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -5731,8 +5732,9 @@ class IterationBJTests(unittest.TestCase):
         # скорость пропорциональна остатку и ограничена сверху — ни разгона,
         # ни ступенек: одна кривая для печати, карточек и панелей
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const v = Math.min(11, Math.max(1.2, gap * 0.16));", chase)
-        self.assertNotIn("st.v", js)
+        self.assertIn("const target = Math.min(7, Math.max(1, gap * 0.14));", chase)
+        self.assertIn("const v = Math.min(target, (st.chaseV || 0) + 0.55);", chase)
+        self.assertNotIn("st.v =", js)
 
     def test_bj2_mode_note_before_any_text(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
@@ -5790,7 +5792,7 @@ class IterationBJTests(unittest.TestCase):
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # обычный корень: штрих + одна диагональ + носик, срастается с чертой
-        self.assertIn("M.8 13.9 L3.3 16 L5.9 0 H11", md)
+        self.assertIn('d="M.8 13.9 L3.3 16 L5.9 0" fill="none"', md)
         # дробь центрируется на строке (baseline числителя больше не топит её)
         self.assertIn("vertical-align:middle;margin:0 2px;line-height:1.15", css)
         self.assertIn(".math-inline .mfrac{font-size:.82em;vertical-align:middle", css)
@@ -5830,7 +5832,7 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.70", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.71", html)
 
 
 
@@ -5881,7 +5883,8 @@ class IterationBKTests(unittest.TestCase):
         self.assertNotIn("liveUi.frozen = {", tl)
         self.assertIn("liveUi.marksEl.style.display = liveUi.freezePending ? 'none' : '';", tl)
         self.assertIn("if (ui.freezePending) {", rt)
-        self.assertIn("const k = lastSentenceEnd(text, src.length);", rt)
+        self.assertIn("const from = Math.max(src.length, ui.markFrom || 0);", rt)
+        self.assertIn("const k = lastSentenceEnd(text, from);", rt)
         self.assertIn("closeMarkSegment(ui);", rt)
         self.assertIn("function closeMarkSegment(", js)
 
@@ -5890,12 +5893,13 @@ class IterationBKTests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # BL: черта — продолжение того же штриха (H1400, клип .msqrt),
         # strut держит базовую линию, знак хранит пропорции
-        self.assertIn("M.8 13.9 L3.3 16 L5.9 0 H11", md)
+        self.assertIn('d="M.8 13.9 L3.3 16 L5.9 0" fill="none"', md)
         self.assertIn('stroke="rgba(190,235,255,.85)"', md)
         self.assertIn('<span class="msq-r">', md)
         self.assertIn('preserveAspectRatio="none" aria-hidden="true"', md)
         self.assertNotIn("msq-b", md)
         self.assertNotIn("H1400", md)
+        self.assertNotIn("H11", md)
         self.assertIn(
             ".msqrt{position:relative;display:inline-block;line-height:0;", css)
         self.assertIn(
@@ -5928,7 +5932,7 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.70", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.71", html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -5961,7 +5965,7 @@ class IterationBLTests(unittest.TestCase):
         self.assertIn("host._tblStamp = ++TABLE_HOST_STAMP;", js)
         # потолок скролла ниже — карточки входят одним куском высоты
         chase = js.split("function chaseBottom(")[1].split("\nfunction ")[0]
-        self.assertIn("const v = Math.min(11, Math.max(1.2, gap * 0.16));", chase)
+        self.assertIn("const target = Math.min(7, Math.max(1, gap * 0.14));", chase)
         self.assertNotIn("Math.min(24,", js)
 
     def test_bl3_dot_centered_and_bigger(self) -> None:
@@ -6006,8 +6010,9 @@ class IterationBLTests(unittest.TestCase):
         self.assertIn("const fitZoom = (w, h) => {", p3)
         self.assertIn("project(x1 - mcx, y1 - mcy, c00 - mcz)", p3)
         # жесты: колесо/пинч = зум, СКМ/два пальца = пан, ЛКМ = вращение
-        self.assertIn("mode = e.button === 1 ? 'pan' : (e.button === 0 ? 'rot' : null);", p3)
-        self.assertIn("mode = pts.size >= 2 ? 'pan' : 'rot';", p3)
+        self.assertIn("mode = (e.button === 0 || e.button === 1) ? 'pan' : (e.button === 2 ? 'rot' : null);", p3)
+        self.assertIn("if (e.pointerType === 'touch') {", p3)
+        self.assertIn("mode = 'pan';", p3)
         self.assertIn("zoomBy(dist / lastDist);", p3)
         self.assertIn("zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12);", p3)
 
@@ -6025,6 +6030,76 @@ class IterationBLTests(unittest.TestCase):
                       .split("\nfunction ")[0])
         self.assertIn("() => qlRowToggle(row)", js.split("function renderAgentTraceGroups(")[1]
                       .split("\nfunction ")[0])
+
+
+class IterationBM2Tests(unittest.TestCase):
+    """BM2 — восемь зон беты .70, исправленных по причинам, не симптомам:
+    метки режимов, консервация отвеченных интерактивов в тексте сообщения,
+    санкции песочницы, жесты 3D, черта корня, плавный догон, одиночный
+    инструмент, толерантные графики."""
+
+    def test_mark_answered_fences_all_variants(self) -> None:
+        f = agent.mark_answered_fences
+        src = ("Выбор:\n\n```ui\ntiles Формат: PDF | Word\n```\n\n"
+               "```ui-panel\nx\n```\n```UI\ny\n```\n```интерфейс\nz\n```")
+        out = f(src)
+        self.assertEqual(out.count("```ui-sent"), 4)
+        self.assertNotIn("```ui\n", out)
+        self.assertIn("tiles Формат: PDF | Word", out)   # тело панели не тронуто
+        self.assertEqual(f(out), out)                     # идемпотентно
+
+    def test_mark_answered_fences_keeps_other_fences(self) -> None:
+        out = agent.mark_answered_fences(
+            "```python\nprint(1)\n```\n```ui\ntiles Да | Нет\n```")
+        self.assertIn("```python\nprint(1)\n```", out)
+        self.assertIn("```ui-sent\ntiles Да | Нет\n```", out)
+
+    def test_suppress_repeated_panels_only_answered(self) -> None:
+        old = "Вопрос\n\n```ui-sent\ntiles Формат: PDF | Word\n```"
+        repeat = "Продолжаю.\n\n```ui\ntiles Формат: PDF | Word\n```\nГотово."
+        out = agent.suppress_repeated_panels(old, repeat)
+        self.assertEqual(out.count("```ui-sent"), 1)
+        self.assertNotIn("```ui\n", out)
+        fresh = agent.suppress_repeated_panels(old, "```ui\ntiles Стиль: А | Б\n```")
+        self.assertIn("```ui\n", fresh)   # новая панель остаётся живой
+
+    def test_run_shell_deletion_asked_others_silent(self) -> None:
+        self.assertIsNone(agent.needs_approval("run_shell", {"command": "cp a b"}))
+        self.assertIsNone(agent.needs_approval(
+            "run_shell", {"command": "sed -i s/x/y/ file && make"}))
+        for cmd in ("rm -rf draft", "rmdir old", "unlink tmp.txt", "shred secret"):
+            reason = agent.needs_approval("run_shell", {"command": cmd})
+            self.assertEqual(reason, "удаление данных", cmd)
+
+    def test_write_and_delete_split(self) -> None:
+        self.assertIsNone(agent.needs_approval(
+            "write_file", {"path": "notes.md", "content": "новое"}))
+        self.assertIsNotNone(agent.needs_approval(
+            "delete_file", {"path": "notes.md"}))
+        self.assertIsNotNone(agent.needs_approval(
+            "run_shell", {"command": "open -a Terminal"}))
+
+    def test_update_message_content(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.object(db, "DATA_DIR", Path(td)), \
+                 mock.patch.object(db, "_DB_PATH", Path(td) / "t.db"):
+                conn = sqlite3.connect(db._DB_PATH)
+                conn.executescript(db.SCHEMA)
+                conn.commit()
+                conn.close()
+                db._CONN = None
+                with mock.patch.object(db, "_CONN", db._connect()):
+                    cid = db.create_chat("c")["id"]
+                    db.add_message(cid, "user", "вопрос", {})
+                    m = db.add_message(cid, "assistant", "```ui\ntiles Да | Нет\n```", {})
+                    db.update_message_content(m["id"], "```ui-sent\ntiles Да | Нет\n```")
+                    self.assertIn("ui-sent", db.get_message(m["id"])["content"])
+
+    def test_suggest_replies_never_empty_on_ai_failure(self) -> None:
+        # /api/replies обязан падать в локальный запас: пустых подсказок не бывает
+        with mock.patch.object(agent.llm, "chat", side_effect=RuntimeError("down")):
+            items = agent.suggest_replies_ai("как дела?", "Нормально.")
+            self.assertTrue(items and isinstance(items, list))
 
 
 if __name__ == "__main__":

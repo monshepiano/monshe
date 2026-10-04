@@ -2391,7 +2391,7 @@ function testIterationADContracts() {
   const sendFn = extractFunction(js, 'send');
   assert(/allMsgs\[allMsgs\.length - 1\] === root/.test(sendFn) &&
     /mountUiPanels\(node\.body, \{ inert: !activePanel \}\);/.test(js) &&
-    /if \(inert\) box\.classList\.add\('ui-inert'\);/.test(extractFunction(js, 'mountUiPanels')) &&
+    /if \(inert \|\| sent\) box\.classList\.add\('ui-inert'\);/.test(extractFunction(js, 'mountUiPanels')) &&
     /\.ui-panel\.ui-inert\{pointer-events:none;opacity:\.5/.test(css),
     'AD4: only the last message continues; historical panels are inert');
   // AD5: плавная кромка ленты у подсказок
@@ -2485,7 +2485,7 @@ function testIterationBIContracts() {
     js.includes('const featureXs = () => {') &&
     // BL: жесты 3D — колесо = масштаб, левая кнопка = вращение, средняя = пан
     js.includes('zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12);') &&
-    js.includes("mode = e.button === 1 ? 'pan' : (e.button === 0 ? 'rot' : null);") &&
+    js.includes("mode = (e.button === 0 || e.button === 1) ? 'pan' : (e.button === 2 ? 'rot' : null);") &&
     // BL: ось больше не обрезается пополам (граница цикла — тоже значение)
     js.includes('const x0t = Math.ceil(x0 / sx) * sx, x1t = Math.floor(x1 / sx) * sx;'),
     'BI: plots use mathematicians\' aspect ratios; axes carry real ticks on the WHOLE axis');
@@ -2497,7 +2497,7 @@ function testIterationBIContracts() {
 function testIterationBJContracts() {
   // BJ: СКРОЛЛ — ровный ход без разгона: скорость пропорциональна остатку
   const chase = js.split('function chaseBottom(')[1].split('\nfunction ')[0];
-  assert(chase.includes('const v = Math.min(11, Math.max(1.2, gap * 0.16));') &&
+  assert(chase.includes('const target = Math.min(7, Math.max(1, gap * 0.14));') && chase.includes('const v = Math.min(target, (st.chaseV || 0) + 0.55);') &&
     !js.includes('st.v') &&
     js.split('function followLiveStream(')[1].split('\nfunction ')[0]
       .includes('chaseBottom(box, run);'),
@@ -2541,7 +2541,7 @@ function testIterationBJContracts() {
     }
   }
   // BJ: математика — обычный корень с носиком, пределы над/под и в строке
-  assert(markdown.includes('M.8 13.9 L3.3 16 L5.9 0 H11') &&
+  assert(markdown.includes('M.8 13.9 L3.3 16 L5.9 0" fill="none') && !markdown.includes('H11') &&
     markdown.includes("out += (inline ? '<span class=\"mbi-in\">' : '')") &&
     markdown.includes('(?![a-zA-Z])') &&
     css.includes('vertical-align:middle;margin:0 2px;line-height:1.15') &&
@@ -2595,7 +2595,7 @@ function testIterationBLContracts() {
     'BL: column widths chase their new proportions smoothly — like the scroll');
   // BL: СКРОЛЛ — потолок ниже: карточки входят одним куском высоты
   assert(js.split('function chaseBottom(')[1].split('\nfunction ')[0]
-      .includes('const v = Math.min(11, Math.max(1.2, gap * 0.16));') &&
+      .includes('const target = Math.min(7, Math.max(1, gap * 0.14));') &&
     !js.includes('Math.min(24,'),
     'BL: the chase ceiling is gentle (11px/frame) — agent cards no longer glide-jerk');
   // BL: ГРАФИКИ — умный старт, ноль всегда в кадре, плавный ±
@@ -2612,7 +2612,7 @@ function testIterationBLContracts() {
   assert(p3.includes('const fitZoom = (w, h) => {') &&
     p3.includes('project(x1 - mcx, y1 - mcy, c00 - mcz)') &&
     p3.includes('lastDist') &&
-    p3.includes("mode = pts.size >= 2 ? 'pan' : 'rot';") &&
+    p3.includes("mode = 'pan';") && p3.includes("if (e.pointerType === 'touch') {") &&
     p3.includes('zoomBy(dist / lastDist);') &&
     p3.includes('zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12);'),
     'BL: 3D rotates around its data center and fits itself into frame; left=rotate, two fingers=pan, wheel/pinch=zoom');
@@ -2648,19 +2648,21 @@ function testIterationBKContracts() {
     tl2.includes('liveUi.freezePending = true;') &&
     tl2.includes("liveUi.marksEl.style.display = liveUi.freezePending ? 'none' : '';") &&
     rt2.includes('closeMarkSegment(ui);') &&
-    rt2.includes('const k = lastSentenceEnd(text, src.length);'),
+    rt2.includes('const from = Math.max(src.length, ui.markFrom || 0);') &&
+    rt2.includes('const k = lastSentenceEnd(text, from);'),
     'BK: a mid-sentence mode note waits for the sentence to end — never cuts words');
   // BK: КОРЕНЬ — черта и носик совпадают (одна линия 1.4px тем же цветом)
-  assert(markdown.includes('M.8 13.9 L3.3 16 L5.9 0 H11') &&
+  assert(markdown.includes('M.8 13.9 L3.3 16 L5.9 0" fill="none') && !markdown.includes('H11') &&
     markdown.includes('stroke="rgba(190,235,255,.85)"') &&
     markdown.includes('<span class="msq-r">') &&
     markdown.includes('vector-effect="non-scaling-stroke"') &&
     css.includes('padding-left:.62em') &&
     css.includes('.msqrt .msq-r{display:inline-block;line-height:1.5;min-height:1em;') &&
-    css.includes('border-top:1.4px solid rgba(190,235,255,.85)') &&
-    !css.includes('.msq-b') && !css.includes('aspect-ratio:11/24') &&
+    css.includes('.msqrt::after{content:\'\';position:absolute;left:.3em;right:0;top:-.7px;') &&
+    css.includes('height:1.4px;background:rgba(190,235,255,.85)') &&
+    !css.includes('.msq-b') && !css.includes('aspect-ratio:11/24') && !css.includes('border-top:1.4px') &&
     css.includes('.msqrt .msq-i{position:absolute;left:-.02em;top:-.58em;font-size:.62em;'),
-    'BM: the radical is one 1.4px stroke (H11 path + border-top bar); the radicand lives in the flow — never huge, never empty');
+    'BM2: the bar is a CSS ::after ON the stroke line (same 1.4px, same color, top on the line); the nose has no H-tail — the radicand is never covered');
   // BK: ГРАФИК-ИНТЕРПРЕТАТОР — z(x,y)=, юникод-математика, спасение формул
   assert(js.includes("src.replace(/(^|[^\\w])([a-zA-Z])\\s*\\(([^)]*)\\)\\s*=/g,") &&
     js.includes(".replace(/[·×]/g, '*')") &&
@@ -2697,12 +2699,18 @@ function testIterationBMContracts() {
     js.split('function toolLine(')[1].split('\nfunction ')[0]
       .includes("liveUi.marksEl.style.display = liveUi.freezePending ? 'none' : '';"),
     'BM: each mode mark keeps its own segment — a later enable/disable never drags it away');
-  // BM: отвеченный интерактив не оживает после перезапуска диалога
+  // BM2: отвеченность живёт В ТЕКСТЕ сообщения (```ui-sent), а не в наборах id
   const rm = js.split('function renderMessages(')[1].split('\nfunction ')[0];
-  assert(rm.includes('const answered = new Set(') &&
-    rm.includes("m.role === 'assistant' && m.id === lastAiId && !answered.has(m.id)") &&
-    pyServer.includes('continue_of'),
-    'BM: an answered interactive stays dead across re-renders and message restarts');
+  assert(rm.includes("m.role === 'assistant' && m.id === lastAiId") && !rm.includes('answered.has') &&
+    js.includes("const sent = box.classList.contains('ui-sent');") &&
+    js.includes("if (inert || sent) box.classList.add('ui-inert');") &&
+    markdown.includes('ui-sent') &&
+    pyAgent.includes('def mark_answered_fences(') &&
+    pyAgent.includes('def suppress_repeated_panels(') &&
+    pyServer.includes('agent.mark_answered_fences(') &&
+    pyServer.includes('db.update_message_content(target["id"], marked)') &&
+    pyServer.includes('suppress_repeated_panels('),
+    'BM2: an answered interactive stays dead across re-renders and restarts — the answer marks the ```ui-sent fence right in the message text');
   // BM: \ge/\le → ≥/≤, степени не теряются
   const bctx = { window: {} };
   vm.createContext(bctx);
@@ -2958,7 +2966,7 @@ function testIterationBEContracts() {
     'BE: the JS engine rotates shapes — 4D figures turn inside out in XW/ZW planes');
   // BE/BG: скролл — плавный догон; прилипание у дна — ПЕРВЫМ делом
   assert(js.includes('function chaseBottom(') &&
-    js.includes('Math.min(11, Math.max(1.2, gap * 0.16))') &&
+    js.includes('const target = Math.min(7, Math.max(1, gap * 0.14));') &&
     js.includes('function followGrowingPanel(') &&
     js.includes('if (top < st.lastTop - 2) { leave(); st.lastTop = top; return; }') &&
     js.includes('if (run && h - top - box.clientHeight < 48) {') &&
@@ -3104,7 +3112,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.70'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.71'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -3407,7 +3415,7 @@ function testIterationBGContracts() {
   assert(js.includes('if (run && h - top - box.clientHeight < 48) {') &&
     js.includes('st.autoPend = 0;') &&
     js.includes('function followGrowingPanel(') &&
-    js.includes('Math.min(11, Math.max(1.2, gap * 0.16))'),
+    js.includes('const target = Math.min(7, Math.max(1, gap * 0.14));'),
     'BG: bottom-stick check comes first; collapsing panels are chased smoothly');
   // BG: математика — правило 11, мини-LaTeX и живые панели plot/geo
   assert(pyAgent.includes('11. МАТЕМАТИКА') && pyAgent.includes('```plot') &&
@@ -3435,7 +3443,7 @@ function testIterationBHContracts() {
     js.split('function followGrowingPanel(')[1].split('\nfunction ')[0]
       .includes('chaseBottom(box, run);') &&
     js.split('function chaseBottom(')[1].split('\nfunction ')[0]
-      .includes('const v = Math.min(11, Math.max(1.2, gap * 0.16));') &&
+      .includes('const target = Math.min(7, Math.max(1, gap * 0.14));') &&
     !js.includes('st.v ='),
     'BI: agent and panel scroll share one chaseBottom engine — no separate steps');
   // BH: уведомление режима остаётся ПОСЕРЕДИНЕ ответа
