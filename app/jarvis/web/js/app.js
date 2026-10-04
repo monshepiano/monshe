@@ -692,17 +692,32 @@ function dockY(on) {
     dock.style.setProperty('--dock-y', '0px');
   }
 }
+let _dockedT = null;
 function toggleSidebar() {
   const app = $('#app');
   if (isNarrow()) { app.classList.toggle('nav-open'); return; }
   app.classList.remove('nav-open');
   const collapsing = !app.classList.contains('collapsed');
-  app.classList.toggle('collapsed', collapsing);
-  // диалоги уезжают/возвращаются РАЗОМ с превращением — один такт
-  app.classList.toggle('side-folding', collapsing);
+  /* BM12: СЖАТИЕ/РАЗЖАТИЕ ПРОСТРАНСТВ — той же кривой, что и само меню.
+     Прежде при сворачивании кнопки пространств пропадали РЕЗКО (display
+     включался мгновенно). Теперь: сворачивание — ряд СЖИМАЕТСЯ (scale +
+     высота в ноль, .side-folding) и только ПОСЛЕ анимации гасится
+     совсем (.docked); разворачивание — наоборот: сначала возвращается
+     место (.docked снят), затем ряд разжимается в следующий кадр */
+  clearTimeout(_dockedT);
+  if (collapsing) {
+    app.classList.add('collapsed', 'side-folding');
+    _dockedT = setTimeout(() => app.classList.add('docked'), 640);
+  } else {
+    app.classList.remove('docked');
+    app.classList.add('side-folding');
+    app.classList.remove('collapsed');
+    requestAnimationFrame(() => requestAnimationFrame(() =>
+      app.classList.remove('side-folding')));
+  }
   dockY(collapsing);
   // BM11: после превращения глайдер обязан встать на выбранную иконку
-  setTimeout(spaceGlider, 650);
+  setTimeout(spaceGlider, 680);
   /* BK: состояние панели больше не хранится: каждый запуск — с доком */
 }
 $('#collapseBtn').addEventListener('click', toggleSidebar);
@@ -713,7 +728,9 @@ try {
      на ТЕКУЩУЮ сессию: перезапуск всегда возвращает док */
   localStorage.removeItem('jarvis.sidebar2');
   if (!isNarrow()) {
-    $('#app').classList.add('collapsed');
+    /* BM12: 'docked' — «превращение завершено»: пространства скрыты,
+       без промежуточной анимации при запуске */
+    $('#app').classList.add('collapsed', 'docked');
     // восстановление БЕЗ анимации: пилюля сразу в центре высоты
     const dock = document.querySelector('.dock');
     if (dock) {
@@ -1125,21 +1142,38 @@ function renderBalance(b) {
       'чтобы видеть данные из личного кабинета.';
 }
 
-/* ================== BM10: ПРОСТРАНСТВА (идея из Arc) ==================
-   Над чертой сайдбара — переключатель: большие CHAT/LIVE и мини-иконки
-   пространств (CHAT — базовое). Переключение кликом или свайпом двумя
-   пальцами по горизонтали; контент уезжает вбок, новый въезжает.
-   Всё, что под чертой (вкладки, диалоги), принадлежит пространству. */
+/* ================== BM11/BM12: ПРОСТРАНСТВА (идея из Arc) ==================
+   Над чертой — LIVE и мини-иконки пространств: чат — базовое (заполнен
+   синим и всегда в тихой рамке), выбранное светится, подсветка-глайдер
+   перетекает на иконку. Справа — маленькая кнопка настроек: прячет/
+   показывает пространства (глазик). Переключение: клик (мгновенно) или
+   быстрый свайп двумя пальцами. Под чертой — вкладки пространства. */
 const SPACES = ['chat', 'math', 'music'];
 const SPACE_META = {
-  chat: { name: 'CHAT', tip: 'чат',
+  chat: { name: 'CHAT', label: 'Чат', tip: 'чат',
     ico: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 3.6c-4.9 0-8.9 3.3-8.9 7.5 0 2.3 1.3 4.4 3.3 5.8-.2 1.1-.8 2.2-1.7 3.1 1.7-.2 3.3-.9 4.4-1.8 1 .3 1.9.4 2.9.4 4.9 0 8.9-3.4 8.9-7.5S16.9 3.6 12 3.6z"/></svg>' },
-  math: { name: 'MATH', tip: 'математика',
+  math: { name: 'MATH', label: 'Математика', tip: 'математика',
     ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 4H9.8l4.9 8-4.9 8h7.7"/></svg>' },
-  music: { name: 'MUSIC', tip: 'музыка',
+  music: { name: 'MUSIC', label: 'Музыка', tip: 'музыка',
     ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5.6l10-2V16"/><circle cx="6.6" cy="18" r="2.6"/><circle cx="16.6" cy="16" r="2.6"/></svg>' },
 };
+const SPACE_EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+  + 'stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 '
+  + '18 18.2 12 18.2 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.7"/></svg>';
 S.space = 'chat';
+
+/* BM12: КАКИЕ ПРОСТРАНСТВА ПОКАЗЫВАТЬ — выбор человека (глазик в
+   настройках). Скрытого пространства нет ни в меню, ни в свайпе */
+function spacesVisibleLoad() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('jarvis.spaces.visible') || 'null'); } catch (e) {}
+  /* пустой массив — законное состояние «все скрыты», не сбрасываем */
+  return Array.isArray(saved) ? saved.filter((n) => SPACES.indexOf(n) >= 0) : SPACES.slice();
+}
+S.spacesVisible = spacesVisibleLoad();
+function spacesSave() {
+  try { localStorage.setItem('jarvis.spaces.visible', JSON.stringify(S.spacesVisible)); } catch (e) {}
+}
 
 /* BM11: ГЛАЙДЕР — подсвеченная область выбранного пространства. Живёт
    отдельно от иконок: при переключении не перескакивает, а морфом
@@ -1147,7 +1181,7 @@ S.space = 'chat';
 function spaceGlider() {
   const row = $('#spRow'), g = $('#spGlider');
   if (!row || !g) return;
-  const sel = row.querySelector('.sp-ico.sel:not(.sp-set)');
+  const sel = row.querySelector('.sp-ico.sel:not(.sp-set):not(.off)');
   if (!sel) { g.classList.remove('on'); return; }
   const rr = row.getBoundingClientRect(), rs = sel.getBoundingClientRect();
   /* док: ряд скрыт — координаты нулевые, глайдер ждёт разворачивания */
@@ -1155,6 +1189,26 @@ function spaceGlider() {
   g.style.left = (rs.left - rr.left) + 'px';
   g.style.width = rs.width + 'px';
   g.classList.add('on');
+}
+
+/* BM12: ХРОМ ПРОСТРАНСТВА — иконки, глайдер, док, панель настроек.
+   Вызывается МГНОВЕННО при клике: кнопки реагируют сразу, не после
+   анимации смены пространства */
+function updateSpaceChrome(name) {
+  $$('.sp-ico[data-space]').forEach((b) => {
+    b.classList.toggle('sel', b.dataset.space === name);
+    b.classList.toggle('base', b.dataset.space === 'chat');
+    b.classList.toggle('off', S.spacesVisible.indexOf(b.dataset.space) < 0);
+  });
+  spaceGlider();
+  const bar = $('#spacesBar');
+  if (bar) bar.classList.toggle('no-spaces', !S.spacesVisible.length);
+  const cur = $('#spdCur');
+  if (cur) {
+    cur.innerHTML = (SPACE_META[name] || {}).ico || '';
+    cur.title = (SPACE_META[name] || {}).tip || name;
+  }
+  $$('#spdFly .spf-ico').forEach((b) => b.classList.toggle('sel', b.dataset.space === name));
 }
 
 function spaceApply(name) {
@@ -1170,22 +1224,8 @@ function spaceApply(name) {
     $('.spaces').after(fut);
   }
   if (fut) fut.classList.toggle('space-off', isChat);
-  // иконки: активная светится (без подчёркивания); чат — базовое, заполнен
-  $$('.sp-ico').forEach((b) => {
-    b.classList.toggle('sel', b.dataset.space === name);
-    b.classList.toggle('base', b.dataset.space === 'chat');
-  });
-  spaceGlider();
-  // док: значок текущего пространства + подсветка в выплывающей панели
-  const cur = $('#spdCur');
-  if (cur) {
-    cur.innerHTML = (SPACE_META[name] || {}).ico || '';
-    cur.title = (SPACE_META[name] || {}).tip || name;
-  }
-  $$('.spf-ico').forEach((b) => {
-    b.classList.toggle('sel', b.dataset.space === name);
-    b.classList.toggle('base', b.dataset.space === 'chat');
-  });
+  updateSpaceChrome(name);
+  syncSpaceSettings();
   // центр: CHAT = обычные вкладки, будущее = заглушка
   if (isChat) {
     showView(S.view || 'chat');
@@ -1200,11 +1240,13 @@ function spaceApply(name) {
 
 function setSpace(name, dir) {
   if (name === S.space || !SPACE_META[name]) return;
+  if (S.spacesVisible.indexOf(name) < 0) return;   // скрытое не выбирается
   if (S.streaming) { toast('Дождись конца ответа — потом переключу', 'warn'); return; }
   const way = dir || ((SPACES.indexOf(name) > SPACES.indexOf(S.space)) ? 1 : -1);
+  /* BM12: ХРОМ МГНОВЕННО — иконки и глайдер реагируют в кадр клика */
+  updateSpaceChrome(name);
   /* BM11: АНИМАЦИЯ КАК В ARC, направленная. Старое пространство уплывает
-     в сторону движения, новое приезжает С ПРОТИВОПОЛОЖНОЙ стороны:
-     вправо (way=1) — старое влево, новое справа; влево — зеркально.
+     в сторону движения, новое приезжает С ПРОТИВОПОЛОЖНОЙ стороны.
      WAAPI: без классов-состояний, кадры не конфликтуют */
   const vis = () => [
     $$('.view').find((v) => v.classList.contains('active')),
@@ -1216,7 +1258,7 @@ function setSpace(name, dir) {
   out.forEach((n) => n.animate(
     [{ transform: 'none', opacity: 1 },
      { transform: 'translateX(' + (-56 * way) + 'px)', opacity: 0 }],
-    { duration: 195, easing: 'cubic-bezier(.55,.06,.68,.19)', fill: 'forwards' }));
+    { duration: 170, easing: 'cubic-bezier(.55,.06,.68,.19)', fill: 'forwards' }));
   setTimeout(() => {
     out.forEach((n) => n.getAnimations().forEach((a) => a.cancel()));
     spaceApply(name);
@@ -1224,37 +1266,160 @@ function setSpace(name, dir) {
     inn.forEach((n) => n.animate(
       [{ transform: 'translateX(' + (56 * way) + 'px)', opacity: 0 },
        { transform: 'none', opacity: 1 }],
-      { duration: 300, easing: 'cubic-bezier(.18,.8,.28,1)' }));
-  }, 200);
+      { duration: 260, easing: 'cubic-bezier(.18,.8,.28,1)' }));
+  }, 175);
+}
+
+/* BM12: НАСТРОЙКИ ПРОСТРАНСТВ — глазик прячет иконку из меню (остальные
+   симметрично переезжают анимацией FLIP), повторный клик возвращает */
+function buildSpaceSettings() {
+  const panel = $('#spSetPanel');
+  if (!panel || panel.dataset.built === '1') return;
+  panel.dataset.built = '1';
+  SPACES.forEach((n) => {
+    const meta = SPACE_META[n] || {};
+    const row = el('div', 'sp-set-row');
+    row.id = 'ssr_' + n;
+    row.innerHTML = '<span class="ssr-ico">' + (meta.ico || '') + '</span>'
+      + '<b>' + esc(meta.label || n) + '</b>';
+    const eye = el('button', 'sp-eye', SPACE_EYE);
+    eye.title = 'показывать в меню';
+    const toggle = () => spaceToggleVisible(n);
+    eye.addEventListener('click', (ev) => { ev.stopPropagation(); toggle(); });
+    row.addEventListener('click', toggle);
+    row.appendChild(eye);
+    panel.appendChild(row);
+  });
+  syncSpaceSettings();
+}
+
+function syncSpaceSettings() {
+  SPACES.forEach((n) => {
+    const row = $('#ssr_' + n);
+    if (!row) return;
+    const off = S.spacesVisible.indexOf(n) < 0;
+    row.classList.toggle('off', off);
+    const eye = row.querySelector('.sp-eye');
+    if (eye) eye.classList.toggle('off', off);
+  });
+}
+
+/* FLIP: иконки, оставшиеся в меню, ПЛАВНО переезжают на симметричные
+   места — ряд всегда центрирован, исчезновение не рвёт композицию */
+function spacesFlip(mutate) {
+  const row = $('#spRow');
+  if (!row || typeof row.getBoundingClientRect !== 'function') { mutate(); return; }
+  const before = new Map();
+  $$('.sp-ico[data-space]', row).forEach((b) => {
+    const r = b.getBoundingClientRect();
+    if (r.width) before.set(b, r.left);
+  });
+  mutate();
+  $$('.sp-ico[data-space]', row).forEach((b) => {
+    const was = before.get(b);
+    if (was == null) {
+      /* появилась — вырастает на своём месте */
+      if (b.animate) b.animate(
+        [{ transform: 'scale(.3)', opacity: 0 }, { transform: 'none', opacity: 1 }],
+        { duration: 280, easing: 'cubic-bezier(.25,1.25,.4,1)' });
+      return;
+    }
+    const dx = was - b.getBoundingClientRect().left;
+    if (Math.abs(dx) > 1 && b.animate) b.animate(
+      [{ transform: 'translateX(' + dx + 'px)' }, { transform: 'none' }],
+      { duration: 330, easing: 'cubic-bezier(.25,1.1,.4,1)' });
+  });
+}
+
+function spaceToggleVisible(name) {
+  const hide = S.spacesVisible.indexOf(name) >= 0;
+  spacesFlip(() => {
+    S.spacesVisible = hide
+      ? S.spacesVisible.filter((n) => n !== name)
+      : SPACES.filter((n) => n === name || S.spacesVisible.indexOf(n) >= 0);
+    spacesSave();
+    updateSpaceChrome(S.space);
+  });
+  syncSpaceSettings();
+}
+
+/* BM12: ФЛАЙАУТ ДОКА — окошко ВЫЛЕТАЕТ из кнопки текущего пространства:
+   панель растёт из неё, иконки разлетаются по своим местам (текущая —
+   на свою позицию в ряду). Курсор гуляет по области — не закрывается;
+   ушла из области — плавно сворачивается */
+function dockFlyIcons() {
+  const fly = $('#spdFly');
+  if (!fly) return;
+  fly.innerHTML = '';
+  S.spacesVisible.forEach((n) => {
+    const meta = SPACE_META[n] || {};
+    const b = el('button', 'spf-ico' + (n === S.space ? ' sel' : ''));
+    b.dataset.space = n;
+    b.dataset.tip = meta.tip || n;
+    b.innerHTML = meta.ico || '';
+    b.addEventListener('click', () => setSpace(n));
+    fly.appendChild(b);
+  });
+}
+
+function initDockFly() {
+  const wrap = $('#spdCurWrap');
+  if (!wrap) return;
+  let closeT = null;
+  wrap.addEventListener('pointerenter', () => {
+    clearTimeout(closeT);
+    if (wrap.classList.contains('open')) return;
+    /* все пространства скрыты глазиком — окошку не из чего собираться */
+    if (!S.spacesVisible.length) return;
+    dockFlyIcons();
+    wrap.classList.add('open');
+    const btn = $('#spdCur').getBoundingClientRect();
+    $$('.spf-ico', $('#spdFly')).forEach((b, i) => {
+      const r = b.getBoundingClientRect();
+      if (!r.width || !b.animate) return;
+      const dx = (btn.left + btn.width / 2) - (r.left + r.width / 2);
+      const dy = (btn.top + btn.height / 2) - (r.top + r.height / 2);
+      b.animate(
+        [{ transform: 'translate(' + dx + 'px,' + dy + 'px) scale(.4)', opacity: 0 },
+         { transform: 'none', opacity: 1 }],
+        { duration: 340, delay: 40 + i * 60, easing: 'cubic-bezier(.22,1.25,.36,1)', fill: 'backwards' });
+    });
+  });
+  wrap.addEventListener('pointerleave', () => {
+    clearTimeout(closeT);
+    closeT = setTimeout(() => wrap.classList.remove('open'), 170);
+  });
 }
 
 function initSpaces() {
   $$('.sp-ico[data-space]').forEach((b) => b.addEventListener('click', () => setSpace(b.dataset.space)));
+  /* настройки: маленькая кнопка справа от иконок — панель видимости */
   const set = $('#spSettings');
-  if (set) set.addEventListener('click', () => showView('settings'));
+  if (set) set.addEventListener('click', () => {
+    buildSpaceSettings();
+    const panel = $('#spSetPanel');
+    if (panel) panel.classList.toggle('open');
+  });
   const liveToast = () => toast('Лайф-режим — финальный этап плана, готовим позже', 'info', 'LIVE');
   $('#spModeLive').addEventListener('click', liveToast);
   const spdLive = $('#spdLive');
   if (spdLive) spdLive.addEventListener('click', liveToast);
-  // выплывающая панель дока: клики по иконкам пространств и настроек
-  $$('#spdFly .spf-ico').forEach((b) => b.addEventListener('click', () => {
-    if (b.dataset.view) showView(b.dataset.view);
-    else setSpace(b.dataset.space);
-  }));
+  initDockFly();
   // СВАЙП ДВУМЯ ПАЛЬЦАМИ по горизонтали (как в Arc): колёсико с deltaX.
-  // BM11: БЫСТРЕЕ — порог ниже, на вертикаль реагируем смелее, пауза
-  // между свайпами короче: переключение успевает за короткий жест
+  // BM12: РАСПОЗНАНИЕ БЫСТРЕЕ — низкий порог, мягче к вертикали, пауза
+  // между свайпами короче; свайп идёт ТОЛЬКО по видимым пространствам
   let lastSwipe = 0;
   window.addEventListener('wheel', (e) => {
-    if (Math.abs(e.deltaX) < 38 || Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.35) return;
+    if (Math.abs(e.deltaX) < 24 || Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.15) return;
     if (e.target && e.target.closest && e.target.closest(
       '.qt-detail, .fprev-body, .plan-dock, .plot-bar, pre, .modal, .sbx-files')) return;
     const now = Date.now();
-    if (now - lastSwipe < 450) return;
+    if (now - lastSwipe < 280) return;
     lastSwipe = now;
-    const i = SPACES.indexOf(S.space);
+    const vis = S.spacesVisible;
+    const i = vis.indexOf(S.space);
     const next = e.deltaX > 0 ? i + 1 : i - 1;
-    if (next >= 0 && next < SPACES.length) setSpace(SPACES[next], e.deltaX > 0 ? 1 : -1);
+    if (next >= 0 && next < vis.length) setSpace(vis[next], e.deltaX > 0 ? 1 : -1);
   }, { passive: true });
   // окно меняет ширину — глайдер обязан остаться на своей иконке
   window.addEventListener('resize', () => spaceGlider());
@@ -3907,17 +4072,21 @@ function mathParseExpr(src) {
     (o === 'u-') ? 2.2 : (o === '^') ? 3 : 0;
   const right = (o) => o === '^';
   let prev = null;
+  const implicit = () => { if (prev === 'n') ops.push('*'); };
   for (const tk of toks) {
-    if (/^\d/.test(tk)) { out.push(parseFloat(tk)); prev = 'n'; continue; }
+    if (/^\d/.test(tk)) {
+      implicit();                     /* BM12: «2x» = 2*x, «3sin(x)» = 3*sin(x) */
+      out.push(parseFloat(tk)); prev = 'n'; continue;
+    }
     if (/^[a-zA-Z]+$/.test(tk)) {
       const low = tk.toLowerCase();
-      if (low === 'pi') { out.push(Math.PI); prev = 'n'; continue; }
-      if (low === 'e') { out.push(Math.E); prev = 'n'; continue; }
-      if (FUN[low]) { ops.push(low + '('); prev = 'f'; continue; }
-      if (tk === 'x' || tk === 'y') { out.push(tk); prev = 'n'; continue; }
+      if (low === 'pi') { implicit(); out.push(Math.PI); prev = 'n'; continue; }
+      if (low === 'e') { implicit(); out.push(Math.E); prev = 'n'; continue; }
+      if (FUN[low]) { implicit(); ops.push(low + '('); prev = 'f'; continue; }
+      if (tk === 'x' || tk === 'y') { implicit(); out.push(tk); prev = 'n'; continue; }
       /* BK: одиночная буква (t, n, u…) — это параметр: считаем её x,
          иначе «sin(t)» валил график целиком */
-      if (tk.length === 1) { out.push('x'); prev = 'n'; continue; }
+      if (tk.length === 1) { implicit(); out.push('x'); prev = 'n'; continue; }
       throw new Error('неизвестное имя: ' + tk);
     }
     if (tk === '(') { if (prev === 'n') ops.push('*'); ops.push('('); prev = '('; continue; }
@@ -3934,7 +4103,9 @@ function mathParseExpr(src) {
     }
     if ('+-*/^'.includes(tk)) {
       if (tk === '-' && (prev === null || prev === 'o' || prev === '(' || prev === ',')) {
-        ops.push('u-'); prev = 'n'; continue;
+        /* BM12: метка 'u' (не 'n') — после унарного минуса НЕЯВНОГО
+           умножения нет: «-2x» = -(2x), а не -2*x*… с лишней звёздочкой */
+        ops.push('u-'); prev = 'u'; continue;
       }
       while (ops.length) {
         const top = ops[ops.length - 1];
@@ -4198,11 +4369,17 @@ function mountPlotPanels(root) {
    во вкладку). Рабочих пространств (MATH/MUSIC) пока нет — интеграция
    собирается из вкладок; когда пространства появятся, фрагменты
    вольются той же карточкой */
+/* BM12: иконки вкладок — векторные, как в меню (текстовые глифы ◎ ▤ ◇
+   стояли криво на базовой линии) */
 const EMBED_VIEWS = {
-  auto: { name: 'AUTO', sub: 'фоновые задачи', ico: '◎', view: 'auto' },
-  files: { name: 'ФАЙЛЫ', sub: 'песочница диалога', ico: '▤', view: 'files' },
-  memory: { name: 'ПАМЯТЬ', sub: 'что Джарвис помнит', ico: '◇', view: 'memory' },
-  scenarios: { name: 'СЦЕНАРИИ', sub: 'автозапуски', ico: '⚡', view: 'scenarios' },
+  auto: { name: 'AUTO', sub: 'фоновые задачи', view: 'auto',
+    ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="7.2"/><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/></svg>' },
+  files: { name: 'ФАЙЛЫ', sub: 'песочница диалога', view: 'files',
+    ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="4" y="4.5" width="7" height="7" rx="1.4"/><rect x="13" y="4.5" width="7" height="7" rx="1.4"/><rect x="4" y="13.5" width="7" height="7" rx="1.4"/><rect x="13" y="13.5" width="7" height="7" rx="1.4"/></svg>' },
+  memory: { name: 'ПАМЯТЬ', sub: 'что Джарвис помнит', view: 'memory',
+    ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.8l7 4.1v8.2l-7 4.1-7-4.1V7.9z"/></svg>' },
+  scenarios: { name: 'СЦЕНАРИИ', sub: 'автозапуски', view: 'scenarios',
+    ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M13 2.8L5.8 13.4h4.9l-1 7.8 7.5-10.8h-4.8z"/></svg>' },
 };
 const EMBED_TASK_ST = {
   queued: 'в очереди', running: 'работает', paused: 'пауза',
@@ -4250,7 +4427,7 @@ function buildEmbedPanel(panel, spec) {
   const meta = EMBED_VIEWS[spec.view];
   const card = el('div', 'embed-card');
   const head = el('div', 'emb-head');
-  head.innerHTML = '<span class="emb-ico">' + esc(meta.ico) + '</span><b>'
+  head.innerHTML = '<span class="emb-ico">' + (meta.ico || '') + '</span><b>'
     + esc(meta.name) + '</b><span class="emb-sub">'
     + esc(String(spec.title || meta.sub)) + '</span>';
   const open = el('button', 'emb-open', 'Открыть');

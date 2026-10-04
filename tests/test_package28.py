@@ -3259,7 +3259,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.81", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.82", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3842,8 +3842,11 @@ class IterationAGTests(unittest.TestCase):
         self.assertIn(".app.collapsed .main .view{padding-left:76px", dock)
         # AJ: ОДНОВРЕМЕННАЯ анимация — никаких фаз и таймеров
         self.assertIn(".side-folding .chats-block,.side-folding .side-foot{opacity:0;transform:translateX(-14px)}", css)
-        self.assertIn("app.classList.toggle('collapsed', collapsing);", js)
-        self.assertIn("app.classList.toggle('side-folding', collapsing);", js)
+        # BM12: сворачивание — явные шаги: сжать пространства, ПОСЛЕ анимации
+        # погасить (.docked); разворачивание — снять .docked и разжать в след. кадр
+        self.assertIn("app.classList.add('collapsed', 'side-folding');", js)
+        self.assertIn("setTimeout(() => app.classList.add('docked'), 640);", js)
+        self.assertIn("app.classList.remove('docked');", js)
         self.assertNotIn("SIDE_FADE", js)
         self.assertNotIn("SIDE_MORPH", js)
         # направления различаются ТОЛЬКО кривой (AK: .8s, глубже S-образные)
@@ -4274,6 +4277,13 @@ class AiReplySuggestionsTests(unittest.TestCase):
         # применение; прежние «расскажи подробнее»-тройки выглядели шаблоном
         self.assertEqual(talk_items, ["Уточни главное", "Предложи варианты развития",
                                       "Как это применить?"])
+        # BM12: ДЛИННЫЙ ответ без кода — не артефакт. Сводка новостей длинная,
+        # но фенсов в ней нет: «сохрани в файл» на новостях было ошибкой класса
+        news = ("Новости дня. " * 200).strip()
+        self.assertGreater(len(news), 1200)
+        self.assertEqual(agent.suggest_replies("что нового?", news),
+                         ["Уточни главное", "Предложи варианты развития",
+                          "Как это применить?"])
         for one in talk_items:
             self.assertTrue(agent._suggestion_usable(one),
                             "запасная реплика обязана проходить фильтр: %s" % one)
@@ -4601,8 +4611,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.81", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.81", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.82", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.82", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5091,7 +5101,10 @@ class IterationBATests(unittest.TestCase):
         srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
         self.assertNotIn("warmRequest", js)
         self.assertNotIn("warmHover", js)
-        self.assertNotIn("pointerenter", js)
+        # BM12: pointerenter живёт только у док-флайаута пространств
+        if "pointerenter" in js:
+            self.assertIn("wrap.addEventListener('pointerenter'", js)
+            self.assertEqual(js.count("addEventListener('pointerenter'"), 1)
         self.assertNotIn("/api/warm", srv)
         self.assertNotIn("_WARM_SEEN", srv)
         self.assertNotIn('operation="warmup"', srv)
@@ -5198,7 +5211,10 @@ class IterationBCTests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
         self.assertNotIn("warmHover", js)
-        self.assertNotIn("pointerenter", js)
+        # BM12: pointerenter живёт только у док-флайаута пространств
+        if "pointerenter" in js:
+            self.assertIn("wrap.addEventListener('pointerenter'", js)
+            self.assertEqual(js.count("addEventListener('pointerenter'"), 1)
         self.assertNotIn("/api/warm", srv)
 
     def test_bc4_shapes_bigger_spring_gold(self) -> None:
@@ -5249,7 +5265,10 @@ class IterationBDTests(unittest.TestCase):
         self.assertNotIn("hashlib", srv)
         self.assertNotIn("warmRequest", js)
         self.assertNotIn("warmHover", js)
-        self.assertNotIn("pointerenter", js)
+        # BM12: pointerenter живёт только у док-флайаута пространств
+        if "pointerenter" in js:
+            self.assertIn("wrap.addEventListener('pointerenter'", js)
+            self.assertEqual(js.count("addEventListener('pointerenter'"), 1)
 
     def test_bd2_replies_always_three(self) -> None:
         ag = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
@@ -5844,7 +5863,7 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.81", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.82", html)
 
 
 
@@ -5926,7 +5945,7 @@ class IterationBKTests(unittest.TestCase):
         self.assertIn("src.replace(/(^|[^\w])([a-zA-Z])\s*\(([^)]*)\)\s*=/g,", js)
         self.assertIn(".replace(/[·×]/g, '*')", js)
         self.assertIn(".replace(/[−–—]/g, '-')", js)
-        self.assertIn("if (tk.length === 1) { out.push('x');", js)
+        self.assertIn("if (tk.length === 1) { implicit(); out.push('x');", js)
         # спасение формулы из нестандартного ключа
         self.assertIn(
             "const cand = Array.isArray(v) ? v.find((s) => typeof s === 'string') : v;", js)
@@ -5944,7 +5963,7 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.81", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.82", html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -7063,8 +7082,8 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn("function setSpace(name, dir)", js)
         self.assertIn("initSpaces();", js)
         # свайп двумя пальцами: колесо с deltaX, быстрый порог
-        self.assertIn("Math.abs(e.deltaX) < 38", js)
-        self.assertIn("if (now - lastSwipe < 450) return;", js)
+        self.assertIn("Math.abs(e.deltaX) < 24", js)
+        self.assertIn("if (now - lastSwipe < 280) return;", js)
         # старт всегда в CHAT
         self.assertIn("spaceApply('chat');", js)
         # BM11: подчёркивания у выбранного нет — светится; глайдер перетекает
@@ -7107,31 +7126,34 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn("}, 18000);", js)
 
     def test_bm11_budget_button_alignment(self) -> None:
-        """Кнопка лимита: радиус тумблера, крайняя справа, ровно под ускорением."""
+        """Кнопка лимита: перед AGENT, ровно под ускорением; AGENT — под Send."""
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         self.assertIn("width:30px;height:28px;border-radius:20px;", css)
-        self.assertIn("margin-right:51px}", css)
+        self.assertIn("margin-right:2px}", css)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertLess(html.index('id="swAgent"'), html.index('id="tgBudget"'),
-                        "лимит — крайняя правая кнопка ряда тумблеров")
+        # BM12: AGENT крайняя справа (правый край 10px — под Send),
+        # лимит левее него (правый край 61px — под ускорением)
+        self.assertLess(html.index('id="tgBudget"'), html.index('id="swAgent"'),
+                        "лимит стоит перед тумблером AGENT")
 
     def test_bm11_root_degree_lower(self) -> None:
-        """Степень корня ещё ниже и левее; в знаменателе опущена."""
+        """Степень корня в границах самого корня: ниже и левее."""
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("left:-.24em;width:.34em", css)
-        self.assertIn("top:-.44em", css)
-        self.assertIn(".mfr-d .msqrt .msq-i{top:-.4em}", css)
+        self.assertIn("left:-.36em;width:.34em", css)
+        self.assertIn("top:0;font-size:.62em", css)
+        self.assertIn(".mfr-d .msqrt{margin-top:.22em}", css)
 
     def test_bm11_dock_untouched_spaces_flyout(self) -> None:
         """Док: вкладки как раньше + LIVE + текущее пространство с выплывающей панелью."""
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         for marker in ('id="spDock"', 'id="spdLive"', 'id="spdCur"', 'id="spdFly"',
-                       'id="spSettings"', 'id="spGlider"'):
+                       'id="spdCurWrap"', 'class="spd-dash"', 'id="spSettings"',
+                       'id="spGlider"', 'id="spSetPanel"'):
             self.assertIn(marker, html)
-        self.assertIn(".app.collapsed .spaces{display:none}", css)
+        self.assertIn(".app.docked .spaces{display:none}", css)
         self.assertIn(".app.collapsed .sp-dock{display:flex", css)
-        self.assertIn(".spd-cur-wrap:hover .spd-fly,.spd-fly:hover{opacity:1", css)
+        self.assertIn(".spd-cur-wrap.open .spd-fly{opacity:1", css)
 
     def test_bm11_plot_empty_plane_banned(self) -> None:
         """Пустая плоскость запрещена: окно по точкам, честная ошибка."""
@@ -7139,6 +7161,73 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn("ДАННЫЕ ВАЖНЕЕ диапазона из спеки", js)
         self.assertIn("ПУСТАЯ ПЛОСКОСТЬ ЗАПРЕЩЕНА", js)
         self.assertIn("panel._emptyGuard", js)
+
+    def test_bm12_implicit_multiplication(self) -> None:
+        """Парсер формул понимает «2x», «2sin(x)», «-2x» — прежде молча NaN."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("const implicit = () => { if (prev === 'n') ops.push('*'); };", js)
+        # унарный минус помечен 'u' — после него неявного умножения нет
+        self.assertIn("ops.push('u-'); prev = 'u'; continue;", js)
+
+    def test_bm12_news_digest_chips_universal(self) -> None:
+        """Длинная сводка без кода не получает кодовых чипов; дефолт проактивных
+        тоже универсальный."""
+        news = ("Новости дня. Рынки выросли. " * 90).strip()
+        items = agent.suggest_replies("что нового?", news)
+        self.assertNotIn("Сохрани в файл", items)
+        self.assertEqual(items, ["Уточни главное", "Предложи варианты развития",
+                                 "Как это применить?"])
+        # проактивные: без новостных слов — универсальные направления
+        pro = agent.suggest_proactive("сделай отчёт", "готово", ["run_python"])
+        self.assertIn("Уточни главное", pro)
+        self.assertIn("Сделай следующий шаг сам", pro)
+        self.assertNotIn("Что можно улучшить в результате?", pro)
+
+    def test_bm12_media_file_not_link(self) -> None:
+        """Медиа — файлом в диалоге, а не ссылкой."""
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        flat = " ".join(src.split())
+        self.assertIn("МЕДИА ИЗ ИНТЕРНЕТА — ФАЙЛОМ, А НЕ ССЫЛКОЙ", flat)
+        self.assertIn("голая ссылка вместо файла — ошибка", flat)
+        reg = Path("app/jarvis/tools/__init__.py").read_text(encoding="utf-8")
+        self.assertIn("ФАЙЛОМ прямо в диалоге", " ".join(reg.split()))
+
+    def test_bm12_spaces_visibility_switch(self) -> None:
+        """Глазик настроек прячит пространство из меню; скрытое не свайпается."""
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn('id="spSetPanel"', html)
+        self.assertIn("const SPACE_EYE =", js)
+        self.assertIn("function spaceToggleVisible(name)", js)
+        self.assertIn("function spacesFlip(mutate)", js)
+        self.assertIn("'jarvis.spaces.visible'", js)
+        self.assertIn("S.spacesVisible.indexOf(name) < 0) return;", js)
+        self.assertIn(".sp-ico.off{display:none}", css)
+        self.assertIn(".sp-eye.off::after", css)
+        self.assertIn(".sp-set-row.off{opacity:.4;filter:saturate(.3)}", css)
+        # все пространства скрыты: ряд пуст, шестерёнка вверх к LIVE
+        self.assertIn(".spaces.no-spaces .sp-row{display:none}", css)
+        self.assertIn(".spaces.no-spaces .sp-ico.sp-set{top:14px}", css)
+
+    def test_bm12_dock_collapse_squeeze(self) -> None:
+        """Сворачивание в док сжимает пространства плавно; в доке вкладки
+        есть в любом пространстве, надписи про диалоги нет."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn("setTimeout(() => app.classList.add('docked'), 640);", js)
+        self.assertIn("classList.add('collapsed', 'docked');", js)
+        self.assertIn(".side-folding .spaces{opacity:0;transform:scale(.42);", css)
+        self.assertIn(".app.docked .spaces{display:none}", css)
+        self.assertIn(".app.collapsed .space-future{display:none!important}", css)
+        self.assertIn(".app.collapsed .nav.space-off{display:flex!important}", css)
+
+    def test_bm12_space_chrome_instant(self) -> None:
+        """Клик по пространству красит иконки/глайдер мгновенно, не после анимации."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("function updateSpaceChrome(name)", js)
+        setsp = js.split("function setSpace(name, dir)")[1].split("\nfunction ")[0]
+        self.assertIn("updateSpaceChrome(name);", setsp)
 
     def test_bm9_interactive_panels_after_news(self) -> None:
         """После сводки новостей/погоды панели выбора снова уместны."""

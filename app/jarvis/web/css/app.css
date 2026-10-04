@@ -242,34 +242,49 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   padding:0;line-height:1}
 .collapse-btn svg{width:14px;height:14px;display:block}
 
-/* ================= BM11: ПРОСТРАНСТВА (идея из Arc) =================
-   Над чертой — LIVE и мини-иконки пространств: чат — базовое (заполнен
-   синим), выбранное светится БЕЗ подчёркивания, а подсвеченная область —
-   глайдер, который жидко перетекает на другую иконку. Справа от иконок —
-   настройки. Под чертой — вкладки конкретного пространства. */
+/* ================= BM12: ПРОСТРАНСТВА (идея из Arc) =================
+   Над чертой — заметный LIVE (свечение из центра) и мини-иконки
+   пространств: чат — базовое (заполнен, ярко-синий, всегда в тихой
+   рамке), выбранное светится, подсветка-глайдер перетекает по иконкам.
+   Маленькая кнопка настроек прячет пространства (глазик). Сворачивание
+   в док СЖИМАЕТ ряд плавно, зеркально разворачиванию. */
 .brand{border-bottom:0}
 .spaces{display:flex;flex-direction:column;gap:9px;padding:10px 6px 12px;
-  border-bottom:1px solid var(--line)}
-.sp-modes{display:flex;gap:8px}
+  border-bottom:1px solid var(--line);position:relative;max-height:132px;
+  transition:opacity .45s ease,transform .6s cubic-bezier(.5,.35,.15,1),
+    max-height .6s cubic-bezier(.5,.35,.15,1),padding .6s cubic-bezier(.5,.35,.15,1),
+    border-color .45s ease}
+.sp-modes{display:flex;gap:8px;transition:padding .35s cubic-bezier(.3,1.2,.4,1)}
+/* BM12: LIVE ЗАМЕТНЕЕ — свечение из центра, рамка и надпись ярче */
 .sp-mode{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;
-  height:34px;border:1px solid var(--line);border-radius:12px;background:transparent;
-  color:var(--tx3);font:600 10.5px/1 var(--ff);letter-spacing:2.2px;cursor:pointer;
-  transition:all .22s ease;padding:0}
-.sp-mode svg{width:14px;height:14px}
-.sp-mode:hover{border-color:var(--line2);color:var(--tx2)}
+  height:34px;border:1px solid rgba(0,212,255,.34);border-radius:12px;
+  background:radial-gradient(circle at 50% 50%,rgba(0,212,255,.11),
+    rgba(0,212,255,.02) 72%);
+  color:#bfe6f8;font:600 10.5px/1 var(--ff);letter-spacing:2.2px;cursor:pointer;
+  transition:all .22s ease;padding:0;
+  box-shadow:inset 0 0 12px rgba(0,212,255,.09);
+  text-shadow:0 0 9px rgba(0,212,255,.35)}
+.sp-mode svg{width:14px;height:14px;color:var(--cy2);
+  filter:drop-shadow(0 0 4px rgba(0,212,255,.5))}
+.sp-mode:hover{border-color:rgba(0,212,255,.55);color:#e2f5ff}
 .sp-mode.active{border-color:rgba(0,212,255,.45);color:var(--tx);
   background:linear-gradient(180deg,rgba(0,212,255,.14),rgba(0,212,255,.04));
   box-shadow:0 0 14px rgba(0,212,255,.12),inset 0 0 10px rgba(0,212,255,.05)}
 .sp-row{display:flex;gap:6px;justify-content:center;position:relative}
 .sp-ico{position:relative;width:36px;height:34px;border:1px solid transparent;
   border-radius:10px;background:transparent;color:var(--tx3);cursor:pointer;
-  display:grid;place-items:center;transition:color .25s ease,filter .25s ease;padding:0}
+  display:grid;place-items:center;
+  transition:color .25s ease,filter .25s ease,box-shadow .3s ease;padding:0}
 .sp-ico svg{width:17px;height:17px}
-/* CHAT — базовое: круглое сообщение, заполненное и ярко-синее */
-.sp-ico.base{color:var(--cy2)}
+/* BM12: чат — базовое: заполнен, ярко-синий И всегда в тихой рамке —
+   читается основным, даже когда выбрано другое пространство */
+.sp-ico.base{color:var(--cy2);background:rgba(0,212,255,.05);
+  box-shadow:inset 0 0 8px rgba(0,212,255,.05),inset 0 0 0 1px rgba(0,212,255,.16)}
 .sp-ico:hover{color:var(--tx)}
-/* ГЛАЙДЕР: подсвеченная область выбранного пространства. Не принадлежит
-   иконке — живёт отдельным слоем и при переключении морфом перетекает
+/* BM12: скрытое глазиком пространство в меню не живёт */
+.sp-ico.off{display:none}
+/* ГЛАЙДЕР: подсвеченная область выбранного пространства. Живёт
+   отдельно от иконок и при переключении морфом перетекает
    на новую иконку (позицию ставит JS, кривая — с лёгким перелётом) */
 .sp-glider{position:absolute;top:0;height:34px;border-radius:10px;
   background:rgba(0,212,255,.13);box-shadow:inset 0 0 10px rgba(0,212,255,.1),
@@ -280,9 +295,44 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 /* выбранное: ярче и светится — без подчёркивания */
 .sp-ico.sel{color:var(--cy2);filter:drop-shadow(0 0 6px rgba(0,212,255,.55))}
 .sp-ico.base.sel{filter:drop-shadow(0 0 7px rgba(0,212,255,.7))}
-/* настройки — с правого края ряда иконок */
-.sp-ico.sp-set{margin-left:auto;color:var(--tx3)}
+/* BM12: НАСТРОЙКИ ПРОСТРАНСТВ — маленькая кнопка, абсолютная: обычно
+   справа от ряда иконок; когда ВСЕ пространства скрыты — переезжает
+   вверх к LIVE (LIVE сужается влево, освобождая место) */
+.sp-ico.sp-set{position:absolute;right:3px;top:56px;width:28px;height:26px;
+  color:var(--tx3);transition:color .22s ease,top .35s cubic-bezier(.3,1.2,.4,1)}
+.sp-ico.sp-set svg{width:13px;height:13px}
 .sp-ico.sp-set:hover{color:var(--tx2)}
+.spaces.no-spaces .sp-row{display:none}
+.spaces.no-spaces .sp-modes{padding-right:36px}
+.spaces.no-spaces .sp-ico.sp-set{top:14px}
+/* панель видимости: иконка + имя + глазик; скрытое — серое и неактивное */
+.sp-set-panel{position:absolute;right:3px;top:96px;z-index:95;width:196px;
+  display:flex;flex-direction:column;overflow:hidden;
+  max-height:0;opacity:0;pointer-events:none;padding:0;
+  background:rgba(8,16,28,.97);border:1px solid var(--line2);border-radius:13px;
+  box-shadow:0 12px 34px rgba(0,0,0,.55);
+  transition:max-height .32s cubic-bezier(.25,1.1,.4,1),opacity .22s ease,
+    padding .3s ease,top .35s cubic-bezier(.3,1.2,.4,1)}
+.sp-set-panel.open{max-height:210px;opacity:1;pointer-events:auto;padding:6px}
+.spaces.no-spaces .sp-set-panel{top:56px}
+.sp-set-row{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:9px;
+  color:var(--tx2);font:11.5px/1 var(--ff);cursor:pointer;
+  transition:background .18s ease,color .18s ease,opacity .25s ease,filter .25s ease}
+.sp-set-row:hover{background:rgba(0,212,255,.07);color:var(--tx)}
+.sp-set-row .ssr-ico{width:16px;height:16px;color:var(--cy);display:grid;
+  place-items:center;flex:none}
+.sp-set-row .ssr-ico svg{width:15px;height:15px}
+.sp-set-row b{flex:1;font-weight:500;text-align:left}
+.sp-set-row.off{opacity:.4;filter:saturate(.3)}
+.sp-eye{position:relative;width:26px;height:24px;border:1px solid transparent;border-radius:8px;
+  background:transparent;color:var(--tx3);cursor:pointer;display:grid;place-items:center;
+  flex:none;transition:color .2s ease,border-color .2s ease}
+.sp-eye svg{width:14px;height:14px}
+.sp-eye:hover{color:var(--tx2);border-color:var(--line)}
+/* глазик зачёркнут — пространство скрыто из меню */
+.sp-eye.off::after{content:'';position:absolute;left:4px;right:4px;top:50%;height:1.6px;
+  border-radius:2px;background:#e3798d;transform:rotate(-38deg);
+  box-shadow:0 0 5px rgba(227,121,141,.35)}
 /* имя пространства при наведении */
 .sp-ico[data-tip]::before{content:attr(data-tip);position:absolute;
   left:50%;top:calc(100% + 8px);transform:translateX(-50%);white-space:nowrap;
@@ -291,10 +341,10 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   padding:6px 9px;opacity:0;pointer-events:none;transition:opacity .18s ease;
   z-index:80;box-shadow:0 8px 22px rgba(0,0,0,.5)}
 .sp-ico:hover::before{opacity:1}
-/* ================= BM11: ДОК — пространства в доке =================
-   Док не менялся со времён вкладок: в нём только вкладки, иконка LIVE и
-   значок текущего пространства. Наведение на значок плавно выплывает
-   вправо небольшой панелью со всеми пространствами и настройками. */
+/* ================= BM12: ДОК — пространства в доке =================
+   Док не менялся: только вкладки, иконка LIVE и значок текущего
+   пространства с чёрточкой. Наведение — окошко ВЫЛЕТАЕТ из кнопки
+   (иконки разлетаются по местам), живёт пока курсор в области */
 .sp-dock{display:none}
 .spd-live,.spd-cur{width:40px;height:38px;border:1px solid transparent;border-radius:11px;
   background:transparent;color:var(--tx3);cursor:pointer;display:grid;place-items:center;
@@ -302,44 +352,48 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .spd-live svg,.spd-cur svg{width:17px;height:17px}
 .spd-live:hover{color:var(--cy2);background:rgba(0,212,255,.09)}
 .spd-cur{color:var(--cy2)}
+/* чёрточка под иконкой текущего пространства — как над LIVE */
+.spd-dash{display:block;width:20px;height:1px;border-radius:1px;
+  background:rgba(0,212,255,.22);margin:3px auto 2px}
 .spd-cur-wrap{position:relative}
-.spd-fly{position:absolute;left:calc(100% + 14px);top:50%;display:flex;align-items:center;
-  gap:4px;padding:5px 6px;border-radius:13px;background:rgba(8,16,28,.96);
+.spd-fly{position:absolute;left:calc(100% + 8px);top:50%;display:flex;align-items:center;
+  gap:5px;padding:6px 8px;border-radius:14px;background:rgba(8,16,28,.96);
   border:1px solid var(--line2);box-shadow:0 12px 34px rgba(0,0,0,.55);
-  transform:translate(-10px,-50%);opacity:0;pointer-events:none;z-index:90;
-  transition:transform .26s cubic-bezier(.25,1.2,.4,1),opacity .2s ease}
-.spd-cur-wrap:hover .spd-fly,.spd-fly:hover{opacity:1;pointer-events:auto;
-  transform:translate(0,-50%)}
+  opacity:0;pointer-events:none;z-index:90;
+  transform:translate(-8px,-50%) scale(.55);transform-origin:left center;
+  transition:transform .3s cubic-bezier(.25,1.25,.4,1),opacity .2s ease}
+.spd-cur-wrap.open .spd-fly{opacity:1;pointer-events:auto;
+  transform:translate(0,-50%) scale(1)}
+/* мостик: курсор свободно проходит от кнопки к окошку */
+.spd-fly::before{content:'';position:absolute;right:100%;top:0;bottom:0;width:18px}
 .spf-ico{position:relative;width:34px;height:32px;border:1px solid transparent;border-radius:9px;
   background:transparent;color:var(--tx3);cursor:pointer;display:grid;place-items:center;
-  transition:color .22s ease,background .22s ease,transform .26s cubic-bezier(.25,1.2,.4,1),
-    opacity .2s ease;padding:0;opacity:0;transform:translateX(-6px)}
+  transition:color .22s ease,background .22s ease;padding:0}
 .spf-ico svg{width:16px;height:16px}
-.spd-cur-wrap:hover .spf-ico,.spd-fly:hover .spf-ico{opacity:1;transform:none}
-/* иконки выплывают по очереди — панель «наливается» слева направо */
-.spd-cur-wrap:hover .spf-ico:nth-child(1),.spd-fly:hover .spf-ico:nth-child(1){transition-delay:.04s}
-.spd-cur-wrap:hover .spf-ico:nth-child(2),.spd-fly:hover .spf-ico:nth-child(2){transition-delay:.08s}
-.spd-cur-wrap:hover .spf-ico:nth-child(3),.spd-fly:hover .spf-ico:nth-child(3){transition-delay:.12s}
-.spd-cur-wrap:hover .spf-ico:nth-child(5),.spd-fly:hover .spf-ico:nth-child(5){transition-delay:.16s}
 .spf-ico:hover{color:var(--tx);background:rgba(0,212,255,.1)}
-.spf-ico.base{color:var(--cy2)}
 .spf-ico.sel{color:var(--cy2);filter:drop-shadow(0 0 5px rgba(0,212,255,.5))}
-.spf-div{width:1px;height:22px;background:var(--line2);margin:0 3px}
 .spf-ico[data-tip]::before{content:attr(data-tip);position:absolute;
   left:50%;top:calc(100% + 9px);transform:translateX(-50%);white-space:nowrap;
   font:10.5px/1 var(--ff);color:var(--tx2);background:rgba(8,16,28,.96);
   border:1px solid var(--line2);border-radius:8px;padding:5px 8px;opacity:0;
   pointer-events:none;transition:opacity .18s ease;z-index:80}
 .spf-ico:hover::before{opacity:1}
-/* в доке пространства скрываются: док — только вкладки + LIVE + текущее */
-.app.collapsed .spaces{display:none}
+/* BM12: в доке пространства скрыты — но НЕ мгновенно: класс .docked
+   ставится ПОСЛЕ анимации сжатия (см. .side-folding ниже) */
+.app.docked .spaces{display:none}
 .app.collapsed .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;
   margin:0 6px;padding:4px 0;
   animation:spDockIn .3s ease .2s backwards}
 @keyframes spDockIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
-/* сворачивание: пространства гаснут в общий такт с диалогами */
-.spaces{transition:opacity .25s ease}
-.side-folding .spaces{opacity:0;transform:translateX(-10px)}
+/* BM12: СЖАТИЕ ПРИ СВОРАЧИВАНИИ — зеркально разжатию: ряд не пропадает
+   резко, а сжимается (scale + высота в ноль) той же кривой, что меню */
+.side-folding .spaces{opacity:0;transform:scale(.42);max-height:0;
+  padding-top:0;padding-bottom:0;border-bottom-color:transparent;
+  overflow:hidden;pointer-events:none}
+/* BM12: в доке вкладки есть ВСЕГДА — и в других пространствах;
+   надпись про диалоги пространства в доке не живёт */
+.app.collapsed .space-future{display:none!important}
+.app.collapsed .nav.space-off{display:flex!important}
 /* содержимое сайдбара ПОД чертой принадлежит пространству */
 .space-off{display:none!important}
 .space-future{padding:16px 14px;font-size:11.5px;color:var(--tx3);line-height:1.5}
@@ -1316,15 +1370,14 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    Теперь индекс выровнен по правому краю узкой зоны у кончика:
    узкий стоит у носика, широкий растёт ВЛЕВО — как в настоящей
    математике, и никогда не задевает штрих */
-.msqrt .msq-i{position:absolute;left:-.24em;width:.34em;text-align:right;
-  top:-.44em;font-size:.62em;opacity:.85;z-index:1;line-height:1;
+.msqrt .msq-i{position:absolute;left:-.36em;width:.34em;text-align:right;
+  top:0;font-size:.62em;opacity:.85;z-index:1;line-height:1;
   white-space:nowrap}
-/* BM11: СТЕПЕНЬ ЕЩЁ НИЖЕ и чуть левее — не задевает верхнюю черту
-   корня (степень висит над носиком, где черты ещё нет).
-   И корень в ЗНАМЕНАТЕЛЕ дроби чуть опущен: его черта больше не
-   наезжает на знак дроби */
+/* BM12: СТЕПЕНЬ ОПУЩЕНА В ГРАНИЦЫ САМОГО КОРНЯ: верхняя граница степени
+   не поднимается выше верхней границы корня (черты она не задевает —
+   висит левее носика, где черты ещё нет). И корень в ЗНАМЕНАТЕЛЕ дроби
+   чуть опущен: его черта больше не наезжает на знак дроби */
 .mfr-d .msqrt{margin-top:.22em}
-.mfr-d .msqrt .msq-i{top:-.4em}
 .math-block .mop,.math-inline .mop{padding:0 3px;color:#9fd8f2}
 .mfn{font-style:normal;padding:0 2px 0 4px}
 .mtext{font-style:normal}
@@ -1416,7 +1469,9 @@ sup.msup,sub.msub{font-size:.72em}
   background:linear-gradient(180deg,rgba(0,40,60,.34),rgba(0,20,34,.34));
   box-shadow:inset 0 0 24px rgba(0,200,240,.06);overflow:hidden}
 .emb-head{display:flex;align-items:center;gap:8px;padding:9px 12px;
-  border-bottom:1px solid rgba(0,200,240,.14)}
+  border-bottom:1px solid rgba(0,200,240,.14);
+  /* BM12: шапка МЕНЕЕ прозрачна, чем тело — имя вкладки читается твёрже */
+  background:rgba(9,20,33,.62)}
 .emb-head .emb-ico{width:15px;height:15px;color:var(--cy);flex:none;
   display:grid;place-items:center}
 .emb-head .emb-ico svg{width:15px;height:15px}
@@ -3292,9 +3347,9 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   .toggles{gap:4px;padding-left:8px;padding-right:8px}
   .toggle{padding:0 8px;font-size:10.5px}
   .agent-switch{padding:0;gap:5px;font-size:10px}
-  /* BM11: ряд тумбелов сузился на 2px справа — лимит остаётся ровно
-     под ускорением (61px от края), а не уезжает на пару пикселей */
-  .budget-btn{margin-right:53px}
+  /* BM12: мобильный ряд тумбелов шире на 2px (паддинг 8) — лимит
+     остаётся ровно под ускорением */
+  .budget-btn{margin-right:4px}
 }
 /* Пауза без задач: мутная и некликабельная — ставить паузу нечему */
 #autoPauseBtn.idle{opacity:.32;cursor:default;filter:saturate(.3)}
@@ -3305,10 +3360,10 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .budget-btn{position:relative;width:30px;height:28px;border-radius:20px;border:1px solid var(--line);
   background:transparent;cursor:pointer;color:var(--tx3);display:flex;align-items:center;
   justify-content:center;padding:0;transition:all .2s ease;
-  /* BM11: ровно ПОД кнопкой ускорения. Кнопка крайняя справа в ряду
-     тумблеров (после AGENT): правый край = паддинг ряда (10) + отступ 51
-     = 61px от края, как у ускорения (10 паддинг + Send 42 + зазор 9) */
-  margin-right:51px}
+  /* BM12: лимит ПЕРЕД тумблером AGENT: правый край кнопки = 61px от
+     края — ровно под ускорением (10 паддинг + Send 42 + зазор 9);
+     сам AGENT крайний справа (10px) — ровно под Send */
+  margin-right:2px}
 .budget-btn:hover{border-color:var(--line2);color:var(--tx2)}
 .budget-coin{font-weight:800;font-size:14px;line-height:1}
 /* активный лимит: жёлтая монета + пульс ТОЧЬ-В-ТОЧЬ как у точки

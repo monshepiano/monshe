@@ -1154,8 +1154,8 @@ function testRussianImageAndHudFollowupContract() {
     'the A letter must live ON the switch knob itself');
   assert(!/agent-switch-label/.test(html), 'no caption floats beside the AGENT track anymore');
   const budgetAt = html.indexOf('id="tgBudget"', togglesAt);
-  assert(budgetAt > 0 && budgetAt > agentAt,
-    'BM11: the ruble-limit button is the rightmost control (after AGENT) so its right edge lands exactly beneath the boost button');
+  assert(budgetAt > 0 && budgetAt < agentAt,
+    'BM12: the budget button sits before AGENT — its right edge lands exactly beneath the boost button, AGENT beneath Send');
   assert(!/<button[^>]+id="tgAgent"/.test(html));
   assert(/\.toggle\s*\{[^}]*height:28px[^}]*padding:0 12px/s.test(css));
   assert(/\.agent-switch\s*\{[^}]*height:28px[^}]*display:flex[^}]*border:0[^}]*background:transparent/s.test(css) &&
@@ -2665,13 +2665,13 @@ function testIterationBKContracts() {
     css.includes('.msqrt::after{content:\'\';position:absolute;left:.35em;right:0;top:-.7px;') &&
     css.includes('height:1.4px;background:rgba(190,235,255,.85)') &&
     !css.includes('.msq-b') && !css.includes('aspect-ratio:11/24') && !css.includes('border-top:1.4px') &&
-    css.includes('.msqrt .msq-i{position:absolute;left:-.24em;width:.34em;text-align:right;'),
+    css.includes('.msqrt .msq-i{position:absolute;left:-.36em;width:.34em;text-align:right;'),
     'BM3: the svg is cropped at the tip (no dead width — the radicand sits right behind the nose), the bar starts at the tip, and a wide root index grows LEFT, never onto the stroke');
   // BK: ГРАФИК-ИНТЕРПРЕТАТОР — z(x,y)=, юникод-математика, спасение формул
   assert(js.includes("src.replace(/(^|[^\\w])([a-zA-Z])\\s*\\(([^)]*)\\)\\s*=/g,") &&
     js.includes(".replace(/[·×]/g, '*')") &&
     js.includes('.replace(/−|–|—/g, '-')') &&
-    js.includes("if (tk.length === 1) { out.push('x');") &&
+    js.includes("if (tk.length === 1) { implicit(); out.push('x');") &&
     js.includes('const cand = Array.isArray(v) ? v.find((s) => typeof s === \'string\') : v;'),
     'BK: the plot interpreter reads f(x,y)= definitions, unicode math, and salvages formulas');
   // BK: ПАН ПЕРЕЖИВАЕТ ПЕЧАТЬ — пересборка хвоста возвращает pointer capture
@@ -2896,9 +2896,9 @@ function testIterationBM9Contracts() {
     'BM10: folders animate via the JS waltz alone — no CSS transition fighting it at the end');
   // BM10: степень корня — ниже и левее: не залезает за черту корня;
   // корень в ЗНАМЕНАТЕЛЕ дроби опущен (не наезжает на знак дроби)
-  assert(css.includes('.msqrt .msq-i{position:absolute;left:-.24em;width:.34em') &&
-    css.includes('top:-.44em') && css.includes('.mfr-d .msqrt{margin-top:.22em}'),
-    'BM11: the root degree sits lower still and slightly more left — never touching the bar; a root in the denominator drops below the fraction bar');
+  assert(css.includes('.msqrt .msq-i{position:absolute;left:-.36em;width:.34em') &&
+    css.includes('top:0;font-size:.62em') && css.includes('.mfr-d .msqrt{margin-top:.22em}'),
+    'BM12: the root degree stays INSIDE the root bounds — its top never above the root top; a root in the denominator drops below the fraction bar');
   // BM9: 3D — ЛКМ вращает, ПКМ пан; короткий ПКМ — обычное меню
   const p3 = js.split('function buildPlot3Panel(')[1].split('\nfunction ')[0];
   assert(p3.includes("(e.button === 0 || e.button === 1) ? 'rot' : (e.button === 2 ? 'pan' : null)"),
@@ -2933,12 +2933,12 @@ function testIterationBM10Contracts() {
     js.includes('function setSpace(name, dir)') &&
     js.includes('function initSpaces()') &&
     js.includes("window.addEventListener('wheel'") &&
-    js.includes('Math.abs(e.deltaX) < 38') &&
+    js.includes('Math.abs(e.deltaX) < 24') &&
     js.includes("spaceApply('chat');"),
-    'BM11: spaces switch by tap or a fast two-finger swipe; the app always boots into CHAT');
+    'BM12: spaces switch by tap or a fast two-finger swipe; the app always boots into CHAT');
   // под чертой — вкладки пространства; чат — базовое: заполнен и синий
   assert(js.includes("$$('.nav, .chats-block').forEach((n) => n.classList.toggle('space-off', !isChat));") &&
-    css.includes('.sp-ico.base{color:var(--cy2)}') &&
+    css.includes('.sp-ico.base{color:var(--cy2);background:rgba(0,212,255,.05);') &&
     !css.includes('.sp-ico.sel::after') &&
     css.includes('.sp-mode.active{'),
     'BM11: below the line the tabs belong to the space; the chat icon is the filled bright-blue base, the selected one glows with no underline');
@@ -2962,29 +2962,29 @@ function testIterationBM10Contracts() {
   assert(!pyAgent.includes('НЕ показывай ui для') &&
     pyAgent.includes('НЕ выставляй панель'),
     'BM10: interactives are never banned — the only ban is repeating an already-answered panel');
-  // BM11: кнопка лимита — под ускорением, радиус как у тумблера
+  // BM12: кнопка лимита — перед AGENT, радиус как у тумблера, под ускорением
   assert(css.includes('.budget-btn{position:relative;width:30px;height:28px;border-radius:20px;') &&
-    css.includes('margin-right:51px}') &&
-    html.indexOf('id="swAgent"') < html.indexOf('id="tgBudget"'),
-    'BM11: the budget button is the rightmost control (after AGENT), pill-radius like the toggles, right edge exactly beneath the boost button');
+    css.includes('margin-right:2px}') &&
+    html.indexOf('id="tgBudget"') < html.indexOf('id="swAgent"'),
+    'BM12: the budget button precedes AGENT — pill-radius, right edge exactly beneath the boost button, AGENT beneath Send');
 }
 
 function testIterationBM11Contracts() {
   // ДОК: пространств в доке нет — вкладки как раньше + LIVE + текущее
   assert(html.includes('id="spDock"') && html.includes('id="spdLive"') &&
     html.includes('id="spdCur"') && html.includes('id="spdFly"') &&
-    css.includes('.app.collapsed .spaces{display:none}') &&
+    css.includes('.app.docked .spaces{display:none}') &&
     css.includes('.app.collapsed .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;'),
-    'BM11: the dock stays as it was — tabs plus a LIVE icon and the current-space icon with a flyout');
-  // выплывающая панель: наведение плавно выплывает вправо
-  assert(css.includes('.spd-cur-wrap:hover .spd-fly,.spd-fly:hover{opacity:1;pointer-events:auto;') &&
-    css.includes('left:calc(100% + 14px)'),
-    'BM11: hovering the current-space icon slides a small panel out to the right');
-  // настройки — с правого края иконок (в ряду и в выпадающей панели)
-  assert(html.includes('id="spSettings"') &&
-    css.includes('.sp-ico.sp-set{margin-left:auto') &&
-    html.includes('data-view="settings" data-tip="настройки"'),
-    'BM11: a settings gear sits at the right edge of the space icons — in the bar and in the flyout');
+    'BM11/BM12: the dock stays as it was — tabs plus a LIVE icon and the current-space icon with a flyout');
+  // окошко вылетает из кнопки (JS open) и живёт, пока курсор в области
+  assert(css.includes('.spd-cur-wrap.open .spd-fly{opacity:1;pointer-events:auto;') &&
+    css.includes('left:calc(100% + 8px)') &&
+    css.includes('.spd-fly::before{content:\'\';position:absolute;right:100%;top:0;bottom:0;width:18px}'),
+    'BM12: the flyout grows out of the button and stays while the cursor is anywhere inside (bridge covers the gap)');
+  // настройки — маленькая абсолютная кнопка + панель видимости
+  assert(html.includes('id="spSettings"') && html.includes('id="spSetPanel"') &&
+    css.includes('.sp-ico.sp-set{position:absolute;right:3px;top:56px;width:28px;height:26px;'),
+    'BM12: a small settings button sits at the right edge of the icons row, opening the visibility panel');
   // ГЛАЙДЕР: подсветка морфом перетекает на выбранную иконку
   assert(html.includes('id="spGlider"') &&
     js.includes('function spaceGlider()') &&
@@ -2995,10 +2995,10 @@ function testIterationBM11Contracts() {
   assert(js.includes("translateX(' + (-56 * way) + 'px)'") &&
     js.includes("translateX(' + (56 * way) + 'px)'"),
     'BM11: old space exits toward the swipe direction, the new one enters from the opposite side');
-  // свайп быстрее: порог 38, пауза 450
-  assert(js.includes('Math.abs(e.deltaX) < 38 || Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.35') &&
-    js.includes('if (now - lastSwipe < 450) return;'),
-    'BM11: the swipe reacts faster — lower threshold, shorter pause between swipes');
+  // свайп быстрее: BM12 — порог 24, пауза 280
+  assert(js.includes('Math.abs(e.deltaX) < 24 || Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.15') &&
+    js.includes('if (now - lastSwipe < 280) return;'),
+    'BM12: the swipe reacts faster — lower threshold, shorter pause between swipes');
   // ЧИПЫ: универсальный запас вместо шаблона; ожидание покрывает бюджет
   assert(pyAgent.includes('Уточни главное') &&
     pyAgent.includes('Предложи варианты развития') &&
@@ -3029,6 +3029,75 @@ function testIterationBM11Contracts() {
   assert(pyAgent.includes('МИНИ-ВКЛАДКИ') &&
     pyAgent.includes('```embed'),
     'BM11: the agent prompt knows the embed block — mini-tabs appear when the answer discusses tasks/files/memory');
+}
+
+function testIterationBM12Contracts() {
+  // ПАРСЕР: неявное умножение — живой прогон «2x», «-2x», «2sin(x)»
+  const mctx = loadFunctions(['mathParseExpr', 'mathCompile'], { Math });
+  const c2 = (expr, x) => mctx.mathCompile(expr)(x);
+  assert(Math.abs(c2('2x', 3) - 6) < 1e-9 &&
+    Math.abs(c2('-2x', 3) + 6) < 1e-9 &&
+    Math.abs(c2('3', 3) - 3) < 1e-9 &&
+    Math.abs(c2('2sin(x)', Math.PI / 2) - 2) < 1e-9 &&
+    Math.abs(c2('2x^2', 3) - 18) < 1e-9,
+    'BM12: «график 2x и 3» draws BOTH curves — implicit multiplication (2x, 2sin(x), -2x) compiles instead of silent NaN');
+  // ЧИПЫ: длинный ответ без фенсов — не артефакт
+  assert(!pyAgent.includes('len(a) > 1200') &&
+    pyAgent.includes('получала «сохрани в файл»; артефакт определяют только фенсы'),
+    'BM12: a long news digest without fences never gets code chips — only real fences make an artifact');
+  // МЕДИА: файлом, а не ссылкой
+  assert(pyAgent.includes('МЕДИА ИЗ ИНТЕРНЕТА — ФАЙЛОМ, А НЕ ССЫЛКОЙ') &&
+    pyAgent.includes('голая ссылка вместо файла — ошибка'),
+    'BM12: media arrives as a FILE in the chat (like a messenger), a bare link instead is an error');
+  // КОРЕНЬ: степень внутри границ корня
+  assert(css.includes('left:-.36em;width:.34em') &&
+    css.includes('top:0;font-size:.62em'),
+    'BM12: the root degree is down and left, its top edge never above the root itself');
+  // СВАЙП: распознание быстрее; кнопки реагируют мгновенно
+  assert(js.includes('Math.abs(e.deltaX) < 24 || Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.15') &&
+    js.includes('if (now - lastSwipe < 280) return;'),
+    'BM12: swipe recognition is fast — low threshold, gentle vertical guard, short pause');
+  assert(js.includes('function updateSpaceChrome(name)') &&
+    js.split('function setSpace(name, dir)')[1].split('\nfunction ')[0].includes('updateSpaceChrome(name);'),
+    'BM12: tapping a space updates icons and the glider INSTANTLY, not after the slide animation');
+  // ВИДИМОСТЬ: глазик прячет пространство, FLIP передвигает остальные
+  assert(js.includes("const SPACE_EYE =") &&
+    js.includes('function spaceToggleVisible(name)') &&
+    js.includes('function spacesFlip(mutate)') &&
+    js.includes("'jarvis.spaces.visible'") &&
+    js.includes('S.spacesVisible.indexOf(name) < 0) return;'),
+    'BM12: the eye toggle hides a space from the menu (others FLIP symmetrically); hidden spaces cannot be swiped into');
+  assert(css.includes('.sp-ico.off{display:none}') &&
+    css.includes('.sp-eye.off::after') &&
+    css.includes('.sp-set-row.off{opacity:.4;filter:saturate(.3)}') &&
+    css.includes('.spaces.no-spaces .sp-row{display:none}') &&
+    css.includes('.spaces.no-spaces .sp-ico.sp-set{top:14px}') &&
+    css.includes('.spaces.no-spaces .sp-modes{padding-right:36px}'),
+    'BM12: hidden rows grey out with a crossed eye; with all spaces hidden the gear slides up beside LIVE and LIVE narrows left');
+  // СЖАТИЕ ДОКА: плавное, зеркально разворачиванию; вкладки в доке всегда
+  assert(js.includes("setTimeout(() => app.classList.add('docked'), 640);") &&
+    js.includes("classList.add('collapsed', 'docked');") &&
+    css.includes('.side-folding .spaces{opacity:0;transform:scale(.42);') &&
+    css.includes('.app.collapsed .space-future{display:none!important}') &&
+    css.includes('.app.collapsed .nav.space-off{display:flex!important}'),
+    'BM12: collapsing SQUEEZES the spaces row smoothly (docked only after the animation); in the dock tabs always show, no dialogs note');
+  // LIVE ярче + чат — базовое в тихой рамке
+  assert(css.includes('text-shadow:0 0 9px rgba(0,212,255,.35)') &&
+    css.includes('radial-gradient(circle at 50% 50%,rgba(0,212,255,.11)'),
+    'BM12: LIVE glows from its center, brighter text and border');
+  assert(css.includes('.sp-ico.base{color:var(--cy2);background:rgba(0,212,255,.05);') &&
+    !css.includes('.spf-ico.base'),
+    'BM12: the chat icon always carries a quiet frame (base space); in the dock flyout it is not singled out');
+  // ФЛАЙАУТ ДОКА: вылетает из кнопки, иконки разлетаются по местам
+  assert(html.includes('id="spdCurWrap"') && html.includes('class="spd-dash"') &&
+    js.includes('function dockFlyIcons()') &&
+    js.includes("wrap.addEventListener('pointerenter'") &&
+    js.includes("wrap.addEventListener('pointerleave'"),
+    'BM12: the dock flyout bursts out of the current-space button — icons fly to their slots, the dash sits under the icon');
+  // МИНИ-ВКЛАДКИ: векторные иконки, шапка плотнее тела
+  assert(js.includes("ico: '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"") &&
+    css.includes('background:rgba(9,20,33,.62)'),
+    'BM12: embed tab icons are proper vectors; the title bar is more opaque than the body');
 }
 
 function testIterationAXContracts() {
@@ -3129,10 +3198,13 @@ function testIterationBAContracts() {
     act.includes("core.classList.add('dot-act');") &&
     !js.includes("root.classList.add('act')"),
     'BA: dot classes live on the core itself; the .act collision is gone for good');
-  // BD: предпрогрев УДАЛЁН — hover больше не делает скрытых LLM-вызовов
+  // BD: предпрогрев УДАЛЁН — hover больше не делает скрытых LLM-вызовов.
+  // BM12: pointerenter разрешён ТОЛЬКО док-флайауту пространств (не LLM)
+  const peUses = (js.match(/addEventListener\('pointerenter'/g) || []).length;
   assert(!js.includes('warmRequest') && !js.includes('warmHover') &&
-    !js.includes('pointerenter') && !pyServer.includes('/api/warm'),
-    'BA/BD: hover warmup is gone for good — no silent LLM calls on hover');
+    !pyServer.includes('/api/warm') &&
+    (peUses === 0 || (peUses === 1 && js.includes("wrap.addEventListener('pointerenter'"))),
+    'BA/BD: hover warmup is gone for good — the only pointerenter is the dock spaces flyout');
 }
 
 function testIterationBBContracts() {
@@ -3162,11 +3234,13 @@ function testIterationBBContracts() {
 }
 
 function testIterationBCContracts() {
-  // BC: рамка удалена; история статична; прогрев не на кнопке отправки
+  // BC: рамка удалена; история статична; прогрев не на кнопке отправки.
+  // BM12: pointerenter живёт только в док-флайауте пространств
+  const peUsesBC = (js.match(/addEventListener\('pointerenter'/g) || []).length;
   assert(!css.includes('flash-done') && !css.includes('doneFlash') &&
     !css.includes('coreBreathe') &&
-    !js.includes('pointerenter'),
-    'BC/BD: no done frame; history cores static; hover warmup gone entirely');
+    (peUsesBC === 0 || js.includes("wrap.addEventListener('pointerenter'")),
+    'BC/BD: no done frame; history cores static; the only pointerenter is the dock flyout');
   // BC/BD/BG: фигуры ×2.1 — SVG с пружиной; золото ПЛАВНО в кадрах морфа
   assert(css.includes('.dot-shape-svg.sh-fly{animation:dotSvgFly .5s') &&
     css.includes('width:46px;height:46px;') &&
@@ -3178,10 +3252,13 @@ function testIterationBCContracts() {
 }
 
 function testIterationBDContracts() {
-  // BD: прогрев убран ПОЛНОСТЬЮ — ни /api/warm на сервере, ни hover-прогрева
+  // BD: прогрев убран ПОЛНОСТЬЮ — ни /api/warm на сервере, ни hover-прогрева.
+  // BM12: pointerenter остаётся только у док-флайаута пространств
+  const peUsesBD = (js.match(/addEventListener\('pointerenter'/g) || []).length;
   assert(!pyServer.includes('/api/warm') && !pyServer.includes('_WARM_SEEN') &&
-    !js.includes('warmRequest') && !js.includes('pointerenter'),
-    'BD: warmup is completely gone — server and client');
+    !js.includes('warmRequest') &&
+    (peUsesBD === 0 || js.includes("wrap.addEventListener('pointerenter'")),
+    'BD: warmup is completely gone — the only pointerenter is the dock flyout');
   // BE: пустой [] — СБОЙ, а не «чипов нет»: подсказки всегда три
   const sra = pyAgent.split('def suggest_replies_ai(')[1].split('\ndef ')[0];
   assert(!sra.includes('span.finish("empty")') && !sra.includes('return []') &&
@@ -3388,7 +3465,7 @@ function testIterationARContracts() {
     'AS: the relay is cancelled — the dock reactor lives forever');
   // AR: статика больше не кэшируется браузером
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.81'),
+    html.includes('/static/css/app.css?v=1.2.0-beta.82'),
     'AR: statics are always fresh — no more week-old CSS in the browser');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
@@ -3542,8 +3619,12 @@ function testIterationAHContracts() {
     'AH: dock is matte glass, nothing protrudes beyond the pill');
   assert(/--dock-y/.test(js) && /function dockY\(on\)/.test(js) &&
     /side-folding/.test(js) && /side-folding/.test(css) &&
-    /app\.classList\.toggle\('collapsed', collapsing\);/.test(js) &&
-    /app\.classList\.toggle\('side-folding', collapsing\);/.test(js) &&
+    /* BM12: хореография сворачивания/разворачивания — явные шаги:
+       сворачивание сжимает пространства и ПОСЛЕ анимации гасит их (.docked);
+       разворачивание снимает .docked и разжимает в следующий кадр */
+    js.includes("app.classList.add('collapsed', 'side-folding');") &&
+    js.includes("setTimeout(() => app.classList.add('docked'), 640);") &&
+    js.includes("app.classList.remove('docked');") &&
     !/SIDE_FADE/.test(js) && !/SIDE_MORPH/.test(js) &&
     /cubic-bezier\(\.5,\.35,\.15,1\)/.test(dock) &&
     /localStorage\.removeItem\('jarvis\.sidebar2'\)/.test(js),
@@ -3842,8 +3923,9 @@ function testIterationBHContracts() {
   testIterationBM9Contracts();
   testIterationBM10Contracts();
   testIterationBM11Contracts();
+  testIterationBM12Contracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 55 regression groups passed');
+  console.log('package28_frontend_runtime: 56 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
