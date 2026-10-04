@@ -13,6 +13,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
 from .config import CONFIG, LOG_DIR
@@ -135,6 +136,83 @@ class _Foreground:
 def wait_foreground_free(timeout: float = 20.0) -> bool:
     """Подождать, пока закончатся главные ответы. False — время вышло."""
     return _FG_FREE.wait(timeout)
+
+
+# --------------------------------------------------- здоровье провайдеров
+# BM5: ЭПИЗОДИЧЕСКАЯ ДЕГРАДАЦИЯ ПРОВАЙДЕРА — «думает долго, печатает по
+# слову в секунду» при том же коде, что обычно отвечает мгновенно. Единственное,
+# что меняется само по себе, — состояние API провайдера: периоды, когда первый
+# токен приходит через 10-30 секунд, а сами токены капают по одному. Приложение
+# было беззащитно: честно ждало зависшего провайдера и не переключалось.
+# Теперь (1) СТОРОЖ ПЕРВОГО ТОКЕНА: если провайдер молчит дольше 12 секунд
+# и есть резервный — попытка обрывается, запрос уходит к резерву; долгая
+# генерация не страдает (любой токен сбрасывает сторож); (2) ПОРЯДОК
+# ПРОВАЙДЕРОВ ПО ЗДОРОВЬЮ: свежие неудачи/медлительность понижают провайдера
+# в очереди — следующие запросы сразу идут к тому, кто отвечает быстро.
+TTFT_WATCHDOG_S = 12.0          # потолок молчания ДО первого токена (есть резерв)
+_HEALTH_LOCK = threading.Lock()
+_PROVIDER_HEALTH: Dict[str, "deque"] = {}
+_HEALTH_TTL = 600.0             # здоровье живёт 10 минут — эпизоды проходят сами
+_HEALTH_MIN_SAMPLES = 2         # меньше двух опытов — мнение не сложилось
+_HEALTH_DEGRADED_TTFT = 6.0     # медиана TTFT выше — провайдер медленный
+_HEALTH_DEAD_CPS = 12.0         # меньше 12 зн/с печати — провайдер еле жив
+
+
+def _record_provider_health(prov: str, ok: bool, ttft_s: float = 0.0,
+                            cps: float = 0.0) -> None:
+    """Записать исход попытки у провайдера (для адаптивного порядка)."""
+    try:
+        with _HEALTH_LOCK:
+            q = _PROVIDER_HEALTH.setdefault(prov, deque(maxlen=24))
+            q.append((time.monotonic(), bool(ok), float(ttft_s or 0.0),
+                      float(cps or 0.0)))
+    except Exception:
+        pass
+
+
+def _provider_penalty(prov: str) -> int:
+    """Насколько провайдер плох ПО СВЕЖИМ фактам. 0 — претензий нет."""
+    with _HEALTH_LOCK:
+        now = time.monotonic()
+        rows = [(ok, ttft, cps) for (ts, ok, ttft, cps)
+                in _PROVIDER_HEALTH.get(prov, ())
+                if now - ts < _HEALTH_TTL]
+    if len(rows) < _HEALTH_MIN_SAMPLES:
+        return 0
+    ok_rate = sum(1 for r in rows if r[0]) / float(len(rows))
+    ttfts = sorted(r[1] for r in rows if r[0] and r[1] > 0)
+    cps_all = sorted(r[2] for r in rows if r[0] and r[2] > 0)
+    med_ttft = ttfts[len(ttfts) // 2] if ttfts else 0.0
+    med_cps = cps_all[len(cps_all) // 2] if cps_all else 0.0
+    penalty = 0
+    if ok_rate < 0.6:
+        penalty += 2
+    if med_ttft > _HEALTH_DEGRADED_TTFT:
+        penalty += 1 + (1 if med_ttft > 2 * _HEALTH_DEGRADED_TTFT else 0)
+    if 0 < med_cps < _HEALTH_DEAD_CPS:
+        penalty += 1
+    return penalty
+
+
+def _ttft_watchdog_fire(resp: Any, fired: List[bool]) -> None:
+    """Сторож первого токена: закрыть сокет молчащего провайдера."""
+    fired[0] = True
+    try:
+        resp.close()
+    except Exception:
+        pass
+
+
+def provider_order(candidates: List[str]) -> List[str]:
+    """Кандидаты, отсортированные по свежему здоровью (стабильно).
+
+    Провайдеры без претензий держат исходный порядок; провайдер в эпизоде
+    деградации (молчит/медленный/льётся по слову в секунду) опускается ниже.
+    Когда эпизод проходит (окно 10 минут), порядок возвращается сам."""
+    base = list(candidates)
+    if len(base) < 2:
+        return base
+    return sorted(base, key=lambda p: (_provider_penalty(p), base.index(p)))
 
 
 # ------------------------------------------------------------- keep-alive
@@ -596,7 +674,8 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
     # чей-то foreground-стрим, ждём свободного окна (с потолком — без дедлоков)
     if background:
         wait_foreground_free(min(20.0, max(1.0, float(timeout))))
-    providers = [provider] if provider else (active_providers() or ["cloudru"])
+    providers = [provider] if provider else provider_order(
+        active_providers() or ["cloudru"])
     span = telemetry.Span(operation, tier=tier)
     deadline = time.monotonic() + max(0.25, float(timeout))
     last_error: Optional[Exception] = None
@@ -612,6 +691,7 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
         last_provider, last_model = prov, model
         payload = _build_payload(model, messages, tools, False, temperature, max_tokens, prov, tier)
         for attempt in range(2):
+            t_attempt = time.monotonic()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
@@ -641,6 +721,10 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
                 _report_usage(model, pt, ct)
                 choice = (body.get("choices") or [{}])[0]
                 message = choice.get("message") or {}
+                _dur = max(0.001, time.monotonic() - t_attempt)
+                _content = message.get("content") or ""
+                _record_provider_health(prov, True, _dur,
+                                        len(_content) / _dur)
                 span.finish("ok", provider=prov, model=model)
                 return {
                     "content": message.get("content") or "",
@@ -658,6 +742,7 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
                     pass
                 last_error = LLMError("HTTP %s %s: %s" % (exc.code, model, detail))
                 span.retried()
+                _record_provider_health(prov, False)
                 if exc.code in (400, 404, 422) and _drop_unsupported(
                         payload, detail, prov, model):
                     # модель не поняла какой-то параметр (tools или
@@ -668,6 +753,7 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
             except Exception as exc:  # сеть/таймаут
                 last_error = exc
                 span.retried()
+                _record_provider_health(prov, False)
                 remaining = deadline - time.monotonic()
                 if remaining > 0:
                     time.sleep(min(1.2, remaining))
@@ -684,30 +770,47 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
                       _span: Optional[telemetry.Span] = None,
                       should_stop: Optional[Callable[[], bool]] = None) -> Generator[Dict[str, Any], None, None]:
     """Внутренняя реализация; публичная обёртка гарантирует закрытие span."""
-    providers = [provider] if provider else (active_providers() or ["cloudru"])
+    providers = [provider] if provider else provider_order(
+        active_providers() or ["cloudru"])
     span = _span or telemetry.Span(operation, tier=tier)
     last_error: Optional[Exception] = None
     last_provider = ""
     last_model = ""
-    for prov in providers:
+    for prov_idx, prov in enumerate(providers):
         conf = provider_conf(prov)
         if not conf.get("api_key"):
             continue
         model = pick_model(tier, prov)
         last_provider, last_model = prov, model
         span.fields.update({"provider": prov, "model": model})
+        # BM5: сторож armed только при наличии резерва — если резервного
+        # провайдера нет, ждать можно долго: поздний ответ лучше никакого
+        has_fallback = prov_idx < len(providers) - 1
         payload = _build_payload(model, messages, tools, True, temperature, max_tokens, prov, tier)
         # попытка 1 — с инструментами; попытка 2 — без них (если модель их не умеет)
         for attempt in range(2):
             started_output = False
             saw_done = False
+            fired: List[bool] = [False]
+            wd: Dict[str, Any] = {"timer": None}
+            t_attempt = time.monotonic()
+            first_at: Optional[float] = None
             try:
-                # BM4: 45с вместо 75с — потолок ОЖИДАНИЯ, а не работы: сокет
-                # сбрасывается каждым чанком, так что это таймаут на МОЛЧАНИЕ
-                # провайдера. Зависший запрос раньше держал человека в «думаю»
-                # до 75 секунд на каждую попытку.
+                # BM5: ПОТОЛОК МОЛЧАНИЯ 180 С — долгая генерация не ошибка,
+                # сокет сбрасывается каждым чанком, так что это таймаут на
+                # МОЛЧАНИЕ провайдера (пожелание человека: ждать можно долго).
+                # Но зависший ДО ПЕРВОГО ТОКЕНА провайдер выручается раньше:
+                # сторож закрывает сокет через TTFT_WATCHDOG_S секунд, и
+                # запрос уходит к резервному провайдеру. Живая печать сторож
+                # не трогает — первый же токен его отменяет.
                 with _request(conf["base_url"].rstrip("/") + "/chat/completions",
-                              conf["api_key"], payload, timeout=45) as resp:
+                              conf["api_key"], payload, timeout=180) as resp:
+                    if has_fallback:
+                        wd["timer"] = threading.Timer(
+                            TTFT_WATCHDOG_S, _ttft_watchdog_fire,
+                            args=(resp, fired))
+                        wd["timer"].daemon = True
+                        wd["timer"].start()
                     acc_content: List[str] = []
                     acc_reasoning: List[str] = []
                     tool_acc: Dict[int, Dict[str, Any]] = {}
@@ -772,6 +875,14 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
                                 if fn.get("arguments"):
                                     slot["arguments"] += fn["arguments"]
                                     yield {"type": "tool_partial", "name": slot["name"], "args": slot["arguments"]}
+                        if started_output and wd["timer"] is not None:
+                            # BM5: модель подала первый знак жизни — сторож
+                            # первого токена отменяется, дальше живёт обычный
+                            # потолок молчания
+                            wd["timer"].cancel()
+                            wd["timer"] = None
+                            if first_at is None:
+                                first_at = time.monotonic() - t_attempt
                 # A clean socket EOF is not a completion signal. Before the
                 # first real delta it is safe to try the next provider; after a
                 # delta, fallback would duplicate already-visible output and is
@@ -792,6 +903,11 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
                             "type": "function",
                             "function": {"name": slot["name"], "arguments": slot.get("arguments") or "{}"},
                         })
+                _dur = max(0.001, time.monotonic() - t_attempt)
+                _record_provider_health(
+                    prov, True,
+                    ttft_s=(first_at if first_at is not None else _dur),
+                    cps=len("".join(acc_content)) / _dur)
                 span.finish("ok", provider=prov, model=model)
                 yield {
                     "type": "done",
@@ -811,6 +927,7 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
                     pass
                 last_error = LLMError("HTTP %s: %s" % (exc.code, detail))
                 span.retried()
+                _record_provider_health(prov, False)
                 if (exc.code in (400, 404, 422) and not started_output
                         and _drop_unsupported(payload, detail, prov, model)):
                     # сервер не понял какой-то параметр (reasoning_effort или
@@ -825,12 +942,23 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
             except Exception as exc:
                 last_error = exc
                 span.retried()
+                _record_provider_health(prov, False)
+                if fired[0] and not started_output and has_fallback:
+                    # BM5: сторож закрыл молчащего провайдера — человек видит
+                    # честную строку вместо мёртвого «думаю», запрос уходит
+                    # к резервному провайдеру
+                    yield {"type": "provider_switch", "from": prov}
                 if started_output:
                     span.finish("error", provider=prov, model=model,
                                 error_type=type(exc).__name__)
                     yield {"type": "error", "error": "Поток модели прерван: %s" % exc}
                     return
                 break
+            finally:
+                t = wd["timer"]
+                if t is not None:
+                    t.cancel()
+                    wd["timer"] = None
     span.finish("error", provider=last_provider, model=last_model,
                 error_type=type(last_error).__name__ if last_error else "no_provider")
     yield {"type": "error", "error": "Модели недоступны: %s" % last_error}

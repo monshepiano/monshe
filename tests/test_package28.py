@@ -2634,6 +2634,10 @@ class ImageGenerationContractTests(unittest.TestCase):
 
 
 class LatencyAndResilienceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # BM5: здоровье провайдеров — глобальное состояние, между тестами чисто
+        llm._PROVIDER_HEALTH.clear()
+
     class _Response:
         def __init__(self, lines=(), error=None):
             self.lines = list(lines)
@@ -3255,7 +3259,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.73", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.74", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4590,8 +4594,8 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.73", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.73", html)
+        self.assertIn("/static/css/app.css?v=1.2.0-beta.74", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.74", html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5833,7 +5837,7 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.73", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.74", html)
 
 
 
@@ -5933,7 +5937,7 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.73", html)
+        self.assertIn("/static/js/app.js?v=1.2.0-beta.74", html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -6170,6 +6174,9 @@ class IterationBM4Tests(unittest.TestCase):
     ответа нет ни одного постороннего LLM-вызова, а второстепенные вызовы
     никогда не конкурируют с главным стримом."""
 
+    def setUp(self) -> None:
+        llm._PROVIDER_HEALTH.clear()
+
     def test_foreground_gate_blocks_background_chat(self) -> None:
         import io
         import jarvis.llm as srv
@@ -6252,10 +6259,109 @@ class IterationBM4Tests(unittest.TestCase):
         ideas_src = Path("app/jarvis/ideas.py").read_text(encoding="utf-8")
         self.assertIn('operation="welcome_ideas", background=True', ideas_src)
 
-    def test_stream_socket_timeout_45(self) -> None:
+    def test_stream_socket_timeout_180(self) -> None:
+        # пожелание человека: долгое ожидание — не ошибка; выручает сторож
+        # первого токена, а не короткий обрыв
         llm_src = Path("app/jarvis/llm.py").read_text(encoding="utf-8")
-        self.assertIn("payload, timeout=45) as resp:", llm_src)
-        self.assertNotIn("timeout=75) as resp:", llm_src)
+        self.assertIn("payload, timeout=180) as resp:", llm_src)
+        self.assertNotIn("timeout=45) as resp:", llm_src)
+
+
+class IterationBM5Tests(unittest.TestCase):
+    """BM5 — эпизодическая деградация провайдера («думает долго, печатает
+    по слову в секунду» при обычно мгновенном ответе): сторож первого
+    токена переключает на резервного провайдера, а свежее здоровье
+    провайдеров меняет порядок запросов."""
+
+    def setUp(self) -> None:
+        llm._PROVIDER_HEALTH.clear()
+
+    def test_watchdog_switches_to_backup_provider(self) -> None:
+        import jarvis.llm as lll
+
+        class SlowResp:
+            def __init__(self): self.closed = False
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def close(self): self.closed = True
+            def __iter__(self): return self
+            def __next__(self):
+                time.sleep(0.5)
+                if self.closed:
+                    raise OSError("closed by watchdog")
+                return b"data: [DONE]\n\n"
+
+        delta = ("data: {\"choices\":[{\"delta\":{\"content\":\"ок\"}}]}\n\n"
+                 ).encode("utf-8")
+
+        class FastResp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def close(self): pass
+            def __iter__(self):
+                yield delta
+                yield b"data: [DONE]\n\n"
+
+        lll._PROVIDER_HEALTH.clear()
+        calls = []
+
+        def fake_request(url, key, payload=None, method="POST", timeout=180):
+            calls.append(url)
+            return SlowResp() if len(calls) == 1 else FastResp()
+
+        with mock.patch.object(lll, "TTFT_WATCHDOG_S", 0.2), \
+             mock.patch.object(lll, "active_providers",
+                               return_value=["p_slow", "p_fast"]), \
+             mock.patch.object(lll, "provider_conf",
+                               side_effect=lambda n: {"api_key": "k",
+                                                      "base_url": "http://%s" % n}), \
+             mock.patch.object(lll, "pick_model", return_value="m"), \
+             mock.patch.object(lll, "_request", side_effect=fake_request):
+            events = list(lll.chat_stream(
+                [{"role": "user", "content": "q"}], tier="base"))
+        kinds = [e["type"] for e in events]
+        self.assertIn("provider_switch", kinds,
+                      "молчун обязан сопровождаться событием переключения")
+        sw = next(e for e in events if e["type"] == "provider_switch")
+        self.assertEqual(sw["from"], "p_slow")
+        self.assertTrue(any(k in kinds for k in ("delta", "done")),
+                        "резервный провайдер отвечает вместо молчуна")
+        lll._PROVIDER_HEALTH.clear()
+
+    def test_provider_order_by_fresh_health(self) -> None:
+        import jarvis.llm as lll
+        lll._PROVIDER_HEALTH.clear()
+        # одиночный сбой — не приговор
+        lll._record_provider_health("cloudru", False)
+        self.assertEqual(lll.provider_order(["cloudru", "deepseek"]),
+                         ["cloudru", "deepseek"])
+        # два сбоя — понижение
+        lll._record_provider_health("cloudru", False)
+        self.assertEqual(lll.provider_order(["cloudru", "deepseek"])[0],
+                         "deepseek")
+        # эпизод прошёл — порядок вернулся сам
+        lll._PROVIDER_HEALTH.clear()
+        self.assertEqual(lll.provider_order(["cloudru", "deepseek"]),
+                         ["cloudru", "deepseek"])
+        # медленный первый токен — понижение
+        for _ in range(3):
+            lll._record_provider_health("cloudru", True, ttft_s=9.0, cps=200)
+        lll._record_provider_health("deepseek", True, ttft_s=0.8, cps=180)
+        self.assertEqual(lll.provider_order(["cloudru", "deepseek"])[0],
+                         "deepseek")
+        # печать по слову в секунду — понижение
+        lll._PROVIDER_HEALTH.clear()
+        for _ in range(3):
+            lll._record_provider_health("cloudru", True, ttft_s=1.0, cps=5)
+        lll._record_provider_health("deepseek", True, ttft_s=1.0, cps=150)
+        self.assertEqual(lll.provider_order(["cloudru", "deepseek"])[0],
+                         "deepseek")
+        lll._PROVIDER_HEALTH.clear()
+
+    def test_agent_translates_provider_switch_to_status(self) -> None:
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        self.assertIn('elif etype == "provider_switch":', src)
+        self.assertIn("отвечает медленно — пробую резервную модель", src)
 
 
 if __name__ == "__main__":

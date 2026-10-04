@@ -2819,6 +2819,16 @@ class Agent:
                 if etype == "model":
                     self.model_used = event.get("model", "")
                     yield {"type": "model", "model": event.get("model"), "tier": tier}
+                elif etype == "provider_switch":
+                    # BM5: провайдер молчал до первого токена — сторож закрыл
+                    # попытку и запрос ушёл к резервному. Человек видит честную
+                    # строку вместо мёртвого «думаю» — и знает, что это
+                    # провайдер тормозит, а не он сам что-то сломал
+                    label = {"cloudru": "Cloud.ru", "deepseek": "DeepSeek"}.get(
+                        str(event.get("from") or ""), str(event.get("from") or "провайдер"))
+                    yield {"type": "status",
+                           "text": "%s отвечает медленно — пробую резервную модель" % label,
+                           "phase": "think"}
                 elif etype == "reasoning":
                     # МЫСЛИ НУЖНЫ НЕ ВСЕГДА. Даже в сложном режиме одна короткая
                     # служебная фраза не заслуживает отдельной карточки.
