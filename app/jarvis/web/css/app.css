@@ -1631,8 +1631,14 @@ sup.msup,sub.msub{font-size:.72em}
   transition:color .15s ease,background .15s ease}
 .emb-fx i:hover{color:var(--cy2);background:rgba(0,212,255,.09)}
 .emb-fx i.d:hover{color:#e3798d;background:rgba(227,121,141,.1)}
-.emb-fx .f-edit{width:86px;height:20px;border:1px solid var(--line2);border-radius:6px;
-  background:rgba(0,0,0,.25);color:var(--tx);font-size:11px;padding:0 5px;outline:none}
+/* BM18: поле переименования в мини-вкладке — ТОТ ЖЕ цвет, что на
+   основной вкладке «Файлы» (.fcard input.f-edit). Прежний селектор
+   .emb-fx .f-edit НЕ применялся: инпут встаёт на место .emb-name
+   внутри .emb-row, а не в .emb-fx — и поле оставалось браузерно-
+   белым. Селектор теперь честный */
+.emb-row .f-edit{width:96px;height:20px;border:1px solid var(--line2);border-radius:7px;
+  background:rgba(0,0,0,.4);color:var(--tx);font-size:11px;padding:0 5px;outline:none;
+  font-family:var(--ff)}
 /* BM18: ИЗМЕНЁННЫЙ/НОВЫЙ файл в мини-вкладке — ЗЕЛЁНЫЙ акцент, как
    подсветка карточек на вкладке «Файлы» (rgba(143,179,90)); вспышка
    при появлении и спокойный зелёный тон после */

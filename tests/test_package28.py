@@ -8347,6 +8347,18 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("want_video", body)
         self.assertIn("want_audio", body)
 
+    def test_bm18_rename_input_dark_like_files_tab(self) -> None:
+        """Поле переименования в мини-вкладке ФАЙЛЫ — тот же тёмный
+        цвет, что на основной вкладке (прежде селектор не применялся
+        и поле было браузерно-белым)."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn(".emb-row .f-edit{width:96px;height:20px;"
+                      "border:1px solid var(--line2);border-radius:7px;", css)
+        self.assertIn("background:rgba(0,0,0,.4);color:var(--tx);", css)
+        # прежний селектор (.emb-fx .f-edit) не применялся: инпут живёт
+        # в .emb-row, а не внутри .emb-fx
+        self.assertNotIn(".emb-fx .f-edit{", css)
+
     def test_bm18_memory_tab_guaranteed(self) -> None:
         """«Что ты помнишь обо мне» — вкладка ПАМЯТЬ гарантирована,
         даже если модель прислала битый embed-блок; фронт разбирает
