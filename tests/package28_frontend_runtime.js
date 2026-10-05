@@ -965,6 +965,7 @@ async function testCameraLifecycleOwnershipAndLateResults() {
   const aiBody = new MiniNode('div');
   aiRoot.appendChild(aiBody);
   const sendCtx = loadFunctions(['api', 'camAttachFrame', 'stopStream', 'send'], {
+    fastScrollToBottom() {},
     S: requestState, AbortController, fetch: fetchFake,
     flushTools() {},
     setInterval, clearInterval,
@@ -2671,7 +2672,7 @@ function testIterationBKContracts() {
        размера корня, а не уменьшенного индекса; прежний right:calc уплывал */
     !css.includes('aspect-ratio:11/24') && !css.includes('border-top:1.4px') &&
     !css.includes('right:calc(100% - .98em)') &&
-    css.includes('.msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em;') &&
+    css.includes('.msqrt .msq-i{position:absolute;left:-.04em;bottom:calc(47% + .01em);font-size:.58em;') &&
     css.includes('.msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}') &&
     css.includes('.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}') &&
     !css.includes('msq-box') && !markdown.includes('msq-box') &&
@@ -2817,7 +2818,7 @@ function testIterationBM14Contracts() {
   const pyAuto = fs.readFileSync(path.join(root, 'app/jarvis/auto.py'), 'utf8');
   // КОРНИ: индекс в БОКСЕ базового кегля, прижат к штриху носика
   assert(markdown.includes("'<span class=\"msq-i\">' + mesc(root) + '</span>'") &&
-    css.includes('.msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em;') &&
+    css.includes('.msqrt .msq-i{position:absolute;left:-.04em;bottom:calc(47% + .01em);font-size:.58em;') &&
     css.includes('.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}') &&
     css.includes('.msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}'),
     'BM16: the degree lies above the lower bend (bottom:42%), the svg keeps its native place; a wide degree shifts the whole root by the viewBox-derived pocket (--msq-x)');
@@ -2851,10 +2852,11 @@ function testIterationBM14Contracts() {
     js.includes('function blobToWav16k(') &&
     js.includes("api('/api/transcribe'") &&
     js.includes("mb.classList.add('rec')") &&
-    js.includes('box.value = (base + text)') &&
-    !js.split("$('#micBtn').addEventListener('click'")[1].split('\n});')[0]
+    js.includes('box.value = (base + String(text)') &&
+    js.includes('const DICT_SEG_MS = 3000;') &&
+    !js.split("$('#micBtn').addEventListener('click'")[1].split('\n')[0]
       .includes('openVoiceMode') &&
-    !js.split("$('#micBtn').addEventListener('click'")[1].split('\n});')[0]
+    !js.split("$('#micBtn').addEventListener('click'")[1].split('\n')[0]
       .includes('SpeechRecognition'),
     'BM15: the mic button records via MediaRecorder, sends the wav to the SERVER /api/transcribe (browser ASR is dead in RU) and lands the text in the input; red .rec + wave stays');
   // ЖИВЫЕ КАРТОЧКИ: файл/факт — в момент события
@@ -2896,7 +2898,7 @@ function testIterationBM15Contracts() {
   // промежутка слева; широкая степень сдвигает корень JS-мерой (--msq-x)
   assert(js.includes('function fixRootIndices(root)') &&
     js.includes('--msq-x') &&
-    css.includes('.msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em;') &&
+    css.includes('.msqrt .msq-i{position:absolute;left:-.04em;bottom:calc(47% + .01em);font-size:.58em;') &&
     css.includes('.msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}'),
     'BM16 roots: the degree lies directly above the lower bend; a wide degree shifts the whole root by the viewBox-derived pocket — zero gap on the left');
   // МИНИ-ВКЛАДКИ: покраска и иконки — как у настоящих вкладок меню
@@ -2941,19 +2943,23 @@ function testIterationBM16Contracts() {
   const pyAuto = fs.readFileSync(path.join(root, 'app/jarvis/auto.py'), 'utf8');
   // КОРНИ: степень ПРЯМО НАД НИЖНИМ ЗАГИБОМ, сдвиг — из геометрии viewBox
   const fix = js.split('function fixRootIndices(root)')[1].split('\nfunction ')[0];
-  assert(css.includes('.msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em;') &&
+  assert(css.includes('.msqrt .msq-i{position:absolute;left:-.04em;bottom:calc(47% + .01em);font-size:.58em;') &&
     !css.includes('msq-box') && !markdown.includes('msq-box') &&
+    fix.includes('const b = Math.max(0.47 * H + 0.01, Math.min(degH + 0.02, H - 0.02));') &&
+    fix.includes("ind.style.bottom = (100 * b / H).toFixed(2) + '%';") &&
     fix.includes('const xU = 3.3 + (16 - yU) * (5.9 - 3.3) / 16;') &&
     fix.includes('const pocket = xU * 0.40 / 6.6;') &&
-    fix.includes('const shift = Math.max(0, w + 0.05 - pocket - 0.04);'),
-    'BM16 roots: the degree sits directly above the lower bend; the shift comes from the viewBox geometry itself, so ANY size (nested roots, denominators) works without per-case fixes');
+    fix.includes('const LEFT = -0.05;') &&
+    fix.includes("ind.style.left = (LEFT * fs) + 'px';") &&
+    fix.includes('const shift = Math.max(0, w - LEFT + 0.09 - pocket - 0.02);'),
+    'BM16/BM17 roots: the degree sits clearly above the bend (47%, honest .09em clearance) and is shifted LEFT out of the box in root px; the shift comes from the viewBox geometry itself, so ANY size (nested roots, denominators) works without per-case fixes');
   // МИКРОФОН: родной значок, ховер как у прикрепления, data-url напрямую
   assert(html.includes('<rect x="9" y="2.6" width="6" height="11.2" rx="3"/>') &&
     html.includes('d="M8.8 21h6.4"') &&
     css.includes('#micBtn:hover{color:var(--sky);border-color:rgba(79,150,201,.5)}') &&
     js.includes("const r = await api('/api/transcribe', { audio: wav, language: 'ru' });") &&
-    !js.split("$('#micBtn').addEventListener('click'")[1].split('\n});')[0]
-      .includes('readAsDataURL(wav)'),
+    js.includes('async function dictTranscribeSegment') &&
+    !js.includes('readAsDataURL(wav)'),
     'BM16 mic: the native icon is back (rect capsule + base line), hover matches the attach button, and the wav data-url goes to the server DIRECTLY (the stray FileReader killed every transcription)');
   // МЕДИА: JSON-«вызов» исполняется и вычищается (py-часть — якорями)
   assert(pyAgent.includes('def rescue_show_media_json(') &&
@@ -2963,13 +2969,15 @@ function testIterationBM16Contracts() {
   // МИНИ-ВКЛАДКИ: без описания, объекты, три кнопки файла, настройки
   const bep = js.split('function buildEmbedPanel(panel, spec)')[1].split('\nfunction ')[0];
   assert(!bep.includes('emb-sub') &&
-    css.includes('transform-origin:0 0;animation:embIn .34s') &&
-    css.includes('@keyframes embIn{from{transform:scale(.55,.4);opacity:0}') &&
-    bep.includes('const openObject = (view, sel) => {') &&
-    bep.includes('.task-card[data-task-id=') &&
-    bep.includes('.mem-card[data-key=') &&
-    bep.includes('.scenario-card[data-title=') &&
-    bep.includes('.sset[data-section=') &&
+    css.includes('transform-origin:0 0;animation:embIn .6s cubic-bezier(.22,.61,.25,1) both') &&
+    css.includes('@keyframes embIn{from{transform:scale(.5,.35);opacity:0}') &&
+    css.includes('.embed-card.no-in{animation:none}') &&
+    css.includes('.emb-more{') && css.includes('@keyframes embMoreIn') &&
+    bep.includes('const toggleMore = (row, html) => {') &&
+    bep.includes("row.after(more);") &&
+    bep.includes("toggleMore(row, esc(m.value || ''))") &&
+    bep.includes("(i + 1) + '. '") &&
+    bep.includes('Изменить: вкладка «Настройки»') &&
     bep.includes('openPreview({ name: f.name, size: f.size, url: f.download_url,') &&
     bep.includes('<i class="r" title="Переименовать">✎</i>') &&
     bep.includes('<i class="dl" title="Скачать">↓</i>') &&
@@ -2993,6 +3001,80 @@ function testIterationBM16Contracts() {
     pyAgent.includes('elif name == "schedule_task" and self.chat_id:') &&
     pyAgent.includes('_auto.create_background_task('),
     'BM16 auto: creating a bg task from chat fires the toast + card (router path AND a schedule_task call in a chat run — both real); a state question never becomes a task; a FIRED task is a plain deferred message');
+}
+
+function testIterationBM17Contracts() {
+  // СКРОЛЛ: отправил запрос наверху — мгновенный плавный прыжок к низу
+  const fast = js.split('function fastScrollToBottom(box)')[1].split('\nfunction ')[0];
+  assert(js.includes('function fastScrollToBottom(box)') &&
+    fast.includes('const dur = Math.min(420, 160 + gap * 0.12);') &&
+    fast.includes('const e = 1 - Math.pow(1 - k, 3);') &&
+    fast.includes('if (st.fastRaf) cancelAnimationFrame(st.fastRaf);') &&
+    js.split('async function send(')[1].includes("if (sbox) fastScrollToBottom(sbox);"),
+    'BM17 scroll: sending a message from the top of the dialog FAST-GLIDES to the bottom (ease-out cubic, ~320-420ms, previous RAF cancelled) — the answer is visible immediately');
+  // БРОНЯ: сборка вкладок не может уронить интерфейс; прямой вызов один
+  assert(js.includes('function embedBuildSafe(panel, spec)') &&
+    (js.match(/embedBuildSafe\(panel, spec\)/g) || []).length >= 10 &&
+    /* ровно 2 вхождения: объявление функции + единственный вызов в броне */
+    (js.match(/buildEmbedPanel\(panel, spec\)/g) || []).length === 2 &&
+    js.includes('try {\n        renderTyped(ui);\n      } catch (e) {') &&
+    js.includes('ui.mdEl.textContent = ui.buffer;'),
+    'BM17 armor: every live card rebuild goes through embedBuildSafe (try/catch with a readable fallback), the render call itself is armored — a broken panel can never freeze the UI again');
+  // ДЛИННЫЙ ХВОСТ: ответ без абзацев больше не рендерится квадратично
+  const rt = js.split('function renderTyped(ui)')[1].split('\nfunction ')[0];
+  assert(rt.includes('text.length - base > 2600') &&
+    rt.includes('lastSentenceEnd(text, base + 1200)') &&
+    rt.includes("ui._longFreeze = k;"),
+    'BM17 typer: a paragraph-less answer longer than 2600 chars freezes its tail at the last safe boundary — no more quadratic re-render freeze');
+  // AUTO-КАРТОЧКА: пересборка без переанимации, fingerprint без volatile
+  const bep = js.split('function buildEmbedPanel(panel, spec)')[1].split('\nfunction ')[0];
+  assert(bep.includes("if (panel._embBuilt) card.classList.add('no-in');") &&
+    css.includes('.embed-card.no-in{animation:none}') &&
+    bep.includes("[x.id, x.title, x.status, x.schedule, String(x.result || '').slice(0, 80)]") &&
+    !bep.includes('x.updated_at'),
+    'BM17 auto card: a working task no longer re-unfolds the card every 4s — the sync fingerprint ignores volatile fields (updated_at/progress) and rebuilds with .no-in');
+  // ДИКТОВКА: живые сегменты по 3с, текст в поле сразу, БЕЗ тостов
+  const dstart = js.split('async function dictStart')[1].split('\nfunction ')[0];
+  assert(js.includes('const DICT_SEG_MS = 3000;') &&
+    dstart.includes("if (DICT) { dictSegment(DICT); return; }") &&
+    !dstart.includes('toast(') && !dstart.includes('micHint') &&
+    js.includes('function dictPutText') &&
+    js.split('function dictPutText')[1].split('\nfunction ')[0]
+      .includes('box.value = (base + String(text)'),
+    'BM17 mic: dictation transcribes LIVE in 3s segments straight into the input (second click stops) — zero microphone notifications');
+  // УВЕДОМЛЕНИЕ О ФОНОВОЙ ЗАДАЧЕ: вкладка АВТО — прямо в нём
+  const ta = js.split('function toastAutoCard(text, kind)')[1].split('\nfunction ')[0];
+  assert(js.includes('function toastAutoCard(text, kind)') &&
+    ta.includes('embedBuildSafe(panel, spec)') &&
+    ta.includes('if (panel.contains(ev.target)) return;') &&
+    !ta.includes("setTimeout(() => { t.classList.add('out')") &&
+    js.split("case 'tool_result': {")[1].split("case '")[0]
+      .includes("toastAutoCard('Задача' + (tt ? ' «' + tt + '»' : '') + ' создана — работает в фоне')") &&
+    js.split("case 'background': {")[1].split("case '")[0]
+      .includes("toastAutoCard('Задача «' + ev.title + '» ушла в фон'") &&
+    css.includes('.toast.toast-auto{display:block;max-width:390px;padding:0}') &&
+    css.includes('.toast.toast-auto .emb-body{max-height:236px;overflow:auto}'),
+    'BM17 notification: a background task created via chat gets a notification with the AUTO tab unfolding RIGHT INSIDE it (live card, click-outside to close, no auto-dismiss)');
+  // ШАПКА МИНИ-ВКЛАДКИ: однородный синий; строки не белеют при ховере
+  const head = css.split('.emb-head{')[1].split('}')[0] + css.split('.emb-head{')[1].split('}')[1];
+  const hover = css.split('.emb-row:hover{')[1].split('}')[0];
+  assert(head.includes('background:rgba(16,44,68,.62)') &&
+    !head.includes('linear-gradient') &&
+    !hover.includes('color:var(--tx)'),
+    'BM17 embeds: the tab title bar is a SOLID translucent jarvis-blue (lighter than the body, not a gradient); file rows no longer whiten on hover');
+  // МЕДИА-ПОИСК (py) + schedule_task в чате (py)
+  const pyMedia = fs.readFileSync(path.join(root, 'app/jarvis/tools/media.py'), 'utf8');
+  assert(pyMedia.includes('def _media_from_query(query: str)') &&
+    pyMedia.includes('"%s filetype:mp3" % q') &&
+    pyMedia.includes('"%s filetype:mp4" % q') &&
+    pyMedia.includes('_YOUTUBE_RE.search(link) or _STREAMING_RE.search(link)') &&
+    pyMedia.includes('def show_media(url: str, _depth: int = 0)') &&
+    pyMedia.split('def show_media(url: str, _depth: int = 0)')[1]
+      .includes('return _media_from_query(src)'),
+    'BM17 media: show_media accepts a TEXT query and hunts for a direct file itself (filetype:mp3/mp4 variants, streaming services skipped) — the model no longer has to know how to search');
+  assert(pyAgent.includes('if self.chat_id and not self.task_id:') &&
+    pyAgent.includes('available = list(available) + [_sched["schema"]]'),
+    'BM17 agent: a CHAT run carries the schedule_task tool, so a background request actually CREATES the task instead of just saying «поставил»');
 }
 
 function testIterationAOContracts() {
@@ -3154,7 +3236,7 @@ function testIterationBM9Contracts() {
   // BM10: степень корня — ниже и левее: не залезает за черту корня;
   // корень в ЗНАМЕНАТЕЛЕ дроби опущен (не наезжает на знак дроби)
   /* BM16: степень над нижним загибом — em от корня */
-  assert(css.includes('.msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em;') &&
+  assert(css.includes('.msqrt .msq-i{position:absolute;left:-.04em;bottom:calc(47% + .01em);font-size:.58em;') &&
     css.includes('.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}') &&
     !css.includes('msq-box') &&
     css.includes('.mfr-d .msqrt{margin-top:.22em}'),
@@ -3325,7 +3407,7 @@ function testIterationBM12Contracts() {
   // КОРЕНЬ: степень внутри границ корня
   /* BM16: степень над нижним загибом — em от корня */
   assert(css.includes('.msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}') &&
-    css.includes('.msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em;') &&
+    css.includes('.msqrt .msq-i{position:absolute;left:-.04em;bottom:calc(47% + .01em);font-size:.58em;') &&
     css.includes('.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}') &&
     !css.includes('msq-box'),
     'BM12/BM13/BM16: the root degree lies above the lower bend — down and left, never onto the bracket or the stroke');
@@ -3380,9 +3462,10 @@ function testIterationBM12Contracts() {
     'BM12: the dock flyout bursts out of the current-space button — icons fly to their slots, the dash sits under the icon');
   // МИНИ-ВКЛАДКИ: векторные иконки; шапка ЧУТЬ СВЕТЛЕЕ тела (BM16)
   assert(js.includes("ico: '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"") &&
-    css.includes('background:linear-gradient(180deg,rgba(28,48,72,.92),rgba(19,33,52,.92))') &&
-    !css.includes('background:rgb(10,20,33)'),
-    'BM16: embed tab icons are proper vectors; the title bar is slightly LIGHTER than the body — it stands out');
+    css.includes('background:rgba(16,44,68,.62)') &&
+    !css.includes('background:rgb(10,20,33)') &&
+    !css.includes('linear-gradient(180deg,rgba(28,48,72,.92)'),
+    'BM16/BM17: embed tab icons are proper vectors; the title bar is a SOLID translucent jarvis-blue, slightly lighter than the body — not a gradient, not a light fill');
 }
 
 function testIterationAXContracts() {
@@ -4222,8 +4305,9 @@ function testIterationBHContracts() {
   testIterationBM14Contracts();
   testIterationBM15Contracts();
   testIterationBM16Contracts();
+  testIterationBM17Contracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 60 regression groups passed');
+  console.log('package28_frontend_runtime: 61 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

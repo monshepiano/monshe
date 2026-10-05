@@ -3316,7 +3316,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.88", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.89", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
         # BM14.1: кэш-бустер статики обновляется сборкой сам
         self.assertIn("def _bump_asset_versions(",
                       Path("install/build.py").read_text(encoding="utf-8"))
@@ -3411,14 +3411,29 @@ class IterationAATests(unittest.TestCase):
         # BM14: кнопка микрофона — обычная ДИКТОВКА (голос -> текст в поле);
         # разговор переезжает в LIVE, из чата кнопкой не открывается
         self.assertIn('id="micBtn" data-tip="Диктовка"', html)
-        handler = js.split("$('#micBtn').addEventListener('click'")[1].split("\n});")[0]
-        # BM15: запись -> сервер -> текст (браузерный ASR в РФ не работает)
-        self.assertIn("MediaRecorder", handler)
-        self.assertIn("DICT", handler)
-        self.assertIn("/api/transcribe", handler)
-        self.assertNotIn("SpeechRecognition", handler)
+        # BM17: обработчик тонкий, вся механика — в живой диктовке
+        handler = js.split("$('#micBtn').addEventListener('click'")[1].split("\n")[0]
+        self.assertIn("dictStart()", handler)
         self.assertNotIn("openVoiceMode()", handler)
         self.assertNotIn("closeVoiceMode()", handler)
+        # BM17: ЖИВОЕ распознавание сегментами по ходу речи (не после
+        # отключения) + никаких уведомлений о микрофоне
+        self.assertIn("const DICT_SEG_MS = 3000;", js)
+        dstart = js.split("async function dictStart")[1].split("\nfunction ")[0]
+        self.assertIn("getUserMedia", dstart)
+        self.assertIn("MediaRecorder", dstart)
+        self.assertIn("DICT", dstart)
+        self.assertIn("toast(", js)                       # тосты живут в чате
+        self.assertNotIn("toast(", dstart)                # ...но не у микрофона
+        self.assertNotIn("micHint", dstart)
+        dtr = js.split("async function dictTranscribeSegment")[1].split("\nfunction ")[0]
+        self.assertIn("/api/transcribe", dtr)
+        self.assertIn("blobToWav16k", dtr)
+        self.assertIn("blob.size < 1200", dtr)            # тишина — не слово
+        dput = js.split("function dictPutText")[1].split("\nfunction ")[0]
+        self.assertIn("box.value = (base + String(text)", dput)  # текст в поле СРАЗУ
+        # повторный клик по кнопке — стоп (конец диктовки)
+        self.assertIn("if (DICT) { dictSegment(DICT); return; }", dstart)
         # разговорный режим жив отдельными функциями (для LIVE), не на micBtn
         self.assertIn("function openVoiceMode", js)
         self.assertIn("async function blobToWav16k", js)
@@ -7226,7 +7241,7 @@ class IterationBM8Tests(unittest.TestCase):
         # BM13: степень живёт ВНУТРИ рамки корня — не наезжает на скобку слева
         self.assertIn("msqrt' + (root ? ' msqrt-i' : ''", md)
         # BM16: степень над нижним загибом — см. bm13_root_degree_inside_box
-        self.assertIn(".msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em", css)
+        self.assertIn(".msqrt .msq-i{position:absolute;left:-.04em;bottom:calc(47% + .01em);font-size:.58em", css)
         self.assertIn(".msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}", css)
         self.assertIn(".msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}", css)
         self.assertNotIn("msq-box", css)
@@ -7539,7 +7554,7 @@ class IterationBM13Tests(unittest.TestCase):
         # BM16: степень ПРЯМО НАД НИЖНИМ ЗАГИБОМ (как в настоящем ∛):
         # .msq-i у левого края, низ — над верхом крючка (42% высоты),
         # обёртки .msq-box больше нет
-        self.assertIn(".msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em", css)
+        self.assertIn(".msqrt .msq-i{position:absolute;left:-.04em;bottom:calc(47% + .01em);font-size:.58em", css)
         self.assertIn(".msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}", css)
         self.assertIn(".msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}", css)
         self.assertNotIn("msq-box", css)
@@ -7783,9 +7798,10 @@ class IterationBM14Tests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         head = css.split(".emb-head{")[1].split("}")[0] + \
             css.split(".emb-head{")[1].split("}")[1]
-        self.assertIn(
-            "background:linear-gradient(180deg,rgba(28,48,72,.92),rgba(19,33,52,.92))",
-            head)
+        # BM17: однородный полупрозрачный джарвисовский синий, чуть светлее
+        # тела карточки — НЕ градиент и НЕ светлая заливка
+        self.assertIn("background:rgba(16,44,68,.62)", head)
+        self.assertNotIn("linear-gradient", head)
         self.assertNotIn("background:rgb(10,20,33)", head)
 
     def test_bm14_global_tooltip_overlay(self) -> None:
@@ -7865,17 +7881,22 @@ class IterationBM14Tests(unittest.TestCase):
         self.assertIn('d="M8.8 21h6.4"', html)
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         self.assertIn("#micBtn:hover{color:var(--sky);border-color:rgba(79,150,201,.5)}", css)
+        # BM17: обработчик тонкий; запись -> сегменты -> сервер -> текст
         handler = js.split("$('#micBtn').addEventListener('click'")[1] \
-            .split("\n});")[0]
-        self.assertIn("getUserMedia", handler)
-        self.assertIn("MediaRecorder", handler)
-        self.assertIn("/api/transcribe", handler)
-        self.assertIn("blobToWav16k", handler)
-        self.assertIn("box.value = (base + text)", handler)
-        self.assertNotIn("SpeechRecognition", handler)
+            .split("\n")[0]
+        self.assertIn("dictStart()", handler)
+        dstart = js.split("async function dictStart")[1].split("\nfunction ")[0]
+        self.assertIn("getUserMedia", dstart)
+        self.assertIn("MediaRecorder", dstart)
+        self.assertNotIn("SpeechRecognition", dstart)
+        dtr = js.split("async function dictTranscribeSegment")[1].split("\nfunction ")[0]
+        self.assertIn("/api/transcribe", dtr)
+        self.assertIn("blobToWav16k", dtr)
+        dput = js.split("function dictPutText")[1].split("\nfunction ")[0]
+        self.assertIn("box.value = (base + String(text)", dput)
         # BM16: data-url от blobToWav16k уходит на сервер НАПРЯМУЮ — прежний
         # FileReader.readAsDataURL(строка) валил каждое распознавание
-        self.assertNotIn("readAsDataURL(wav)", handler)
+        self.assertNotIn("readAsDataURL(wav)", js)
 
     def test_bm14_live_card_files_memory_at_event(self) -> None:
         """Файл создан — карточка ФАЙЛЫ сразу; факт — карточка ПАМЯТЬ."""
@@ -7949,18 +7970,25 @@ class IterationBM16Tests(unittest.TestCase):
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         self.assertIn(
-            ".msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em",
+            ".msqrt .msq-i{position:absolute;left:-.04em;bottom:calc(47% + .01em);font-size:.58em",
             css)
         # обёртки-бокса нет ни в рендере, ни в стилях
         self.assertNotIn("msq-box", md)
         self.assertNotIn("msq-box", css)
         fix = js.split("function fixRootIndices(root)")[1].split("\nfunction ")[0]
-        # нижняя линия степени над крючком, но не выше корня
-        self.assertIn("const b = Math.max(0.42 * H + 0.01, Math.min(degH + 0.02, H - 0.02));", fix)
+        # BM17: низ в % высоты корня (em считались бы от .58em степени),
+        # поднят выше (47%), чтобы явно не касаться штриха
+        self.assertIn("const b = Math.max(0.47 * H + 0.01, Math.min(degH + 0.02, H - 0.02));", fix)
+        self.assertIn("ind.style.bottom = (100 * b / H).toFixed(2) + '%';", fix)
+        # вынос влево — честными em корня (px из JS, не CSS-em индекса)
+        self.assertIn("const LEFT = -0.05;", fix)
+        self.assertIn("ind.style.left = (LEFT * fs) + 'px';", fix)
         # карман диагонали выведен из той же геометрии, что и path svg
         self.assertIn("const xU = 3.3 + (16 - yU) * (5.9 - 3.3) / 16;", fix)
         self.assertIn("const pocket = xU * 0.40 / 6.6;", fix)
-        self.assertIn("const shift = Math.max(0, w + 0.05 - pocket - 0.04);", fix)
+        # правый край степени не задевает штрих: честный зазор .09em
+        self.assertIn("const shift = Math.max(0, w - LEFT + 0.09 - pocket - 0.02);", fix)
+        self.assertNotIn("const shift = Math.max(0, w + 0.05 - pocket - 0.04);", fix)
 
     def test_bm16_mic_native_icon_and_direct_datalog(self) -> None:
         """Родной значок микрофона; data-url уходит на сервер напрямую."""
@@ -7972,10 +8000,12 @@ class IterationBM16Tests(unittest.TestCase):
         # ховер — тот же, что у прикрепления файла
         self.assertIn("#attachBtn:hover{color:var(--sky);border-color:rgba(79,150,201,.5)}", css)
         self.assertIn("#micBtn:hover{color:var(--sky);border-color:rgba(79,150,201,.5)}", css)
-        handler = js.split("$('#micBtn').addEventListener('click'")[1].split("\n});")[0]
-        self.assertIn("const r = await api('/api/transcribe', { audio: wav, language: 'ru' });", handler)
+        # BM17: транскрипция сегмента — отдельной функцией (живая диктовка)
+        dtr = js.split("async function dictTranscribeSegment")[1].split("\nfunction ")[0]
+        self.assertIn("const r = await api('/api/transcribe', { audio: wav, language: 'ru' });", dtr)
+        self.assertIn("blobToWav16k", dtr)
         # прежний FileReader.readAsDataURL(строка) валил каждое распознавание
-        self.assertNotIn("readAsDataURL(wav)", handler)
+        self.assertNotIn("readAsDataURL(wav)", js)
 
     def test_bm16_media_json_rescue(self) -> None:
         """JSON-блок {"url": …} исполняется как show_media и исчезает."""
@@ -8027,15 +8057,26 @@ class IterationBM16Tests(unittest.TestCase):
         # описания нет; имя тянется на всю шапку
         self.assertNotIn("emb-sub", bep)
         self.assertIn(".emb-head b{font:600 9.5px/1 var(--ff);letter-spacing:1.9px;color:var(--tx2);", css)
-        # разворачивание из верхней левой точки
-        self.assertIn("transform-origin:0 0;animation:embIn .34s", css)
-        self.assertIn("@keyframes embIn{from{transform:scale(.55,.4);opacity:0}", css)
-        # объекты: задача/факт/сценарий/файл/секция настроек + вспышка
-        self.assertIn("const openObject = (view, sel) => {", bep)
-        self.assertIn(".task-card[data-task-id=", bep)
-        self.assertIn(".mem-card[data-key=", bep)
-        self.assertIn(".scenario-card[data-title=", bep)
-        self.assertIn(".sset[data-section=", bep)
+        # BM17: разворот МЕДЛЕННЫЙ и плавный; повторная сборка НЕ
+        # переанимирует работающую карточку (no-in)
+        self.assertIn("transform-origin:0 0;animation:embIn .6s cubic-bezier(.22,.61,.25,1) both", css)
+        self.assertIn("@keyframes embIn{from{transform:scale(.5,.35);opacity:0}", css)
+        self.assertIn(".embed-card.no-in{animation:none}", css)
+        # BM17: объекты открываются ПРЯМО В ЧАТЕ — разворот под строкой
+        self.assertIn("const toggleMore = (row, html) => {", bep)
+        self.assertIn("const more = el('div', 'emb-more');", bep)
+        self.assertIn("row.after(more);", bep)
+        self.assertIn(".emb-more{", css)
+        self.assertIn("@keyframes embMoreIn", css)
+        # задача: статус + расписание + результат прямо под строкой
+        self.assertIn("следующий запуск: '", bep)
+        self.assertIn("расписание: '", bep)
+        self.assertIn("String(t.result).slice(0, 400)", bep)
+        # факт: значение целиком; сценарий: нумерованные шаги
+        self.assertIn("toggleMore(row, esc(m.value || ''))", bep)
+        self.assertIn("(i + 1) + '. '", bep)
+        # секция настроек: подсказка, где менять
+        self.assertIn("Изменить: вкладка «Настройки» → ' + (TITLES[sec] || 'Настройки')", bep)
         self.assertIn("openPreview({ name: f.name, size: f.size, url: f.download_url,", bep)
         self.assertIn("@keyframes flashIn", css)
         # три кнопки файла: переименовать / скачать / удалить
@@ -8082,6 +8123,118 @@ class IterationBM16Tests(unittest.TestCase):
         self.assertIn("ЗАПРЕЩЕНО «вызывать» show_media JSON-блоком", flat)
         self.assertIn("def rescue_show_media_json(", src)
         self.assertIn("final_text = self._rescue_show_media_json(final_text)", src)
+
+
+class IterationBM17Tests(unittest.TestCase):
+    """BM17: корень выше/левее, живая диктовка, броня настроек, скролл,
+    уведомление с вкладкой АВТО внутри, медиа-поиск, schedule_task в чате."""
+
+    def test_bm17_fast_scroll_on_send(self) -> None:
+        """Отправил запрос наверху — мгновенный плавный прыжок к низу."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("function fastScrollToBottom(box)", js)
+        fast = js.split("function fastScrollToBottom(box)")[1].split("\nfunction ")[0]
+        self.assertIn("const dur = Math.min(420, 160 + gap * 0.12);", fast)
+        self.assertIn("const e = 1 - Math.pow(1 - k, 3);", fast)   # ease-out cubic
+        self.assertIn("if (st.fastRaf) cancelAnimationFrame(st.fastRaf);", fast)
+        # вызов — сразу после addUserMsg, только при отправке (вниз)
+        send = js.split("async function send(")[1]
+        self.assertIn("if (sbox) fastScrollToBottom(sbox);", send)
+        self.assertIn("requestHost.closest('.cam-chat')", send)
+
+    def test_bm17_settings_freeze_armor(self) -> None:
+        """Вкладка настроек НЕ может повесить интерфейс: вся сборка
+        в броне, тайпер под try/catch, длинный хвост замерзает."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("function embedBuildSafe(panel, spec)", js)
+        # все живые пересборки идут только через броню
+        self.assertGreaterEqual(js.count("embedBuildSafe(panel, spec)"), 9)
+        self.assertNotIn("buildEmbedPanel(panel, spec);\n", js.replace(
+            "buildEmbedPanel(panel, spec);\n  } catch (e) {", ""))
+        rt = js.split("function renderTyped(ui)")[1].split("\nfunction ")[0]
+        self.assertIn("ui._longFreeze", rt)
+        self.assertIn("text.length - base > 2600", rt)
+        self.assertIn("lastSentenceEnd(text, base + 1200)", rt)
+        # вызов рендера — в броне: исключение НЕ вешает печать,
+        # сырой текст вываливается как есть и таймер честно гасится
+        self.assertIn("try {\n        renderTyped(ui);\n      } catch (e) {", js)
+        self.assertIn("ui.mdEl.textContent = ui.buffer;", js)
+
+    def test_bm17_auto_card_no_reanimate(self) -> None:
+        """Работающая задача НЕ переанимирует карточку каждые 4с."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        bep = js.split("function buildEmbedPanel(panel, spec)")[1].split("\nfunction ")[0]
+        self.assertIn("if (panel._embBuilt) card.classList.add('no-in');", bep)
+        self.assertIn(".embed-card.no-in{animation:none}", css)
+        # fingerprint без volatile-полей задачи
+        self.assertIn("[x.id, x.title, x.status, x.schedule, "
+                      "String(x.result || '').slice(0, 80)]", bep)
+        self.assertNotIn("x.updated_at", bep)
+
+    def test_bm17_notification_carries_auto_tab(self) -> None:
+        """Уведомление о фоновой задаче: вкладка АВТО разворачивается
+        ПРЯМО В ОБЛАСТИ УВЕДОМЛЕНИЯ, не отдельной всплывашкой."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn("function toastAutoCard(text, kind)", js)
+        ta = js.split("function toastAutoCard(text, kind)")[1].split("\nfunction ")[0]
+        self.assertIn("embedBuildSafe(panel, spec)", ta)
+        self.assertIn("if (panel.contains(ev.target)) return;", ta)
+        self.assertIn("$('＃toasts')".replace("＃", "#"), ta)
+        # оба пути создают уведомление с вкладкой внутри
+        tr = js.split("case 'tool_result': {")[1].split("case '")[0]
+        self.assertIn("toastAutoCard('Задача' + (tt ? ' «' + tt + '»' : '')"
+                      " + ' создана — работает в фоне')", tr)
+        bg = js.split("case 'background': {")[1].split("case '")[0]
+        self.assertIn("toastAutoCard('Задача «' + ev.title + '» ушла в фон'", bg)
+        # не гаснет по таймеру — закрытие только кликом
+        self.assertNotIn("setTimeout(() => { t.classList.add('out')", ta)
+        self.assertIn(".toast.toast-auto{display:block;max-width:390px;padding:0}", css)
+        self.assertIn(".toast.toast-auto .emb-body{max-height:236px;overflow:auto}", css)
+
+    def test_bm17_embed_head_and_rows(self) -> None:
+        """Шапка мини-вкладки — однородный синий; строка файла при ховере
+        НЕ белеет."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        head = css.split(".emb-head{")[1].split("}")[0] + \
+            css.split(".emb-head{")[1].split("}")[1]
+        self.assertIn("background:rgba(16,44,68,.62)", head)
+        self.assertNotIn("linear-gradient", head)
+        hover = css.split(".emb-row:hover{")[1].split("}")[0]
+        self.assertNotIn("color:var(--tx)", hover)
+
+    def test_bm17_media_query_search(self) -> None:
+        """show_media принимает ТЕКСТОВЫЙ запрос и сам ищет прямые файлы."""
+        sys.path.insert(0, "app")
+        try:
+            from jarvis.tools import media as md
+            code = Path("app/jarvis/tools/media.py").read_text(encoding="utf-8")
+            self.assertIn("def _media_from_query(query: str)", code)
+            self.assertIn("def _looks_like_domain(s: str)", code)
+            self.assertIn('"%s filetype:mp3" % q', code)
+            self.assertIn('"%s скачать mp3" % q', code)
+            self.assertIn('"%s filetype:mp4" % q', code)
+            q = code.split("def _media_from_query(query: str)")[1]
+            self.assertIn("_YOUTUBE_RE.search(link) or _STREAMING_RE.search(link)", q)
+            self.assertIn("show_media(link, _depth=1)", q)
+            # не-ссылка при _depth==0 уходит в поиск; домен — под https://
+            sm = code.split("def show_media(url: str, _depth: int = 0)")[1]
+            self.assertIn("return _media_from_query(src)", sm)
+            # пустой запрос — честная ошибка
+            self.assertEqual(md._media_from_query("   ")["ok"], False)
+        finally:
+            sys.path.remove("app")
+
+    def test_bm17_chat_runs_can_schedule(self) -> None:
+        """Чат-прогон получает schedule_task: модель может ДЕЙСТВИТЕЛЬНО
+        поставить фоновую задачу, а не только сказать «поставил»."""
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        flat = " ".join(src.split())
+        self.assertIn("if self.chat_id and not self.task_id:", src)
+        self.assertIn('available = list(available) + [_sched["schema"]]', src)
+        self.assertIn("ПОРУЧЕНИЕ В ФОН", flat)
+        self.assertIn("Не говори «поставил» без вызова", flat)
 
 
 if __name__ == "__main__":

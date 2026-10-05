@@ -1443,18 +1443,11 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    Теперь индекс выровнен по правому краю узкой зоны у кончика:
    узкий стоит у носика, широкий растёт ВЛЕВО — как в настоящей
    математике, и никогда не задевает штрих */
-/* BM16: СТЕПЕНЬ — ПРЯМО НАД НИЖНИМ ЗАГИБОМ, КАК В НАСТОЯЩЕМ ∛.
-   Геометрия знака (viewBox 6.6×24, штрих M.8 13.9 → 3.3 16 → 5.9 0):
-   крючок занимает нижние 33–42% высоты, диагональ поднимается из
-   вершины (3.3, 16) в правый верх. Степень лежит левым краем у самой
-   рамки, её низ — над верхом крючка (bottom:42%), в кармане галочки.
-   Диагональ на этой высоте отстоит от края svg на .22em — если степень
-   шире, JS (fixRootIndices) сдвигает ВЕСЬ корень на вынос (--msq-x):
-   формула выведена из той же геометрии viewBox, поэтому работает для
-   корня любого размера — вложенного, в дроби, крупного блочного.
-   Промежутка слева нет: без степени svg стоит на left:0, с узкой
-   степенью сдвиг почти нулевой — левый край всегда занят делом */
-.msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em;
+/* BM17: степень ПОДНЯТА выше (47% — над крючком с запасом) и смещена
+   левее (left:-.04em — лёгкий вынос за рамку, как в настоящем ∛),
+   чтобы она явно НЕ касалась штриха корня. Сдвиг корня под широкую
+   степень считает fixRootIndices из геометрии viewBox (см. app.js) */
+.msqrt .msq-i{position:absolute;left:-.04em;bottom:calc(47% + .01em);font-size:.58em;
   opacity:.85;z-index:1;line-height:1;white-space:nowrap}
 .msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}
 .msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}
@@ -1554,18 +1547,18 @@ sup.msup,sub.msub{font-size:.72em}
   border:1px solid rgba(0,200,240,.22);
   background:linear-gradient(180deg,rgba(0,40,60,.34),rgba(0,20,34,.34));
   box-shadow:inset 0 0 24px rgba(0,200,240,.06);overflow:hidden;
-  /* BM16: карточка РАЗВОРАЧИВАЕТСЯ из верхней левой точки — плавно,
-     слева направо, как створка */
-  transform-origin:0 0;animation:embIn .34s cubic-bezier(.25,.72,.28,1) both}
-@keyframes embIn{from{transform:scale(.55,.4);opacity:0}
-  55%{transform:scale(1.015,.94);opacity:1}
+  /* BM17: разворачивание из верхней левой точки — МЕДЛЕННЕЕ и ПЛАВНЕЕ */
+  transform-origin:0 0;animation:embIn .6s cubic-bezier(.22,.61,.25,1) both}
+.embed-card.no-in{animation:none}
+@keyframes embIn{from{transform:scale(.5,.35);opacity:0}
+  60%{transform:scale(1.012,.96);opacity:1}
   to{transform:scale(1,1);opacity:1}}
 @media (prefers-reduced-motion:reduce){.embed-card{animation:none}}
 .emb-head{display:flex;align-items:center;gap:7px;padding:5px 10px;
   border-bottom:1px solid rgba(0,200,240,.14);
-  /* BM15: цветовая маркировка и иконки — В ТОЧНОСТИ как у пунктов меню;
-     BM16: область названия ЧУТЬ СВЕТЛЕЕ тела карточки — выделяется */
-  background:linear-gradient(180deg,rgba(28,48,72,.92),rgba(19,33,52,.92))}
+  /* BM17: область названия — ОДНОРОДНЫЙ полупрозрачный джарвисовский
+     синий, просто чуть светлее нижней области (не светлой заливкой) */
+  background:rgba(16,44,68,.62)}
 .emb-head .emb-ico{width:16px;color:var(--cy);flex:none;
   display:grid;place-items:center;font-size:13.5px;line-height:1}
 .emb-head .emb-ico svg{width:14px;height:14px}
@@ -1587,7 +1580,7 @@ sup.msup,sub.msub{font-size:.72em}
 .emb-body::-webkit-scrollbar{width:4px}
 .emb-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;
   font-size:12px;color:var(--tx2);cursor:pointer;transition:background .18s ease}
-.emb-row:hover{background:rgba(0,212,255,.07);color:var(--tx)}
+.emb-row:hover{background:rgba(0,212,255,.07)}
 .emb-row .emb-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--tx3)}
 .emb-row.running .emb-dot{background:#57d98c;box-shadow:0 0 7px rgba(87,217,140,.7)}
 .emb-row.paused .emb-dot{background:#f0be46;box-shadow:0 0 7px rgba(240,190,70,.6)}
@@ -1609,6 +1602,15 @@ sup.msup,sub.msub{font-size:.72em}
 .emb-fx i.d:hover{color:#e3798d;background:rgba(227,121,141,.1)}
 .emb-fx .f-edit{width:86px;height:20px;border:1px solid var(--line2);border-radius:6px;
   background:rgba(0,0,0,.25);color:var(--tx);font-size:11px;padding:0 5px;outline:none}
+/* BM17: разворот объекта ПРЯМО В КАРТОЧКЕ — клик по строке раскрывает
+   детали под ней (задача/факт/сценарий/секция настроек), без ухода
+   во вкладку */
+.emb-more{margin:0 8px 4px 22px;padding:7px 9px;border-radius:8px;
+  background:rgba(0,0,0,.22);font-size:11px;color:var(--tx2);
+  line-height:1.5;white-space:pre-wrap;word-break:break-word;
+  animation:embMoreIn .22s ease-out both}
+@keyframes embMoreIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+.emb-row.open{background:rgba(0,212,255,.09)}
 /* подсветка объекта, открытого из мини-вкладки: строка вспыхивает и гаснет */
 .flash-in{animation:flashIn 1.6s ease-out both}
 @keyframes flashIn{0%,45%{background:rgba(0,212,255,.16);box-shadow:0 0 0 1px rgba(0,212,255,.25) inset}
@@ -2364,6 +2366,15 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .toast.error{border-color:rgba(221,85,102,.45)}.toast.error .ti{color:var(--red)}
 .toast.warn{border-color:rgba(217,164,65,.45)}.toast.warn .ti{color:var(--gold)}
 .toast.info{border-color:rgba(79,150,201,.45)}.toast.info .ti{color:var(--sky)}
+/* BM17: уведомление о фоновой задаче — вкладка АВТО разворачивается
+   ПРЯМО В ОБЛАСТИ УВЕДОМЛЕНИЯ (не отдельной всплывашкой рядом).
+   Не гаснет по таймеру: живая задача не должна исчезать сама */
+.toast.toast-auto{display:block;max-width:390px;padding:0}
+.toast.toast-auto .ta-body{cursor:pointer;padding:11px 15px 9px}
+.toast.toast-auto .ta-cap{font-weight:600;margin-bottom:2px;letter-spacing:.6px;color:var(--cy)}
+.toast.toast-auto .embed-panel{margin:0 10px 10px}
+.toast.toast-auto .embed-card{margin:0;max-width:none}
+.toast.toast-auto .emb-body{max-height:236px;overflow:auto}
 
 /* модалка */
 .modal-back{position:fixed;inset:0;z-index:150;background:rgba(2,5,10,.78);backdrop-filter:blur(7px);

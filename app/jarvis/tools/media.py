@@ -1042,16 +1042,79 @@ _STREAMING_RE = re.compile(
     r"(?:music\.yandex|spotify\.com|zvuk\.com|apple\.com/music|deezer)", re.IGNORECASE)
 
 
+_QUERY_EMBED_HINT = (
+    "ссылка не нужна: покажи запрос текстом или воспользуйся web_search и "
+    "передай show_media найденную страницу/файл")
+
+
+def _looks_like_domain(s: str) -> bool:
+    return bool(re.match(r"^[\w.-]+\.[a-z]{2,}(/|$)", s, re.IGNORECASE))
+
+
+def _media_from_query(query: str) -> Dict[str, Any]:
+    """BM17: show_media умеет и ПОИСК. Модель передаёт текстовый запрос —
+    сами ищем прямые файлы (mp3/mp4) и страницы с медиа, пробуем по
+    очереди, первый успех уходит в чат. Прежде модель «не могла найти
+    ни одного mp3/mp4 в интернете»: она не умеет искать прямые ссылки
+    сама — теперь это дело инструмента."""
+    from . import web as web_tools
+    q = re.sub(r"\s+", " ", str(query or "")).strip()
+    if not q:
+        return {"ok": False, "error": "пустой запрос"}
+    variants = [
+        q,
+        "%s filetype:mp3" % q,
+        "%s скачать mp3" % q,
+        "%s filetype:mp4" % q,
+        "%s mp4 смотреть" % q,
+        "%s видео" % q,
+    ]
+    tried = 0
+    errors = []
+    for v in variants:
+        try:
+            res = web_tools.web_search(v, count=6)
+        except Exception as exc:
+            errors.append(str(exc)[:80])
+            continue
+        for item in (res or {}).get("results") or []:
+            link = str(item.get("url") or "").strip()
+            if not link or not link.lower().startswith("http"):
+                continue
+            if _YOUTUBE_RE.search(link) or _STREAMING_RE.search(link):
+                continue
+            tried += 1
+            if tried > 14:
+                break
+            out = show_media(link, _depth=1)
+            if out.get("ok"):
+                return out
+        if tried > 14:
+            break
+    return {"ok": False,
+            "error": "по запросу «%s» не нашлось медиа, которое ложится "
+                     "прямо в чат (прямой файл или страница с плеером). "
+                     "Попробуй другой запрос или дай конкретную ссылку. %s"
+                     % (q[:60], _QUERY_EMBED_HINT)}
+
+
 def show_media(url: str, _depth: int = 0) -> Dict[str, Any]:
     """Показать человеку медиа из интернета: картинку, аудио или видео.
 
     Видео открывается нативным плеером и сразу воспроизводится (без звука).
-    Принимает И прямую ссылку на файл, И обычную страницу — сам находит
-    в ней медиа (og:video, плеер, ссылку на файл). YouTube в России
+    Принимает прямую ссылку на файл, обычную страницу (сам находит в ней
+    медиа: og:video, плеер, ссылку на файл) и ТЕКСТОВЫЙ ЗАПРОС — тогда
+    сам ищет прямые файлы и страницы с медиа (BM17). YouTube в России
     заблокирован — честно отказываем и предлагаем RuTube/VK Видео."""
     src = str(url or "").strip()
     if not src:
         return {"ok": False, "error": "нужна ссылка на медиа"}
+    # BM17: не ссылка, а текстовый запрос — работаем поиском
+    if (_depth == 0 and not src.lower().startswith(("http://", "https://"))
+            and not _looks_like_domain(src)):
+        return _media_from_query(src)
+    if _depth == 0 and _looks_like_domain(src):
+        src = "https://" + src
     if _YOUTUBE_RE.search(src):
         return {"ok": False,
                 "error": "YouTube в России без VPN недоступен. НЕ давай ссылку "

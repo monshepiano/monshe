@@ -253,6 +253,32 @@ function toast(text, kind, title) {
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 400); }, 5200);
 }
 
+/* BM17: уведомление о фоновой задаче несёт вкладку АВТО ПРЯМО В СЕБЕ:
+   мини-вкладка разворачивается прямо в области уведомления — задачу
+   видно в момент постановки, ходить во вкладку не нужно. Карточка
+   живая (синк каждые 4с, сама чистится после закрытия). Такое
+   уведомление НЕ гаснет по таймеру — у живой задачи нет причины
+   исчезать: закрывается кликом по тексту (вне карточки) */
+function toastAutoCard(text, kind) {
+  const t = el('div', 'toast ' + (kind || 'success') + ' toast-auto');
+  t.innerHTML = '<div class="ta-body"><div class="ta-cap">AUTO</div>'
+    + '<div>' + esc(text) + '</div></div>';
+  const panel = el('div', 'embed-panel');
+  panel.dataset.embed = '{"view": "auto", "title": "что я делаю в фоне"}';
+  let spec = null;
+  try { spec = embedParseSpec(panel.dataset.embed); } catch (e) { spec = null; }
+  if (spec && spec.view) embedBuildSafe(panel, spec);
+  panel.dataset.live = '1';            // отложенный монтер вкладок её не трогает
+  t.appendChild(panel);
+  t.querySelector('.ta-body').title = 'Кликни, чтобы убрать';
+  t.addEventListener('click', (ev) => {
+    if (panel.contains(ev.target)) return;   // жизнь внутри карточки — не закрывает
+    t.classList.add('out');
+    setTimeout(() => t.remove(), 300);
+  });
+  $('#toasts').appendChild(t);
+}
+
 /* BE: включение/отключение инструмента — стильная строка В ЧАТЕ, а не
    всплывашка: остаётся в ленте, и видно, КОГДА режим заработал и когда
    его сняли. Иконка режима + название + состояние, без времени.
@@ -2270,6 +2296,34 @@ function chaseBottom(box, run) {
     }
   };
   requestAnimationFrame(frame);
+}
+
+/* BM17: ОТПРАВКА ИЗ ВЕРХА ДИАЛОГА — БЫСТРЫЙ ПЛАВНЫЙ ПРЫЖОК К НИЗУ.
+   Обычный chase идёт ≤13px/кадр: если человек читал старое messages
+   наверху и отправил запрос, лента «листалась вечность». Здесь —
+   короткая анимация (~320мс, ease-out) сразу к дну: ответ виден
+   с первой секунды, дальше работает обычный тихий догон */
+function fastScrollToBottom(box) {
+  if (!box || !box.scrollHeight) return;
+  const st = (box.__jarvisScroll = box.__jarvisScroll ||
+    { lastTop: box.scrollTop, lastH: box.scrollHeight, autoPend: 0, chasing: false });
+  st.chasing = false;
+  if (st.fastRaf) cancelAnimationFrame(st.fastRaf);
+  const from = box.scrollTop;
+  const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
+  if (gap <= 4) return;
+  const dur = Math.min(420, 160 + gap * 0.12);
+  const t0 = performance.now();
+  const frame = (now) => {
+    if (!box.isConnected) { st.fastRaf = 0; return; }
+    const k = Math.min(1, (now - t0) / dur);
+    const e = 1 - Math.pow(1 - k, 3);            // ease-out cubic
+    const target = box.scrollHeight - box.clientHeight;
+    box.scrollTop = from + (target - from) * e;
+    if (k < 1) st.fastRaf = requestAnimationFrame(frame);
+    else st.fastRaf = 0;
+  };
+  st.fastRaf = requestAnimationFrame(frame);
 }
 
 /* BH: НЕПРЕРЫВНЫЙ ЖИВОЙ ДОГОН. В тихом режиме лента растёт мелкими шагами
@@ -4539,7 +4593,8 @@ function fixRootIndices(root) {
     if (!ind) return;
     const fs = parseFloat(getComputedStyle(m).fontSize) || 16;
     const w = ind.getBoundingClientRect().width / fs;   // em кегля корня
-    /* BM16: степень — ПРЯМО НАД НИЖНИМ ЗАГИБОМ (как в настоящем ∛).
+    /* BM17: степень — над нижним загибом, ПОДНЯТА выше и смещена
+       ВЛЕВО, чтобы явно не касаться штриха (как в настоящем ∛).
        Геометрия знака — ОДИН источник правды: viewBox 6.6×24, штрих
        M.8 13.9 → 3.3 16 → 5.9 0. Крючок занимает нижние 33–42%
        высоты; низ степени держится над его верхом (42%), но не выше
@@ -4550,18 +4605,22 @@ function fixRootIndices(root) {
     const H = m.getBoundingClientRect().height / fs;
     if (!(H > 0.2)) return;
     const degH = ind.getBoundingClientRect().height / fs;
-    const b = Math.max(0.42 * H + 0.01, Math.min(degH + 0.02, H - 0.02));
+    const b = Math.max(0.47 * H + 0.01, Math.min(degH + 0.02, H - 0.02));
     /* низ — в ПРОЦЕНТАХ высоты корня: em здесь считались бы от кегля
        самой степени (.58em) и уплывали почти вдвое */
     ind.style.bottom = (100 * b / H).toFixed(2) + '%';
+    /* вынос степени ВЛЕВО за рамку — в ЧЕСТНЫХ em корня (px): em самого
+       индекса (.58em) считался бы от его кегля и уплывал */
+    const LEFT = -0.05;
+    ind.style.left = (LEFT * fs) + 'px';
     /* x диагонали на нижней линии степени (в viewBox-координатах) */
     let yU = 24 * (1 - b / H);
     if (yU < 0) yU = 0; else if (yU > 24) yU = 24;
     const xU = 3.3 + (16 - yU) * (5.9 - 3.3) / 16;
     const pocket = xU * 0.40 / 6.6;                     // em от края svg
-    /* правый край степени не задевает штрих: зазор .05em;
-       микровынос (до .04em) не двигает корень вовсе */
-    const shift = Math.max(0, w + 0.05 - pocket - 0.04);
+    /* BM17: правый край степени не задевает штрих: честный зазор .09em;
+       микровынос (.02em) корень не двигает */
+    const shift = Math.max(0, w - LEFT + 0.09 - pocket - 0.02);
     m.style.setProperty('--msq-x', shift.toFixed(3) + 'em');
   });
 }
@@ -4678,7 +4737,7 @@ function embedLiveCard(ui, view, title) {
      live='1' запрещает монтеру трогать уже собранную панель */
   let spec = null;
   try { spec = embedParseSpec(panel.dataset.embed); } catch (e) { spec = null; }
-  if (spec && spec.view) buildEmbedPanel(panel, spec);
+  if (spec && spec.view) embedBuildSafe(panel, spec);
   panel.dataset.live = '1';
   /* BM16: карточка ФАЙЛОВ открывается В ПОСЛЕДНЮЮ ОЧЕРЕДЬ — в самый
      низ сообщения, под текст и медиа (плеер важнее списка файлов) */
@@ -4746,13 +4805,34 @@ function mountEmbedPanels(root, isFinal) {
         + '```embed {"view": "auto"}</div>';
       return;
     }
-    buildEmbedPanel(panel, spec);
+    embedBuildSafe(panel, spec);
   });
+}
+
+/* BM17: карточка НИКОГДА не валит интерфейс. Ошибка сборки (любая!)
+   показывается ВНУТРИ панели — приложение живёт, каким бы странным
+   ни был ответ модели. Прежде исключение из buildEmbedPanel
+   поднималось в рендер и могло уронить всю ленту */
+function embedBuildSafe(panel, spec) {
+  try {
+    buildEmbedPanel(panel, spec);
+  } catch (e) {
+    try {
+      panel.innerHTML = '<div class="emb-empty">Не удалось собрать вкладку: '
+        + esc(String((e && e.message) || e)).slice(0, 120) + '</div>';
+    } catch (e2) { /* совсем страховка */ }
+  }
 }
 
 function buildEmbedPanel(panel, spec) {
   const meta = EMBED_VIEWS[spec.view];
   const card = el('div', 'embed-card emb-v-' + spec.view);
+  /* BM17: разворачивание — один раз, при ПЕРВОМ появлении карточки.
+     Синхронизация данных пересобирает карточку без анимации:
+     прежде каждая живая карточка «разворачивалась» заново каждые
+     4 секунды (AUTO с работающей задачей — бесконечно) */
+  if (panel._embBuilt) card.classList.add('no-in');
+  panel._embBuilt = true;
   const head = el('div', 'emb-head');
   /* BM16: описания у мини-вкладок НЕТ — только иконка, имя и «Открыть» */
   head.innerHTML = '<span class="emb-ico">' + (meta.ico || '') + '</span><b>'
@@ -4765,22 +4845,21 @@ function buildEmbedPanel(panel, spec) {
   card.appendChild(body);
   panel.innerHTML = '';
   panel.appendChild(card);
-  /* BM16: из мини-вкладки открывается КОНКРЕТНЫЙ объект — задача в AUTO,
-     сценарий, факт, секция настроек: вкладка раскрывается, объект
-     докручивается в центр и вспыхивает */
-  const openObject = (view, sel) => {
-    showView(view);
-    setTimeout(() => {
-      const node = sel && document.querySelector(sel);
-      if (!node) return;
-      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      node.classList.remove('flash-in');
-      void node.offsetWidth;
-      node.classList.add('flash-in');
-      setTimeout(() => node.classList.remove('flash-in'), 1700);
-    }, 240);
+  /* BM17: клик по строке разворачивает объект ПРЯМО В КАРТОЧКЕ —
+     задача, факт, сценарий или пункт настроек раскрываются под своей
+     строкой в чате, без ухода во вкладку */
+  const toggleMore = (row, html) => {
+    const exist = row.nextElementSibling;
+    if (exist && exist.classList.contains('emb-more')) {
+      exist.remove(); row.classList.remove('open'); return;
+    }
+    $$('.emb-more', body).forEach((n) => n.remove());
+    $$('.emb-row.open', body).forEach((n) => n.classList.remove('open'));
+    const more = el('div', 'emb-more');
+    more.innerHTML = html;
+    row.after(more);
+    row.classList.add('open');
   };
-  const attrSel = (v) => '"' + String(v || '').replace(/(["\\])/g, '\\$1') + '"';
   const fail = (e) => {
     body.innerHTML = '<div class="emb-empty">'
       + esc((e && e.message) || 'не удалось открыть вкладку') + '</div>';
@@ -4801,7 +4880,7 @@ function buildEmbedPanel(panel, spec) {
         const fp = fingerprint(r);
         if (fp === panel._embFp) return;
         panel._embFp = fp;
-        buildEmbedPanel(panel, spec);
+        embedBuildSafe(panel, spec);
       }, () => {});
     }, 4000);
   };
@@ -4824,7 +4903,7 @@ function buildEmbedPanel(panel, spec) {
           run.title = 'Запустить';
           run.addEventListener('click', (ev) => {
             ev.stopPropagation();
-            api('/api/tasks/run', { task_id: t.id }).then(() => buildEmbedPanel(panel, spec), () => {});
+            api('/api/tasks/run', { task_id: t.id }).then(() => embedBuildSafe(panel, spec), () => {});
           });
           row.appendChild(run);
         }
@@ -4833,12 +4912,15 @@ function buildEmbedPanel(panel, spec) {
           stop.title = 'Остановить';
           stop.addEventListener('click', (ev) => {
             ev.stopPropagation();
-            api('/api/tasks/cancel', { task_id: t.id }).then(() => buildEmbedPanel(panel, spec), () => {});
+            api('/api/tasks/cancel', { task_id: t.id }).then(() => embedBuildSafe(panel, spec), () => {});
           });
           row.appendChild(stop);
         }
-        row.addEventListener('click', () =>
-          openObject('auto', '.task-card[data-task-id=' + attrSel(t.id) + ']'));
+        row.addEventListener('click', () => toggleMore(row,
+          'статус: ' + esc(EMBED_TASK_ST[t.status] || t.status || '')
+          + (t.next_run_human ? '\nследующий запуск: ' + esc(t.next_run_human) : '')
+          + (t.schedule ? '\nрасписание: ' + esc(t.schedule) : '')
+          + (t.result ? '\n\n' + esc(String(t.result).slice(0, 400)) : '')));
         body.appendChild(row);
       });
     };
@@ -4848,10 +4930,14 @@ function buildEmbedPanel(panel, spec) {
         if (!panel.isConnected) { clearInterval(panel._embSync); panel._embSync = null; return; }
         api('/api/tasks').then((r) => {
           if (!panel.isConnected) return;
-          const fp = JSON.stringify((r && r.tasks) || []);
+          /* BM17: fingerprint БЕЗ volatile-полей — updated_at/progress
+             работающей задачи менялись каждый опрос, и карточка
+             бесконечно пересобиралась, заново «разворачиваясь» */
+          const fp = JSON.stringify(((r && r.tasks) || []).map((x) =>
+            [x.id, x.title, x.status, x.schedule, String(x.result || '').slice(0, 80)]));
           if (fp === panel._embFp) return;
           panel._embFp = fp;
-          buildEmbedPanel(panel, spec);
+          embedBuildSafe(panel, spec);
         }, () => {});
       }, 4000);
     }
@@ -4887,7 +4973,7 @@ function buildEmbedPanel(panel, spec) {
               if (!nv || nv === f.name) { inp.replaceWith(name); return; }
               const res = await api('/api/sandbox/rename_file',
                 { path: f.path, name: nv, chat_id: S.chatId || '' });
-              if (res.ok) { toast('Переименован', 'success'); buildEmbedPanel(panel, spec); }
+              if (res.ok) { toast('Переименован', 'success'); embedBuildSafe(panel, spec); }
               else { toast(res.error || 'не удалось переименовать', 'error'); inp.replaceWith(name); }
             };
             inp.addEventListener('keydown', (e) => {
@@ -4906,7 +4992,7 @@ function buildEmbedPanel(panel, spec) {
               async () => {
                 const res = await api('/api/sandbox/delete_file',
                   { name: f.path, chat_id: S.chatId || '' });
-                if (res.ok) { toast('Удалено', 'success'); buildEmbedPanel(panel, spec); }
+                if (res.ok) { toast('Удалено', 'success'); embedBuildSafe(panel, spec); }
                 else toast(res.error || 'не удалось удалить', 'error');
               });
           });
@@ -4943,8 +5029,7 @@ function buildEmbedPanel(panel, spec) {
         row.innerHTML = '<i class="emb-dot"></i><span class="emb-name">'
           + esc(m.key || m.kind) + '</span><span class="emb-meta">'
           + esc(val.length > 42 ? val.slice(0, 42) + '…' : val) + '</span>';
-        row.addEventListener('click', () =>
-          openObject('memory', '.mem-card[data-key=' + attrSel(m.key || m.kind) + ']'));
+        row.addEventListener('click', () => toggleMore(row, esc(m.value || '')));
         body.appendChild(row);
       });
     }, (e) => { done = true; clearTimeout(timer); fail(e); });
@@ -4959,8 +5044,10 @@ function buildEmbedPanel(panel, spec) {
         row.innerHTML = '<i class="emb-dot"></i><span class="emb-name">'
           + esc(sc.title || 'сценарий') + '</span><span class="emb-meta">'
           + ((sc.steps || []).length) + ' шагов</span>';
-        row.addEventListener('click', () =>
-          openObject('scenarios', '.scenario-card[data-title=' + attrSel(sc.title || '') + ']'));
+        row.addEventListener('click', () => toggleMore(row,
+          (sc.steps || []).map((s, i) => (i + 1) + '. '
+            + esc(typeof s === 'string' ? s : (s && (s.text || s.action || s.prompt)) || JSON.stringify(s)))
+            .join('\n') || 'шагов нет'));
         body.appendChild(row);
       });
     }, fail);
@@ -5034,9 +5121,12 @@ function buildEmbedPanel(panel, spec) {
         row('звуки интерфейса', (u.sound == null || u.sound) ? 'включены' : 'выключены', u.sound == null || !!u.sound);
       }
       body.innerHTML = rows.join('');
+      const TITLES = { providers: 'Модели и ключи', images: 'Генерация изображений',
+        safety: 'Безопасность', auto: 'AUTO · фоновый режим', telegram: 'Telegram',
+        profile: 'Обо мне', billing: 'Биллинг Cloud.ru', interface: 'Интерфейс' };
+      const hint = 'Изменить: вкладка «Настройки» → ' + (TITLES[sec] || 'Настройки');
       $$('.emb-row', body).forEach((r2) =>
-        r2.addEventListener('click', () =>
-          openObject('settings', '.sset[data-section=' + attrSel(sec) + ']')));
+        r2.addEventListener('click', () => toggleMore(r2, esc(hint))));
     };
     embSync(() => api('/api/config'),
       (r) => JSON.stringify((r && (r.providers || r.safety || r.auto || r.media)) || {}));
@@ -6904,6 +6994,11 @@ async function send(opts) {
     requestHost.appendChild(stage);
   } else if (!opts.silent) {
     userMsgNode = addUserMsg(text, atts, null, requestHost);
+    /* BM17: запрос отправлен из верхней части диалога — мгновенный
+       плавный прыжок к низу: ответ должен быть виден сразу */
+    const sbox = (requestHost && (requestHost.closest('.cam-chat') ||
+      requestHost.closest('.messages'))) || stream();
+    if (sbox) fastScrollToBottom(sbox);
   }
 
   // ПРОДОЛЖЕНИЕ ОТВЕТА: ответ на интерактивную панель — не новый ответ, а
@@ -8597,6 +8692,28 @@ function renderTyped(ui) {
       }
     }
   }
+  /* BM17: ОГРАНИЧЕНИЕ ПЕРЕРЕНДЕРА. Ответ без пустых строк (один гигантский
+     абзац — например, список в одну строку) НИКОГДА не замораживался: каждый
+     такт печати перерисовывал ВЕСЬ текст заново, квадратично, — длинный
+     такой ответ вешал главный поток: интерфейс переставал отвечать, а
+     мини-вкладка в хвосте навсегда оставалась на «собираю вкладку…».
+     Хвост длиннее 2600 знаков замораживаем на последней безопасной
+     границе — не внутри кода, формулы или открытой таблицы */
+  if (text.length - base > 2600 && text.length > (ui._longFreeze || 0)) {
+    let k = lastSentenceEnd(text, base + 1200);
+    if (!(k > base)) k = text.lastIndexOf(' ', base + 2400);
+    if (!(k > base)) k = base + 2400;
+    const cand = text.slice(0, k);
+    const mathOk2 = (cand.match(/\\\[/g) || []).length ===
+                    (cand.match(/\\\]/g) || []).length;
+    if (!inCodeBlock(cand) && mathOk2 && !endsInOpenTable(cand)) {
+      ui._longFreeze = k;
+      ui.frozen = { src: cand, html: MD.render(stripSteps(cand.slice(base))) };
+      base = cand.length;
+      src = text.slice(0, base);
+      html = '';
+    }
+  }
 
   // ПОЧЕМУ ЛЕНТА «ЕЗДИЛА» ВВЕРХ-ВНИЗ ВО ВРЕМЯ ПЕЧАТИ.
   // Хвост ответа пересобирается из markdown на каждом такте, а markdown по
@@ -8937,7 +9054,20 @@ function typerStart(ui) {
     ui.shown = ui.buffer.slice(0, ui.shown.length + step);
     if (ui.mdEl) {
       ui.mdEl.classList.add('typing');
-      renderTyped(ui);
+      /* BM17: исключение рендера НЕ вешает приложение: сырой текст
+         вываливается как есть, печать останавливается корректно */
+      try {
+        renderTyped(ui);
+      } catch (e) {
+        try {
+          ui.mdEl.classList.remove('typing');
+          ui.mdEl.textContent = ui.buffer;
+          ui.shown = ui.buffer;
+          clearInterval(ui.typer); ui.typer = null;
+          if (ui.onTyped) { const cb = ui.onTyped; ui.onTyped = null; cb(); }
+        } catch (e2) { /* двойная страховка */ }
+        return;
+      }
     }
     if (!code) {
       const pause = PAUSE_AFTER[ui.shown[ui.shown.length - 1]] || 0;
@@ -10322,12 +10452,12 @@ function handleEvent(ev, ui) {
       if (ev.result && ev.result.ok !== false) {
         if (ev.name === 'schedule_task') {
           /* BM16: уведомление о фоновой задаче при создании ИЗ ЧАТА —
-             вернули (карточка AUTO — в конец этого уведомления/ответа) */
+             вернули; BM17: вкладка АВТО разворачивается ПРЯМО
+             В ОБЛАСТИ УВЕДОМЛЕНИЯ */
           embedLiveAuto(ui);
           const tt = (ev.result && ev.result.task && ev.result.task.title)
             || (ev.result && ev.result.title) || '';
-          toast('Задача' + (tt ? ' «' + tt + '»' : '') + ' создана — работает в фоне',
-            'success', 'AUTO');
+          toastAutoCard('Задача' + (tt ? ' «' + tt + '»' : '') + ' создана — работает в фоне');
           sfx('ok');
         } else if (/^(write_file|download_file|make_archive|generate_image)$/.test(ev.name)) {
           embedLiveCard(ui, 'files', 'файлы диалога');
@@ -10424,11 +10554,12 @@ function handleEvent(ev, ui) {
       /* BM13: сервер уводит задачу в фон САМ (агентский прогон не стартует) —
          живая AUTO-карточка появляется здесь СРАЗУ, в момент ухода в фон.
          BM15: карточка ОДНА — прежде рядом всплывала ещё и bg-плашка
-         «В фоне: …», а потом они менялись местами. Название и срок
-         сообщает toast, живой список задач — сама карточка */
+         «В фоне: …», а потом они менялись местами. BM17: уведомление
+         несёт вкладку АВТО прямо в себе — она разворачивается
+         в области уведомления */
       embedLiveAuto(ui);
       const when = ev.when || ev.schedule || '';
-      toast('Задача «' + ev.title + '» ушла в фон' + (when ? ' · ' + when : ''), 'info', 'AUTO');
+      toastAutoCard('Задача «' + ev.title + '» ушла в фон' + (when ? ' · ' + when : ''), 'info');
       dropStatus(ui);
       refreshState();
       scrollDown();
@@ -10683,60 +10814,85 @@ async function blobToWav16k(blob) {
    клику запись идёт на сервер (/api/transcribe), текст ложится
    в поле ввода */
 let DICT = null;
-$('#micBtn').addEventListener('click', async () => {
+/* BM17: ЖИВАЯ ДИКОВКА — речь распознаётся СРАЗУ, по ходу разговора, а не
+   после отключения. Запись идёт СЕГМЕНТАМИ по 3 секунды: сегмент
+   закрывается, уходит на сервер (/api/transcribe), текст дописывается
+   в поле, следующий сегмент стартует тут же. Никаких уведомлений —
+   единственный индикатор это красная кнопка с волной */
+const DICT_SEG_MS = 3000;
+
+function dictPutText(text) {
+  const box = $('#input');
+  const base = box.value ? box.value.replace(/\s+$/, '') + ' ' : '';
+  box.value = (base + String(text).replace(/^\s+/, '')).replace(/^\s+/, '');
+  autoGrow();
+}
+
+async function dictTranscribeSegment(chunks, mime) {
+  const blob = new Blob(chunks, { type: mime || 'audio/webm' });
+  if (!blob.size || blob.size < 1200) return '';       // тишина — не слово
+  const wav = await blobToWav16k(blob);
+  const r = await api('/api/transcribe', { audio: wav, language: 'ru' });
+  return String((r && r.text) || '').trim();
+}
+
+function dictSegment(D) {
+  if (!DICT || DICT !== D) return;
+  try { D.rec.stop(); } catch (e) { return; }
+}
+
+async function dictStart() {
   const mb = $('#micBtn');
-  if (DICT) { try { DICT.rec.stop(); } catch (e) {} return; }
-  if (!window.MediaRecorder || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    toast('Браузер не поддерживает запись звука', 'error');
-    return;
-  }
+  if (DICT) { dictSegment(DICT); return; }             // повторный клик — стоп
+  if (!window.MediaRecorder || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  let stream;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4',
-                  'audio/ogg;codecs=opus']
-      .find((t) => MediaRecorder.isTypeSupported(t)) || '';
-    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) { return; }                              // без тостов: кнопка сама погаснет
+  const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4',
+                'audio/ogg;codecs=opus']
+    .find((t) => MediaRecorder.isTypeSupported(t)) || '';
+  const D = { rec: null, stream, timer: 0, closing: false };
+  DICT = D;
+  mb.classList.add('rec');
+  const armSegment = () => {
+    if (!DICT || DICT !== D || D.closing) return;
+    try {
+      D.rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    } catch (e) { dictFinish(D); return; }
     const chunks = [];
-    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-    rec.onstop = async () => {
-      stream.getTracks().forEach((t) => t.stop());
-      mb.classList.remove('rec');
-      DICT = null;
-      if (!chunks.length) return;
-      toast('Распознаю запись…', 'info', 'Микрофон');
+    D.rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    D.rec.onstop = async () => {
+      const closedAll = D.closing;
       try {
-        const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
-        /* blobToWav16k УЖЕ возвращает data-url строки — её отдаём серверу
-           как есть (так делает голосовой режим). Прежний FileReader здесь
-           читал dataURL КАК ФАЙЛ и падал на каждом нажатии */
-        const wav = await blobToWav16k(blob);
-        const r = await api('/api/transcribe', { audio: wav, language: 'ru' });
-        const text = String((r && r.text) || '').trim();
-        if (!r || r.ok === false || !text) {
-          toast((r && r.error) || 'Не удалось распознать речь', 'error');
-          return;
-        }
-        const box = $('#input');
-        const base = box.value ? box.value.replace(/\s+$/, '') + ' ' : '';
-        box.value = (base + text).replace(/^\s+/, '');
-        autoGrow();
-        toast('Готово — текст в поле ввода', 'success', 'Микрофон');
-      } catch (e) {
-        toast('Не удалось распознать речь', 'error');
+        const text = await dictTranscribeSegment(chunks, D.rec.mimeType);
+        if (text && DICT === D) dictPutText(text);
+      } catch (e) { /* сегмент не расслышал — просто дальше */ }
+      if (closedAll) {
+        stream.getTracks().forEach((t) => t.stop());
+        if (DICT === D) { DICT = null; mb.classList.remove('rec'); }
+      } else {
+        armSegment();                                  // следующий сегмент
       }
     };
-    rec.start(250);
-    DICT = { rec, stream };
-    mb.classList.add('rec');
-    toast('Говори — нажми кнопку ещё раз, чтобы расшифровать', 'info', 'Микрофон');
-  } catch (e) {
-    if (e && (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError')) {
-      toast('Нет доступа к микрофону — разреши его в браузере', 'error');
-    } else {
-      toast('Микрофон недоступен', 'error');
-    }
+    try { D.rec.start(250); } catch (e) { dictFinish(D); return; }
+    D.timer = setTimeout(() => dictSegment(D), DICT_SEG_MS);
+  };
+  armSegment();
+}
+
+function dictFinish(D) {
+  if (DICT !== D) return;
+  D.closing = true;
+  clearTimeout(D.timer);
+  try { D.rec.stop(); } catch (e) {
+    D.stream.getTracks().forEach((t) => t.stop());
+    DICT = null;
+    $('#micBtn').classList.remove('rec');
   }
-});
+}
+
+$('#micBtn').addEventListener('click', () => { dictStart(); });
 
 /* ============================ ГОЛОСОВОЙ РЕЖИМ ============================
    AB: РАЗГОВОР — ОБЛАСТЬ, КАК КАМЕРА, а не окно на весь экран. Кнопка
