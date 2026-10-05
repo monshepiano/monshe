@@ -829,6 +829,9 @@ ui. Если вариантов нет, но ответ человека всё 
    вида <show_media url="…"/> в тексте ответа ЗАПРЕЩЕНО: они не
    отображаются у человека, это мусор. Только настоящий вызов
    инструмента — или обычная ссылка текстом, если инструмента нет.
+   Равным образом ЗАПРЕЩЕНО «вызывать» show_media JSON-блоком: чёрное
+   поле ``` {{{{"url": "…"}}}} ``` — это НЕ показ медиа, человек видит
+   мусорный код вместо видео. Только function calling.
    ССЫЛКИ НА СТРИМИНГИ (Яндекс Музыка, Spotify, YouTube) — НЕ
    результат: человек найдёт их сам. Твоя работа — НАЙТИ источник,
    который ложится прямо в чат: прямой файл (mp3/mp4/m4a — ищи
@@ -886,7 +889,9 @@ ui. Если вариантов нет, но ответ человека всё 
    {{{{"view": "auto", "title": "что я делаю в фоне"}}}}
    ```
    view: auto (задачи, с кнопками запуска/останова) | files (файлы
-   песочницы) | memory (факты) | scenarios (сценарии). Карточка узнаваема:
+   песочницы) | memory (факты) | scenarios (сценарии) | settings
+   (пункт настроек: section = providers | images | safety | auto |
+   telegram | profile | billing | interface). Карточка узнаваема:
    имя вкладки наверху, её мини-интерфейс внизу. КОГДА УМЕСТНА:
    — ответ ПЕРЕЧИСЛЯЕТ или описывает задачи, файлы, факты или сценарии —
      текст допустим, но живая карточка ОБЯЗАТЕЛЬНА как дополнение: добавь
@@ -898,6 +903,13 @@ ui. Если вариантов нет, но ответ человека всё 
      ни фактов. Если фоновых задач нет — так и скажи, ничего не создавая.
      НИКОГДА не отвечай на такую просьбу одним текстовым перечислением:
      текст без карточки — неполный ответ;
+   — ВОПРОС О НАСТРОЙКАХ («какие у нас провайдеры?», «какой моделью
+     ты думаешь?», «что включено в безопасности?») — ответ с карточкой
+     ```embed settings``` нужной секции. Просьба ИЗМЕНИТЬ настройку
+     («сделай яндекс основным провайдером») — сам ты конфиг не меняешь:
+     дай КОРОТКУЮ ИНСТРУКЦИЮ, что и где нажать во вкладке «Настройки»,
+     и приложи карточку этой секции — человек увидит текущее состояние
+     и место изменения;
    — запустил фоновую задачу (schedule_task) — вставь ```embed auto
      СРАЗУ в этот же ответ: человек сразу видит карточку с живой задачей;
    — создал или разобрал что-то, живущее во вкладке, — покажи карточку:
@@ -1326,7 +1338,7 @@ EMBED_TASK_TOOLS = {"schedule_task"}
 STATE_Q_RE = re.compile(
     r"\b(?:что|чем|какие|как)\b.{0,26}\b(?:делаешь|делает|занимаешься|"
     r"занят|работаешь|работает|происходит|происходят|идёт|идут|"
-    r"задачи|задача|процессы)\b|"
+    r"задачи|задача|процессы|фоне|фоном|фону|фон)\b|"
     r"\b(?:покажи|покажись|расскажи|перечисли)\b.{0,34}\b(?:фон\w*|задач\w*)\b")
 
 
@@ -1344,11 +1356,52 @@ def state_question_view(text: str) -> Optional[str]:
     if re.search(r"\bфайл", t) and re.search(
             r"\b(?:какие|что|покажи|перечисли|создал|записал|сохранил)\b", t):
         return "files"
-    if re.search(r"\b(?:помнишь|запомнил|записал\s+про|память)\b", t) and re.search(
-            r"\b(?:что|какая|какие|покажи|перечисли|твоя)\b", t):
+    # BM16: «покажи факты обо мне», «что ты знаешь обо мне» — память
+    if (re.search(r"\b(?:факт\w*|помнишь|запомнил|записал\s+про|память\w*|знаешь\s+обо\s+мне)\b", t)
+            and re.search(r"\b(?:что|какая|какие|покажи|перечисли|твоя|обо\s+мне|про\s+меня)\b", t)):
         return "memory"
+    # BM16: НАСТРОЙКИ — тоже состояние: «какие провайдеры?», «сделай яндекс
+    # основным», «что в безопасности?» — показать фрагмент + инструкцию
+    if settings_section(t):
+        return "settings"
     if STATE_Q_RE.search(t):
         return "auto"
+    return None
+
+
+def _prov_priority(pc: Any) -> int:
+    try:
+        return int((pc or {}).get("priority"))
+    except (TypeError, ValueError):
+        return 100
+
+
+SETTINGS_SECTIONS = [
+    ("providers", r"\bпровайдер|\bмодел\w*|\bключ\w*|\bapi|yandex|гигачат|\bgpt|основн\w*\s+провайдер"),
+    ("images", r"генерац\w*\s+изображен|картинк\w*\s+облак|image\s+cloud|гигачат\s+fallback"),
+    ("safety", r"безопасност|подтверждени|спрашива\w*\s+перед"),
+    ("auto", r"фонов\w*\s+режим|тих\w*\s+час\w*|проактивн"),
+    ("telegram", r"телеграм|telegram|бот\w*\s+уведомлен"),
+    ("profile", r"обо\s+мне|профил|моё\s+имя|город"),
+    ("billing", r"биллинг|баланс|\bбюджет|лимит\w*\s+(руб|₽|бюджет)|расход\w*\s+cloud|cloud\.ru"),
+    ("interface", r"интерфейс|звук\w*\s+интерфейс|звуки"),
+]
+
+
+def settings_section(text: str) -> Optional[str]:
+    """Какая секция настроек отвечает на вопрос (None — не про настройки)."""
+    t = re.sub(r"\s+", " ", str(text or "").lower())
+    if not re.search(r"\b(?:настройк\w*|провайдер\w*|модел\w+|ключ\w*|подключ\w+|"
+                     r"включ\w+|выключ\w+|сделай|поставь|поменяй|переключ\w+|"
+                     r"спрашива\w+|тих\w*\s+час\w*|телеграм|telegram|бот|"
+                     r"профил\w*|биллинг|баланс|бюджет|лимит\w*|генерац\w*|звук\w*|"
+                     r"безопасност\w*|основн\w*)\b", t):
+        return None
+    for sec, pat in SETTINGS_SECTIONS:
+        if re.search(pat, t):
+            return sec
+    if re.search(r"\bнастройк", t):
+        return "providers"
     return None
 
 
@@ -1376,6 +1429,32 @@ def state_question_snapshot(view: str) -> str:
                                if t.get("next_run_human") else "")
                 for t in tasks[:10])
             return "фоновые задачи: " + rows
+        if view == "settings":
+            # BM16: агент ЗНАЕТ настройки — читает их как факт, не как догадку.
+            # Ключи замаскированы (config.public), секретов в контексте нет
+            try:
+                from . import config as _config
+                cfg = _config.CONFIG.public()
+            except Exception:
+                return "настройки недоступны"
+            provs = []
+            for name, pc in sorted((cfg.get("providers") or {}).items(),
+                                   key=lambda kv: _prov_priority(kv[1])):
+                provs.append("%s — %s" % (pc.get("label") or name,
+                                          "ключ есть" if pc.get("has_key")
+                                          else "нет ключа"))
+            orch = cfg.get("orchestrator") or {}
+            return ("настройки прямо сейчас: провайдеры: %s; уровень модели: %s; "
+                    "безопасность: подтверждения %s; фоновый режим: %s; "
+                    "telegram: %s" % (
+                        "; ".join(provs) or "не настроены",
+                        orch.get("force_tier") or "авто",
+                        "включены" if (cfg.get("safety") or {}).get("confirm_shell")
+                        else "как настроено",
+                        "включен" if (cfg.get("auto") or {}).get("enabled", True)
+                        else "выключен",
+                        "подключен" if (cfg.get("telegram") or {}).get("bot_token")
+                        else "не настроен"))
         if view == "files":
             res = tools.call("list_files", {}) or {}
             entries = res.get("entries") or []
@@ -1415,7 +1494,8 @@ EMBED_MEMORY_TOOLS = {"remember", "recall"}
 def auto_embed_block(final_text: str,
                      tools_used: Optional[List[str]] = None,
                      memory_changed: bool = False,
-                     q_view: Optional[str] = None) -> str:
+                     q_view: Optional[str] = None,
+                     q_section: str = "") -> str:
     """Карточка вкладки — сама, когда прогон что-то изменил.
 
     Решение человека (BM12): после агентского или тихого прогона, который
@@ -1437,16 +1517,20 @@ def auto_embed_block(final_text: str,
         view, title = "files", "файлы диалога"
     elif memory_changed or (tools & EMBED_MEMORY_TOOLS):
         view, title = "memory", "что я запомнил"
-    if not view and q_view in ("auto", "files", "memory", "scenarios"):
+    if not view and q_view in ("auto", "files", "memory", "scenarios",
+                               "settings"):
         view = q_view
         title = {"auto": "что я делаю в фоне", "files": "файлы диалога",
                  "memory": "что я запомнил",
-                 "scenarios": "мои сценарии"}[q_view]
+                 "scenarios": "мои сценарии",
+                 "settings": "настройки"}[q_view]
     if not view:
         return text
     sep = "" if not text.strip() else "\n\n"
+    extra = (', "section": "' + str(q_section) + '"'
+             if view == "settings" and q_section else "")
     return (text + sep + '```embed\n{"view": "' + view + '", '
-            + '"title": "' + title + '"}\n```')
+            + '"title": "' + title + '"' + extra + '}\n```')
 
 
 def suggest_replies(user_text: str, answer: str) -> List[str]:
@@ -2077,6 +2161,68 @@ def rescue_show_media_tags(text: str,
     cleaned = re.sub(r"<\s*/?\s*show_media[^>]*?>", "", cleaned,
                      flags=re.IGNORECASE)
     return cleaned, cleaned != t
+
+
+_MD_LINK_IN_URL_RE = re.compile(r"\[[^\]]*\]\((https?://[^)\s]+)\)")
+_SHOW_MEDIA_CALL_KEYS = {"url", "type", "name", "title", "kind", "filetype"}
+
+
+def _clean_media_url(u: str) -> str:
+    """Ссылка из текстового «вызова»: модель заворачивает её в markdown."""
+    u = str(u or "").strip().strip("<>").strip()
+    m = _MD_LINK_IN_URL_RE.search(u)
+    return m.group(1) if m else u
+
+
+def rescue_show_media_json(text: str,
+                           sink=None) -> tuple:
+    """BM16: JSON-«вызов» show_media в тексте — превратить в настоящий показ.
+
+    Слабая модель «вызывает» инструмент чёрным блоком в ответе:
+      ```json
+      {"url": "https://…/video.mp4"}
+      ```
+    (внутри url ссылка бывает завёрнута ещё и в markdown [x](y)).
+    Каждый такой блок исполняется по-настоящему: файл скачивается в
+    песочницу, попадает в created_files → плеер в диалоге, сам блок из
+    текста исчезает. Ловим ТОЛЬКО конверт вызова show_media (dict с
+    ключом url и без посторонних ключей) — произвольный JSON-код не
+    трогаем. sink(info) получает файлы. Возвращает (чистый текст,
+    было_ли_спасение).
+    """
+    t = str(text or "")
+    if "```" not in t or "url" not in t.lower():
+        return t, False
+    changed = [False]
+
+    def _try_block(m: "re.Match") -> str:
+        body = (m.group(1) or "").strip()
+        if not body.startswith("{"):
+            return m.group(0)
+        try:
+            data = json.loads(body)
+        except Exception:
+            return m.group(0)
+        if (not isinstance(data, dict) or "url" not in data or
+                not set(data.keys()) <= _SHOW_MEDIA_CALL_KEYS):
+            return m.group(0)
+        url = _clean_media_url(data.get("url"))
+        if not re.match(r"^https?://", url):
+            return m.group(0)
+        changed[0] = True
+        try:
+            result = tools.call("show_media", {"url": url})
+        except Exception:
+            return ""
+        if isinstance(result, dict) and result.get("ok"):
+            info = _file_info_of(result)
+            if info and sink:
+                sink(info)
+        return ""
+
+    cleaned = re.sub(r"```[a-zA-Z]*[ \t]*\n(\{.*?\})\n?\s*```",
+                     _try_block, t, flags=re.S)
+    return cleaned, changed[0]
 
 
 def _timed_call(name: str, args: Dict[str, Any]) -> tuple:
@@ -2710,6 +2856,20 @@ class Agent:
                 self.created_files.append(info)
 
         cleaned, _ = rescue_show_media_tags(text, sink)
+        return cleaned
+
+    def _rescue_show_media_json(self, text: str) -> str:
+        """BM16: JSON-блоки {"url": …} в тексте — исполнить и вычистить.
+
+        Модель иногда «вызывает» show_media чёрным блоком
+        ```json {"url": "…"} ``` — человек видит чёрное поле со ссылкой
+        вместо медиа. Блок исполняется по-настоящему и исчезает.
+        """
+        def sink(info: Dict[str, Any]) -> None:
+            if info not in self.created_files:
+                self.created_files.append(info)
+
+        cleaned, _ = rescue_show_media_json(text, sink)
         return cleaned
 
     def run(self, messages: List[Dict[str, Any]], user_text: str = "",
@@ -3760,7 +3920,14 @@ class Agent:
                     # Function-calling и распознавание текстовых вызовов сходятся
                     # здесь. Никакой из этих путей не вправе обойти набор схем,
                     # реально выданный модели в данном прогоне.
-                    if name not in allowed_tool_names:
+                    # BM16: исключение — schedule_task в ЧАТ-прогоне: схемы его
+                    # не выдают (группа «server»), но слабая модель зовёт его
+                    # текстом, когда маршрутизатор не увёл просьбу в фон. Ниже
+                    # перехват решает: вопрос о состоянии — наблюдение, поручение
+                    # — НАСТОЯЩЕЕ создание задачи (дубль невозможен: серверный
+                    # маршрут закрывает поток до старта агента).
+                    if (name not in allowed_tool_names
+                            and not (name == "schedule_task" and self.chat_id)):
                         self._append_tool_result(convo, call, name, {
                             "ok": False,
                             "error": "Этот инструмент недоступен в текущем диалоге.",
@@ -3981,6 +4148,35 @@ class Agent:
                                            "карточку ```embed auto со списком "
                                            "текущих задач."}
                         elapsed = 0
+                    elif name == "schedule_task" and self.chat_id:
+                        # BM16: маршрутизатор НЕ увёл просьбу в фон, а модель
+                        # зовёт schedule_task — создаём задачу ПО-НАСТОЯЩЕМУ.
+                        # Дубль невозможен: если задачу уже создал серверный
+                        # маршрутизатор, агентский прогон вообще не стартует.
+                        # Прежде здесь был сентинел-отказ: человек просил
+                        # «сделай в фоне» — и не получал ни задачи, ни
+                        # уведомления. Уведомление (toast + карточка AUTO в
+                        # конец ответа) фронт показывает на этот tool_result.
+                        try:
+                            from . import auto as _auto
+                            if _auto.has_similar_pending(user_text, self.chat_id):
+                                result = {"ok": True, "already": True,
+                                          "task": {"title": str(args.get("title")
+                                                                or user_text)[:60]}}
+                            else:
+                                result = {"ok": True,
+                                          "task": _auto.create_background_task(
+                                              title=str(args.get("title")
+                                                        or user_text)[:60],
+                                              prompt=str(args.get("prompt")
+                                                         or user_text),
+                                              schedule=str(args.get("schedule")
+                                                           or ""),
+                                              chat_id=self.chat_id)}
+                        except Exception as exc:
+                            result = {"ok": False,
+                                      "error": "не удалось создать задачу: %s" % exc}
+                        elapsed = 0
                     else:
                         result, elapsed = _timed_call(name, args)
                     if self._cancelled():
@@ -4160,6 +4356,9 @@ class Agent:
         # Настоящий вызов выполняем ЗДЕСЬ: тег -> реальный показ (файл в
         # created_files, плеер в диалоге), из текста тег убираем совсем.
         final_text = self._rescue_show_media_tags(final_text)
+        # BM16: JSON-«вызов» show_media чёрным блоком — та же история, что
+        # с тегами: исполняем по-настоящему, из текста вычищаем
+        final_text = self._rescue_show_media_json(final_text)
         # BM13: АВТО-КАРТОЧКА ДО done — файл создан или факт сохранён, карточка
         # вкладки приезжает в ТОМ ЖЕ ответе (прежде сервер доклеивал её после
         # done, и до перезагрузки диалога человек её не видел). Дубль-защита
@@ -4175,7 +4374,9 @@ class Agent:
             final_text, self.used_tools,
             memory_changed=bool(self._mem0 is not None and mem_now is not None
                                 and self._mem0 != mem_now),
-            q_view=state_question_view(user_text))
+            q_view=state_question_view(user_text),
+            q_section=(settings_section(user_text)
+                       if state_question_view(user_text) == "settings" else ""))
         yield {"type": "done", "content": final_text, "files": self.created_files,
                "tools": self.used_tools, "model": self.model_used, "tier": tier,
                "budget_spent": round(self._spent_rub, 2),

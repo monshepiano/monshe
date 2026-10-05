@@ -850,6 +850,11 @@ class Handler(BaseHTTPRequestHandler):
         # модель через schedule_task, и на одну просьбу появлялись две задачи
         # («Таймер» и «Reminder after 5 seconds» на скриншоте пользователя).
         decision = auto.should_background(text)
+        # BM16: ВОПРОС О СОСТОЯНИИ («что в фоне?», «какие задачи?») — не
+        # поручение: маршрутизатор обязан оставить его в диалоге. Прежде
+        # «что в фоне» само становилось фоновой задачей
+        if agent.state_question(text):
+            decision = {"background": False, "schedule": "", "reason": ""}
         # защита от дублей: такая же задача из этого чата, уже стоящая в очереди
         if decision["background"] and auto.has_similar_pending(text, chat_id):
             decision = {"background": False, "schedule": "", "reason": ""}
@@ -1183,7 +1188,10 @@ class Handler(BaseHTTPRequestHandler):
                 final_text, used_tools,
                 memory_changed=(facts_saved or
                                 bool(mem_mark is not None and mem_now is not None
-                                     and mem_mark != mem_now)))
+                                     and mem_mark != mem_now)),
+                q_view=agent.state_question(text),
+                q_section=(agent.settings_section(text)
+                           if agent.state_question(text) == "settings" else ""))
             # ХОД-ВОПРОС НЕ ПРОПАДАЕТ: ask_user и ходы с инструментами часто
             # не имеют текста вовсе — раньше такой ответ не сохранялся, и при
             # открытии диалога исчезали вопрос, интерактивная панель и трасса.

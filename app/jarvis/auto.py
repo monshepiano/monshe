@@ -254,9 +254,8 @@ def _execute_reserved(task: Dict[str, Any], cancelled: threading.Event) -> None:
         # («он снова начал отвечать на прошлый запрос»). Диалог получает
         # только результаты задач, которые из него и родились.
         if task.get("chat_id"):
-            # BM12: тихий прогон тоже меняет вкладку AUTO — карточка
-            # прикладывается к результату сама
-            content = agent.auto_embed_block(content, ["schedule_task"])
+            # BM16: сработавшая задача — ПРОСТО ОТЛОЖЕННОЕ СООБЩЕНИЕ, без
+            # карточки AUTO: человек просил результат, а не состояние вкладки
             db.add_message(task["chat_id"], "assistant", content,
                            {"task_id": task_id, "from_auto": True,
                             "files": files, "title": task.get("title", "")})

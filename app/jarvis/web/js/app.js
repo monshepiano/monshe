@@ -4539,10 +4539,29 @@ function fixRootIndices(root) {
     if (!ind) return;
     const fs = parseFloat(getComputedStyle(m).fontSize) || 16;
     const w = ind.getBoundingClientRect().width / fs;   // em кегля корня
-    /* вынос за левый край: колонка носика даёт степени .30em; всё, что
-       шире, сдвигает корень — но крошечный вынос (до .04em, полпикселя)
-       не считается: обычные цифры не двигают корень вовсе */
-    const shift = Math.max(0, w - 0.34);
+    /* BM16: степень — ПРЯМО НАД НИЖНИМ ЗАГИБОМ (как в настоящем ∛).
+       Геометрия знака — ОДИН источник правды: viewBox 6.6×24, штрих
+       M.8 13.9 → 3.3 16 → 5.9 0. Крючок занимает нижние 33–42%
+       высоты; низ степени держится над его верхом (42%), но не выше
+       верха корня. Диагональ на нижней линии степени отстоит от края
+       svg на вычислимую величину — всё в em самого корня, значит
+       вложенные корни и знаменатели дробей ложатся сами, без
+       частных случаев */
+    const H = m.getBoundingClientRect().height / fs;
+    if (!(H > 0.2)) return;
+    const degH = ind.getBoundingClientRect().height / fs;
+    const b = Math.max(0.42 * H + 0.01, Math.min(degH + 0.02, H - 0.02));
+    /* низ — в ПРОЦЕНТАХ высоты корня: em здесь считались бы от кегля
+       самой степени (.58em) и уплывали почти вдвое */
+    ind.style.bottom = (100 * b / H).toFixed(2) + '%';
+    /* x диагонали на нижней линии степени (в viewBox-координатах) */
+    let yU = 24 * (1 - b / H);
+    if (yU < 0) yU = 0; else if (yU > 24) yU = 24;
+    const xU = 3.3 + (16 - yU) * (5.9 - 3.3) / 16;
+    const pocket = xU * 0.40 / 6.6;                     // em от края svg
+    /* правый край степени не задевает штрих: зазор .05em;
+       микровынос (до .04em) не двигает корень вовсе */
+    const shift = Math.max(0, w + 0.05 - pocket - 0.04);
     m.style.setProperty('--msq-x', shift.toFixed(3) + 'em');
   });
 }
@@ -4611,6 +4630,9 @@ const EMBED_VIEWS = {
   memory: { name: 'ПАМЯТЬ', sub: 'что Джарвис помнит', view: 'memory', ico: '◇' },
   scenarios: { name: 'СЦЕНАРИИ', sub: 'автозапуски', view: 'scenarios',
     ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2.8L5.8 13.4h4.9l-1 7.8 7.5-10.8h-4.8z"/></svg>' },
+  /* BM16: любой пункт настроек — тоже мини-вкладка (синхронизированная);
+     section выбирает фрагмент: providers/safety/auto/telegram/profile/billing/interface */
+  settings: { name: 'НАСТРОЙКИ', sub: 'конфигурация', view: 'settings', ico: '⚙' },
 };
 const EMBED_TASK_ST = {
   queued: 'в очереди', running: 'работает', paused: 'пауза',
@@ -4627,9 +4649,11 @@ function embedParseSpec(raw) {
   const v = String(spec.view).toLowerCase().trim();
   const map = { auto: 'auto', 'задачи': 'auto', 'авто': 'auto',
     files: 'files', 'файлы': 'files', 'файл': 'files',
-    memory: 'memory', 'память': 'memory',
-    scenarios: 'scenarios', 'сценарии': 'scenarios', 'сценарий': 'scenarios' };
+    memory: 'memory', 'память': 'memory', 'факты': 'memory',
+    scenarios: 'scenarios', 'сценарии': 'scenarios', 'сценарий': 'scenarios',
+    settings: 'settings', 'настройки': 'settings', 'настройка': 'settings' };
   spec.view = map[v] || (EMBED_VIEWS[v] ? v : null);
+  spec.section = String(spec.section || spec.part || '').toLowerCase().trim();
   return spec;
 }
 
@@ -4656,12 +4680,18 @@ function embedLiveCard(ui, view, title) {
   try { spec = embedParseSpec(panel.dataset.embed); } catch (e) { spec = null; }
   if (spec && spec.view) buildEmbedPanel(panel, spec);
   panel.dataset.live = '1';
-  const anchor = (ui.mdEl && ui.mdEl.isConnected)
-    ? ui.mdEl.nextSibling
-    : (ui.statusEl && ui.statusEl.parentNode === ui.node.body
-        ? ui.statusEl : null);
-  if (anchor) ui.node.body.insertBefore(panel, anchor);
-  else ui.node.body.appendChild(panel);
+  /* BM16: карточка ФАЙЛОВ открывается В ПОСЛЕДНЮЮ ОЧЕРЕДЬ — в самый
+     низ сообщения, под текст и медиа (плеер важнее списка файлов) */
+  if (view === 'files') {
+    ui.node.body.appendChild(panel);
+  } else {
+    const anchor = (ui.mdEl && ui.mdEl.isConnected)
+      ? ui.mdEl.nextSibling
+      : (ui.statusEl && ui.statusEl.parentNode === ui.node.body
+          ? ui.statusEl : null);
+    if (anchor) ui.node.body.insertBefore(panel, anchor);
+    else ui.node.body.appendChild(panel);
+  }
   ui._liveCards[view] = panel;
   if (ui.node && ui.node.root && ui.node.root.isConnected) {
     chaseBottom(msgHost(), ui);
@@ -4724,9 +4754,9 @@ function buildEmbedPanel(panel, spec) {
   const meta = EMBED_VIEWS[spec.view];
   const card = el('div', 'embed-card emb-v-' + spec.view);
   const head = el('div', 'emb-head');
+  /* BM16: описания у мини-вкладок НЕТ — только иконка, имя и «Открыть» */
   head.innerHTML = '<span class="emb-ico">' + (meta.ico || '') + '</span><b>'
-    + esc(meta.name) + '</b><span class="emb-sub">'
-    + esc(String(spec.title || meta.sub)) + '</span>';
+    + esc(meta.name) + '</b>';
   const open = el('button', 'emb-open', 'Открыть');
   open.addEventListener('click', () => showView(meta.view));
   head.appendChild(open);
@@ -4735,6 +4765,22 @@ function buildEmbedPanel(panel, spec) {
   card.appendChild(body);
   panel.innerHTML = '';
   panel.appendChild(card);
+  /* BM16: из мини-вкладки открывается КОНКРЕТНЫЙ объект — задача в AUTO,
+     сценарий, факт, секция настроек: вкладка раскрывается, объект
+     докручивается в центр и вспыхивает */
+  const openObject = (view, sel) => {
+    showView(view);
+    setTimeout(() => {
+      const node = sel && document.querySelector(sel);
+      if (!node) return;
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      node.classList.remove('flash-in');
+      void node.offsetWidth;
+      node.classList.add('flash-in');
+      setTimeout(() => node.classList.remove('flash-in'), 1700);
+    }, 240);
+  };
+  const attrSel = (v) => '"' + String(v || '').replace(/(["\\])/g, '\\$1') + '"';
   const fail = (e) => {
     body.innerHTML = '<div class="emb-empty">'
       + esc((e && e.message) || 'не удалось открыть вкладку') + '</div>';
@@ -4791,7 +4837,8 @@ function buildEmbedPanel(panel, spec) {
           });
           row.appendChild(stop);
         }
-        row.addEventListener('click', () => showView('auto'));
+        row.addEventListener('click', () =>
+          openObject('auto', '.task-card[data-task-id=' + attrSel(t.id) + ']'));
         body.appendChild(row);
       });
     };
@@ -4820,7 +4867,58 @@ function buildEmbedPanel(panel, spec) {
         row.innerHTML = '<i class="emb-dot" style="' + (f.is_dir ? '' : 'background:rgba(0,212,255,.55)') + '"></i>'
           + '<span class="emb-name">' + esc(f.name) + '</span><span class="emb-meta">'
           + esc(f.is_dir ? ((f.items || 0) + ' об.') : fmtSize(f.size || 0)) + '</span>';
-        row.addEventListener('click', () => showView('files'));
+        /* BM16: у файла — ТЕ ЖЕ ТРИ КНОПКИ, что на вкладке «Файлы»:
+           переименовать / скачать / удалить */
+        if (!f.is_dir) {
+          const fx = el('span', 'emb-fx');
+          fx.innerHTML = '<i class="r" title="Переименовать">✎</i>'
+            + '<i class="dl" title="Скачать">↓</i>'
+            + '<i class="d" title="Удалить">✕</i>';
+          fx.querySelector('.r').addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            const name = row.querySelector('.emb-name');
+            if (!name || row.querySelector('.f-edit')) return;
+            const inp = el('input', 'f-edit');
+            inp.value = f.name;
+            name.replaceWith(inp);
+            inp.focus(); inp.select();
+            const done = async () => {
+              const nv = inp.value.trim();
+              if (!nv || nv === f.name) { inp.replaceWith(name); return; }
+              const res = await api('/api/sandbox/rename_file',
+                { path: f.path, name: nv, chat_id: S.chatId || '' });
+              if (res.ok) { toast('Переименован', 'success'); buildEmbedPanel(panel, spec); }
+              else { toast(res.error || 'не удалось переименовать', 'error'); inp.replaceWith(name); }
+            };
+            inp.addEventListener('keydown', (e) => {
+              if (e.key === 'Enter') done();
+              if (e.key === 'Escape') inp.replaceWith(name);
+            });
+            inp.addEventListener('blur', () => { if (inp.isConnected) done(); });
+          });
+          fx.querySelector('.dl').addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            window.open(f.download_url, '_blank');
+          });
+          fx.querySelector('.d').addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            confirmBox('Удалить файл?', '«' + esc(f.name) + '» будет удалён безвозвратно.',
+              async () => {
+                const res = await api('/api/sandbox/delete_file',
+                  { name: f.path, chat_id: S.chatId || '' });
+                if (res.ok) { toast('Удалено', 'success'); buildEmbedPanel(panel, spec); }
+                else toast(res.error || 'не удалось удалить', 'error');
+              });
+          });
+          row.appendChild(fx);
+        }
+        /* клик по файлу — предпросмотрщик ЧАТА (как по фишке файла в ответе);
+           папка — вкладка «Файлы» в этой папке */
+        row.addEventListener('click', () => {
+          if (f.is_dir) { showView('files'); loadFiles(f.path); return; }
+          openPreview({ name: f.name, size: f.size, url: f.download_url,
+            path: f.path, chat_id: S.chatId || '' });
+        });
         body.appendChild(row);
       });
     }, fail);
@@ -4845,7 +4943,8 @@ function buildEmbedPanel(panel, spec) {
         row.innerHTML = '<i class="emb-dot"></i><span class="emb-name">'
           + esc(m.key || m.kind) + '</span><span class="emb-meta">'
           + esc(val.length > 42 ? val.slice(0, 42) + '…' : val) + '</span>';
-        row.addEventListener('click', () => showView('memory'));
+        row.addEventListener('click', () =>
+          openObject('memory', '.mem-card[data-key=' + attrSel(m.key || m.kind) + ']'));
         body.appendChild(row);
       });
     }, (e) => { done = true; clearTimeout(timer); fail(e); });
@@ -4860,10 +4959,88 @@ function buildEmbedPanel(panel, spec) {
         row.innerHTML = '<i class="emb-dot"></i><span class="emb-name">'
           + esc(sc.title || 'сценарий') + '</span><span class="emb-meta">'
           + ((sc.steps || []).length) + ' шагов</span>';
-        row.addEventListener('click', () => showView('scenarios'));
+        row.addEventListener('click', () =>
+          openObject('scenarios', '.scenario-card[data-title=' + attrSel(sc.title || '') + ']'));
         body.appendChild(row);
       });
     }, fail);
+  } else if (spec.view === 'settings') {
+    /* BM16: ЛЮБОЙ ПУНКТ НАСТРОЕК — МИНИ-ВКЛАДКОЙ В ЧАТ. Фрагмент рисуется
+       из реального конфига и живо синхронизируется: спроси «какие у нас
+       провайдеры?» — карточка ответит быстрее вкладки. Сами настройки
+       меняются на вкладке; клик по строке приводит туда */
+    const SECTIONS = {
+      providers: 'модели и ключи', images: 'генерация изображений',
+      safety: 'безопасность', auto: 'фоновый режим',
+      telegram: 'telegram', profile: 'обо мне',
+      billing: 'биллинг', interface: 'интерфейс' };
+    const sec = SECTIONS[spec.section] ? spec.section : 'providers';
+    const drawCfg = (r) => {
+      const c = (r && r.ok !== false && r) || {};
+      const rows = [];
+      const row = (name, meta, hot) => {
+        rows.push('<div class="emb-row"><i class="emb-dot" style="'
+          + (hot ? 'background:var(--green);box-shadow:0 0 7px rgba(87,217,140,.6)'
+                 : 'background:var(--tx3)') + '"></i>'
+          + '<span class="emb-name">' + esc(name) + '</span><span class="emb-meta">'
+          + esc(meta) + '</span></div>');
+      };
+      if (sec === 'providers') {
+        const provs = Object.entries(c.providers || {}).sort((a, b) =>
+          (Number((a[1] || {}).priority) || 100) - (Number((b[1] || {}).priority) || 100));
+        if (!provs.length) row('провайдеры не настроены', 'вкладка «Настройки»', false);
+        const ROLES = { 0: 'основной', 10: 'запасной 1', 20: 'запасной 2', 30: 'резерв' };
+        provs.forEach(([name, pc]) => {
+          pc = pc || {};
+          const role = ROLES[Number(pc.priority)] || '';
+          row(pc.label || name, (pc.has_key ? (role ? role + ' · ключ есть' : 'ключ есть') : 'нет ключа'), !!pc.has_key);
+        });
+        const tier = ((c.orchestrator || {}).force_tier) || '';
+        row('уровень модели', tier ? (TIER_LABEL[tier] || tier) : 'авто');
+      } else if (sec === 'images') {
+        const m = c.media || {};
+        row('облачная генерация', m.has_image_gateway ? 'подключена' : 'не подключена', !!m.has_image_gateway);
+        if (!m.has_image_gateway) row('GigaChat fallback', m.has_gigachat_key ? 'ключ установлен' : 'нет ключа', !!m.has_gigachat_key);
+      } else if (sec === 'safety') {
+        const s = c.safety || {};
+        [['confirm_payments', 'спрос перед оплатой'],
+         ['confirm_delete', 'спрос перед удалением'],
+         ['confirm_shell', 'спрос перед терминалом'],
+         ['confirm_computer_use', 'спрос перед мышью'],
+         ['confirm_send_message', 'спрос перед отправкой сообщений'],
+         ['auto_approve_readonly', 'безопасное — без вопросов']]
+          .forEach(([k, label]) => row(label, s[k] ? 'включено' : 'выключено', !!s[k]));
+      } else if (sec === 'auto') {
+        const a = c.auto || {};
+        row('фоновые задачи', a.enabled ? 'включены' : 'выключены', !!a.enabled);
+        row('проактивные подсказки', a.proactive ? 'включены' : 'выключены', !!a.proactive);
+        const qh = a.quiet_hours || [1, 8];
+        row('тихие часы', qh[0] + ':00 – ' + qh[1] + ':00', false);
+      } else if (sec === 'telegram') {
+        const g = c.telegram || {};
+        row('уведомления', g.bot_token ? 'бот подключён' : 'бот не настроен', !!g.bot_token);
+        row('chat id', g.chat_id || 'не указан', false);
+      } else if (sec === 'profile') {
+        const u = c.user || {};
+        row('имя', u.name || '—', false);
+        row('город', u.city || '—', false);
+        if (u.about) row('о себе', u.about.length > 46 ? u.about.slice(0, 46) + '…' : u.about, false);
+      } else if (sec === 'billing') {
+        const b = c.billing || {};
+        row('показывать баланс', b.enabled ? 'включено' : 'выключено', !!b.enabled);
+        row('Cloud.ru', b.key_id ? 'ключ задан' : 'ключ не задан', !!b.key_id);
+      } else if (sec === 'interface') {
+        const u = c.ui || {};
+        row('звуки интерфейса', (u.sound == null || u.sound) ? 'включены' : 'выключены', u.sound == null || !!u.sound);
+      }
+      body.innerHTML = rows.join('');
+      $$('.emb-row', body).forEach((r2) =>
+        r2.addEventListener('click', () =>
+          openObject('settings', '.sset[data-section=' + attrSel(sec) + ']')));
+    };
+    embSync(() => api('/api/config'),
+      (r) => JSON.stringify((r && (r.providers || r.safety || r.auto || r.media)) || {}));
+    api('/api/config').then(drawCfg, fail);
   }
 }
 
@@ -9832,8 +10009,11 @@ function handleEvent(ev, ui) {
       // живёт только на самой tool-карточке, а Markdown сохраняет синюю каретку.
       // раз дошло до инструментов — задача не «простая», кухню открываем
       ui.verbose = true;
-      /* BM13: задача уходит в фон — карточка AUTO в момент СТАРТА вызова */
-      if (ev.name === 'schedule_task') embedLiveAuto(ui);
+      /* BM16: AUTO-карточку НЕ ставим на СТАРТЕ вызова schedule_task —
+         этот инструмент в агентском прогоне СЕНТИНЕЛ (задачу создаёт
+         только серверный маршрутизатор ДО агента): карточка до результата
+         врала «задача есть», хотя её не было. Карточка и уведомление —
+         только на успешный результат (tool_result ниже) */
       // «Глаза» агента (снимок экрана, параметры экрана) — служебные шаги.
       // Пользователю их видеть незачем: он просил результат, а не отчёт
       // о каждом кадре. Тихо запоминаем и показываем только в терминале.
@@ -10140,8 +10320,16 @@ function handleEvent(ev, ui) {
          Файл создан — сразу карточка ФАЙЛЫ; факт сохранён — ПАМЯТЬ:
          вкладка открывается в момент события, а не после ответа */
       if (ev.result && ev.result.ok !== false) {
-        if (ev.name === 'schedule_task') embedLiveAuto(ui);
-        else if (/^(write_file|download_file|make_archive|generate_image)$/.test(ev.name)) {
+        if (ev.name === 'schedule_task') {
+          /* BM16: уведомление о фоновой задаче при создании ИЗ ЧАТА —
+             вернули (карточка AUTO — в конец этого уведомления/ответа) */
+          embedLiveAuto(ui);
+          const tt = (ev.result && ev.result.task && ev.result.task.title)
+            || (ev.result && ev.result.title) || '';
+          toast('Задача' + (tt ? ' «' + tt + '»' : '') + ' создана — работает в фоне',
+            'success', 'AUTO');
+          sfx('ok');
+        } else if (/^(write_file|download_file|make_archive|generate_image)$/.test(ev.name)) {
           embedLiveCard(ui, 'files', 'файлы диалога');
         } else if (ev.name === 'remember') {
           embedLiveCard(ui, 'memory', 'что я запомнил');
@@ -10518,13 +10706,11 @@ $('#micBtn').addEventListener('click', async () => {
       toast('Распознаю запись…', 'info', 'Микрофон');
       try {
         const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+        /* blobToWav16k УЖЕ возвращает data-url строки — её отдаём серверу
+           как есть (так делает голосовой режим). Прежний FileReader здесь
+           читал dataURL КАК ФАЙЛ и падал на каждом нажатии */
         const wav = await blobToWav16k(blob);
-        const b64 = await new Promise((res) => {
-          const fr = new FileReader();
-          fr.onload = () => res(fr.result);
-          fr.readAsDataURL(wav);
-        });
-        const r = await api('/api/transcribe', { audio: b64, language: 'ru' });
+        const r = await api('/api/transcribe', { audio: wav, language: 'ru' });
         const text = String((r && r.text) || '').trim();
         if (!r || r.ok === false || !text) {
           toast((r && r.error) || 'Не удалось распознать речь', 'error');
@@ -11804,6 +11990,7 @@ async function loadScenarios() {
     // те же кнопки .btn.sm. Один язык интерфейса, без самодеятельности.
     const steps = sc.steps || [];
     const card = el('div', 'task-card scenario-card done');
+    card.dataset.title = sc.title || '';
     card.innerHTML =
       '<div class="tc-head">' +
         '<div class="tc-title">' + esc((sc.emoji ? sc.emoji + ' ' : '') + (sc.title || 'Сценарий')) + '</div>' +
@@ -12997,6 +13184,7 @@ async function loadMemory() {
   grid.innerHTML = '';
   items.forEach((m, i) => {
     const c = el('div', 'mem-card');
+    c.dataset.key = m.key || '';
     c.style.animationDelay = (i * 0.02) + 's';
     c.innerHTML = '<div class="mem-kind">' + esc(m.kind) + '</div>' +
       '<div class="mem-key">' + esc(m.key) + '</div>' +
@@ -13062,6 +13250,7 @@ function renderSettings() {
   // Провайдеры — BM6: список динамический, из конфига. Любой
   // OpenAI-совместимый провайдер появляется здесь сам; порядок = приоритет.
   const prov = el('div', 'sset');
+  prov.dataset.section = 'providers';
   const provs = Object.entries(p).sort((a, b) =>
     (Number((a[1] || {}).priority) || 100) - (Number((b[1] || {}).priority) || 100));
   const ROLE_OPTS = [[0, 'Основной'], [10, 'Запасной 1'], [20, 'Запасной 2'], [30, 'Дальний резерв']];
@@ -13127,6 +13316,7 @@ function renderSettings() {
   // сервере. Пользователь ничего не регистрирует и не настраивает.
   const mediaCfg = c.media || {};
   const mediaSet = el('div', 'sset');
+  mediaSet.dataset.section = 'images';
   if (mediaCfg.has_image_gateway) {
     mediaSet.innerHTML = '<h3>Генерация изображений</h3>' +
       '<div class="sd">Облачная генерация уже включена в установщик. Работает из России ' +
@@ -13163,6 +13353,7 @@ function renderSettings() {
 
   // Безопасность
   const saf = el('div', 'sset');
+  saf.dataset.section = 'safety';
   saf.innerHTML = '<h3>Безопасность</h3><div class="sd">Что я обязан спросить перед выполнением.</div>';
   const safety = c.safety || {};
   [['confirm_payments', 'Спрашивать перед оплатой'],
@@ -13185,6 +13376,7 @@ function renderSettings() {
 
   // AUTO
   const au = el('div', 'sset');
+  au.dataset.section = 'auto';
   au.innerHTML = '<h3>AUTO · фоновый режим</h3><div class="sd">Работа без тебя и проактивные подсказки.</div>';
   const autoCfg = c.auto || {};
   [['enabled', 'Фоновые задачи включены'], ['proactive', 'Проактивные подсказки']].forEach(([key, label]) => {
@@ -13209,6 +13401,7 @@ function renderSettings() {
 
   // Telegram
   const tg = el('div', 'sset');
+  tg.dataset.section = 'telegram';
   const tgc = c.telegram || {};
   tg.innerHTML = '<h3>Telegram</h3>' +
     '<div class="sd">Уведомления и отчёты фоновых задач. Создай бота у @BotFather, вставь токен, ' +
@@ -13230,6 +13423,7 @@ function renderSettings() {
 
   // Профиль
   const pr = el('div', 'sset');
+  pr.dataset.section = 'profile';
   const u = c.user || {};
   pr.innerHTML = '<h3>Обо мне</h3><div class="sd">Чтобы я отвечал персонально.</div>' +
     '<div class="field"><label>Имя</label><input id="uName" value="' + esc(u.name || '') + '"></div>' +
@@ -13247,6 +13441,7 @@ function renderSettings() {
 
   // Биллинг Cloud.ru — данные из личного кабинета
   const bl = el('div', 'sset');
+  bl.dataset.section = 'billing';
   const bc = c.billing || {};
   const bs = S.billing || {};
   bl.innerHTML = '<h3>Биллинг Cloud.ru</h3>' +
@@ -13304,6 +13499,7 @@ function renderSettings() {
 
   // E. Интерфейс и звук
   const ui = el('div', 'sset');
+  ui.dataset.section = 'interface';
   const uic = c.ui || {};
   ui.innerHTML = '<h3>Интерфейс</h3>' +
     '<div class="sd">Тихие звуки подтверждают действия, не отвлекая: щелчок переключателя, ' +

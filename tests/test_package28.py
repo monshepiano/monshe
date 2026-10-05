@@ -74,6 +74,59 @@ class BackgroundRoutingTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("сервер", result["error"].lower())
 
+    def test_bm16_chat_schedule_call_creates_real_task(self) -> None:
+        """BM16: в ЧАТ-прогоне звонок schedule_task создаёт НАСТОЯЩУЮ задачу.
+
+        Маршрутизатор не увёл просьбу в фон — модель зовёт schedule_task:
+        прежде это был сентинел-отказ (ни задачи, ни уведомления). Теперь
+        задача создаётся, фронт показывает toast и карточку AUTO. Вопрос о
+        состоянии по-прежнему НЕ создаёт ничего.
+        """
+        from unittest import mock as _mock
+        turns = iter(("call", "answer"))
+
+        def fake_stream(*_args, **_kwargs):
+            if next(turns) == "call":
+                yield {"type": "done", "tool_calls": [{
+                    "id": "bg1", "type": "function",
+                    "function": {"name": "schedule_task",
+                                 "arguments": json.dumps(
+                                     {"title": "Таймер", "prompt": "напомни"},
+                                     ensure_ascii=False)},
+                }]}
+            else:
+                yield {"type": "delta", "text": "Поставил в фон."}
+                yield {"type": "done", "tool_calls": []}
+
+        route = {"tier": "base", "reason": "test", "score": 0,
+                 "verbose": False, "offer_tools": True}
+        with _mock.patch.object(agent.orchestrator, "choose_tier",
+                                return_value=route), \
+             _mock.patch.object(agent.llm, "chat_stream",
+                                side_effect=fake_stream), \
+             _mock.patch.object(agent, "state_question",
+                                return_value=False), \
+             _mock.patch.object(auto, "has_similar_pending",
+                                return_value=False) as pending, \
+             _mock.patch.object(
+                 auto, "create_background_task",
+                 return_value={"id": "t1", "title": "Таймер"}) as create:
+            runner = agent.Agent(chat_id="chat-9", agent_mode=False)
+            events = list(runner.run(
+                [{"role": "user", "content": "напомни через час"}],
+                user_text="напомни через час"))
+
+        pending.assert_called_once()
+        create.assert_called_once()
+        self.assertEqual(create.call_args.kwargs.get("chat_id"), "chat-9")
+        results = [e for e in events
+                   if e.get("type") == "tool_result"
+                   and e.get("name") == "schedule_task"]
+        self.assertTrue(results)
+        self.assertTrue(results[0]["result"]["ok"])
+        self.assertEqual(results[0]["result"]["task"]["title"], "Таймер")
+        self.assertIn("schedule_task", runner.used_tools)
+
     def test_hallucinated_schedule_call_cannot_bypass_schema(self) -> None:
         """Even a structured call omitted from schemas must not be dispatched."""
         turns = iter(("call", "answer"))
@@ -1862,11 +1915,11 @@ class DirectDelayedDeliveryTests(unittest.TestCase):
         headless.assert_not_called()
         notify.assert_not_called()
         update.assert_any_call("timer-1", status="done", resume_status="", progress=1.0, result="привет")
-        # BM12: тихий прогон прикладывает карточку AUTO сам
+        # BM16: сработавшая задача — ПРОСТО отложенное сообщение, без
+        # карточки AUTO (карточка уместна при СОЗДАНИИ, не при срабатывании)
         sent_content = add_message.call_args[0][2]
         self.assertIn("привет", sent_content)
-        self.assertIn('```embed', sent_content)
-        self.assertIn('"view": "auto"', sent_content)
+        self.assertNotIn('```embed', sent_content)
         self.assertEqual(add_message.call_args[0][3],
                          {"task_id": "timer-1", "from_auto": True,
                           "files": [], "title": "Приветствие"})
@@ -3263,7 +3316,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.87", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.88", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
         # BM14.1: кэш-бустер статики обновляется сборкой сам
         self.assertIn("def _bump_asset_versions(",
                       Path("install/build.py").read_text(encoding="utf-8"))
@@ -5946,9 +5999,10 @@ class IterationBKTests(unittest.TestCase):
         self.assertIn('stroke="rgba(190,235,255,.85)"', md)
         self.assertIn('<span class="msq-r">', md)
         self.assertIn('preserveAspectRatio="none" aria-hidden="true"', md)
-        # BM14: .msq-box — новый бокс степени корня (базовый кегль);
-        # прежний класс msq-b не возвращается
-        self.assertIn('class="msq-box"', md)
+        # BM16: обёртки-бокса НЕТ — степень .msq-i лежит прямо над
+        # нижним загибом; прежние классы msq-b/msq-box не возвращаются
+        self.assertIn("'<span class=\"msq-i\">' + mesc(root) + '</span>'", md)
+        self.assertNotIn('class="msq-box"', md)
         self.assertNotIn('class="msq-b"', md)
         self.assertNotIn("H1400", md)
         self.assertNotIn("H11", md)
@@ -7171,11 +7225,11 @@ class IterationBM8Tests(unittest.TestCase):
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
         # BM13: степень живёт ВНУТРИ рамки корня — не наезжает на скобку слева
         self.assertIn("msqrt' + (root ? ' msqrt-i' : ''", md)
-        # BM15: носик на родном месте, степень в углу, сдвиг по выносу
+        # BM16: степень над нижним загибом — см. bm13_root_degree_inside_box
+        self.assertIn(".msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em", css)
         self.assertIn(".msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}", css)
-        self.assertIn(".msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;", css)
-        self.assertIn(".msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em", css)
         self.assertIn(".msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}", css)
+        self.assertNotIn("msq-box", css)
         self.assertIn(".mfr-d .msqrt{margin-top:.22em}", css)
 
     def test_bm11_dock_untouched_spaces_flyout(self) -> None:
@@ -7230,7 +7284,8 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn("mem_mark = _memory_mark()", srv)
         self.assertIn("final_text = agent.auto_embed_block(", srv)
         auto = Path("app/jarvis/auto.py").read_text(encoding="utf-8")
-        self.assertIn('agent.auto_embed_block(content, ["schedule_task"])', auto)
+        # BM16: сработавшая задача — просто отложенное сообщение
+        self.assertNotIn("agent.auto_embed_block(content", auto)
         # промпт: перечисление и вопросы о состоянии — всегда карточкой
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
         flat = " ".join(src.split())
@@ -7481,13 +7536,18 @@ class IterationBM13Tests(unittest.TestCase):
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         self.assertIn("msqrt' + (root ? ' msqrt-i' : ''", md)
-        # BM15: носик на родном месте (left:var(--msq-x)), степень в углу,
-        # пустого резерва нет: padding = .40em + фактический вынос степени
+        # BM16: степень ПРЯМО НАД НИЖНИМ ЗАГИБОМ (как в настоящем ∛):
+        # .msq-i у левого края, низ — над верхом крючка (42% высоты),
+        # обёртки .msq-box больше нет
+        self.assertIn(".msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em", css)
         self.assertIn(".msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}", css)
-        self.assertIn(".msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;", css)
-        self.assertIn(".msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em", css)
         self.assertIn(".msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}", css)
+        self.assertNotIn("msq-box", css)
         self.assertIn("function fixRootIndices(root)", js)
+        # формула сдвига выведена из геометрии viewBox (6.6×24, вершина 3.3,16)
+        fix = js.split("function fixRootIndices(root)")[1].split("\nfunction ")[0]
+        self.assertIn("const xU = 3.3 + (16 - yU) * (5.9 - 3.3) / 16;", fix)
+        self.assertIn("const pocket = xU * 0.40 / 6.6;", fix)
         # прежний вынос за левый край — запрещён (правило, не комментарий)
         self.assertNotIn(".msq-i{position:absolute;top:0;left:-.36em", css)
         self.assertNotIn("left:-.36em;width", css)
@@ -7643,12 +7703,11 @@ class IterationBM14Tests(unittest.TestCase):
     AUTO-вопросы в диалог, док-меню из кнопки, диктовка, тонкий скроллбар."""
 
     def test_bm14_root_degree_box_wrapper(self) -> None:
-        """Степень корня в боксе базового кегля: em от размера корня."""
+        """BM16: обёртки-бокса больше нет — степень лежит над загибом."""
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
-        self.assertIn(
-            "'<span class=\"msq-box\"><span class=\"msq-i\">' + mesc(root) +",
-            md)
-        self.assertIn("Индекс лежит", md)
+        self.assertIn("'<span class=\"msq-i\">' + mesc(root) + '</span>'", md)
+        self.assertNotIn("msq-box", md)
+        self.assertIn("в кармане галочки, как в глифе ∛", md)
 
     def test_bm14_payload_guard_honest_json_hint(self) -> None:
         """Ретрай больше не ВРЁТ «просил именно JSON» когда просили медиа."""
@@ -7720,11 +7779,14 @@ class IterationBM14Tests(unittest.TestCase):
         self.assertIn("self._rescue_show_media_tags(final_text)", src)
 
     def test_bm14_embed_head_solid(self) -> None:
-        """Шапка мини-вкладки почти непрозрачная — как вкладки агента."""
+        """BM16: область названия мини-вкладки ЧУТЬ СВЕТЛЕЕ — выделяется."""
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         head = css.split(".emb-head{")[1].split("}")[0] + \
             css.split(".emb-head{")[1].split("}")[1]
-        self.assertIn("background:rgb(10,20,33)", head)
+        self.assertIn(
+            "background:linear-gradient(180deg,rgba(28,48,72,.92),rgba(19,33,52,.92))",
+            head)
+        self.assertNotIn("background:rgb(10,20,33)", head)
 
     def test_bm14_global_tooltip_overlay(self) -> None:
         """Подписи пространств — глобальный fixed-оверлей поверх границ."""
@@ -7796,7 +7858,13 @@ class IterationBM14Tests(unittest.TestCase):
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         self.assertIn('id="micBtn" data-tip="Диктовка"', html)
-        self.assertIn("M12 3.4a3.1 3.1 0 0 1 3.1 3.1", html)
+        # BM16: родной значок обратно (капсула-rect + широкая дуга + стойка
+        # с основанием), ховер — как у прикрепления файла
+        self.assertIn('<rect x="9" y="2.6" width="6" height="11.2" rx="3"/>', html)
+        self.assertIn('d="M5.5 11.2a6.5 6.5 0 0 0 13 0"', html)
+        self.assertIn('d="M8.8 21h6.4"', html)
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn("#micBtn:hover{color:var(--sky);border-color:rgba(79,150,201,.5)}", css)
         handler = js.split("$('#micBtn').addEventListener('click'")[1] \
             .split("\n});")[0]
         self.assertIn("getUserMedia", handler)
@@ -7805,6 +7873,9 @@ class IterationBM14Tests(unittest.TestCase):
         self.assertIn("blobToWav16k", handler)
         self.assertIn("box.value = (base + text)", handler)
         self.assertNotIn("SpeechRecognition", handler)
+        # BM16: data-url от blobToWav16k уходит на сервер НАПРЯМУЮ — прежний
+        # FileReader.readAsDataURL(строка) валил каждое распознавание
+        self.assertNotIn("readAsDataURL(wav)", handler)
 
     def test_bm14_live_card_files_memory_at_event(self) -> None:
         """Файл создан — карточка ФАЙЛЫ сразу; факт — карточка ПАМЯТЬ."""
@@ -7867,6 +7938,150 @@ class IterationBM14Tests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         bg = js.split("case 'background':")[1].split("case '")[0]
         self.assertIn("embedLiveAuto(ui)", bg)
+
+
+class IterationBM16Tests(unittest.TestCase):
+    """BM16: корни заново, медиа-JSON, мини-вкладки-объекты, настройки, микрофон."""
+
+    def test_bm16_root_degree_above_bend(self) -> None:
+        """Степень — ПРЯМО НАД НИЖНИМ ЗАГИБОМ; сдвиг из геометрии viewBox."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn(
+            ".msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em",
+            css)
+        # обёртки-бокса нет ни в рендере, ни в стилях
+        self.assertNotIn("msq-box", md)
+        self.assertNotIn("msq-box", css)
+        fix = js.split("function fixRootIndices(root)")[1].split("\nfunction ")[0]
+        # нижняя линия степени над крючком, но не выше корня
+        self.assertIn("const b = Math.max(0.42 * H + 0.01, Math.min(degH + 0.02, H - 0.02));", fix)
+        # карман диагонали выведен из той же геометрии, что и path svg
+        self.assertIn("const xU = 3.3 + (16 - yU) * (5.9 - 3.3) / 16;", fix)
+        self.assertIn("const pocket = xU * 0.40 / 6.6;", fix)
+        self.assertIn("const shift = Math.max(0, w + 0.05 - pocket - 0.04);", fix)
+
+    def test_bm16_mic_native_icon_and_direct_datalog(self) -> None:
+        """Родной значок микрофона; data-url уходит на сервер напрямую."""
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn('<rect x="9" y="2.6" width="6" height="11.2" rx="3"/>', html)
+        self.assertIn('d="M8.8 21h6.4"', html)
+        # ховер — тот же, что у прикрепления файла
+        self.assertIn("#attachBtn:hover{color:var(--sky);border-color:rgba(79,150,201,.5)}", css)
+        self.assertIn("#micBtn:hover{color:var(--sky);border-color:rgba(79,150,201,.5)}", css)
+        handler = js.split("$('#micBtn').addEventListener('click'")[1].split("\n});")[0]
+        self.assertIn("const r = await api('/api/transcribe', { audio: wav, language: 'ru' });", handler)
+        # прежний FileReader.readAsDataURL(строка) валил каждое распознавание
+        self.assertNotIn("readAsDataURL(wav)", handler)
+
+    def test_bm16_media_json_rescue(self) -> None:
+        """JSON-блок {"url": …} исполняется как show_media и исчезает."""
+        from jarvis import agent as ag
+        from unittest import mock
+        text = ("Вот видео:\n```json\n{\"url\": "
+                "\"[https://x.com/v.mp4](https://x.com/v.mp4)\"}" +
+                "\n```\nПриятного просмотра.")
+        with mock.patch.object(ag.tools, "call",
+                               return_value={"ok": True, "file": "v.mp4",
+                                             "path": "v.mp4", "kind": "video"}), \
+             mock.patch.object(ag, "_file_info_of",
+                               return_value={"name": "v.mp4", "size": 10}):
+            files = []
+            cleaned, rescued = ag.rescue_show_media_json(text, files.append)
+        self.assertTrue(rescued)
+        self.assertNotIn("```", cleaned)
+        self.assertNotIn("x.com", cleaned)
+        self.assertEqual(files, [{"name": "v.mp4", "size": 10}])
+        # произвольный JSON-код не трогаем
+        code = "```json\n{\"name\": \"Иван\", \"age\": 30}\n```"
+        cleaned2, rescued2 = ag.rescue_show_media_json(code, None)
+        self.assertFalse(rescued2)
+        self.assertEqual(cleaned2, code)
+
+    def test_bm16_state_questions_extended(self) -> None:
+        """«что в фоне», «факты обо мне», настройки — правильные вкладки."""
+        from jarvis import agent as ag
+        self.assertEqual(ag.state_question_view("что в фоне"), "auto")
+        self.assertEqual(ag.state_question_view("покажи факты обо мне"), "memory")
+        self.assertEqual(ag.state_question_view("какие у нас провайдеры?"), "settings")
+        self.assertEqual(
+            ag.state_question_view("сделай яндекс у себя основным провайдером"),
+            "settings")
+        self.assertEqual(ag.settings_section(
+            "сделай яндекс у себя основным провайдером"), "providers")
+        # поручение в фоне — НЕ вопрос о состоянии
+        self.assertIsNone(ag.state_question_view("сделай в фоне задачу через час"))
+        # снимок настроек — факты без секретов
+        snap = ag.state_question_snapshot("settings")
+        self.assertIn("провайдеры", snap)
+        self.assertNotIn("api_key", snap.split("провайдеры")[1].split(";")[0])
+
+    def test_bm16_embed_cards_objects_and_settings(self) -> None:
+        """Мини-вкладки: без описания, объекты открываются, настройки."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        bep = js.split("function buildEmbedPanel(panel, spec)")[1].split("\nfunction ")[0]
+        # описания нет; имя тянется на всю шапку
+        self.assertNotIn("emb-sub", bep)
+        self.assertIn(".emb-head b{font:600 9.5px/1 var(--ff);letter-spacing:1.9px;color:var(--tx2);", css)
+        # разворачивание из верхней левой точки
+        self.assertIn("transform-origin:0 0;animation:embIn .34s", css)
+        self.assertIn("@keyframes embIn{from{transform:scale(.55,.4);opacity:0}", css)
+        # объекты: задача/факт/сценарий/файл/секция настроек + вспышка
+        self.assertIn("const openObject = (view, sel) => {", bep)
+        self.assertIn(".task-card[data-task-id=", bep)
+        self.assertIn(".mem-card[data-key=", bep)
+        self.assertIn(".scenario-card[data-title=", bep)
+        self.assertIn(".sset[data-section=", bep)
+        self.assertIn("openPreview({ name: f.name, size: f.size, url: f.download_url,", bep)
+        self.assertIn("@keyframes flashIn", css)
+        # три кнопки файла: переименовать / скачать / удалить
+        self.assertIn('<i class="r" title="Переименовать">✎</i>', bep)
+        self.assertIn('<i class="dl" title="Скачать">↓</i>', bep)
+        self.assertIn('<i class="d" title="Удалить">✕</i>', bep)
+        self.assertIn("api('/api/sandbox/rename_file'", bep)
+        # карточка ФАЙЛОВ открывается в последнюю очередь (в самый низ)
+        elc = js.split("function embedLiveCard(ui, view, title)")[1].split("\nfunction ")[0]
+        self.assertIn("if (view === 'files') {", elc)
+        self.assertIn("ui.node.body.appendChild(panel);", elc)
+        # настройки — полноценный вид с секциями и синхронизацией
+        self.assertIn("settings: { name: 'НАСТРОЙКИ', sub: 'конфигурация', view: 'settings', ico: '⚙' }",
+                      js)
+        self.assertIn("embSync(() => api('/api/config'),", bep)
+
+    def test_bm16_auto_creation_notification_and_plain_fire(self) -> None:
+        """Создание из чата — уведомление с карточкой; срабатывание — чисто."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        auto = Path("app/jarvis/auto.py").read_text(encoding="utf-8")
+        tr = js.split("case 'tool_result': {")[1].split("case '")[0]
+        self.assertIn("Задача' + (tt ? ' «' + tt + '»' : '') + ' создана — работает в фоне'", tr)
+        # карточки на СТАРТЕ вызова больше нет — сентинел не создаёт задач
+        ts = js.split("case 'tool_start': {")[1].split("case '")[0]
+        self.assertNotIn("embedLiveAuto(ui)", ts)
+        # маршрутизатор не уводит вопрос о состоянии в фон
+        self.assertIn("if agent.state_question(text):", srv)
+        # уведомление маршрутизатора несёт карточку в конце
+        bg = srv.split("if server_scheduled:")[1].split("self._sse_close()")[0]
+        self.assertIn('```embed', bg)
+        # сработавшая задача — просто отложенное сообщение
+        self.assertNotIn("agent.auto_embed_block(content", auto)
+
+    def test_bm16_prompt_knows_settings_tab(self) -> None:
+        """Промпт: настройки — мини-вкладкой с секцией и инструкцией."""
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        flat = " ".join(src.split())
+        self.assertIn("scenarios (сценарии) | settings", flat)
+        self.assertIn("section = providers | images | safety | auto", flat)
+        self.assertIn("ВОПРОС О НАСТРОЙКАХ", flat)
+        self.assertIn("КОРОТКУЮ ИНСТРУКЦИЮ, что и где нажать", flat)
+        # JSON-«вызов» медиа запрещён промптом
+        self.assertIn("ЗАПРЕЩЕНО «вызывать» show_media JSON-блоком", flat)
+        self.assertIn("def rescue_show_media_json(", src)
+        self.assertIn("final_text = self._rescue_show_media_json(final_text)", src)
 
 
 if __name__ == "__main__":

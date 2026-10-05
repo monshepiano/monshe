@@ -2667,18 +2667,18 @@ function testIterationBKContracts() {
     css.includes('padding:0 .18em 0 .05em') &&
     css.includes('.msqrt::after{content:\'\';position:absolute;left:.35em;right:0;top:-.7px;') &&
     css.includes('height:1.4px;background:rgba(190,235,255,.85)') &&
-    /* BM14: индекс в БОКСЕ базового кегля (.msq-box) — em считаются от
+    /* BM16: степень над нижним загибом — em считаются от
        размера корня, а не уменьшенного индекса; прежний right:calc уплывал */
     !css.includes('aspect-ratio:11/24') && !css.includes('border-top:1.4px') &&
     !css.includes('right:calc(100% - .98em)') &&
-    css.includes('.msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;') &&
-    css.includes('.msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;') &&
+    css.includes('.msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em;') &&
     css.includes('.msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}') &&
     css.includes('.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}') &&
-    markdown.includes('class="msq-box"><span class="msq-i">') &&
+    !css.includes('msq-box') && !markdown.includes('msq-box') &&
+    markdown.includes("'<span class=\"msq-i\">' + mesc(root) + '</span>'") &&
     markdown.includes("msqrt' + (root ? ' msqrt-i' : ''") &&
     js.includes('function fixRootIndices(root)'),
-    'BM3/BM13/BM15: the root svg stays at its native place (left:var(--msq-x)); the degree sits in the corner box, and a WIDE degree shifts the root by its measured overhang via --msq-x — no gap to the left of the root');
+    'BM3/BM13/BM16: the degree lies DIRECTLY ABOVE THE LOWER BEND like a real ∛ (bottom:42%, no wrapper box); a wide degree shifts the whole root by a pocket computed from the viewBox geometry — works at any size, nested included');
   // BK: ГРАФИК-ИНТЕРПРЕТАТОР — z(x,y)=, юникод-математика, спасение формул
   assert(js.includes("src.replace(/(^|[^\\w])([a-zA-Z])\\s*\\(([^)]*)\\)\\s*=/g,") &&
     js.includes(".replace(/[·×]/g, '*')") &&
@@ -2816,11 +2816,11 @@ function testIterationBM13Contracts() {
 function testIterationBM14Contracts() {
   const pyAuto = fs.readFileSync(path.join(root, 'app/jarvis/auto.py'), 'utf8');
   // КОРНИ: индекс в БОКСЕ базового кегля, прижат к штриху носика
-  assert(markdown.includes('class="msq-box"><span class="msq-i">') &&
-    css.includes('.msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;') &&
+  assert(markdown.includes("'<span class=\"msq-i\">' + mesc(root) + '</span>'") &&
+    css.includes('.msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em;') &&
     css.includes('.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}') &&
     css.includes('.msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}'),
-    'BM15: the degree nestles into the check corner and the root svg keeps its native place; a wide degree shifts the whole root by its measured overhang (--msq-x)');
+    'BM16: the degree lies above the lower bend (bottom:42%), the svg keeps its native place; a wide degree shifts the whole root by the viewBox-derived pocket (--msq-x)');
   // BM14.1: мини-вкладки больше не висят «собираю вкладку…» вечно:
   // финальный монтаж не зависит от гонки флагов стрима
   assert(js.includes('function mountEmbedPanels(root, isFinal)') &&
@@ -2896,9 +2896,9 @@ function testIterationBM15Contracts() {
   // промежутка слева; широкая степень сдвигает корень JS-мерой (--msq-x)
   assert(js.includes('function fixRootIndices(root)') &&
     js.includes('--msq-x') &&
-    css.includes('.msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;') &&
+    css.includes('.msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em;') &&
     css.includes('.msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}'),
-    'BM15 roots: the degree nestles into the check corner at the native svg place; a wide degree shifts the whole root by its measured overhang — zero gap on the left');
+    'BM16 roots: the degree lies directly above the lower bend; a wide degree shifts the whole root by the viewBox-derived pocket — zero gap on the left');
   // МИНИ-ВКЛАДКИ: покраска и иконки — как у настоящих вкладок меню
   assert(css.includes('.emb-v-auto') && css.includes('.emb-v-files') &&
     css.includes('.emb-v-memory') && css.includes('.emb-v-scenarios') &&
@@ -2935,6 +2935,64 @@ function testIterationBM15Contracts() {
     pyAuto.includes('db.notify("AUTO: " + task["title"]') &&
     !pyAuto.includes('db.list_chats(1)'),
     'BM15 auto: only THIS dialog tasks write into the dialog; chatless results are note-dock notifications');
+}
+
+function testIterationBM16Contracts() {
+  const pyAuto = fs.readFileSync(path.join(root, 'app/jarvis/auto.py'), 'utf8');
+  // КОРНИ: степень ПРЯМО НАД НИЖНИМ ЗАГИБОМ, сдвиг — из геометрии viewBox
+  const fix = js.split('function fixRootIndices(root)')[1].split('\nfunction ')[0];
+  assert(css.includes('.msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em;') &&
+    !css.includes('msq-box') && !markdown.includes('msq-box') &&
+    fix.includes('const xU = 3.3 + (16 - yU) * (5.9 - 3.3) / 16;') &&
+    fix.includes('const pocket = xU * 0.40 / 6.6;') &&
+    fix.includes('const shift = Math.max(0, w + 0.05 - pocket - 0.04);'),
+    'BM16 roots: the degree sits directly above the lower bend; the shift comes from the viewBox geometry itself, so ANY size (nested roots, denominators) works without per-case fixes');
+  // МИКРОФОН: родной значок, ховер как у прикрепления, data-url напрямую
+  assert(html.includes('<rect x="9" y="2.6" width="6" height="11.2" rx="3"/>') &&
+    html.includes('d="M8.8 21h6.4"') &&
+    css.includes('#micBtn:hover{color:var(--sky);border-color:rgba(79,150,201,.5)}') &&
+    js.includes("const r = await api('/api/transcribe', { audio: wav, language: 'ru' });") &&
+    !js.split("$('#micBtn').addEventListener('click'")[1].split('\n});')[0]
+      .includes('readAsDataURL(wav)'),
+    'BM16 mic: the native icon is back (rect capsule + base line), hover matches the attach button, and the wav data-url goes to the server DIRECTLY (the stray FileReader killed every transcription)');
+  // МЕДИА: JSON-«вызов» исполняется и вычищается (py-часть — якорями)
+  assert(pyAgent.includes('def rescue_show_media_json(') &&
+    pyAgent.includes('final_text = self._rescue_show_media_json(final_text)') &&
+    pyAgent.includes('ЗАПРЕЩЕНО «вызывать» show_media JSON-блоком'),
+    'BM16 media: a black ```json {"url": …} block is EXECUTED as a real show_media call and removed from the text — the person sees the player, not code');
+  // МИНИ-ВКЛАДКИ: без описания, объекты, три кнопки файла, настройки
+  const bep = js.split('function buildEmbedPanel(panel, spec)')[1].split('\nfunction ')[0];
+  assert(!bep.includes('emb-sub') &&
+    css.includes('transform-origin:0 0;animation:embIn .34s') &&
+    css.includes('@keyframes embIn{from{transform:scale(.55,.4);opacity:0}') &&
+    bep.includes('const openObject = (view, sel) => {') &&
+    bep.includes('.task-card[data-task-id=') &&
+    bep.includes('.mem-card[data-key=') &&
+    bep.includes('.scenario-card[data-title=') &&
+    bep.includes('.sset[data-section=') &&
+    bep.includes('openPreview({ name: f.name, size: f.size, url: f.download_url,') &&
+    bep.includes('<i class="r" title="Переименовать">✎</i>') &&
+    bep.includes('<i class="dl" title="Скачать">↓</i>') &&
+    bep.includes('<i class="d" title="Удалить">✕</i>') &&
+    bep.includes("api('/api/sandbox/rename_file'"),
+    'BM16 embeds: no description line; rows open the REAL object (task/scenario/fact/section) with a flash; file rows carry the same three buttons (rename/download/delete); the card unfolds from the top-left point');
+  // ФАЙЛЫ-карточка — в последнюю очередь; настройки — вид с секциями
+  const elc = js.split('function embedLiveCard(ui, view, title)')[1].split('\nfunction ')[0];
+  assert(elc.includes("if (view === 'files') {") &&
+    elc.includes('ui.node.body.appendChild(panel);') &&
+    js.includes("settings: { name: 'НАСТРОЙКИ', sub: 'конфигурация', view: 'settings', ico: '⚙' }") &&
+    bep.includes("embSync(() => api('/api/config'),"),
+    'BM16: the FILES card lands at the very BOTTOM of the message; settings sections render live and sync');
+  // AUTO: уведомление при создании из чата; карточки на старте НЕТ
+  const tr = js.split("case 'tool_result': {")[1].split("case '")[0];
+  const ts = js.split("case 'tool_start': {")[1].split("case '")[0];
+  assert(tr.includes('создана — работает в фоне') &&
+    !ts.includes('embedLiveAuto(ui)') &&
+    pyServer.includes('if agent.state_question(text):') &&
+    !pyAuto.includes('agent.auto_embed_block(content'),
+    pyAgent.includes('elif name == "schedule_task" and self.chat_id:') &&
+    pyAgent.includes('_auto.create_background_task('),
+    'BM16 auto: creating a bg task from chat fires the toast + card (router path AND a schedule_task call in a chat run — both real); a state question never becomes a task; a FIRED task is a plain deferred message');
 }
 
 function testIterationAOContracts() {
@@ -3095,12 +3153,12 @@ function testIterationBM9Contracts() {
     'BM10: folders animate via the JS waltz alone — no CSS transition fighting it at the end');
   // BM10: степень корня — ниже и левее: не залезает за черту корня;
   // корень в ЗНАМЕНАТЕЛЕ дроби опущен (не наезжает на знак дроби)
-  /* BM14: индекс в боксе базового кегля — .msq-box держит em корня */
-  assert(css.includes('.msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;') &&
-    css.includes('.msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;') &&
+  /* BM16: степень над нижним загибом — em от корня */
+  assert(css.includes('.msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em;') &&
     css.includes('.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}') &&
+    !css.includes('msq-box') &&
     css.includes('.mfr-d .msqrt{margin-top:.22em}'),
-    'BM12/BM13/BM15: the root degree stays INSIDE the root bounds, nestled into the corner (wide degrees shift the root via --msq-x); a root in the denominator drops below the fraction bar');
+    'BM12/BM13/BM16: the root degree stays INSIDE the root bounds above the lower bend; a root in the denominator drops below the fraction bar');
   // BM9: 3D — ЛКМ вращает, ПКМ пан; короткий ПКМ — обычное меню
   const p3 = js.split('function buildPlot3Panel(')[1].split('\nfunction ')[0];
   assert(p3.includes("(e.button === 0 || e.button === 1) ? 'rot' : (e.button === 2 ? 'pan' : null)"),
@@ -3265,12 +3323,12 @@ function testIterationBM12Contracts() {
     pyAgent.includes('попробуй другой сайт или поисковый запрос, а не\n   сдавайся'),
     'BM12: media arrives as a FILE in the chat (like a messenger), a bare link instead is an error');
   // КОРЕНЬ: степень внутри границ корня
-  /* BM14: индекс в боксе базового кегля (.msq-box) — em от корня */
+  /* BM16: степень над нижним загибом — em от корня */
   assert(css.includes('.msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}') &&
-    css.includes('.msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;') &&
+    css.includes('.msqrt .msq-i{position:absolute;left:0;bottom:calc(42% + .01em);font-size:.58em;') &&
     css.includes('.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}') &&
-    css.includes('.msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;'),
-    'BM12/BM13: the root degree is down and left, never above the root, and (BM13) always inside the root box — never onto the bracket');
+    !css.includes('msq-box'),
+    'BM12/BM13/BM16: the root degree lies above the lower bend — down and left, never onto the bracket or the stroke');
   // СВАЙП: распознание быстрее; кнопки реагируют мгновенно
   assert(js.includes('if (dx < 24 || dx < Math.abs(e.deltaY) * 1.15) return;') &&
     js.includes('if (now - lastSwipe < 280) return;'),
@@ -3320,10 +3378,11 @@ function testIterationBM12Contracts() {
     js.includes("wrap.addEventListener('pointerenter'") &&
     js.includes("wrap.addEventListener('pointerleave'"),
     'BM12: the dock flyout bursts out of the current-space button — icons fly to their slots, the dash sits under the icon');
-  // МИНИ-ВКЛАДКИ: векторные иконки, шапка ПОЧТИ НЕПРОЗРАЧНАЯ (BM14)
+  // МИНИ-ВКЛАДКИ: векторные иконки; шапка ЧУТЬ СВЕТЛЕЕ тела (BM16)
   assert(js.includes("ico: '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"") &&
-    css.includes('background:rgb(10,20,33)'),
-    'BM12: embed tab icons are proper vectors; the title bar is SOLID — like the agent tool tabs');
+    css.includes('background:linear-gradient(180deg,rgba(28,48,72,.92),rgba(19,33,52,.92))') &&
+    !css.includes('background:rgb(10,20,33)'),
+    'BM16: embed tab icons are proper vectors; the title bar is slightly LIGHTER than the body — it stands out');
 }
 
 function testIterationAXContracts() {
@@ -4162,8 +4221,9 @@ function testIterationBHContracts() {
   testIterationBM13Contracts();
   testIterationBM14Contracts();
   testIterationBM15Contracts();
+  testIterationBM16Contracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 59 regression groups passed');
+  console.log('package28_frontend_runtime: 60 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
