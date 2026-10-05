@@ -867,18 +867,13 @@ class Handler(BaseHTTPRequestHandler):
             task = auto.create_background_task(title=task_title, prompt=text,
                                                schedule=decision["schedule"], chat_id=chat_id)
             human = auto.describe_schedule(decision["schedule"])
-            # Карточка «В фоне» уже сообщает и название, и срок. Дублировать
-            # то же самое текстом «Принято…» — лишний шум в диалоге.
-            note = ("Задача «%s» — в фоне%s." % (task_title, ", " + human if human else ""))
-            # BM15: в сохранённую заметку вкладываем и карточку AUTO — после
-            # перезагрузки диалога живой список задач виден, а не только текст
-            note += "\n\n```embed\n{\"view\": \"auto\", \"title\": \"что я делаю в фоне\"}\n```"
+            # BM18: уведомление о фоновой задаче — ЗЕЛЁНАЯ БЛАШКА с живой
+            # вкладкой АВТО внутри (тост на клиенте). В диалоге больше
+            # НИЧЕГО не появляется: ни текстовой заметки, ни карточки —
+            # пользователь просил убрать уведомление из чата совсем
             self._sse({"type": "background", "task_id": task["id"], "title": task["title"],
                        "schedule": decision["schedule"], "when": human,
                        "reason": decision.get("reason", "")})
-            db.add_message(chat_id, "assistant", note,
-                           {"task_id": task["id"], "bg_card": True})
-            # content пустой: текст уже нарисован карточкой «В фоне»
             foreground_span.first_token()
             self._sse({"type": "done", "content": "", "files": [], "tools": ["schedule_task"]})
             self._sse({"type": "end"})

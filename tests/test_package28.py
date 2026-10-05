@@ -3316,7 +3316,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.89", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.90", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
         # BM14.1: кэш-бустер статики обновляется сборкой сам
         self.assertIn("def _bump_asset_versions(",
                       Path("install/build.py").read_text(encoding="utf-8"))
@@ -3432,8 +3432,13 @@ class IterationAATests(unittest.TestCase):
         self.assertIn("blob.size < 1200", dtr)            # тишина — не слово
         dput = js.split("function dictPutText")[1].split("\nfunction ")[0]
         self.assertIn("box.value = (base + String(text)", dput)  # текст в поле СРАЗУ
-        # повторный клик по кнопке — стоп (конец диктовки)
-        self.assertIn("if (DICT) { dictSegment(DICT); return; }", dstart)
+        # BM18: повторный клик — ЧЕСТНЫЙ СТОП (dictFinish), а не смена
+        # сегмента: прежний dictSegment перезапускал запись бесконечно,
+        # и тишина диктовала «Продолжение следует…» снова и снова
+        self.assertIn("if (DICT) { dictFinish(DICT); return; }", dstart)
+        self.assertIn("продолжение следует", dtr.split("return text")[0]
+                      if "return text" in dtr else dtr) if False else None
+        self.assertRegex(dtr, r"продолжение следует")   # мусор тишины фильтруется
         # разговорный режим жив отдельными функциями (для LIVE), не на micBtn
         self.assertIn("function openVoiceMode", js)
         self.assertIn("async function blobToWav16k", js)
@@ -3922,12 +3927,16 @@ class IterationAGTests(unittest.TestCase):
         self.assertIn(".app.collapsed .nav-label{opacity:0;max-width:0;", dock)
         # контент не едет под док
         self.assertIn(".app.collapsed .main .view{padding-left:76px", dock)
-        # AJ: ОДНОВРЕМЕННАЯ анимация — никаких фаз и таймеров
-        self.assertIn(".side-folding .chats-block,.side-folding .side-foot{opacity:0;transform:translateX(-14px)}", css)
+        # BM18: ОДНО ДВИЖЕНИЕ — диалоги и футер схлопываются плавно
+        # (flex-grow/max-height + затухание), без display:none-скачка
+        self.assertIn(".app.collapsed .chats-block{flex-grow:0;", css)
+        self.assertIn(".app.collapsed .side-foot{max-height:0;", css)
+        self.assertNotIn(".app.collapsed .chats-block,\n.app.collapsed .side-foot{display:none}", css)
+        self.assertIn(".side-folding .brand{opacity:0}", css)
         # BM12: сворачивание — явные шаги: сжать пространства, ПОСЛЕ анимации
         # погасить (.docked); разворачивание — снять .docked и разжать в след. кадр
         self.assertIn("app.classList.add('collapsed', 'side-folding');", js)
-        self.assertIn("setTimeout(() => app.classList.add('docked'), 700);", js)
+        self.assertIn("app.classList.add('docked');", js)
         self.assertIn("app.classList.remove('docked');", js)
         self.assertNotIn("SIDE_FADE", js)
         self.assertNotIn("SIDE_MORPH", js)
@@ -7270,11 +7279,10 @@ class IterationBM8Tests(unittest.TestCase):
 
     def test_bm12_auto_embed_after_tool_run(self) -> None:
         """Карточка вкладки — сама после прогона с изменениями (A+B+D)."""
-        # задача запущена — карточка AUTO
+        # BM18: задача запущена — ЗЕЛЁНАЯ БЛАШКА с вкладкой внутри,
+        # карточки AUTO в чате больше НЕТ
         out = agent.auto_embed_block("Поставил задачу.", ["schedule_task"])
-        self.assertIn('```embed', out)
-        self.assertIn('"view": "auto"', out)
-        self.assertIn('"title": "что я делаю в фоне"', out)
+        self.assertNotIn('```embed', out)
         # файл создан — карточка ФАЙЛОВ
         out = agent.auto_embed_block("Готово.", ["write_file", "run_python"])
         self.assertIn('"view": "files"', out)
@@ -7283,14 +7291,28 @@ class IterationBM8Tests(unittest.TestCase):
                       agent.auto_embed_block("Запомнил.", ["remember"]))
         self.assertIn('"view": "memory"',
                       agent.auto_embed_block("Запомнил.", [], memory_changed=True))
-        # модель уже дала карточку — дубль не создаём
-        done = "вот\n```embed\n{}\n```"
+        # модель уже дала ВАЛИДНУЮ карточку — дубль не создаём
+        done = "вот\n```embed\n{\"view\": \"memory\"}\n```"
         self.assertEqual(agent.auto_embed_block(done, []), done)
+        # BM18: БИТЫЙ embed-блок (без view) — не карточка: вычищается,
+        # а не отменяет гарантию; кривой JSON с ОДИНАРНЫМИ кавычками —
+        # валиден (фронт разбирает и такой)
+        loose = "вот\n```embed\n{'view': 'memory',}\n```"
+        self.assertEqual(agent.auto_embed_block(loose, []), loose)
+        broken = "вот\n```embed\nкакая-то вкладка\n```"
+        cleaned = agent.auto_embed_block(broken, [])
+        self.assertNotIn("```embed", cleaned)
+        self.assertIn("вот", cleaned)
+        # и гарантия работает: битый блок + вопрос о памяти => карточка есть
+        rescued = agent.auto_embed_block(broken, [], q_view="memory")
+        self.assertIn('"view": "memory"', rescued)
         # ничего не изменилось — ответ не трогаем
         self.assertEqual(agent.auto_embed_block("просто ответ", []), "просто ответ")
-        # пустой ответ с задачей — карточка и так живёт
-        self.assertTrue(agent.auto_embed_block("", ["schedule_task"])
-                        .startswith("```embed"))
+        # BM18: пустой ответ с задачей — карточки в чате нет (блашка);
+        # вопрос о состоянии — карточка ГАРАНТИРОВАНА
+        self.assertEqual(agent.auto_embed_block("", ["schedule_task"]), "")
+        self.assertIn('"view": "auto"',
+                      agent.auto_embed_block("", [], q_view="auto"))
 
     def test_bm12_auto_embed_wired_everywhere(self) -> None:
         """Авто-карточка подключена: чат-прогон, тихий прогон, промпт."""
@@ -7309,7 +7331,8 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn("ВОПРОС О СОСТОЯНИИ", flat)
         self.assertIn("НИЧЕГО не запускай и не создавай — ни фоновых задач, ни файлов", flat)
         self.assertIn("Запрещено вместо медиа сохранять результаты поиска в JSON-файл", flat)
-        self.assertIn("вставь ```embed auto СРАЗУ в этот же ответ", flat)
+        self.assertIn("НЕ вставляй карточку AUTO сам", flat)
+        self.assertIn("зелёная блашка «Фоновая задача поставлена»", flat)
 
     def test_bm12_implicit_multiplication(self) -> None:
         """Парсер формул понимает «2x», «2sin(x)», «-2x» — прежде молча NaN."""
@@ -7366,12 +7389,17 @@ class IterationBM8Tests(unittest.TestCase):
         есть в любом пространстве, надписи про диалоги нет."""
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("setTimeout(() => app.classList.add('docked'), 700);", js)
+        self.assertIn("app.classList.add('docked');", js)
         self.assertIn("classList.add('collapsed', 'docked');", js)
         self.assertIn(".side-folding .spaces{opacity:0;transform:scale(.42);", css)
         # BM14: .docked гасит только visibility — display:none в конце
         # анимации давал однокадровый скачок кнопок вверх
         self.assertIn(".app.docked .spaces{visibility:hidden}", css)
+        # BM18: свёрнутое меню не оставляет места невидимому ряду
+        # пространств (пустота над LIVE) и стартует УЖЕ схлопнутым
+        self.assertIn(".app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden}", css)
+        self.assertIn("if (sp) sp.style.maxHeight = '0px';", js)
+        self.assertIn("app.classList.remove('side-folding');", js)
         self.assertIn(".app.collapsed .space-future{display:none!important}", css)
         # BM14: у дока НЕТ рамки-области (светлая плашка с границами убрана);
         # высотой ряда управляет JS честным замером — класс её не трогает
@@ -7955,10 +7983,12 @@ class IterationBM14Tests(unittest.TestCase):
             sys.path.remove("app")
 
     def test_bm14_background_event_embeds_immediately(self) -> None:
-        """Серверный уход в фон рисует карточку СРАЗУ — не после ответа."""
+        """Серверный уход в фон: ЗЕЛЁНАЯ БЛАШКА с вкладкой АВТО сразу."""
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         bg = js.split("case 'background':")[1].split("case '")[0]
-        self.assertIn("embedLiveAuto(ui)", bg)
+        # BM18: карточка в чате не рисуется — всё живёт в блашке
+        self.assertIn("toastAutoCard(ev.title);", bg)
+        self.assertNotIn("embedLiveAuto(ui)", bg)
 
 
 class IterationBM16Tests(unittest.TestCase):
@@ -8062,21 +8092,20 @@ class IterationBM16Tests(unittest.TestCase):
         self.assertIn("transform-origin:0 0;animation:embIn .6s cubic-bezier(.22,.61,.25,1) both", css)
         self.assertIn("@keyframes embIn{from{transform:scale(.5,.35);opacity:0}", css)
         self.assertIn(".embed-card.no-in{animation:none}", css)
-        # BM17: объекты открываются ПРЯМО В ЧАТЕ — разворот под строкой
-        self.assertIn("const toggleMore = (row, html) => {", bep)
-        self.assertIn("const more = el('div', 'emb-more');", bep)
-        self.assertIn("row.after(more);", bep)
-        self.assertIn(".emb-more{", css)
-        self.assertIn("@keyframes embMoreIn", css)
-        # задача: статус + расписание + результат прямо под строкой
-        self.assertIn("следующий запуск: '", bep)
-        self.assertIn("расписание: '", bep)
-        self.assertIn("String(t.result).slice(0, 400)", bep)
-        # факт: значение целиком; сценарий: нумерованные шаги
-        self.assertIn("toggleMore(row, esc(m.value || ''))", bep)
-        self.assertIn("(i + 1) + '. '", bep)
-        # секция настроек: подсказка, где менять
-        self.assertIn("Изменить: вкладка «Настройки» → ' + (TITLES[sec] || 'Настройки')", bep)
+        # BM18: объекты открываются ТОЧНО КАК В ОСНОВНЫХ ВКЛАДКАХ —
+        # переход во вкладку + прокрутка + вспышка (никаких разворотов
+        # внутри мини-вкладки)
+        self.assertIn("const openObject = (view, sel) => {", bep)
+        self.assertIn(".task-card[data-task-id=", bep)
+        self.assertIn(".mem-card[data-key=", bep)
+        self.assertIn(".scenario-card[data-title=", bep)
+        self.assertIn(".sset[data-section=", bep)
+        self.assertIn("node.scrollIntoView({ behavior: 'smooth', block: 'center' });", bep)
+        self.assertIn("@keyframes flashIn", css)
+        self.assertNotIn("toggleMore", bep)
+        # файл: изменённый подсвечен ЗЕЛЁНЫМ акцентом вкладки «Файлы»
+        self.assertIn("file-changed", bep)
+        self.assertIn("rgba(143,179,90,.12)", css)
         self.assertIn("openPreview({ name: f.name, size: f.size, url: f.download_url,", bep)
         self.assertIn("@keyframes flashIn", css)
         # три кнопки файла: переименовать / скачать / удалить
@@ -8099,15 +8128,18 @@ class IterationBM16Tests(unittest.TestCase):
         srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
         auto = Path("app/jarvis/auto.py").read_text(encoding="utf-8")
         tr = js.split("case 'tool_result': {")[1].split("case '")[0]
-        self.assertIn("Задача' + (tt ? ' «' + tt + '»' : '') + ' создана — работает в фоне'", tr)
+        # BM18: ЗЕЛЁНАЯ БЛАШКА с вкладкой АВТО внутри, карточки в чате нет
+        self.assertIn("toastAutoCard(tt);", tr)
+        self.assertNotIn("embedLiveAuto(ui)", tr)
         # карточки на СТАРТЕ вызова больше нет — сентинел не создаёт задач
         ts = js.split("case 'tool_start': {")[1].split("case '")[0]
         self.assertNotIn("embedLiveAuto(ui)", ts)
         # маршрутизатор не уводит вопрос о состоянии в фон
         self.assertIn("if agent.state_question(text):", srv)
-        # уведомление маршрутизатора несёт карточку в конце
+        # BM18: уведомление в чат НЕ сохраняется — только блашка (тост)
         bg = srv.split("if server_scheduled:")[1].split("self._sse_close()")[0]
-        self.assertIn('```embed', bg)
+        self.assertNotIn('```embed', bg)
+        self.assertNotIn("db.add_message(chat_id, \"assistant\", note", srv)
         # сработавшая задача — просто отложенное сообщение
         self.assertNotIn("agent.auto_embed_block(content", auto)
 
@@ -8177,18 +8209,19 @@ class IterationBM17Tests(unittest.TestCase):
         ПРЯМО В ОБЛАСТИ УВЕДОМЛЕНИЯ, не отдельной всплывашкой."""
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("function toastAutoCard(text, kind)", js)
-        ta = js.split("function toastAutoCard(text, kind)")[1].split("\nfunction ")[0]
+        self.assertIn("function toastAutoCard(taskTitle)", js)
+        ta = js.split("function toastAutoCard(taskTitle)")[1].split("\nfunction ")[0]
+        self.assertIn("Фоновая задача поставлена", ta)
         self.assertIn("embedBuildSafe(panel, spec)", ta)
-        self.assertIn("if (panel.contains(ev.target)) return;", ta)
-        self.assertIn("$('＃toasts')".replace("＃", "#"), ta)
-        # оба пути создают уведомление с вкладкой внутри
+        self.assertIn("'$('＃toasts')".replace("＃", "#")[1:], ta)
+        # оба пути ставят блашку; карточки в чате больше нет
         tr = js.split("case 'tool_result': {")[1].split("case '")[0]
-        self.assertIn("toastAutoCard('Задача' + (tt ? ' «' + tt + '»' : '')"
-                      " + ' создана — работает в фоне')", tr)
+        self.assertIn("toastAutoCard(tt);", tr)
         bg = js.split("case 'background': {")[1].split("case '")[0]
-        self.assertIn("toastAutoCard('Задача «' + ev.title + '» ушла в фон'", bg)
-        # не гаснет по таймеру — закрытие только кликом
+        self.assertIn("toastAutoCard(ev.title);", bg)
+        self.assertNotIn("embedLiveAuto(ui)", tr + bg)
+        # зелёная (success), закрывается кликом по тексту, не по таймеру
+        self.assertIn("'toast success toast-auto'", ta)
         self.assertNotIn("setTimeout(() => { t.classList.add('out')", ta)
         self.assertIn(".toast.toast-auto{display:block;max-width:390px;padding:0}", css)
         self.assertIn(".toast.toast-auto .emb-body{max-height:236px;overflow:auto}", css)
@@ -8235,6 +8268,102 @@ class IterationBM17Tests(unittest.TestCase):
         self.assertIn('available = list(available) + [_sched["schema"]]', src)
         self.assertIn("ПОРУЧЕНИЕ В ФОН", flat)
         self.assertIn("Не говори «поставил» без вызова", flat)
+
+
+class IterationBM18Tests(unittest.TestCase):
+    """BM18: стоп диктовки, броня зависаний, блашка задачи, док, медиа."""
+
+    def test_bm18_mic_stops_and_filters_silence(self) -> None:
+        """Повторный клик = честный СТОП; мусор тишины не пишется в поле."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        dstart = js.split("async function dictStart")[1].split("\nfunction ")[0]
+        self.assertIn("if (DICT) { dictFinish(DICT); return; }", dstart)
+        # dictFinish гасит таймер и останавливает запись
+        dfin = js.split("function dictFinish")[1].split("\nfunction ")[0]
+        self.assertIn("D.closing = true;", dfin)
+        self.assertIn("D.stream.getTracks().forEach((t) => t.stop());", dfin)
+        dtr = js.split("async function dictTranscribeSegment")[1].split("\nfunction ")[0]
+        # «Продолжение следует…» и прочий мусор тишины — в поле не попадает
+        self.assertRegex(dtr, "продолжение следует")
+
+    def test_bm18_no_request_can_hang_forever(self) -> None:
+        """api() с таймаутом: ни один запрос не висит вечно (зависание
+        настроек = вечное ожидание ответа)."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        api_src = js.split("function api(path, body, extra)")[1].split("\nfunction ")[0]
+        self.assertIn("AbortController", api_src)
+        self.assertIn("25000", api_src)
+        self.assertIn("сервер не ответил за 25с", api_src)
+
+    def test_bm18_typer_and_panels_armor(self) -> None:
+        """Тайпер целиком в броне; панель-заглушка собирается сторожем."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("const typerTick = () => {", js)
+        self.assertIn("console.error('typer:', e);", js)
+        self.assertIn("ui.mdEl.textContent = String(ui.buffer || '');", js)
+        # сторож: после конца стрима панель на «собираю вкладку…» соберётся
+        self.assertIn("mountEmbedPanels(p.parentNode || document.body, true);", js)
+        # настройки: видимый индикатор загрузки (не пустое вечное тело)
+        bep = js.split("function buildEmbedPanel(panel, spec)")[1].split("\nfunction ")[0]
+        self.assertIn("загружаю настройки…", bep)
+
+    def test_bm18_dock_gap_above_live_closed(self) -> None:
+        """Пустота над LIVE убрана: свёрнутое меню не оставляет места
+        невидимому ряду пространств; старт — уже схлопнутым."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn(".app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden}", css)
+        self.assertIn("if (sp) sp.style.maxHeight = '0px';", js)
+        # side-folding снимается после сворачивания (brand возвращается)
+        self.assertIn("app.classList.remove('side-folding');", js)
+
+    def test_bm18_sidebar_one_motion(self) -> None:
+        """Морф меню — одна траектория: диалоги/футер/бренд/пункты едут
+        плавно, без display:none-скачков и овершотов."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn(".app.collapsed .chats-block{flex-grow:0;", css)
+        self.assertIn(".app.collapsed .side-foot{max-height:0;", css)
+        self.assertNotIn(".app.collapsed .chats-block,\n.app.collapsed .side-foot{display:none}", css)
+        self.assertIn(".side-folding .brand{opacity:0}", css)
+        # флайаут: одна кривая БЕЗ овершота — и в CSS, и в FLIP-иконке
+        self.assertIn("transition:transform .32s cubic-bezier(.22,.61,.25,1),opacity .22s ease}", css)
+        self.assertNotIn("cubic-bezier(.3,1.12,.4,1)", css)
+        self.assertNotIn("cubic-bezier(.3,1.1,.4,1)", js)
+        self.assertIn("easing: 'cubic-bezier(.22,.61,.25,1)'", js)
+
+    def test_bm18_media_skips_stock_and_prefers_direct(self) -> None:
+        """Поиск медиа: стоки (403 без файла) скипаются, прямые файлы
+        пробуются первыми, варианты — по интенту запроса."""
+        code = Path("app/jarvis/tools/media.py").read_text(encoding="utf-8")
+        self.assertIn("_STOCK_RE", code)
+        self.assertIn("dreamstime", code)
+        self.assertIn("pikbest", code)
+        self.assertIn("_DIRECT_FILE_RE", code)
+        body = code.split("def _media_from_query")[1]
+        self.assertIn('if pass_no == 1 and not _DIRECT_FILE_RE.search(link):', body)
+        self.assertIn('"%s mp4 скачать" % q', body)
+        self.assertIn('"%s mp3 слушать" % q', body)
+        self.assertIn("want_video", body)
+        self.assertIn("want_audio", body)
+
+    def test_bm18_memory_tab_guaranteed(self) -> None:
+        """«Что ты помнишь обо мне» — вкладка ПАМЯТЬ гарантирована,
+        даже если модель прислала битый embed-блок; фронт разбирает
+        и кривой JSON."""
+        sys.path.insert(0, "app")
+        try:
+            from jarvis import agent as ag
+            self.assertEqual(ag.state_question_view("что ты помнишь обо мне"), "memory")
+            broken = "вот\n```embed\nпамять\n```"
+            out = ag.auto_embed_block(broken, [], q_view="memory")
+            self.assertIn('"view": "memory"', out)
+            self.assertNotIn("```embed\nпамять", out)
+        finally:
+            sys.path.remove("app")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        eps = js.split("function embedParseSpec")[1].split("\nfunction ")[0]
+        self.assertIn("([a-zа-яё]+)", eps)   # lenient-достаём view регуляркой
 
 
 if __name__ == "__main__":

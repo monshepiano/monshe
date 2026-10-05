@@ -153,6 +153,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
      каждый кадр рвал анимацию по кадрам (Safari); стекло переключается
      сразу, едет только геометрия */
   transition:width .6s cubic-bezier(.22,.68,.18,1),padding .6s cubic-bezier(.22,.68,.18,1),
+    gap .6s cubic-bezier(.22,.68,.18,1),
     background-color .5s ease,border-color .5s ease}
 @media (min-width:901px){
 /* ---- свёрнутый режим: панель превращается в плавающий DOCK ----
@@ -166,6 +167,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   background:rgba(6,12,21,0);border-right-color:transparent;backdrop-filter:blur(0px);
   /* кривая сворачивания: лёгкий разгон, мягкое прилежание (без blur — см. ФПС выше) */
   transition:width .6s cubic-bezier(.5,.35,.15,1),padding .6s cubic-bezier(.5,.35,.15,1),
+    gap .6s cubic-bezier(.5,.35,.15,1),
     background-color .5s ease,border-color .5s ease}
 /* сам док: ВЫПУКЛОЕ матовое стекло — без резкой рамки, форму держат
    светлая верхняя кромка, тёмный низ и мягкая тень-парение (AI).
@@ -191,7 +193,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   transition:padding-left .6s cubic-bezier(.5,.35,.15,1)}
 /* бренд, кнопка разворачивания и черта — внутри дока, столбиком */
 .app.collapsed .brand{flex-direction:column;align-items:center;gap:8px;padding:2px 0 10px;
-  margin:0;border-bottom:1px solid rgba(0,212,255,.1)}
+  margin:0;border-bottom:1px solid rgba(0,212,255,.1);
+  transition:padding .6s cubic-bezier(.5,.35,.15,1),gap .6s cubic-bezier(.5,.35,.15,1),
+    border-color .45s ease,opacity .22s ease}
 .app.collapsed .brand-text{display:none}
 .app.collapsed .collapse-btn{transform:rotate(180deg)}
 /* AL: ГЕОМЕТРИЯ ДОКА — nav занимает ВСЮ ширину стекла (52px), без своих
@@ -205,6 +209,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   transition:max-width .6s cubic-bezier(.5,.35,.15,1)}
 .app.collapsed .nav-item{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none;
   transition:padding .6s cubic-bezier(.5,.35,.15,1),gap .6s cubic-bezier(.5,.35,.15,1),
+    margin .6s cubic-bezier(.5,.35,.15,1),
+    background .22s ease,color .22s ease,transform .22s ease,opacity .22s ease;
+  transition:padding .6s cubic-bezier(.5,.35,.15,1),gap .6s cubic-bezier(.5,.35,.15,1),
     background .22s ease,color .22s ease,opacity .22s ease}
 .app.collapsed .nav-item:hover{transform:none;background:rgba(0,212,255,.09)}
 /* AJ: активная полоска несла СВЕЧЕНИЕ за пределы дока — в доке активность
@@ -216,16 +223,24 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .app.collapsed .nav-item .badge{position:absolute;top:2px;right:2px;margin:0;min-width:16px;height:16px;
   padding:0 4px;font-size:9px}
 /* лишнее в доке не живёт */
-.app.collapsed .chats-block,
-.app.collapsed .side-foot{display:none}
+/* BM18: диалоги и футер НЕ пропадают мгновенно (display:none = скачок
+   всей колонки) — они плавно схлопываются по высоте и гаснут, той же
+   кривой и длительностью, что и само меню: одна траектория, одно
+   движение */
+.app.collapsed .chats-block{flex-grow:0;flex-shrink:1;flex-basis:0%;margin:0;min-height:0;
+  opacity:0;transform:translateX(-14px);overflow:hidden;pointer-events:none;
+  transition:flex-grow .6s cubic-bezier(.5,.35,.15,1),margin .6s cubic-bezier(.5,.35,.15,1),
+    opacity .34s ease,transform .34s ease}
+.app.collapsed .side-foot{max-height:0;padding:0 8px;border-color:transparent;
+  opacity:0;transform:translateX(-14px);overflow:hidden;pointer-events:none;
+  transition:max-height .6s cubic-bezier(.5,.35,.15,1),padding .6s cubic-bezier(.5,.35,.15,1),
+    border-color .45s ease,opacity .34s ease,transform .34s ease}
 /* подпись иконки при наведении — вылетает из дока */
 .app.collapsed .nav-item::after{content:attr(data-name);position:absolute;left:calc(100% + 14px);
   padding:6px 10px;border-radius:9px;background:rgba(8,16,28,.96);border:1px solid var(--line2);
   color:var(--tx);font-size:12px;white-space:nowrap;opacity:0;pointer-events:none;transform:translateX(-6px);
   transition:.18s;z-index:80;box-shadow:var(--shadow)}
 .app.collapsed .nav-item:hover::after{opacity:1;transform:none}
-/* фаза 1 сворачивания: диалоги и статистика гаснут ДО превращения */
-.side-folding .chats-block,.side-folding .side-foot{opacity:0;transform:translateX(-14px)}
 }
 
 .dock{display:flex;flex-direction:column;gap:12px;border:1px solid transparent;border-radius:0;
@@ -234,7 +249,12 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   transition:transform .6s cubic-bezier(.22,.68,.18,1),margin .6s cubic-bezier(.22,.68,.18,1),
     padding .6s ease,border-radius .5s ease,background-color .5s ease,border-color .5s ease,
     box-shadow .5s ease}
-.brand{display:flex;align-items:center;gap:10px;padding:4px 6px 12px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 6px 12px;border-bottom:1px solid var(--line);
+  /* BM18: единая траектория морфа — геометрия бренда едет той же кривой,
+     что и меню; переключение раскладки маскируется быстрым затуханием */
+  transition:padding .6s cubic-bezier(.22,.68,.18,1),gap .6s cubic-bezier(.22,.68,.18,1),
+    border-color .45s ease,opacity .22s ease}
+.side-folding .brand{opacity:0}
 .brand-text{flex:1;min-width:0}
 .brand-name{font-size:17px;font-weight:600;letter-spacing:4px;color:#eaf9ff;text-shadow:0 0 18px rgba(0,212,255,.5)}
 .brand-sub{font-size:10.5px;color:var(--tx3);letter-spacing:.4px;margin-top:1px}
@@ -417,7 +437,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   box-shadow:0 12px 34px rgba(0,0,0,.55);
   opacity:0;pointer-events:none;z-index:90;
   transform:translateY(-50%) scale(.22);transform-origin:left center;
-  transition:transform .34s cubic-bezier(.3,1.12,.4,1),opacity .22s ease}
+  /* BM18: кривая БЕЗ овершота — панель раскрывается ровно тем же
+     движением, что и иконка-FLIP: синхронно, без «подпрыгивания» */
+  transition:transform .32s cubic-bezier(.22,.61,.25,1),opacity .22s ease}
 .spd-cur-wrap.open .spd-fly{opacity:1;pointer-events:auto;
   transform:translateY(-50%) scale(1)}
 /* иконка кнопки «уехала» в меню — на кнопке её не видно */
@@ -432,6 +454,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 /* BM12/BM13: в доке ряд сжат анимацией до нуля; .docked дожимает только
    visibility — display:none в конце анимации давал однокадровый скачок */
 .app.docked .spaces{visibility:hidden}
+/* BM18: свёрнутое меню НЕ оставляет места невидимому ряду пространств:
+   высота и паддинги в ноль (анимация — той же кривой, что и меню) */
+.app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden}
 .app.collapsed .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;
   margin:0;padding:4px 0;position:relative;
   animation:spDockIn .3s ease .2s backwards}
@@ -471,6 +496,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .nav-item{display:flex;align-items:center;gap:11px;padding:10px 12px;border:0;border-radius:11px;
   background:transparent;color:var(--tx2);font-size:13.5px;cursor:pointer;position:relative;
   transition:padding .6s cubic-bezier(.22,.68,.18,1),gap .6s cubic-bezier(.22,.68,.18,1),
+    margin .6s cubic-bezier(.22,.68,.18,1),
     background .22s ease,color .22s ease,transform .22s ease,opacity .22s ease;text-align:left;width:100%}
 .nav-item:hover{background:rgba(0,212,255,.07);color:var(--tx);transform:translateX(2px)}
 .nav-item.active{background:linear-gradient(90deg,rgba(0,212,255,.18),rgba(0,212,255,.03));color:#fff}
@@ -581,6 +607,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 @keyframes memoryIconBloom{0%,100%{filter:none}48%{color:#d6b4ff;filter:drop-shadow(0 0 8px rgba(180,119,255,.72))}}
 
 .chats-block{flex:1;min-height:0;display:flex;flex-direction:column;margin-top:6px;
+  transition:flex-grow .6s cubic-bezier(.22,.68,.18,1),margin .6s cubic-bezier(.22,.68,.18,1),
+    opacity .34s ease,transform .34s ease;
   transition:opacity .24s ease,transform .24s ease}
 .block-head{display:flex;align-items:center;justify-content:space-between;padding:8px 10px 6px;
   font-size:10.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--tx3)}
@@ -615,6 +643,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 @keyframes slideIn{from{opacity:0;transform:translateX(-10px)}}
 
 .side-foot{border-top:1px solid var(--line);padding:10px 8px 2px;font-size:11px;color:var(--tx3);
+  max-height:160px;
+  transition:max-height .6s cubic-bezier(.22,.68,.18,1),padding .6s cubic-bezier(.22,.68,.18,1),
+    border-color .45s ease,opacity .34s ease,transform .34s ease;
   transition:opacity .24s ease,transform .24s ease}
 .stat-row{display:flex;justify-content:space-between;padding:3px 4px}
 .stat-row b{color:var(--cy);font-weight:500;font-family:var(--fm);font-size:10.5px;max-width:130px;
@@ -1602,15 +1633,14 @@ sup.msup,sub.msub{font-size:.72em}
 .emb-fx i.d:hover{color:#e3798d;background:rgba(227,121,141,.1)}
 .emb-fx .f-edit{width:86px;height:20px;border:1px solid var(--line2);border-radius:6px;
   background:rgba(0,0,0,.25);color:var(--tx);font-size:11px;padding:0 5px;outline:none}
-/* BM17: разворот объекта ПРЯМО В КАРТОЧКЕ — клик по строке раскрывает
-   детали под ней (задача/факт/сценарий/секция настроек), без ухода
-   во вкладку */
-.emb-more{margin:0 8px 4px 22px;padding:7px 9px;border-radius:8px;
-  background:rgba(0,0,0,.22);font-size:11px;color:var(--tx2);
-  line-height:1.5;white-space:pre-wrap;word-break:break-word;
-  animation:embMoreIn .22s ease-out both}
-@keyframes embMoreIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
-.emb-row.open{background:rgba(0,212,255,.09)}
+/* BM18: ИЗМЕНЁННЫЙ/НОВЫЙ файл в мини-вкладке — ЗЕЛЁНЫЙ акцент, как
+   подсветка карточек на вкладке «Файлы» (rgba(143,179,90)); вспышка
+   при появлении и спокойный зелёный тон после */
+.emb-row.file-changed{background:rgba(143,179,90,.12)}
+.emb-row.file-changed .emb-dot{background:#8fb35a!important;box-shadow:0 0 7px rgba(143,179,90,.6)}
+.emb-row.file-changed .emb-name{color:#b9d59a}
+@keyframes embChangedIn{0%{background:rgba(143,179,90,.34)}100%{background:rgba(143,179,90,.12)}}
+.emb-row.file-changed{animation:embChangedIn 1.4s ease-out both}
 /* подсветка объекта, открытого из мини-вкладки: строка вспыхивает и гаснет */
 .flash-in{animation:flashIn 1.6s ease-out both}
 @keyframes flashIn{0%,45%{background:rgba(0,212,255,.16);box-shadow:0 0 0 1px rgba(0,212,255,.25) inset}
@@ -2366,12 +2396,15 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .toast.error{border-color:rgba(221,85,102,.45)}.toast.error .ti{color:var(--red)}
 .toast.warn{border-color:rgba(217,164,65,.45)}.toast.warn .ti{color:var(--gold)}
 .toast.info{border-color:rgba(79,150,201,.45)}.toast.info .ti{color:var(--sky)}
-/* BM17: уведомление о фоновой задаче — вкладка АВТО разворачивается
-   ПРЯМО В ОБЛАСТИ УВЕДОМЛЕНИЯ (не отдельной всплывашкой рядом).
-   Не гаснет по таймеру: живая задача не должна исчезать сама */
+/* BM18: ЗЕЛЁНАЯ БЛАШКА «фонова задача поставлена» — как обычный
+   success-тост, но мини-вкладка АВТО живёт прямо в нём. Не гаснет
+   по таймеру: закрывается кликом по тексту; клик внутри вкладки —
+   жизнь самой вкладки (запуск/стоп задач) */
 .toast.toast-auto{display:block;max-width:390px;padding:0}
-.toast.toast-auto .ta-body{cursor:pointer;padding:11px 15px 9px}
-.toast.toast-auto .ta-cap{font-weight:600;margin-bottom:2px;letter-spacing:.6px;color:var(--cy)}
+.toast.toast-auto .ta-body{cursor:pointer;padding:11px 15px 9px;display:flex;
+  align-items:center;gap:10px;font-size:12.5px}
+.toast.toast-auto .ta-body b{font-weight:600}
+.toast.toast-auto .ta-name{margin-left:7px;color:var(--tx2)}
 .toast.toast-auto .embed-panel{margin:0 10px 10px}
 .toast.toast-auto .embed-card{margin:0;max-width:none}
 .toast.toast-auto .emb-body{max-height:236px;overflow:auto}

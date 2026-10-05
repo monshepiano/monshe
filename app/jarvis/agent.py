@@ -914,8 +914,9 @@ ui. Если вариантов нет, но ответ человека всё 
      день в 9:00…») — вызывай инструмент schedule_task (title, prompt,
      schedule): задача создаётся по-настоящему, человек видит
      уведомление и карточку AUTO. Не говори «поставил» без вызова;
-   — запустил фоновую задачу (schedule_task) — вставь ```embed auto
-     СРАЗУ в этот же ответ: человек сразу видит карточку с живой задачей;
+   — запустил фоновую задачу (schedule_task) — НЕ вставляй карточку
+     AUTO сам: зелёная блашка «Фоновая задача поставлена» с живой
+     вкладкой АВТО появляется автоматически, без тебя;
    — создал или разобрал что-то, живущее во вкладке, — покажи карточку:
      человек видит живое состояние, не уходя из диалога.
    ЖЕЛЕЗНОЕ правило: если ты в тексте предлагаешь выбрать (скорость, уровень,
@@ -1511,13 +1512,38 @@ def auto_embed_block(final_text: str,
     текстовым перечислением.
     """
     text = str(final_text or "")
-    if "```embed" in text:
+
+    def _existing_views(txt: str) -> set:
+        """BM18: модель любит писать ```embed с кривым JSON (одинарные
+        кавычки, лишняя запятая) — такой блок НЕ считается карточкой:
+        он вычищается, а гарантированная карточка дописывается. Раньше
+        один битый блок навсегда отменял гарантию — человек спрашивал
+        «что ты помнишь обо мне» и не получал вкладку ПАМЯТЬ"""
+        views = set()
+        for m in re.finditer(r"```embed\n(.*?)```", txt, re.S):
+            body = m.group(1)
+            vm = (re.search(r'["\']?view["\']?\s*[:=]\s*["\']?([a-zа-яё]+)', body, re.I)
+                  or re.search(r'["\']?tab["\']?\s*[:=]\s*["\']?([a-zа-яё]+)', body, re.I))
+            if vm and vm.group(1).lower() in ("auto", "files", "memory",
+                                              "scenarios", "settings",
+                                              "задачи", "авто", "файлы",
+                                              "файл", "память", "факты",
+                                              "сценарии", "сценарий",
+                                              "настройки", "настройка"):
+                views.add(vm.group(1).lower())
+        return views
+
+    good = _existing_views(text)
+    if good:
         return text
+    if "```embed" in text:
+        # битые embed-блоки — мусор в диалоге, вычищаем
+        text = re.sub(r"\n?```embed\n.*?```\n?", "", text, flags=re.S).rstrip()
     tools = set(str(t) for t in (tools_used or []) if t)
     view = title = None
-    if tools & EMBED_TASK_TOOLS:
-        view, title = "auto", "что я делаю в фоне"
-    elif tools & EMBED_FILE_TOOLS:
+    # BM18: создание фоновой задачи — ЗЕЛЁНАЯ БЛАШКА с вкладкой АВТО
+    # внутри (тост), карточка в чате не рисуется
+    if tools & EMBED_FILE_TOOLS:
         view, title = "files", "файлы диалога"
     elif memory_changed or (tools & EMBED_MEMORY_TOOLS):
         view, title = "memory", "что я запомнил"

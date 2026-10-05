@@ -2859,13 +2859,16 @@ function testIterationBM14Contracts() {
     !js.split("$('#micBtn').addEventListener('click'")[1].split('\n')[0]
       .includes('SpeechRecognition'),
     'BM15: the mic button records via MediaRecorder, sends the wav to the SERVER /api/transcribe (browser ASR is dead in RU) and lands the text in the input; red .rec + wave stays');
-  // ЖИВЫЕ КАРТОЧКИ: файл/факт — в момент события
+  // ЖИВЫЕ КАРТОЧКИ: файл/факт — в момент события; фон — ЗЕЛЁНАЯ БЛАШКА
+  // с вкладкой АВТО внутри (BM18: карточки AUTO в чате больше нет)
   assert(js.includes("function embedLiveCard(ui, view, title)") &&
     js.includes("embedLiveCard(ui, 'files', 'файлы диалога')") &&
     js.includes("embedLiveCard(ui, 'memory', 'что я запомнил')") &&
     js.split("case 'background':")[1].split("case '")[0]
+      .includes('toastAutoCard(ev.title)') &&
+    !js.split("case 'background':")[1].split("case '")[0]
       .includes('embedLiveAuto(ui)'),
-    'BM14: FILES card the moment a file is created, MEMORY card the moment a fact is saved, AUTO card the instant the server backgrounds a task');
+    'BM14/BM18: FILES card the moment a file is created, MEMORY card the moment a fact is saved; a backgrounded task shows the GREEN BADGE carrying the live AUTO tab');
   // ТУЛТИПЫ: глобальный fixed-оверлей
   assert(js.includes("document.addEventListener('pointerover'") &&
     css.includes('.g-tip{position:fixed;z-index:300') &&
@@ -2906,13 +2909,14 @@ function testIterationBM15Contracts() {
     css.includes('.emb-v-memory') && css.includes('.emb-v-scenarios') &&
     js.includes("auto: { name: 'AUTO', sub: 'фоновые задачи', view: 'auto', ico: '◎' }"),
     'BM15 embed cards: each view is painted from the nav variables and carries its menu icon');
-  // ФОНОВАЯ ЗАДАЧА = ОДНА карточка; карточки не пропадают и не меняются местами
+  // ФОНОВАЯ ЗАДАЧА = ОДНА зелёная блашка с вкладкой (BM18); карточки
+  // не пропадают и не меняются местами
   assert(js.includes("case 'background': {") &&
-    js.split("case 'background': {")[1].split("case '")[0].includes('embedLiveAuto(ui);') &&
+    js.split("case 'background': {")[1].split("case '")[0].includes('toastAutoCard(ev.title);') &&
     !js.split("case 'background': {")[1].split("case '")[0].includes('bg-card') &&
     js.includes('function embedLiveAutoSettle(ui)') &&
     js.includes("else ui.node.body.appendChild(panel);"),
-    'BM15: a background task produces exactly ONE embed card (no bg-card swap dance); a live card whose anchor died is appended to the body instead of vanishing');
+    'BM15/BM18: a background task produces exactly ONE green badge carrying the live AUTO tab (no bg-card swap dance); a live card whose anchor died is appended to the body instead of vanishing');
   // ЖИВАЯ СИНХРОНИЗАЦИЯ всех мини-вкладок (не только AUTO)
   assert(js.includes('const embSync = (fetchCall, fingerprint) => {') &&
     js.includes("embSync(() => api('/api/memory')") &&
@@ -2972,12 +2976,19 @@ function testIterationBM16Contracts() {
     css.includes('transform-origin:0 0;animation:embIn .6s cubic-bezier(.22,.61,.25,1) both') &&
     css.includes('@keyframes embIn{from{transform:scale(.5,.35);opacity:0}') &&
     css.includes('.embed-card.no-in{animation:none}') &&
-    css.includes('.emb-more{') && css.includes('@keyframes embMoreIn') &&
-    bep.includes('const toggleMore = (row, html) => {') &&
-    bep.includes("row.after(more);") &&
-    bep.includes("toggleMore(row, esc(m.value || ''))") &&
-    bep.includes("(i + 1) + '. '") &&
-    bep.includes('Изменить: вкладка «Настройки»') &&
+    /* BM18: объекты открываются КАК В ОСНОВНЫХ ВКЛАДКАХ — openObject
+       (переход + прокрутка + вспышка), никаких разворотов в карточке */
+    bep.includes('const openObject = (view, sel) => {') &&
+    bep.includes(".task-card[data-task-id=") &&
+    bep.includes(".mem-card[data-key=") &&
+    bep.includes(".scenario-card[data-title=") &&
+    bep.includes(".sset[data-section=") &&
+    bep.includes("node.scrollIntoView({ behavior: 'smooth', block: 'center' });") &&
+    css.includes('@keyframes flashIn') &&
+    !bep.includes('toggleMore') &&
+    /* изменённый файл — зелёный акцент вкладки «Файлы» */
+    bep.includes('file-changed') &&
+    css.includes('rgba(143,179,90,.12)') &&
     bep.includes('openPreview({ name: f.name, size: f.size, url: f.download_url,') &&
     bep.includes('<i class="r" title="Переименовать">✎</i>') &&
     bep.includes('<i class="dl" title="Скачать">↓</i>') &&
@@ -2994,7 +3005,8 @@ function testIterationBM16Contracts() {
   // AUTO: уведомление при создании из чата; карточки на старте НЕТ
   const tr = js.split("case 'tool_result': {")[1].split("case '")[0];
   const ts = js.split("case 'tool_start': {")[1].split("case '")[0];
-  assert(tr.includes('создана — работает в фоне') &&
+  assert(tr.includes('toastAutoCard(tt);') &&
+    !tr.includes('embedLiveAuto(ui)') &&
     !ts.includes('embedLiveAuto(ui)') &&
     pyServer.includes('if agent.state_question(text):') &&
     !pyAuto.includes('agent.auto_embed_block(content'),
@@ -3036,22 +3048,22 @@ function testIterationBM17Contracts() {
   // ДИКТОВКА: живые сегменты по 3с, текст в поле сразу, БЕЗ тостов
   const dstart = js.split('async function dictStart')[1].split('\nfunction ')[0];
   assert(js.includes('const DICT_SEG_MS = 3000;') &&
-    dstart.includes("if (DICT) { dictSegment(DICT); return; }") &&
+    dstart.includes("if (DICT) { dictFinish(DICT); return; }") &&
     !dstart.includes('toast(') && !dstart.includes('micHint') &&
     js.includes('function dictPutText') &&
     js.split('function dictPutText')[1].split('\nfunction ')[0]
       .includes('box.value = (base + String(text)'),
     'BM17 mic: dictation transcribes LIVE in 3s segments straight into the input (second click stops) — zero microphone notifications');
   // УВЕДОМЛЕНИЕ О ФОНОВОЙ ЗАДАЧЕ: вкладка АВТО — прямо в нём
-  const ta = js.split('function toastAutoCard(text, kind)')[1].split('\nfunction ')[0];
-  assert(js.includes('function toastAutoCard(text, kind)') &&
+  const ta = js.split('function toastAutoCard(taskTitle)')[1].split('\nfunction ')[0];
+  assert(js.includes('function toastAutoCard(taskTitle)') &&
+    ta.includes('Фоновая задача поставлена') &&
     ta.includes('embedBuildSafe(panel, spec)') &&
-    ta.includes('if (panel.contains(ev.target)) return;') &&
     !ta.includes("setTimeout(() => { t.classList.add('out')") &&
     js.split("case 'tool_result': {")[1].split("case '")[0]
-      .includes("toastAutoCard('Задача' + (tt ? ' «' + tt + '»' : '') + ' создана — работает в фоне')") &&
+      .includes("toastAutoCard(tt);") &&
     js.split("case 'background': {")[1].split("case '")[0]
-      .includes("toastAutoCard('Задача «' + ev.title + '» ушла в фон'") &&
+      .includes("toastAutoCard(ev.title);") &&
     css.includes('.toast.toast-auto{display:block;max-width:390px;padding:0}') &&
     css.includes('.toast.toast-auto .emb-body{max-height:236px;overflow:auto}'),
     'BM17 notification: a background task created via chat gets a notification with the AUTO tab unfolding RIGHT INSIDE it (live card, click-outside to close, no auto-dismiss)');
@@ -3075,6 +3087,56 @@ function testIterationBM17Contracts() {
   assert(pyAgent.includes('if self.chat_id and not self.task_id:') &&
     pyAgent.includes('available = list(available) + [_sched["schema"]]'),
     'BM17 agent: a CHAT run carries the schedule_task tool, so a background request actually CREATES the task instead of just saying «поставил»');
+}
+
+function testIterationBM18Contracts() {
+  // МИКРОФОН: повторный клик — ЧЕСТНЫЙ СТОП; мусор тишины фильтруется
+  const dstart = js.split('async function dictStart')[1].split('\nfunction ')[0];
+  const dtr = js.split('async function dictTranscribeSegment')[1].split('\nfunction ')[0];
+  assert(dstart.includes("if (DICT) { dictFinish(DICT); return; }") &&
+    !dstart.includes("if (DICT) { dictSegment(DICT); return; }") &&
+    /продолжение следует/.test(dtr),
+    'BM18 mic: the second click STOPS the dictation for real (dictFinish closes the stream); Whisper silence-hallucinations («Продолжение следует…») never reach the input');
+  // НИ ОДИН запрос не висит вечно: api() с таймаутом
+  const apiSrc = js.split('function api(path, body, extra)')[1].split('\nfunction ')[0];
+  assert(apiSrc.includes('AbortController') && apiSrc.includes('25000') &&
+    apiSrc.includes('сервер не ответил за 25с'),
+    'BM18 net: every api() call aborts after 25s — a stuck server can no longer leave a tab card on eternal «загружаю…» or freeze the whole UI');
+  // ТАЙПЕР: весь тик в броне; СТОРОЖ достраивает зависшие панели
+  assert(js.includes('const typerTick = () => {') &&
+    js.includes("ui.mdEl.textContent = String(ui.buffer || '');") &&
+    js.includes('mountEmbedPanels(p.parentNode || document.body, true);') &&
+    js.split('function buildEmbedPanel(panel, spec)')[1].split('\nfunction ')[0]
+      .includes('загружаю настройки…'),
+    'BM18 typer: the whole typer tick is armored (any exception ends the print gracefully instead of an undead interval); a watchdog force-builds any panel still on «собираю вкладку…» after the stream ended; settings shows an honest loading row');
+  // ПАМЯТЬ ГАРАНТИРОВАНА: битый embed-блок не отменяет карточку
+  assert(pyAgent.includes('def _existing_views') &&
+    pyAgent.includes('битые embed-блоки — мусор в диалоге, вычищаем') &&
+    pyAgent.split('def auto_embed_block')[1].includes('q_view in ("auto", "files", "memory", "scenarios",'),
+    'BM18 memory: a model-broken ```embed block is stripped and the guaranteed tab card is still appended — «что ты помнишь обо мне» always gets the MEMORY tab');
+  // УВЕДОМЛЕНИЕ О ФОНЕ: заметка в чат НЕ сохраняется
+  assert(pyServer.split('if server_scheduled:')[1].split('self._sse_close()')[0]
+      .includes('ЗЕЛЁНАЯ БЛАШКА') &&
+    !pyServer.includes('db.add_message(chat_id, "assistant", note') &&
+    pyAgent.replace(/\s+/g, ' ').includes('НЕ вставляй карточку AUTO сам'),
+    'BM18 auto: the background route saves NO note into the dialog — only the green badge with the live AUTO tab; the prompt no longer asks the model to embed an auto card');
+  // ДОК: пустоты над LIVE нет; морф — одна траектория
+  assert(css.includes('.app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden}') &&
+    js.includes("if (sp) sp.style.maxHeight = '0px';") &&
+    js.includes("app.classList.remove('side-folding');") &&
+    css.includes('.app.collapsed .chats-block{flex-grow:0;') &&
+    css.includes('.app.collapsed .side-foot{max-height:0;') &&
+    css.includes('.side-folding .brand{opacity:0}') &&
+    !css.includes('cubic-bezier(.3,1.12,.4,1)') &&
+    !js.includes('cubic-bezier(.3,1.1,.4,1)'),
+    'BM18 dock: no phantom space above LIVE (spaces collapse at startup too); the sidebar morph is ONE motion — chats/footer/brand/items glide on one curve with no display:none snaps and no overshoot bounce in the flyout');
+  // МЕДИА: стоки скипаются, прямые файлы — первыми
+  const pyMedia = fs.readFileSync(path.join(root, 'app/jarvis/tools/media.py'), 'utf8');
+  assert(pyMedia.includes('_STOCK_RE') && pyMedia.includes('dreamstime') &&
+    pyMedia.includes('_DIRECT_FILE_RE') &&
+    pyMedia.split('def _media_from_query')[1]
+      .includes('if pass_no == 1 and not _DIRECT_FILE_RE.search(link):'),
+    'BM18 media: stock sites (Dreamstime/Pikbest/… — 403 and no file) are skipped, direct .mp3/.mp4 links are tried first, query variants follow the intent');
 }
 
 function testIterationAOContracts() {
@@ -3435,9 +3497,11 @@ function testIterationBM12Contracts() {
   // СЖАТИЕ ДОКА: плавное, зеркально разворачиванию; вкладки в доке всегда
   /* BM14: честная анимация высоты (JS замер), .docked гасит только
      visibility, у дока НЕТ рамки-области, полоса — на весь док */
-  assert(js.includes("setTimeout(() => app.classList.add('docked'), 700);") &&
+  assert(js.includes("app.classList.add('docked');") &&
     js.includes("sp.style.maxHeight = sp.offsetHeight + 'px'") &&
     js.includes("classList.add('collapsed', 'docked');") &&
+    js.includes("if (sp) sp.style.maxHeight = '0px';") &&
+    css.includes('.app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden}') &&
     css.includes('.side-folding .spaces{opacity:0;transform:scale(.42);') &&
     css.includes('.app.collapsed .space-future{display:none!important}') &&
     !css.includes('.app.collapsed .nav.space-off{display:flex!important}') &&
@@ -3999,8 +4063,12 @@ function testIterationAHContracts() {
        разворачивание снимает .docked и разжимает в следующий кадр */
     js.includes("app.classList.add('collapsed', 'side-folding');") &&
     /* BM14: честная анимация высоты — JS замеряет и ведёт max-height,
-       .docked ставится позже (700мс) и гасит только visibility */
-    js.includes("setTimeout(() => app.classList.add('docked'), 700);") &&
+       .docked ставится позже (700мс) и гасит только visibility;
+       BM18: старт — УЖЕ схлопнутым (без пустоты над LIVE), side-folding
+       снимается по завершению морфа */
+    js.includes("app.classList.add('docked');") &&
+    js.includes("if (sp) sp.style.maxHeight = '0px';") &&
+    js.includes("app.classList.remove('side-folding');") &&
     js.includes("app.classList.remove('docked');") &&
     !/SIDE_FADE/.test(js) && !/SIDE_MORPH/.test(js) &&
     /cubic-bezier\(\.5,\.35,\.15,1\)/.test(dock) &&
@@ -4306,8 +4374,9 @@ function testIterationBHContracts() {
   testIterationBM15Contracts();
   testIterationBM16Contracts();
   testIterationBM17Contracts();
+  testIterationBM18Contracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 61 regression groups passed');
+  console.log('package28_frontend_runtime: 62 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

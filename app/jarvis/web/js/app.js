@@ -68,6 +68,21 @@ function api(path, body, extra) {
     ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
     : {};
   if (extra) Object.assign(opt, extra);
+  /* BM18: НИ ОДИН запрос не висит вечно. Прежний fetch без таймаута
+     мог ждать ответа бесконечно (сервер не ответил / соединение
+     утонуло) — карточка вкладки оставалась на «загружаю…» НАВСЕГДА,
+     а очередь таких запросов складывала впечатление «программа
+     зависла». Теперь каждый вызов честно заканчивается — ошибкой. */
+  if (!opt.signal) {
+    const ctrl = new AbortController();
+    const kill = setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, 25000);
+    opt.signal = ctrl.signal;
+    return fetch(path, opt)
+      .then((r) => r.json())
+      .catch((e) => ({ ok: false, error: (e && e.name === 'AbortError')
+        ? 'сервер не ответил за 25с' : String(e) }))
+      .then((r) => { clearTimeout(kill); return r; });
+  }
   return fetch(path, opt).then((r) => r.json()).catch((e) => ({ ok: false, error: String(e) }));
 }
 
@@ -253,16 +268,16 @@ function toast(text, kind, title) {
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 400); }, 5200);
 }
 
-/* BM17: уведомление о фоновой задаче несёт вкладку АВТО ПРЯМО В СЕБЕ:
-   мини-вкладка разворачивается прямо в области уведомления — задачу
-   видно в момент постановки, ходить во вкладку не нужно. Карточка
-   живая (синк каждые 4с, сама чистится после закрытия). Такое
-   уведомление НЕ гаснет по таймеру — у живой задачи нет причины
-   исчезать: закрывается кликом по тексту (вне карточки) */
-function toastAutoCard(text, kind) {
-  const t = el('div', 'toast ' + (kind || 'success') + ' toast-auto');
-  t.innerHTML = '<div class="ta-body"><div class="ta-cap">AUTO</div>'
-    + '<div>' + esc(text) + '</div></div>';
+/* BM18: ЗЕЛЁНАЯ БЛАШКА «ФОНОВАЯ ЗАДАЧА ПОСТАВЛЕНА» — как прежде, но
+   теперь мини-вкладка АВТО живёт ПРЯМО В НЕЙ (вместо отдельной
+   карточки в чате). Блашка не гаснет по таймеру: закрывается кликом
+   по тексту; клик внутри вкладки живёт её жизнью (запуск/стоп задач) */
+function toastAutoCard(taskTitle) {
+  const t = el('div', 'toast success toast-auto');
+  t.innerHTML = '<div class="ta-body"><span class="ti">✓</span>'
+    + '<div><b>Фоновая задача поставлена</b>'
+    + (taskTitle ? '<span class="ta-name">«' + esc(taskTitle) + '»</span>' : '')
+    + '</div></div>';
   const panel = el('div', 'embed-panel');
   panel.dataset.embed = '{"view": "auto", "title": "что я делаю в фоне"}';
   let spec = null;
@@ -271,8 +286,7 @@ function toastAutoCard(text, kind) {
   panel.dataset.live = '1';            // отложенный монтер вкладок её не трогает
   t.appendChild(panel);
   t.querySelector('.ta-body').title = 'Кликни, чтобы убрать';
-  t.addEventListener('click', (ev) => {
-    if (panel.contains(ev.target)) return;   // жизнь внутри карточки — не закрывает
+  t.querySelector('.ta-body').addEventListener('click', () => {
     t.classList.add('out');
     setTimeout(() => t.remove(), 300);
   });
@@ -753,7 +767,12 @@ function toggleSidebar() {
     }
     app.classList.add('collapsed', 'side-folding');
     if (sp) requestAnimationFrame(() => { sp.style.maxHeight = '0px'; });
-    _dockedT = setTimeout(() => app.classList.add('docked'), 700);
+    _dockedT = setTimeout(() => {
+      app.classList.add('docked');
+      /* BM18: класс морфинга снимается по завершению — иначе brand
+         остаётся прозрачным, а правила «складывания» висят зря */
+      app.classList.remove('side-folding');
+    }, 700);
   } else {
     app.classList.remove('docked');
     app.classList.add('side-folding');
@@ -784,8 +803,12 @@ try {
   localStorage.removeItem('jarvis.sidebar2');
   if (!isNarrow()) {
     /* BM12: 'docked' — «превращение завершено»: пространства скрыты,
-       без промежуточной анимации при запуске */
+       без промежуточной анимации при запуске.
+       BM18: и СХЛОПНУТЫ по высоте — прежде класс ставился без
+       обнуления max-height, невидимый ряд пространств оставлял над
+       LIVE пустоту в ~100px */
     $('#app').classList.add('collapsed', 'docked');
+    if (sp) sp.style.maxHeight = '0px';
     // восстановление БЕЗ анимации: пилюля сразу в центре высоты
     const dock = document.querySelector('.dock');
     if (dock) {
@@ -1486,7 +1509,7 @@ function initDockFly() {
       sel.animate(
         [{ transform: 'translate(' + shift.dx + 'px,' + shift.dy + 'px)' },
          { transform: 'none' }],
-        { duration: 340, easing: 'cubic-bezier(.3,1.1,.4,1)', fill: 'backwards' });
+        { duration: 320, easing: 'cubic-bezier(.22,.61,.25,1)', fill: 'backwards' });
       $('#spdCur').classList.add('ghost');
     }
   };
@@ -1500,7 +1523,7 @@ function initDockFly() {
       sel.animate(
         [{ transform: 'none' },
          { transform: 'translate(' + shift.dx + 'px,' + shift.dy + 'px)' }],
-        { duration: 300, easing: 'cubic-bezier(.5,.1,.4,1)' });
+        { duration: 320, easing: 'cubic-bezier(.22,.61,.25,1)' });
     }
   };
   wrap.addEventListener('pointerenter', open);
@@ -4702,7 +4725,16 @@ function embedParseSpec(raw) {
   let src = String(raw || '').trim()
     .replace(/^```[a-zа-яё]*\s*/i, '').replace(/```\s*$/, '');
   let spec = {};
-  try { spec = JSON.parse(src) || {}; } catch (e) { spec = {}; }
+  try { spec = JSON.parse(src) || {}; } catch (e) {
+    /* BM18: модель пишет JSON с одинарными кавычками или лишней
+       запятой — вкладка всё равно собирается: view/section достаём
+       регуляркой, а не relying на строгий JSON */
+    spec = {};
+    const mv = src.match(/["']?view["']?\s*[:=]\s*["']?([a-zа-яё]+)/i);
+    if (mv) spec.view = mv[1];
+    const ms = src.match(/["']?section["']?\s*[:=]\s*["']?([a-zа-яё-]+)/i);
+    if (ms) spec.section = ms[1];
+  }
   if (!spec.view && spec.tab) spec.view = spec.tab;
   if (!spec.view) spec.view = src;           // голое слово — имя вкладки
   const v = String(spec.view).toLowerCase().trim();
@@ -4824,6 +4856,19 @@ function embedBuildSafe(panel, spec) {
   }
 }
 
+/* BM18: СТОРОЖ МИНИ-ВКЛАДОК. Панель показывается финальным монтажом
+   (onTyped). Если печать умерла нештатно и монтаж не наступил, панель
+   навсегда оставалась на «собираю вкладку…». Сторож раз в 2.5с ищет
+   такие панели ПОСЛЕ конца стрима и собирает их сам */
+setInterval(() => {
+  if (S.streaming) return;
+  $$('.embed-panel').forEach((p) => {
+    if (p.dataset.live === '1') return;
+    if (!p.querySelector('.embed-load')) return;
+    mountEmbedPanels(p.parentNode || document.body, true);
+  });
+}, 2500);
+
 function buildEmbedPanel(panel, spec) {
   const meta = EMBED_VIEWS[spec.view];
   const card = el('div', 'embed-card emb-v-' + spec.view);
@@ -4848,18 +4893,22 @@ function buildEmbedPanel(panel, spec) {
   /* BM17: клик по строке разворачивает объект ПРЯМО В КАРТОЧКЕ —
      задача, факт, сценарий или пункт настроек раскрываются под своей
      строкой в чате, без ухода во вкладку */
-  const toggleMore = (row, html) => {
-    const exist = row.nextElementSibling;
-    if (exist && exist.classList.contains('emb-more')) {
-      exist.remove(); row.classList.remove('open'); return;
-    }
-    $$('.emb-more', body).forEach((n) => n.remove());
-    $$('.emb-row.open', body).forEach((n) => n.classList.remove('open'));
-    const more = el('div', 'emb-more');
-    more.innerHTML = html;
-    row.after(more);
-    row.classList.add('open');
+  /* BM18: объекты из мини-вкладки открываются ТОЧНО КАК В ОСНОВНЫХ
+     вкладках — переход во вкладку, прокрутка к объекту, вспышка.
+     Прежний «расворот прямо в карточке» пользователь отверг */
+  const openObject = (view, sel) => {
+    showView(view);
+    setTimeout(() => {
+      const node = sel && document.querySelector(sel);
+      if (!node) return;
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      node.classList.remove('flash-in');
+      void node.offsetWidth;
+      node.classList.add('flash-in');
+      setTimeout(() => node.classList.remove('flash-in'), 1700);
+    }, 240);
   };
+  const attrSel = (v) => '"' + String(v || '').replace(/(["\\])/g, '\\$1') + '"';
   const fail = (e) => {
     body.innerHTML = '<div class="emb-empty">'
       + esc((e && e.message) || 'не удалось открыть вкладку') + '</div>';
@@ -4916,11 +4965,8 @@ function buildEmbedPanel(panel, spec) {
           });
           row.appendChild(stop);
         }
-        row.addEventListener('click', () => toggleMore(row,
-          'статус: ' + esc(EMBED_TASK_ST[t.status] || t.status || '')
-          + (t.next_run_human ? '\nследующий запуск: ' + esc(t.next_run_human) : '')
-          + (t.schedule ? '\nрасписание: ' + esc(t.schedule) : '')
-          + (t.result ? '\n\n' + esc(String(t.result).slice(0, 400)) : '')));
+        row.addEventListener('click', () =>
+          openObject('auto', '.task-card[data-task-id=' + attrSel(t.id) + ']'));
         body.appendChild(row);
       });
     };
@@ -4948,8 +4994,16 @@ function buildEmbedPanel(panel, spec) {
     api(q).then((r) => {
       const es = (r && r.ok && r.entries) || [];
       if (!es.length) { emptyNote('Песочница диалога пуста — файлы появятся, как только я что-нибудь создам.'); return; }
+      /* BM18: ИЗМЕНЁННЫЙ файл подсвечивается ЗЕЛЁНЫМ акцентом вкладки
+         «Файлы» (не белым): размер/состав изменился или файл новый */
+      const prev = panel._embFiles || {};
+      const next = {};
+      es.forEach((f) => { next[f.name] = f.is_dir ? (f.items || 0) : (f.size || 0); });
+      panel._embFiles = next;
       es.slice(0, 6).forEach((f) => {
-        const row = el('div', 'emb-row');
+        const changed = (f.name in prev) && prev[f.name] !== next[f.name];
+        const fresh = !(f.name in prev) && Object.keys(prev).length;
+        const row = el('div', 'emb-row' + ((changed || fresh) ? ' file-changed' : ''));
         row.innerHTML = '<i class="emb-dot" style="' + (f.is_dir ? '' : 'background:rgba(0,212,255,.55)') + '"></i>'
           + '<span class="emb-name">' + esc(f.name) + '</span><span class="emb-meta">'
           + esc(f.is_dir ? ((f.items || 0) + ' об.') : fmtSize(f.size || 0)) + '</span>';
@@ -5029,7 +5083,8 @@ function buildEmbedPanel(panel, spec) {
         row.innerHTML = '<i class="emb-dot"></i><span class="emb-name">'
           + esc(m.key || m.kind) + '</span><span class="emb-meta">'
           + esc(val.length > 42 ? val.slice(0, 42) + '…' : val) + '</span>';
-        row.addEventListener('click', () => toggleMore(row, esc(m.value || '')));
+        row.addEventListener('click', () =>
+          openObject('memory', '.mem-card[data-key=' + attrSel(m.key || m.kind) + ']'));
         body.appendChild(row);
       });
     }, (e) => { done = true; clearTimeout(timer); fail(e); });
@@ -5044,10 +5099,8 @@ function buildEmbedPanel(panel, spec) {
         row.innerHTML = '<i class="emb-dot"></i><span class="emb-name">'
           + esc(sc.title || 'сценарий') + '</span><span class="emb-meta">'
           + ((sc.steps || []).length) + ' шагов</span>';
-        row.addEventListener('click', () => toggleMore(row,
-          (sc.steps || []).map((s, i) => (i + 1) + '. '
-            + esc(typeof s === 'string' ? s : (s && (s.text || s.action || s.prompt)) || JSON.stringify(s)))
-            .join('\n') || 'шагов нет'));
+        row.addEventListener('click', () =>
+          openObject('scenarios', '.scenario-card[data-title=' + attrSel(sc.title || '') + ']'));
         body.appendChild(row);
       });
     }, fail);
@@ -5121,15 +5174,15 @@ function buildEmbedPanel(panel, spec) {
         row('звуки интерфейса', (u.sound == null || u.sound) ? 'включены' : 'выключены', u.sound == null || !!u.sound);
       }
       body.innerHTML = rows.join('');
-      const TITLES = { providers: 'Модели и ключи', images: 'Генерация изображений',
-        safety: 'Безопасность', auto: 'AUTO · фоновый режим', telegram: 'Telegram',
-        profile: 'Обо мне', billing: 'Биллинг Cloud.ru', interface: 'Интерфейс' };
-      const hint = 'Изменить: вкладка «Настройки» → ' + (TITLES[sec] || 'Настройки');
       $$('.emb-row', body).forEach((r2) =>
-        r2.addEventListener('click', () => toggleMore(r2, esc(hint))));
+        r2.addEventListener('click', () =>
+          openObject('settings', '.sset[data-section=' + attrSel(sec) + ']')));
     };
     embSync(() => api('/api/config'),
       (r) => JSON.stringify((r && (r.providers || r.safety || r.auto || r.media)) || {}));
+    /* BM18: честный индикатор загрузки + таймаут api() — вкладка
+       настроек НЕ может висеть на «загружаю…» вечно */
+    body.innerHTML = '<div class="embed-load"><i></i><span>загружаю настройки…</span></div>';
     api('/api/config').then(drawCfg, fail);
   }
 }
@@ -8977,7 +9030,13 @@ function typerStart(ui) {
   ui._qtHold = 0;
   ui.acc = ui.acc || 0;
   let lastTick = performance.now();
-  ui.typer = setInterval(() => {
+  /* BM18: весь тик — в броне. Прежний try/catch закрывал только вызов
+     рендера; исключение в ЛЮБОМ другом месте тика оставляло интервал
+     живым навсегда: печать не заканчивалась, финальный монтаж вкладок
+     не наступал («собираю вкладку…» вечно), а поток ошибок в консоль
+     выглядел как зависший интерфейс */
+  const typerTick = () => {
+    try {
     const now = performance.now();
     // Пропущенный браузером кадр не превращаем в долг, который затем выдаётся
     // пачкой. Реальное время всё равно прошло; после stall продолжаем тем же
@@ -9075,7 +9134,20 @@ function typerStart(ui) {
         (CPS_TALK / Math.max(CPS_TALK, ui.cps));
     }
     scrollSoon(ui);
-  }, TYPE_MS);
+    } catch (e) {
+      try {
+        console.error('typer:', e);
+        clearInterval(ui.typer); ui.typer = null;
+        if (ui.mdEl) {
+          ui.mdEl.classList.remove('typing');
+          ui.mdEl.textContent = String(ui.buffer || '');
+        }
+        ui.shown = String(ui.buffer || '');
+        if (ui.onTyped) { const cb = ui.onTyped; ui.onTyped = null; try { cb(); } catch (e2) {} }
+      } catch (e3) { /* двойная страховка */ }
+    }
+  };
+  ui.typer = setInterval(typerTick, TYPE_MS);
 }
 
 /* дописать всё, что осталось (в конце ответа) */
@@ -10451,13 +10523,11 @@ function handleEvent(ev, ui) {
          вкладка открывается в момент события, а не после ответа */
       if (ev.result && ev.result.ok !== false) {
         if (ev.name === 'schedule_task') {
-          /* BM16: уведомление о фоновой задаче при создании ИЗ ЧАТА —
-             вернули; BM17: вкладка АВТО разворачивается ПРЯМО
-             В ОБЛАСТИ УВЕДОМЛЕНИЯ */
-          embedLiveAuto(ui);
+          /* BM18: создание фоновой задачи — ЗЕЛЁНАЯ БЛАШКА с вкладкой
+             АВТО внутри (в чате больше ничего не появляется) */
           const tt = (ev.result && ev.result.task && ev.result.task.title)
             || (ev.result && ev.result.title) || '';
-          toastAutoCard('Задача' + (tt ? ' «' + tt + '»' : '') + ' создана — работает в фоне');
+          toastAutoCard(tt);
           sfx('ok');
         } else if (/^(write_file|download_file|make_archive|generate_image)$/.test(ev.name)) {
           embedLiveCard(ui, 'files', 'файлы диалога');
@@ -10553,13 +10623,9 @@ function handleEvent(ev, ui) {
     case 'background': {
       /* BM13: сервер уводит задачу в фон САМ (агентский прогон не стартует) —
          живая AUTO-карточка появляется здесь СРАЗУ, в момент ухода в фон.
-         BM15: карточка ОДНА — прежде рядом всплывала ещё и bg-плашка
-         «В фоне: …», а потом они менялись местами. BM17: уведомление
-         несёт вкладку АВТО прямо в себе — она разворачивается
-         в области уведомления */
-      embedLiveAuto(ui);
-      const when = ev.when || ev.schedule || '';
-      toastAutoCard('Задача «' + ev.title + '» ушла в фон' + (when ? ' · ' + when : ''), 'info');
+         BM18: ЗЕЛЁНАЯ БЛАШКА с вкладкой АВТО внутри — единый вид
+         постановки фоновой задачи (карточка в чате не рисуется) */
+      toastAutoCard(ev.title);
       dropStatus(ui);
       refreshState();
       scrollDown();
@@ -10833,7 +10899,12 @@ async function dictTranscribeSegment(chunks, mime) {
   if (!blob.size || blob.size < 1200) return '';       // тишина — не слово
   const wav = await blobToWav16k(blob);
   const r = await api('/api/transcribe', { audio: wav, language: 'ru' });
-  return String((r && r.text) || '').trim();
+  const text = String((r && r.text) || '').trim();
+  /* BM18: ASR на тишине «слышит» устойчивый мусор («Продолжение
+     следует…», «Спасибо за внимание») — такой сегмент в поле ввода
+     не попадает никогда */
+  if (/^(продолжение следует|спасибо за внимание|спасибо за просмотр|до свидания|подписывайтесь на канал|субтитры сделал|ещё раз|пока)[\s.!..]*$/i.test(text)) return '';
+  return text;
 }
 
 function dictSegment(D) {
@@ -10843,7 +10914,7 @@ function dictSegment(D) {
 
 async function dictStart() {
   const mb = $('#micBtn');
-  if (DICT) { dictSegment(DICT); return; }             // повторный клик — стоп
+  if (DICT) { dictFinish(DICT); return; }              // повторный клик — СТОП
   if (!window.MediaRecorder || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
   let stream;
   try {

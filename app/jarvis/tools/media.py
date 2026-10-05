@@ -1046,6 +1046,19 @@ _QUERY_EMBED_HINT = (
     "ссылка не нужна: покажи запрос текстом или воспользуйся web_search и "
     "передай show_media найденную страницу/файл")
 
+# BM18: стоки и платные медиатеки — глухой край: плеера у них нет, файл
+# прячут за оплатой, а роботов встречают 403. Иметь их в результате —
+# значит гарантированно НЕ найти файл. Скипаем сразу
+_STOCK_RE = re.compile(
+    r"(?:dreamstime|pikbest|shutterstock|gettyimages|istockphoto|"
+    r"stock\.adobe|depositphotos|123rf|alamy|storyblocks|pond5|artlist|"
+    r"epidemicsound|freepik|vecteezy|mixkit|motionarray|motionarray\.com|"
+    r"magnific\.ai|freepik\.com|vecteezy\.com)", re.IGNORECASE)
+
+# прямое расширение файла в ссылке — самый желанный результат
+_DIRECT_FILE_RE = re.compile(
+    r"\.mp[34]|\.m4a|\.webm|\.ogg|\.mov|\.m3u8?$|\.aac", re.IGNORECASE)
+
 
 def _looks_like_domain(s: str) -> bool:
     return bool(re.match(r"^[\w.-]+\.[a-z]{2,}(/|$)", s, re.IGNORECASE))
@@ -1061,34 +1074,55 @@ def _media_from_query(query: str) -> Dict[str, Any]:
     q = re.sub(r"\s+", " ", str(query or "")).strip()
     if not q:
         return {"ok": False, "error": "пустой запрос"}
-    variants = [
-        q,
-        "%s filetype:mp3" % q,
-        "%s скачать mp3" % q,
-        "%s filetype:mp4" % q,
-        "%s mp4 смотреть" % q,
-        "%s видео" % q,
-    ]
+    # BM18: интент запроса задаёт порядок вариантов — видео-просьба не
+    # начинает жизнь с mp3-поиска, и наоборот
+    low = q.lower()
+    want_video = any(w in low for w in ("видео", "фильм", "клип", "ролик",
+                                        "мультфильм", "трейлер"))
+    want_audio = any(w in low for w in ("музык", "песн", "трек", "mp3",
+                                        "аудиокниг", "звук", "минус"))
+    video_variants = ["%s filetype:mp4" % q, "%s mp4 скачать" % q,
+                      "%s видео mp4 прямая ссылка" % q, "%s смотреть mp4" % q]
+    audio_variants = ["%s filetype:mp3" % q, "%s скачать mp3" % q,
+                      "%s mp3 слушать" % q, "%s аудио" % q]
+    if want_audio:
+        variants = audio_variants + video_variants + [q]
+    elif want_video:
+        variants = video_variants + audio_variants + [q]
+    else:
+        variants = [q, "%s filetype:mp3" % q, "%s filetype:mp4" % q,
+                    "%s скачать mp3" % q, "%s mp4" % q]
+
     tried = 0
-    errors = []
-    for v in variants:
-        try:
-            res = web_tools.web_search(v, count=6)
-        except Exception as exc:
-            errors.append(str(exc)[:80])
-            continue
-        for item in (res or {}).get("results") or []:
-            link = str(item.get("url") or "").strip()
-            if not link or not link.lower().startswith("http"):
+    tried_links = []
+    # проход 1 — ссылки на ПРЯМЫЕ ФАЙЛЫ (самый надёжный результат),
+    # проход 2 — обычные страницы (в них ищем плеер/og:video)
+    for pass_no in (1, 2):
+        for v in variants:
+            try:
+                res = web_tools.web_search(v, count=6)
+            except Exception as exc:
                 continue
-            if _YOUTUBE_RE.search(link) or _STREAMING_RE.search(link):
-                continue
-            tried += 1
+            for item in (res or {}).get("results") or []:
+                link = str(item.get("url") or "").strip()
+                if not link or not link.lower().startswith("http"):
+                    continue
+                if link in tried_links:
+                    continue
+                if (_YOUTUBE_RE.search(link) or _STREAMING_RE.search(link)
+                        or _STOCK_RE.search(link)):
+                    continue
+                if pass_no == 1 and not _DIRECT_FILE_RE.search(link):
+                    continue
+                tried_links.append(link)
+                tried += 1
+                if tried > 14:
+                    break
+                out = show_media(link, _depth=1)
+                if out.get("ok"):
+                    return out
             if tried > 14:
                 break
-            out = show_media(link, _depth=1)
-            if out.get("ok"):
-                return out
         if tried > 14:
             break
     return {"ok": False,
