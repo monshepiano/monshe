@@ -248,11 +248,20 @@ def _execute_reserved(task: Dict[str, Any], cancelled: threading.Event) -> None:
 
         # Результат показываем ОДИН раз. Уведомление нужно только тогда, когда
         # ответ некуда положить — если задача пришла из диалога, ответ и есть оно.
-        if task.get("chat_id"):
+        # BM13: задача БЕЗ чата (создана руками во вкладке AUTO) тоже несёт
+        # ответ В ДИАЛОГ — в последний активный разговор человека. Прежде
+        # такой ответ выпадал «табличкой» в док уведомлений над полем ввода
+        # (в зоне чипов) — а человек ждёт его именно в ленте диалога.
+        target_chat = task.get("chat_id") or ""
+        if not target_chat:
+            last = db.list_chats(1)
+            if last:
+                target_chat = last[0].get("id") or ""
+        if target_chat:
             # BM12: тихий прогон тоже меняет вкладку AUTO — карточка
             # прикладывается к результату сама
             content = agent.auto_embed_block(content, ["schedule_task"])
-            db.add_message(task["chat_id"], "assistant", content,
+            db.add_message(target_chat, "assistant", content,
                            {"task_id": task_id, "from_auto": True,
                             "files": files, "title": task.get("title", "")})
         else:
@@ -266,7 +275,21 @@ def _execute_reserved(task: Dict[str, Any], cancelled: threading.Event) -> None:
                 db.update_task(task_id, status="error", resume_status="",
                                result="Ошибка: %s" % exc)
                 db.append_task_event(task_id, {"type": "error", "text": str(exc)[:300]})
-                db.notify("AUTO: ошибка в задаче", "%s — %s" % (task["title"], exc), "error")
+                # BM13: ошибка — тоже сообщение в диалог (не табличка у чипов);
+                # уведомление остаётся только когда диалога нет вовсе
+                err_chat = task.get("chat_id") or ""
+                if not err_chat:
+                    last = db.list_chats(1)
+                    if last:
+                        err_chat = last[0].get("id") or ""
+                if err_chat:
+                    db.add_message(err_chat, "assistant",
+                                   "Задача «%s» не удалась: %s" % (task["title"], exc),
+                                   {"task_id": task_id, "from_auto": True,
+                                    "title": task.get("title", "")})
+                else:
+                    db.notify("AUTO: ошибка в задаче",
+                              "%s — %s" % (task["title"], exc), "error")
     finally:
         with _RUN_LOCK:
             if _RUNNING.get(task_id) is cancelled:
@@ -621,6 +644,15 @@ def detect_schedule(text: str) -> str:
 _REMIND_WORDS = ("напомни", "напоминай", "разбуди")
 _WATCH_WORDS = ("следи", "мониторь", "отслеживай", "проверяй", "наблюдай", "держи в курсе")
 _BG_WORDS = ("в фоне", "фоном", "в фоновом режиме", "по расписанию", "регулярно")
+# BM13: ВОПРОС О СОСТОЯНИИ ФОНА — это не поручение. «Что ты делаешь в
+# фоне?», «покажи, какие задачи фоном» — человек СПРАШИВАЕТ; прежде
+# такие фразы ловились по «в фоне» и уезжали в AUTO-задачу, и вопрос
+# оставался без ответа в диалоге
+_STATE_Q_RE = re.compile(
+    r"\b(?:что|чем|какие|как)\b.{0,26}\b(?:делаешь|делает|занимаешься|"
+    r"занят|работаешь|работает|происходит|происходят|идёт|идут|"
+    r"задачи|задача|процессы)\b|"
+    r"\b(?:покажи|покажись|расскажи|перечисли)\b.{0,34}\b(?:фон\w*|задач\w*)\b")
 _DEFER_RE = re.compile(
     r"(?:\b(?:сделай|выполни|подготовь|собери|напиши|пришли|вернись)\b.{0,60}"
     r"\b(?:позже|потом|завтра)\b|"
@@ -654,6 +686,10 @@ def should_background(text: str) -> Dict[str, Any]:
         return {"background": True, "reason": "напоминание", "schedule": ""}
     if _DEFER_RE.search(t):
         return {"background": True, "reason": "отложенная задача", "schedule": ""}
+    # BM13: вопрос о состоянии фона — НЕ задача: отвечаем в диалоге
+    if _STATE_Q_RE.search(t) and (any(k in t for k in _BG_WORDS)
+                                  or "фон" in t or "задач" in t):
+        return {"background": False, "reason": "вопрос о состоянии фона"}
     if any(k in t for k in _BG_WORDS):
         return {"background": True, "reason": "явная фоновая задача", "schedule": ""}
 

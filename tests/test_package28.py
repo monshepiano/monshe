@@ -3263,7 +3263,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.84", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.85", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -3352,15 +3352,19 @@ class IterationAATests(unittest.TestCase):
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         # id="voiceBtn" ровно один — тумблер озвучки в шапке; дубль убивал клик
         self.assertEqual(html.count('id="voiceBtn"'), 1)
-        self.assertIn('id="micBtn" data-tip="Голосовой режим"', html)
+        # BM14: кнопка микрофона — обычная ДИКТОВКА (голос -> текст в поле);
+        # разговор переезжает в LIVE, из чата кнопкой не открывается
+        self.assertIn('id="micBtn" data-tip="Диктовка"', html)
         handler = js.split("$('#micBtn').addEventListener('click'")[1].split("\n});")[0]
-        self.assertIn("openVoiceMode()", handler)
-        self.assertIn("closeVoiceMode()", handler)
-        # диктовка ушла: мёртвых функций нет, WAV-конвертер жив для разговора
-        self.assertNotIn("function browserASR", js)
-        self.assertNotIn("async function serverASR", js)
-        self.assertNotIn("function micHint", js)
+        self.assertIn("SpeechRecognition", handler)
+        self.assertIn("DICT", handler)
+        self.assertNotIn("openVoiceMode()", handler)
+        self.assertNotIn("closeVoiceMode()", handler)
+        # разговорный режим жив отдельными функциями (для LIVE), не на micBtn
+        self.assertIn("function openVoiceMode", js)
         self.assertIn("async function blobToWav16k", js)
+        self.assertNotIn("function browserASR", js)
+        self.assertNotIn("function micHint", js)
         # кнопка подсвечивается на время разговора
         self.assertIn("mb.classList.add('rec');", js)
         self.assertIn("mb.classList.remove('rec');", js)
@@ -3849,7 +3853,7 @@ class IterationAGTests(unittest.TestCase):
         # BM12: сворачивание — явные шаги: сжать пространства, ПОСЛЕ анимации
         # погасить (.docked); разворачивание — снять .docked и разжать в след. кадр
         self.assertIn("app.classList.add('collapsed', 'side-folding');", js)
-        self.assertIn("setTimeout(() => app.classList.add('docked'), 640);", js)
+        self.assertIn("setTimeout(() => app.classList.add('docked'), 700);", js)
         self.assertIn("app.classList.remove('docked');", js)
         self.assertNotIn("SIDE_FADE", js)
         self.assertNotIn("SIDE_MORPH", js)
@@ -5934,7 +5938,10 @@ class IterationBKTests(unittest.TestCase):
         self.assertIn('stroke="rgba(190,235,255,.85)"', md)
         self.assertIn('<span class="msq-r">', md)
         self.assertIn('preserveAspectRatio="none" aria-hidden="true"', md)
-        self.assertNotIn("msq-b", md)
+        # BM14: .msq-box — новый бокс степени корня (базовый кегль);
+        # прежний класс msq-b не возвращается
+        self.assertIn('class="msq-box"', md)
+        self.assertNotIn('class="msq-b"', md)
         self.assertNotIn("H1400", md)
         self.assertNotIn("H11", md)
         self.assertIn(
@@ -7156,8 +7163,10 @@ class IterationBM8Tests(unittest.TestCase):
         # BM13: степень живёт ВНУТРИ рамки корня — не наезжает на скобку слева
         self.assertIn("msqrt' + (root ? ' msqrt-i' : ''", md)
         self.assertIn(".msqrt.msqrt-i{padding-left:1.46em}", css)
-        self.assertIn(".msqrt.msqrt-i .msq-i{left:auto;right:calc(100% - .98em);width:auto}", css)
-        self.assertIn("top:0;font-size:.58em", css)
+        # BM14: индекс в боксе базового кегля — em считаются от размера
+        # корня, а не от уменьшенного индекса (прежний right:calc уплывал)
+        self.assertIn(".msqrt .msq-box{position:absolute;top:0;left:0;width:1.02em;height:100%;", css)
+        self.assertIn(".msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em", css)
         self.assertIn(".mfr-d .msqrt{margin-top:.22em}", css)
 
     def test_bm11_dock_untouched_spaces_flyout(self) -> None:
@@ -7168,9 +7177,11 @@ class IterationBM8Tests(unittest.TestCase):
                        'id="spdCurWrap"', 'class="spd-dash"', 'id="spSettings"',
                        'id="spGlider"', 'id="spSetPanel"'):
             self.assertIn(marker, html)
-        self.assertIn(".app.docked .spaces{display:none}", css)
+        self.assertIn(".app.docked .spaces{visibility:hidden}", css)
         self.assertIn(".app.collapsed .sp-dock{display:flex", css)
         self.assertIn(".spd-cur-wrap.open .spd-fly{opacity:1", css)
+        # BM14: меню пространств вырастает ИЗ кнопки (left:0), не сбоку
+        self.assertIn("transform:translateY(-50%) scale(.22);transform-origin:left center", css)
 
     def test_bm11_plot_empty_plane_banned(self) -> None:
         """Пустая плоскость запрещена: окно по точкам, честная ошибка."""
@@ -7214,10 +7225,11 @@ class IterationBM8Tests(unittest.TestCase):
         # промпт: перечисление и вопросы о состоянии — всегда карточкой
         src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
         flat = " ".join(src.split())
-        # BM13: B-смягчение — текст допустим, карточка дополняет
-        self.assertIn("текст допустим, но живая карточка дополнит его состоянием", flat)
+        # BM14: текст допустим, карточка ОБЯЗАТЕЛЬНА как дополнение
+        self.assertIn("текст допустим, но живая карточка ОБЯЗАТЕЛЬНА как дополнение", flat)
         self.assertIn("ВОПРОС О СОСТОЯНИИ", flat)
-        self.assertIn("ничего не запускай и не создавай по своей инициативе", flat)
+        self.assertIn("НИЧЕГО не запускай и не создавай — ни фоновых задач, ни файлов", flat)
+        self.assertIn("Запрещено вместо медиа сохранять результаты поиска в JSON-файл", flat)
         self.assertIn("вставь ```embed auto СРАЗУ в этот же ответ", flat)
 
     def test_bm12_implicit_multiplication(self) -> None:
@@ -7275,16 +7287,18 @@ class IterationBM8Tests(unittest.TestCase):
         есть в любом пространстве, надписи про диалоги нет."""
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("setTimeout(() => app.classList.add('docked'), 640);", js)
+        self.assertIn("setTimeout(() => app.classList.add('docked'), 700);", js)
         self.assertIn("classList.add('collapsed', 'docked');", js)
         self.assertIn(".side-folding .spaces{opacity:0;transform:scale(.42);", css)
-        self.assertIn(".app.docked .spaces{display:none}", css)
+        # BM14: .docked гасит только visibility — display:none в конце
+        # анимации давал однокадровый скачок кнопок вверх
+        self.assertIn(".app.docked .spaces{visibility:hidden}", css)
         self.assertIn(".app.collapsed .space-future{display:none!important}", css)
-        # BM13: в чужих пространствах вкладки чата в доке НЕ показываем;
-        # под кнопками дока — полоса на всю ширину с размытой границей
-        self.assertNotIn(".app.collapsed .nav.space-off{display:flex!important}", css)
-        self.assertIn(".app.collapsed .sp-dock::before{", css)
-        self.assertIn("filter:blur(4px)", css)
+        # BM14: у дока НЕТ рамки-области (светлая плашка с границами убрана);
+        # высотой ряда управляет JS честным замером — класс её не трогает
+        self.assertNotIn(".app.collapsed .sp-dock::before{", css)
+        self.assertIn("класс не трогает max-height", css)
+        self.assertIn("sp.style.maxHeight = sp.offsetHeight + 'px'", js)
 
     def test_bm12_space_chrome_instant(self) -> None:
         """Клик по пространству красит иконки/глайдер мгновенно, не после анимации."""
@@ -7458,11 +7472,13 @@ class IterationBM13Tests(unittest.TestCase):
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
         self.assertIn("msqrt' + (root ? ' msqrt-i' : ''", md)
         self.assertIn(".msqrt.msqrt-i{padding-left:1.46em}", css)
-        self.assertIn(".msqrt.msqrt-i .msq-i{left:auto;right:calc(100% - .98em)",
-                      css)
+        # BM14: индекс в БОКСЕ базового кегля — позиции в em корня
+        self.assertIn(".msqrt .msq-box{position:absolute;top:0;left:0;width:1.02em", css)
+        self.assertIn(".msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em", css)
         # прежний вынос за левый край — запрещён (правило, не комментарий)
         self.assertNotIn(".msq-i{position:absolute;top:0;left:-.36em", css)
         self.assertNotIn("left:-.36em;width", css)
+        self.assertNotIn("right:calc(100% - .98em)", css)
 
     def test_bm13_scroll_catches_final_render_growth(self) -> None:
         """Финальный рендер (таблицы/графики/вкладки) — экран догоняет."""
@@ -7476,14 +7492,16 @@ class IterationBM13Tests(unittest.TestCase):
     def test_bm13_live_auto_card_at_task_start(self) -> None:
         """AUTO-карточка появляется В МОМЕНТ запуска задачи, не после ответа."""
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        self.assertIn("function embedLiveAuto(ui)", js)
+        # BM14: карточка обобщена — AUTO/ФАЙЛЫ/ПАМЯТЬ в момент события
+        self.assertIn("function embedLiveCard(ui, view, title)", js)
+        self.assertIn("function embedLiveAuto(ui) { embedLiveCard(ui, 'auto'", js)
         self.assertIn("function embedLiveAutoSettle(ui)", js)
         self.assertIn("ev.name === 'schedule_task'", js)
-        live_spec = ("panel.dataset.embed = '{"
-                     + '"view": "auto", "title": "что я делаю в фоне"'
-                     + "}'")
-        self.assertIn(live_spec, js)
-        # дубль не ставим: серверная карточка пришла — живая уходит
+        self.assertIn("embedLiveCard(ui, 'files', 'файлы диалога')", js)
+        self.assertIn("embedLiveCard(ui, 'memory', 'что я запомнил')", js)
+        # сервер сам уводит задачу в фон — карточка сразу, до ответа
+        self.assertIn("case 'background'", js)
+        # дубль не ставим: серверская карточка пришла — живая уходит
         self.assertIn("const inText = (ui.mdEl && $$('.embed-panel', ui.mdEl)", js)
     def test_bm13_auto_card_realtime_sync(self) -> None:
         """Удаление фоновой задачи видно в карточке без перезагрузки."""
@@ -7519,7 +7537,8 @@ class IterationBM13Tests(unittest.TestCase):
         settings = js.split("function buildSpaceSettings()")[1] \
             .split("\nfunction ")[0]
         self.assertIn("chat-fixed", settings)
-        self.assertIn("настройки отображения", settings)
+        # BM14: подписи-заголовка в панели НЕТ — только сами пространства
+        self.assertNotIn("sp-set-title", settings)
         # скрыли текущее — возврат в чат
         toggle = js.split("function spaceToggleVisible(name)")[1] \
             .split("\nfunction ")[0]
@@ -7534,10 +7553,14 @@ class IterationBM13Tests(unittest.TestCase):
         """Панель настроек — стекло + заголовок + закрытие тапом вне."""
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        self.assertIn("backdrop-filter:blur(16px) saturate(1.35)", css)
-        self.assertIn(".sp-set-title{", css)
+        # BM14: стекло МЕНЕЕ прозрачное (плотнее + сильнее blur), без
+        # заголовка; CHAT — жирная выделенная строка
+        self.assertIn("backdrop-filter:blur(22px) saturate(1.4)", css)
+        self.assertIn("background:rgba(11,20,34,.84)", css)
+        self.assertNotIn(".sp-set-title{", css)
         self.assertIn("transform:scale(.55);transform-origin:100% 0", css)
         self.assertIn(".sp-set-row.chat-fixed{", css)
+        self.assertIn(".sp-set-row.chat-fixed b{font-weight:700", css)
         # закрытие тапом вне
         init = js.split("function initSpaces()")[1].split("\nfunction ")[0]
         self.assertIn("document.addEventListener('click', () => {", init)
@@ -7563,10 +7586,14 @@ class IterationBM13Tests(unittest.TestCase):
     def test_bm13_live_fill_from_center(self) -> None:
         """LIVE hover — заливка светом из центра, однородно."""
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # BM14: НЕ новая заливка — существующее свечение плавно РАСХОДИТСЯ
+        # по всей кнопке с кривой плавности
         self.assertIn(".sp-mode::after{", css)
-        self.assertIn("border-radius:50%", css)
-        self.assertIn("transform:scale(0)", css)
-        self.assertIn(".sp-mode:hover::after{transform:scale(2.6)}", css)
+        self.assertIn("background:radial-gradient(circle at 50% 50%,rgba(0,212,255,.22)", css)
+        self.assertIn("opacity:0;transform:scale(.24)", css)
+        self.assertIn("transition:transform .6s cubic-bezier(.3,.75,.25,1),opacity .45s ease", css)
+        self.assertIn(".sp-mode:hover::after{opacity:1;transform:scale(1)}", css)
+        self.assertNotIn(".sp-mode:hover::after{transform:scale(2.6)}", css)
 
     def test_bm13_chat_list_scrollbar_only_while_scrolling(self) -> None:
         """Скроллбар списка диалогов живёт только во время скролла."""
@@ -7574,9 +7601,13 @@ class IterationBM13Tests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         self.assertIn("scrollbar-color:transparent transparent", css)
         self.assertIn(".chat-list.scr{", css)
-        self.assertIn("mask-image:linear-gradient(180deg,transparent 0,"
-                      "#000 14px", css)
+        # BM14: маска — только у переполненного списка (.over ставит JS)
+        self.assertIn(".chat-list.over{", css)
+        self.assertIn("#000 16px", css)
+        # BM14: палка ещё тоньше
+        self.assertIn(".chat-list::-webkit-scrollbar{width:2px}", css)
         self.assertIn("cl.classList.add('scr')", js)
+        self.assertIn("cl.classList.toggle('over'", js)
 
     def test_bm13_embed_head_dense(self) -> None:
         """Шапка мини-вкладок плотнее — как вкладки инструментов агента."""
@@ -7592,6 +7623,175 @@ class IterationBM13Tests(unittest.TestCase):
             .split("} else if (spec.view === 'scenarios')")[0]
         self.assertIn("Память собирается дольше обычного", mem)
         self.assertIn("fail(new Error('не удалось открыть память'))", mem)
+
+
+class IterationBM14Tests(unittest.TestCase):
+    """BM14: корни в боксе, честный payload-guard, живые карточки событий,
+    AUTO-вопросы в диалог, док-меню из кнопки, диктовка, тонкий скроллбар."""
+
+    def test_bm14_root_degree_box_wrapper(self) -> None:
+        """Степень корня в боксе базового кегля: em от размера корня."""
+        md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
+        self.assertIn(
+            "'<span class=\"msq-box\"><span class=\"msq-i\">' + mesc(root) +",
+            md)
+        self.assertIn("Индекс лежит", md)
+
+    def test_bm14_payload_guard_honest_json_hint(self) -> None:
+        """Ретрай больше не ВРЁТ «просил именно JSON» когда просили медиа."""
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        self.assertIn("if user_wants_json(user_text):", src)
+        # ветка JSON остаётся только за условием
+        self.assertIn("fix_hint", src)
+        self.assertIn("а не сохраняй", src)
+        self.assertIn("JSON и не перечисляй ссылки текстом.", src)
+        # враньё не осталось безусловным: текст живёт только внутри ветки
+        self.assertIn("Пользователь просил именно ", src)
+        self.assertLess(src.index("if user_wants_json(user_text):"),
+                        src.index("Пользователь просил именно "))
+
+    def test_bm14_media_never_json_fallback(self) -> None:
+        """Промпт: найденное медиа — в show_media, JSON вместо медиа запрещён."""
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        flat = " ".join(src.split())
+        self.assertIn("Нашёл через web_search ссылку или страницу с медиа — "
+                      "ПЕРЕДАЙ её в show_media", flat)
+        self.assertIn("Запрещено вместо медиа сохранять результаты поиска в "
+                      "JSON-файл", flat)
+
+    def test_bm14_state_question_not_background(self) -> None:
+        """«Что ты делаешь в фоне?» — вопрос, а не фоновая задача."""
+        auto = Path("app/jarvis/auto.py").read_text(encoding="utf-8")
+        self.assertIn("_STATE_Q_RE", auto)
+        self.assertIn("вопрос о состоянии фона", auto)
+        sys.path.insert(0, "app")
+        try:
+            from jarvis import auto as automod
+            self.assertIs(automod.should_background(
+                "что ты делаешь в фоне?")["background"], False)
+            self.assertIs(automod.should_background(
+                "покажи, какие задачи фоном")["background"], False)
+            self.assertIs(automod.should_background(
+                "сделай это в фоне")["background"], True)
+        finally:
+            sys.path.remove("app")
+
+    def test_bm14_auto_answers_go_to_dialog(self) -> None:
+        """Результат/ошибка задачи без чата — сообщением в диалог, не в док."""
+        auto = Path("app/jarvis/auto.py").read_text(encoding="utf-8")
+        self.assertIn("target_chat = task.get(\"chat_id\") or \"\"", auto)
+        self.assertIn("db.list_chats(1)", auto)
+        self.assertIn("err_chat", auto)
+
+    def test_bm14_auto_card_before_done(self) -> None:
+        """Карточка вкладки вкладывается в ответ ДО done — и по памяти."""
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        dbp = Path("app/jarvis/db.py").read_text(encoding="utf-8")
+        self.assertIn("def memory_count()", dbp)
+        self.assertIn("self._mem0 = db.memory_count()", src)
+        tail = src.split('yield {"type": "done"')[-1]
+        head = src.split('final_text = auto_embed_block(')[-1]
+        self.assertIn("final_text = auto_embed_block(", src)
+        self.assertIn("memory_changed=", src)
+
+    def test_bm14_embed_head_solid(self) -> None:
+        """Шапка мини-вкладки почти непрозрачная — как вкладки агента."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        head = css.split(".emb-head{")[1].split("}")[0] + \
+            css.split(".emb-head{")[1].split("}")[1]
+        self.assertIn("background:rgba(9,20,33,.94)", head)
+
+    def test_bm14_global_tooltip_overlay(self) -> None:
+        """Подписи пространств — глобальный fixed-оверлей поверх границ."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn("document.addEventListener('pointerover'", js)
+        self.assertIn(".g-tip{position:fixed;z-index:300", css)
+        self.assertIn(".g-tip.show{opacity:1", css)
+        # прежние обрезанные ::before ушли
+        self.assertNotIn(".sp-ico[data-tip]::before", css)
+        self.assertNotIn(".spf-ico[data-tip]::before", css)
+
+    def test_bm14_glider_immediate_and_flip_cleanup(self) -> None:
+        """Глайдер рисуется сразу и ведёт анимацию; FLIP не оставляет transform."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("function gliderWatchRun()", js)
+        self.assertIn("gliderWatchRun();", js)
+        self.assertIn("b.style.transform = ''", js)
+        self.assertIn("requestAnimationFrame(spaceGlider)", js)
+
+    def test_bm14_honest_height_animation(self) -> None:
+        """Высота ряда — честный замер JS, без доездов и прыжков."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        fold = js.split("function toggleSidebar()")[1].split("\nfunction ")[0]
+        self.assertIn("sp.style.maxHeight = sp.offsetHeight + 'px'", fold)
+        self.assertIn("sp.style.maxHeight = '0px'", fold)
+        self.assertIn("const h = sp.offsetHeight", fold)
+        self.assertIn("sp.style.maxHeight = h + 'px'", fold)
+        # класс больше не рулит высотой ряда
+        self.assertNotIn("max-height:0;padding-top:0;padding-bottom:0", css)
+
+    def test_bm14_dock_full_dash_and_blurred_border(self) -> None:
+        """Полоса под текущим пространством — на весь док; граница размыта."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        self.assertIn(".app.collapsed .spd-cur-wrap{align-self:stretch", css)
+        dash = css.split(".spd-dash{")[1].split("}")[0]
+        self.assertIn("width:100%", dash)
+        self.assertIn(".spaces::after{", css)
+        self.assertIn("filter:blur(1.1px)", css)
+        self.assertNotIn(".app.collapsed .sp-dock::before{", css)
+
+    def test_bm14_flyout_grows_from_button(self) -> None:
+        """Меню пространств вырастает ИЗ кнопки; иконка плывёт на слот."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        fly = css.split(".spd-fly{")[1].split("}")[0]
+        self.assertIn("left:0", fly)
+        self.assertIn("scale(.22)", fly)
+        self.assertIn("transform-origin:left center", fly)
+        self.assertNotIn("left:calc(100% + 8px)", css)
+        init = js.split("function initDockFly()")[1].split("\nfunction ")[0]
+        self.assertIn("selShift", init)
+        self.assertIn("classList.add('ghost')", init)
+        self.assertIn("icons.indexOf(sel) <= 0", init)
+
+    def test_bm14_chat_list_mask_only_when_overflow(self) -> None:
+        """Маска чат-листа включается только у переполненного списка."""
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn(".chat-list.over{", css)
+        self.assertIn("width:2px", css)
+        hook = js.split("СКРОЛЛБАР ЧАТ-ЛИСТА")[1].split("})();")[0]
+        self.assertIn("cl.scrollHeight > cl.clientHeight + 4", hook)
+        self.assertIn("MutationObserver", hook)
+
+    def test_bm14_mic_button_is_dictation(self) -> None:
+        """Микрофон — диктовка в поле; разговор остался для LIVE."""
+        html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        self.assertIn('id="micBtn" data-tip="Диктовка"', html)
+        self.assertIn("M12 3.4a3.1 3.1 0 0 1 3.1 3.1", html)
+        handler = js.split("$('#micBtn').addEventListener('click'")[1] \
+            .split("\n});")[0]
+        self.assertIn("SpeechRecognition", handler)
+        self.assertIn("rec.lang = 'ru-RU'", handler)
+        self.assertIn("interimResults", handler)
+        self.assertIn("box.value = (base + txt)", handler)
+
+    def test_bm14_live_card_files_memory_at_event(self) -> None:
+        """Файл создан — карточка ФАЙЛЫ сразу; факт — карточка ПАМЯТЬ."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        tr = js.split("case 'tool_result':")[1].split("case '")[0]
+        self.assertIn("embedLiveCard(ui, 'files', 'файлы диалога')", tr)
+        self.assertIn("embedLiveCard(ui, 'memory', 'что я запомнил')", tr)
+        self.assertIn("write_file|download_file|make_archive|generate_image", tr)
+
+    def test_bm14_background_event_embeds_immediately(self) -> None:
+        """Серверный уход в фон рисует карточку СРАЗУ — не после ответа."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        bg = js.split("case 'background':")[1].split("case '")[0]
+        self.assertIn("embedLiveAuto(ui)", bg)
 
 
 if __name__ == "__main__":

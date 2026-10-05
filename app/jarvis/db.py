@@ -712,6 +712,16 @@ def remember(kind: str, key: str, value: str, weight: float = 1.0) -> Dict[str, 
             "weight": weight, "created_at": ts, "updated_at": ts}
 
 
+def memory_count() -> int:
+    """BM13: дешёвый счётчик строк памяти — снапшот для авто-карточки ПАМЯТЬ."""
+    with _LOCK:
+        try:
+            row = _CONN.execute("SELECT COUNT(*) FROM memory").fetchone()
+            return int(row[0]) if row else 0
+        except Exception:
+            return 0
+
+
 def recall(kind: str = "", limit: int = 80) -> List[Dict[str, Any]]:
     _compact_memory()
     if kind:

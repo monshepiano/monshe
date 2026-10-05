@@ -693,31 +693,60 @@ function dockY(on) {
   }
 }
 let _dockedT = null;
+let _gliderWatch = 0;
+/* BM13: ГЛАЙДЕР РИСУЕТСЯ СРАЗУ И ЕДЕТ ЗА АНИМАЦИЕЙ. Прежде он ставился
+   только ПОСЛЕ превращения (setTimeout 680) — всё время разворачивания
+   выбранное пространство оставалось без подсветки. Теперь перерисовываем
+   каждый кадр, пока меню меняет ширину */
+function gliderWatchRun() {
+  cancelAnimationFrame(_gliderWatch);
+  const until = performance.now() + 760;
+  const tick = () => {
+    spaceGlider();
+    if (performance.now() < until) _gliderWatch = requestAnimationFrame(tick);
+  };
+  tick();
+}
+
 function toggleSidebar() {
   const app = $('#app');
   if (isNarrow()) { app.classList.toggle('nav-open'); return; }
   app.classList.remove('nav-open');
   const collapsing = !app.classList.contains('collapsed');
-  /* BM12: СЖАТИЕ/РАЗЖАТИЕ ПРОСТРАНСТВ — той же кривой, что и само меню.
-     Прежде при сворачивании кнопки пространств пропадали РЕЗКО (display
-     включался мгновенно). Теперь: сворачивание — ряд СЖИМАЕТСЯ (scale +
-     высота в ноль, .side-folding) и только ПОСЛЕ анимации гасится
-     совсем (.docked); разворачивание — наоборот: сначала возвращается
-     место (.docked снят), затем ряд разжимается в следующий кадр */
+  const sp = document.querySelector('.spaces');
+  /* BM13: ЧЕСТНАЯ АНИМАЦИЯ ВЫСОТЫ РЯДА. Прежде max-height схлопывался
+     классом от выдуманных 132px: пока значение падало от 132 до
+     фактических ~40px, ряд стоял неподвижно, а доезжал резко под конец
+     — отсюда «однокадровый скачок вверх». Теперь фиксируем фактическую
+     высоту инлайном и ведём её к нулю/высоте той же кривой, что меню */
   clearTimeout(_dockedT);
   if (collapsing) {
+    if (sp) {
+      sp.style.maxHeight = sp.offsetHeight + 'px';
+      void sp.offsetHeight;
+    }
     app.classList.add('collapsed', 'side-folding');
-    _dockedT = setTimeout(() => app.classList.add('docked'), 640);
+    if (sp) requestAnimationFrame(() => { sp.style.maxHeight = '0px'; });
+    _dockedT = setTimeout(() => app.classList.add('docked'), 700);
   } else {
     app.classList.remove('docked');
     app.classList.add('side-folding');
     app.classList.remove('collapsed');
+    if (sp) {
+      sp.style.maxHeight = 'none';
+      const h = sp.offsetHeight;
+      sp.style.maxHeight = '0px';
+      void sp.offsetHeight;
+      requestAnimationFrame(() => { sp.style.maxHeight = h + 'px'; });
+      setTimeout(() => {
+        if (!app.classList.contains('collapsed')) sp.style.maxHeight = '';
+      }, 760);
+    }
     requestAnimationFrame(() => requestAnimationFrame(() =>
       app.classList.remove('side-folding')));
   }
   dockY(collapsing);
-  // BM11: после превращения глайдер обязан встать на выбранную иконку
-  setTimeout(spaceGlider, 680);
+  gliderWatchRun();
   /* BK: состояние панели больше не хранится: каждый запуск — с доком */
 }
 $('#collapseBtn').addEventListener('click', toggleSidebar);
@@ -1285,17 +1314,15 @@ function buildSpaceSettings() {
   const panel = $('#spSetPanel');
   if (!panel || panel.dataset.built === '1') return;
   panel.dataset.built = '1';
-  const title = el('div', 'sp-set-title', 'настройки отображения');
-  panel.appendChild(title);
+  /* BM13: без заголовка-бейджа — просто сами пространства */
   SPACES.forEach((n) => {
     const meta = SPACE_META[n] || {};
-    /* BM13: ЧАТ — основное: жирная строка без глазика, скрыть нельзя */
+    /* BM13: ЧАТ — основное: ЖИРНАЯ ВЫДЕЛЕННАЯ строка без глазика */
     if (n === 'chat') {
       const row = el('div', 'sp-set-row chat-fixed');
       row.id = 'ssr_chat';
       row.innerHTML = '<span class="ssr-ico">' + (meta.ico || '') + '</span>'
-        + '<b>' + esc(meta.label || 'CHAT') + '</b>'
-        + '<i class="ssr-lock">основное</i>';
+        + '<b>' + esc(meta.label || 'CHAT') + '</b>';
       panel.appendChild(row);
       return;
     }
@@ -1350,6 +1377,14 @@ function spacesFlip(mutate) {
       [{ transform: 'translateX(' + dx + 'px)' }, { transform: 'none' }],
       { duration: 330, easing: 'cubic-bezier(.25,1.1,.4,1)' });
   });
+  /* BM13: после FLIP у иконок не остаётся чужого transform (иконка
+     «не по центру»), а глайдер встаёт на выбранную иконку ПОВЕРХ
+     анимации — не уезжает влево */
+  setTimeout(() => {
+    $$('.sp-ico[data-space]', row).forEach((b) => { b.style.transform = ''; });
+    spaceGlider();
+  }, 380);
+  requestAnimationFrame(spaceGlider);
 }
 
 function spaceToggleVisible(name) {
@@ -1391,47 +1426,140 @@ function initDockFly() {
   const wrap = $('#spdCurWrap');
   if (!wrap) return;
   let closeT = null;
-  wrap.addEventListener('pointerenter', () => {
+  /* BM13: иконка ТЕКУЩЕГО пространства «входит» в меню: при открытии
+     она плывёт С КНОПКИ ДОКА на свой слот (FLIP), иконка на кнопке
+     гаснет; если её слот первый — она и так на месте, не трогаем.
+     Закрытие — обратный полёт на кнопку */
+  const flySel = () => {
+    const fly = $('#spdFly');
+    return fly ? fly.querySelector('.spf-ico.sel') : null;
+  };
+  const selShift = (sel) => {
+    const cur = $('#spdCur');
+    if (!sel || !cur || !sel.animate) return null;
+    const icons = $$('.spf-ico', $('#spdFly'));
+    if (icons.indexOf(sel) <= 0) return null;   // первый слот = кнопка
+    const br = cur.getBoundingClientRect();
+    const sr = sel.getBoundingClientRect();
+    if (!br.width || !sr.width) return null;
+    return {
+      dx: (br.left + br.width / 2) - (sr.left + sr.width / 2),
+      dy: (br.top + br.height / 2) - (sr.top + sr.height / 2),
+    };
+  };
+  const open = () => {
     clearTimeout(closeT);
     if (wrap.classList.contains('open')) return;
     /* все пространства скрыты глазиком — окошку не из чего собираться */
     if (!S.spacesVisible.length) return;
     dockFlyIcons();
     wrap.classList.add('open');
-    /* BM13: панель открывается НА МЕСТЕ кнопки; с кнопки НА СВОЁ место
-       в меню вылетает только ИКОНКА ТЕКУЩЕГО пространства — остальные
-       уже стоят на своих местах */
-    const btn = $('#spdCur').getBoundingClientRect();
-    const sel = $('#spdFly .spf-ico.sel');
-    if (sel && sel.animate) {
-      const r = sel.getBoundingClientRect();
-      if (r.width) {
-        const dx = (btn.left + btn.width / 2) - (r.left + r.width / 2);
-        const dy = (btn.top + btn.height / 2) - (r.top + r.height / 2);
-        sel.animate(
-          [{ transform: 'translate(' + dx + 'px,' + dy + 'px) scale(.6)', opacity: 0 },
-           { transform: 'none', opacity: 1 }],
-          { duration: 320, delay: 60, easing: 'cubic-bezier(.22,1.25,.36,1)', fill: 'backwards' });
-      }
+    const sel = flySel();
+    const shift = selShift(sel);
+    if (shift && (shift.dx || shift.dy)) {
+      sel.animate(
+        [{ transform: 'translate(' + shift.dx + 'px,' + shift.dy + 'px)' },
+         { transform: 'none' }],
+        { duration: 340, easing: 'cubic-bezier(.3,1.1,.4,1)', fill: 'backwards' });
+      $('#spdCur').classList.add('ghost');
     }
-  });
+  };
+  const close = () => {
+    wrap.classList.remove('open');
+    const cur = $('#spdCur');
+    const sel = flySel();
+    if (cur) cur.classList.remove('ghost');
+    const shift = selShift(sel);
+    if (shift && (shift.dx || shift.dy)) {
+      sel.animate(
+        [{ transform: 'none' },
+         { transform: 'translate(' + shift.dx + 'px,' + shift.dy + 'px)' }],
+        { duration: 300, easing: 'cubic-bezier(.5,.1,.4,1)' });
+    }
+  };
+  wrap.addEventListener('pointerenter', open);
   wrap.addEventListener('pointerleave', () => {
     clearTimeout(closeT);
-    closeT = setTimeout(() => wrap.classList.remove('open'), 170);
+    closeT = setTimeout(close, 170);
+  });
+  /* выбрали пространство — панель складывается обратно в кнопку */
+  document.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest && e.target.closest('#spdFly .spf-ico');
+    if (b) { clearTimeout(closeT); setTimeout(close, 140); }
   });
 }
 
+/* BM13: ТУЛТИПЫ ПРОСТРАНСТВ — ГЛОБАЛЬНЫЙ ОВЕРЛЕЙ. Прежние ::before
+   обрезались контейнерами (ряд иконок — overflow:hidden, граница
+   сайдбара) и пропадали после повторного показа иконок. Теперь
+   подпись живёт в одном элементе поверх всего (position:fixed) */
+(function () {
+  let tipEl = null, tipHide = null;
+  const show = (target) => {
+    const text = target.getAttribute('data-tip');
+    if (!text) return;
+    if (!tipEl) {
+      tipEl = el('div', 'g-tip');
+      tipEl.style.display = 'none';
+      document.body.appendChild(tipEl);
+    }
+    tipEl.textContent = text;
+    tipEl.style.display = 'block';
+    const r = target.getBoundingClientRect();
+    const tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+    /* по центру снизу цели; у самого края экрана — не вылезать */
+    let left = r.left + r.width / 2 - tw / 2;
+    left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
+    let top = r.bottom + 8;
+    if (top + th > window.innerHeight - 6) top = r.top - th - 8;
+    tipEl.style.left = left + 'px';
+    tipEl.style.top = top + 'px';
+    tipEl.classList.add('show');
+  };
+  const hide = () => {
+    if (tipEl) tipEl.classList.remove('show');
+  };
+  document.addEventListener('pointerover', (e) => {
+    const t = e.target && e.target.closest &&
+      e.target.closest('.spaces [data-tip], .sp-dock [data-tip]');
+    if (t) { clearTimeout(tipHide); show(t); }
+  }, true);
+  document.addEventListener('pointerout', (e) => {
+    const t = e.target && e.target.closest &&
+      e.target.closest('.spaces [data-tip], .sp-dock [data-tip]');
+    if (t) { tipHide = setTimeout(hide, 60); }
+  }, true);
+  document.addEventListener('pointermove', (e) => {
+    if (!tipEl || !tipEl.classList.contains('show')) return;
+    const t = e.target && e.target.closest &&
+      e.target.closest('.spaces [data-tip], .sp-dock [data-tip]');
+    if (t) { clearTimeout(tipHide); show(t); } else hide();
+  }, true);
+})();
+
 /* BM13: СКРОЛЛБАР ЧАТ-ЛИСТА ЖИВЁТ ТОЛЬКО ВО ВРЕМЯ СКРОЛЛА —
-   класс .scr держится 650мс после последнего движения и гаснет */
+   класс .scr держится 500мс после последнего движения и гаснет.
+   Маска-затухание краёв (.over) включается ТОЛЬКО когда список
+   реально переполнен: короткий список выглядит как всегда */
 (function () {
   const cl = document.querySelector('.chat-list');
   if (!cl) return;
   let t = null;
+  const over = () => {
+    cl.classList.toggle('over', cl.scrollHeight > cl.clientHeight + 4);
+  };
   cl.addEventListener('scroll', () => {
     cl.classList.add('scr');
+    over();
     clearTimeout(t);
-    t = setTimeout(() => cl.classList.remove('scr'), 650);
+    t = setTimeout(() => cl.classList.remove('scr'), 500);
   }, { passive: true });
+  /* список диалогов меняется — следим за детьми */
+  if (window.MutationObserver) {
+    new MutationObserver(over).observe(cl, { childList: true });
+  }
+  window.addEventListener('resize', over);
+  over();
 })();
 
 function initSpaces() {
@@ -4486,40 +4614,49 @@ function embedParseSpec(raw) {
   return spec;
 }
 
-/* BM13: ЖИВАЯ КАРТОЧКА AUTO в печатающемся ответе — в момент запуска
-   задачи. Финальный рендер принесёт свою (серверную) карточку — дубль
-   не ставим */
-function embedLiveAuto(ui) {
-  if (!ui || !ui.mdEl || !ui.mdEl.isConnected || ui._liveAuto) return;
+/* BM13: ЖИВАЯ КАРТОЧКА В ПЕЧАТАЮЩЕМСЯ ОТВЕТЕ — в момент события, не
+   после ответа: AUTO при уходе задачи в фон, ФАЙЛЫ при создании файла,
+   ПАМЯТЬ при сохранении факта. Финальный рендер принесёт свою
+   (серверную) карточку — дубль не ставим */
+function embedLiveCard(ui, view, title) {
+  if (!ui || !ui.mdEl || !ui.mdEl.isConnected) return;
+  if (!ui._liveCards) ui._liveCards = {};
+  if (ui._liveCards[view]) return;
   /* панель живёт в body ПОСЛЕ mdEl: тайпер пересобирает детей mdEl
      каждый такт — внутрь его вставлять нельзя, сотрёт */
   const panel = el('div', 'embed-panel');
-  panel.dataset.embed = '{"view": "auto", "title": "что я делаю в фоне"}';
+  panel.dataset.embed = '{"view": "' + view + '", "title": "'
+    + String(title || '').replace(/"/g, '') + '"}';
   ui.mdEl.parentNode.insertBefore(panel, ui.mdEl.nextSibling);
   /* строим карточку СРАЗУ (в обход отложенного mountEmbedPanels,
      который во время печати показывает «собираю вкладку…») */
   let spec = null;
   try { spec = embedParseSpec(panel.dataset.embed); } catch (e) { spec = null; }
   if (spec && spec.view) buildEmbedPanel(panel, spec);
-  ui._liveAuto = panel;
+  ui._liveCards[view] = panel;
   if (ui.node && ui.node.root && ui.node.root.isConnected) {
     chaseBottom(msgHost(), ui);
   }
 }
+/* частный случай — читаемая подпись вызова */
+function embedLiveAuto(ui) { embedLiveCard(ui, 'auto', 'что я делаю в фоне'); }
 
-/* BM13: финальный сверильщик живой AUTO-карточки: серверная вставка
-   пришла в тексте — живая уходит (без дубля); НЕ пришла — живая
-   переезжает В mdEl и остаётся с сообщением как полноценная карточка */
+/* BM13: финальный сверильщик живых карточек: серверская вставка пришла
+   в тексте — живая уходит (без дубля); НЕ пришла — живая переезжает
+   В mdEl и остаётся с сообщением как полноценная карточка */
 function embedLiveAutoSettle(ui) {
-  if (!ui || !ui._liveAuto) return;
-  const live = ui._liveAuto;
-  ui._liveAuto = null;
+  if (!ui || !ui._liveCards) return;
+  const cards = ui._liveCards;
+  ui._liveCards = {};
   setTimeout(() => {
-    if (!live.isConnected) return;
-    const inText = (ui.mdEl && $$('.embed-panel', ui.mdEl)
-      .some((p) => (p.dataset.embed || '').indexOf('"auto"') >= 0));
-    if (inText || !ui.mdEl || !ui.mdEl.isConnected) { live.remove(); return; }
-    ui.mdEl.appendChild(live);
+    Object.keys(cards).forEach((view) => {
+      const live = cards[view];
+      if (!live.isConnected) return;
+      const inText = (ui.mdEl && $$('.embed-panel', ui.mdEl)
+        .some((p) => (p.dataset.embed || '').indexOf('"' + view + '"') >= 0));
+      if (inText || !ui.mdEl || !ui.mdEl.isConnected) { live.remove(); return; }
+      ui.mdEl.appendChild(live);
+    });
   }, 1200);
 }
 
@@ -9635,6 +9772,8 @@ function handleEvent(ev, ui) {
       // живёт только на самой tool-карточке, а Markdown сохраняет синюю каретку.
       // раз дошло до инструментов — задача не «простая», кухню открываем
       ui.verbose = true;
+      /* BM13: задача уходит в фон — карточка AUTO в момент СТАРТА вызова */
+      if (ev.name === 'schedule_task') embedLiveAuto(ui);
       // «Глаза» агента (снимок экрана, параметры экрана) — служебные шаги.
       // Пользователю их видеть незачем: он просил результат, а не отчёт
       // о каждом кадре. Тихо запоминаем и показываем только в терминале.
@@ -9937,9 +10076,16 @@ function handleEvent(ev, ui) {
 
     case 'tool_result': {
       /* BM13: задача ушла в фон — карточка AUTO появляется В ЖИВОМ ответе
-         сразу, не дожидаясь конца: человек видит задачу в момент старта */
-      if (ev.name === 'schedule_task' && ev.result && ev.result.ok !== false) {
-        embedLiveAuto(ui);
+         сразу, не дожидаясь конца: человек видит задачу в момент старта.
+         Файл создан — сразу карточка ФАЙЛЫ; факт сохранён — ПАМЯТЬ:
+         вкладка открывается в момент события, а не после ответа */
+      if (ev.result && ev.result.ok !== false) {
+        if (ev.name === 'schedule_task') embedLiveAuto(ui);
+        else if (/^(write_file|download_file|make_archive|generate_image)$/.test(ev.name)) {
+          embedLiveCard(ui, 'files', 'файлы диалога');
+        } else if (ev.name === 'remember') {
+          embedLiveCard(ui, 'memory', 'что я запомнил');
+        }
       }
       if (ui.silent[ev.id || ev.name]) {
         delete ui.silent[ev.id || ev.name];
@@ -10027,6 +10173,10 @@ function handleEvent(ev, ui) {
     }
 
     case 'background': {
+      /* BM13: сервер уводит задачу в фон САМ (агентский прогон не стартует) —
+         живая AUTO-карточка появляется здесь СРАЗУ, в момент ухода в фон,
+         а не после окончания ответа */
+      embedLiveAuto(ui);
       const when = ev.when || ev.schedule || '';
       toast('Задача «' + ev.title + '» ушла в фон' + (when ? ' · ' + when : ''), 'info', 'AUTO');
       dropStatus(ui);
@@ -10284,8 +10434,44 @@ async function blobToWav16k(blob) {
    была лишней (и из-за дубля id вообще не реагировала): диктовка в поле
    уступила место живому диалогу — говоришь, Джарвис отвечает голосом,
    разговор пишется в текущий диалог. */
+/* BM13: КНОПКА МИКРОФОНА — ОБЫЧНАЯ ДИКТОВКА: голос превращается в текст
+   в поле ввода, как раньше. Разговорный режим переезжает в LIVE (там он
+   будет сильно прокачан) — из чата кнопкой больше не открывается */
+let DICT = null;
 $('#micBtn').addEventListener('click', () => {
-  if (VOICE.open) closeVoiceMode(); else openVoiceMode();
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const mb = $('#micBtn');
+  if (DICT) { try { DICT.stop(); } catch (e) {} return; }
+  if (!SR) { toast('Браузер не поддерживает распознавание речи', 'error'); return; }
+  const rec = new SR();
+  DICT = rec;
+  rec.lang = 'ru-RU';
+  rec.interimResults = true;
+  rec.continuous = true;
+  const box = $('#input');
+  const base = box && box.value ? box.value.replace(/\s+$/, '') + ' ' : '';
+  rec.onresult = (ev) => {
+    let txt = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      txt += ev.results[i][0].transcript;
+    }
+    if (!box) return;
+    box.value = (base + txt).replace(/^\s+/, '');
+    try {
+      box.style.height = 'auto';
+      box.style.height = box.scrollHeight + 'px';
+    } catch (e) {}
+  };
+  rec.onend = () => { DICT = null; mb.classList.remove('rec'); };
+  rec.onerror = (ev) => {
+    if (ev && ev.error === 'not-allowed') toast('Нет доступа к микрофону', 'error');
+    DICT = null; mb.classList.remove('rec');
+  };
+  try {
+    rec.start();
+    mb.classList.add('rec');
+    toast('Диктовка включена — говори, текст появится в поле', 'success', 'Микрофон');
+  } catch (e) { DICT = null; }
 });
 
 /* ============================ ГОЛОСОВОЙ РЕЖИМ ============================

@@ -250,15 +250,22 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    в док СЖИМАЕТ ряд плавно, зеркально разворачиванию. */
 .brand{border-bottom:0}
 .spaces{display:flex;flex-direction:column;gap:9px;padding:10px 6px 12px;
-  border-bottom:1px solid var(--line);position:relative;max-height:132px;
+  border-bottom:0;position:relative;max-height:132px;
   transition:opacity .45s ease,transform .6s cubic-bezier(.5,.35,.15,1),
     max-height .6s cubic-bezier(.5,.35,.15,1),padding .6s cubic-bezier(.5,.35,.15,1),
-    border-color .45s ease,
-    transform .45s cubic-bezier(.4,.1,.2,1),opacity .35s ease}
+    border-color .45s ease}
+/* BM13: ГРАНИЦА ВКЛАДОК/ПРОСТРАНСТВ — РАЗМЫТАЯ: не резкая линия, а
+   мягкий свет, тающий к краям */
+.spaces::after{content:'';position:absolute;left:10px;right:10px;bottom:0;
+  height:1px;pointer-events:none;
+  background:linear-gradient(90deg,transparent,rgba(0,212,255,.26) 16%,
+    rgba(0,212,255,.26) 84%,transparent);
+  filter:blur(1.1px)}
 .sp-modes{display:flex;gap:8px;transition:padding .35s cubic-bezier(.3,1.2,.4,1)}
-/* BM13: LIVE — ЗАЛИВКА СВЕТОМ ИЗ ЦЕНТРА: при наведении круг света
-   растёт из середины, пока не заполнит кнопку целиком — ровно и
-   однородно (без яркого пятна в центре) */
+/* BM13: LIVE — СВЕЧЕНИЕ, КОТОРОЕ УЖЕ ЕСТЬ В ДИЗАЙНЕ, при наведении
+   ПЛАВНО РАСХОДИТСЯ по всей кнопке: тот же центральный градиент
+   вырастает из маленького пятна до полного заполнения, с кривой
+   плавности (не вспышка и не заливка чужим цветом) */
 .sp-mode{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;
   height:34px;border:1px solid rgba(0,212,255,.34);border-radius:12px;
   background:radial-gradient(circle at 50% 50%,rgba(0,212,255,.11),
@@ -267,10 +274,12 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   transition:all .22s ease;padding:0;position:relative;overflow:hidden;
   box-shadow:inset 0 0 12px rgba(0,212,255,.09);
   text-shadow:0 0 9px rgba(0,212,255,.35)}
-.sp-mode::after{content:'';position:absolute;inset:-2%;border-radius:50%;
-  background:rgba(0,212,255,.17);transform:scale(0);pointer-events:none;
-  transition:transform .5s cubic-bezier(.25,.75,.3,1)}
-.sp-mode:hover::after{transform:scale(2.6)}
+.sp-mode::after{content:'';position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(circle at 50% 50%,rgba(0,212,255,.22),
+    rgba(0,212,255,.05) 58%,rgba(0,212,255,.02) 100%);
+  opacity:0;transform:scale(.24);
+  transition:transform .6s cubic-bezier(.3,.75,.25,1),opacity .45s ease}
+.sp-mode:hover::after{opacity:1;transform:scale(1)}
 .sp-mode svg,.sp-mode span{position:relative;z-index:1}
 .sp-mode svg{width:14px;height:14px;color:var(--cy2);
   filter:drop-shadow(0 0 4px rgba(0,212,255,.5))}
@@ -279,13 +288,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   background:linear-gradient(180deg,rgba(0,212,255,.14),rgba(0,212,255,.04));
   box-shadow:0 0 14px rgba(0,212,255,.12),inset 0 0 10px rgba(0,212,255,.05)}
 .sp-row{display:flex;gap:6px;justify-content:center;position:relative;
-  overflow:hidden;transform-origin:left center;
-  transition:opacity .32s ease,transform .32s ease,max-height .32s ease,
-    margin .32s ease}
+  overflow:hidden;
+  transition:opacity .32s ease,transform .32s ease}
 /* BM13: все НЕ-чатовые скрыты — чат исчезает ВМЕСТЕ с рядом, плавно
-   (сжатие влево), а не мгновенно; обратный выбор — обратная анимация */
-.spaces.no-spaces .sp-row{opacity:0;transform:scale(.42);max-height:0;
-  margin:-6px 0;pointer-events:none}
+   (сжатие влево + высота в ноль через родителя), а не мгновенно;
+   обратный выбор — обратная анимация */
+.spaces.no-spaces .sp-row{opacity:0;transform:scale(.42);
+  max-height:0;pointer-events:none}
 .sp-ico{position:relative;width:36px;height:34px;border:1px solid transparent;
   border-radius:10px;background:transparent;color:var(--tx3);cursor:pointer;
   display:grid;place-items:center;
@@ -320,34 +329,29 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sp-ico.sp-set:hover{color:var(--tx2)}
 .spaces.no-spaces .sp-modes{padding-right:36px}
 .spaces.no-spaces .sp-ico.sp-set{top:14px}
-/* BM13: панель настроек — СТЕКЛО: фон полупрозрачный + blur того, что
-   под ним; заголовок-бейдж лежит ПОВЕРХ верхней границы; закрытие —
-   ВЫЛЕТ из настроек (сжатие к кнопке шестерёнки, origin правый-верх) */
+/* BM13: панель настроек — ПЛОТНОЕ СТЕКЛО (менее прозрачное, blur
+   сильнее); закрытие — ВЫЛЕТ из настроек; заголовка нет — только
+   сами пространства */
 .sp-set-panel{position:absolute;right:3px;top:96px;z-index:95;width:200px;
-  display:flex;flex-direction:column;overflow:hidden;
+  display:flex;flex-direction:column;overflow:visible;
   max-height:0;opacity:0;pointer-events:none;padding:0;
-  background:rgba(10,19,32,.6);
-  -webkit-backdrop-filter:blur(16px) saturate(1.35);
-  backdrop-filter:blur(16px) saturate(1.35);
-  border:1px solid rgba(255,255,255,.09);border-radius:13px;
+  background:rgba(11,20,34,.84);
+  -webkit-backdrop-filter:blur(22px) saturate(1.4);
+  backdrop-filter:blur(22px) saturate(1.4);
+  border:1px solid rgba(255,255,255,.1);border-radius:13px;
   box-shadow:0 12px 34px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.06);
   transform:scale(.55);transform-origin:100% 0;
   transition:max-height .32s cubic-bezier(.25,1.1,.4,1),opacity .22s ease,
     padding .3s ease,top .35s cubic-bezier(.3,1.2,.4,1),
     transform .3s cubic-bezier(.3,1.15,.4,1)}
-.sp-set-panel.open{max-height:230px;opacity:1;pointer-events:auto;padding:10px 6px 6px;
+.sp-set-panel.open{max-height:230px;opacity:1;pointer-events:auto;padding:7px 6px 6px;
   transform:scale(1)}
 .spaces.no-spaces .sp-set-panel{top:56px}
-/* заголовок-бейдж поверх верхней границы панели */
-.sp-set-title{position:relative;z-index:2;align-self:center;margin:-4px 0 4px;
-  font:600 9.5px/1 var(--ff);letter-spacing:1.5px;color:var(--tx2);
-  background:rgba(13,24,40,.92);border:1px solid rgba(255,255,255,.1);
-  border-radius:8px;padding:5px 10px;cursor:default}
-/* чат в настройках — жирная строка без глазика: основное, не выключается */
-.sp-set-row.chat-fixed{cursor:default}
-.sp-set-row.chat-fixed b{font-weight:700;letter-spacing:.8px;color:var(--tx)}
-.sp-set-row.chat-fixed .ssr-lock{font:9.5px/1 var(--ff);color:var(--tx3);
-  font-style:normal;letter-spacing:.6px;opacity:.8}
+/* чат в настройках — ЖИРНАЯ ВЫДЕЛЕННАЯ строка без глазика: основное */
+.sp-set-row.chat-fixed{cursor:default;background:rgba(0,212,255,.07);
+  border:1px solid rgba(0,212,255,.14)}
+.sp-set-row.chat-fixed b{font-weight:700;letter-spacing:.9px;color:#eaf8ff}
+.sp-set-row.chat-fixed .ssr-ico{color:var(--cy2)}
 .sp-set-row{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:9px;
   color:var(--tx2);font:11.5px/1 var(--ff);cursor:pointer;
   transition:background .18s ease,color .18s ease,opacity .25s ease,filter .25s ease}
@@ -366,14 +370,17 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sp-eye.off::after{content:'';position:absolute;left:4px;right:4px;top:50%;height:1.6px;
   border-radius:2px;background:#e3798d;transform:rotate(-38deg);
   box-shadow:0 0 5px rgba(227,121,141,.35)}
-/* имя пространства при наведении */
-.sp-ico[data-tip]::before{content:attr(data-tip);position:absolute;
-  left:50%;top:calc(100% + 8px);transform:translateX(-50%);white-space:nowrap;
-  font:10.5px/1 var(--ff);letter-spacing:.3px;color:var(--tx2);
-  background:rgba(8,16,28,.96);border:1px solid var(--line2);border-radius:8px;
-  padding:6px 9px;opacity:0;pointer-events:none;transition:opacity .18s ease;
-  z-index:80;box-shadow:0 8px 22px rgba(0,0,0,.5)}
-.sp-ico:hover::before{opacity:1}
+/* BM13: подписи пространств — ГЛОБАЛЬНЫЙ JS-ОВЕРЛЕЙ .g-tip (fixed,
+   поверх границ и обрезок); прежние ::before обрезались рядом иконок */
+.g-tip{position:fixed;z-index:300;white-space:nowrap;pointer-events:none;
+  font:600 10px/1 var(--ff);letter-spacing:1.4px;color:var(--tx2);
+  background:rgba(11,20,34,.9);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  border:1px solid rgba(255,255,255,.1);border-radius:8px;
+  padding:6px 9px;opacity:0;transform:translateY(2px);
+  transition:opacity .16s ease,transform .16s ease;
+  box-shadow:0 8px 22px rgba(0,0,0,.5)}
+.g-tip.show{opacity:1;transform:none}
 /* ================= BM12: ДОК — пространства в доке =================
    Док не менялся: только вкладки, иконка LIVE и значок текущего
    пространства с чёрточкой. Наведение — окошко ВЫЛЕТАЕТ из кнопки
@@ -385,50 +392,58 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .spd-live svg,.spd-cur svg{width:17px;height:17px}
 .spd-live:hover{color:var(--cy2);background:rgba(0,212,255,.09)}
 .spd-cur{color:var(--tx3)}   /* BM13: чат в доке — как все, без выделения */
-/* чёрточка под иконкой текущего пространства — как над LIVE */
-.spd-dash{display:block;width:20px;height:1px;border-radius:1px;
-  background:rgba(0,212,255,.22);margin:3px auto 2px}
+/* BM13: полоса под иконкой текущего пространства — НА ВСЮ горизонталь
+   дока (прежде была короткой чёрточкой по ширине кнопки) */
+/* полоса — на всю горизонталь ДОКА: wrap растянут на ширину дока,
+   кнопка стоит по центру, полоса тянется на все 100% */
+.app.collapsed .spd-cur-wrap{align-self:stretch;display:flex;
+  flex-direction:column;align-items:center}
+.spd-dash{display:block;height:1px;border-radius:1px;position:relative;
+  width:100%;
+  background:linear-gradient(90deg,transparent,rgba(0,212,255,.3) 18%,
+    rgba(0,212,255,.3) 82%,transparent);
+  filter:blur(.6px);margin:4px 0 2px}
 .spd-cur-wrap{position:relative}
-.spd-fly{position:absolute;left:calc(100% + 8px);top:50%;display:flex;align-items:center;
-  gap:5px;padding:6px 8px;border-radius:14px;background:rgba(8,16,28,.96);
-  border:1px solid var(--line2);box-shadow:0 12px 34px rgba(0,0,0,.55);
+/* BM13: МЕНЮ ПРОСТРАНСТВ ВЫРАСТАЕТ ИЗ САМОЙ КНОПКИ: левый край и центр
+   панели совпадают с кнопкой, рост — от её области (scale), панель —
+   ПОВЕРХ дока, стеклянная. Иконка текущего пространства «вплывает»
+   внутрь на свой слот (JS FLIP), кнопка в это время гаснет (.ghost) */
+.spd-fly{position:absolute;left:0;top:50%;display:flex;align-items:center;
+  gap:5px;padding:6px 8px;border-radius:14px;
+  background:rgba(11,20,34,.72);
+  -webkit-backdrop-filter:blur(20px) saturate(1.4);
+  backdrop-filter:blur(20px) saturate(1.4);
+  border:1px solid rgba(255,255,255,.1);
+  box-shadow:0 12px 34px rgba(0,0,0,.55);
   opacity:0;pointer-events:none;z-index:90;
-  transform:translate(-8px,-50%) scale(.55);transform-origin:left center;
-  transition:transform .3s cubic-bezier(.25,1.25,.4,1),opacity .2s ease}
+  transform:translateY(-50%) scale(.22);transform-origin:left center;
+  transition:transform .34s cubic-bezier(.3,1.12,.4,1),opacity .22s ease}
 .spd-cur-wrap.open .spd-fly{opacity:1;pointer-events:auto;
-  transform:translate(0,-50%) scale(1)}
-/* мостик: курсор свободно проходит от кнопки к окошку */
-.spd-fly::before{content:'';position:absolute;right:100%;top:0;bottom:0;width:18px}
+  transform:translateY(-50%) scale(1)}
+/* иконка кнопки «уехала» в меню — на кнопке её не видно */
+.spd-cur.ghost{color:transparent}
 .spf-ico{position:relative;width:34px;height:32px;border:1px solid transparent;border-radius:9px;
   background:transparent;color:var(--tx3);cursor:pointer;display:grid;place-items:center;
   transition:color .22s ease,background .22s ease;padding:0}
 .spf-ico svg{width:16px;height:16px}
 .spf-ico:hover{color:var(--tx);background:rgba(0,212,255,.1)}
 .spf-ico.sel{color:var(--cy2);filter:drop-shadow(0 0 5px rgba(0,212,255,.5))}
-.spf-ico[data-tip]::before{content:attr(data-tip);position:absolute;
-  left:50%;top:calc(100% + 9px);transform:translateX(-50%);white-space:nowrap;
-  font:10.5px/1 var(--ff);color:var(--tx2);background:rgba(8,16,28,.96);
-  border:1px solid var(--line2);border-radius:8px;padding:5px 8px;opacity:0;
-  pointer-events:none;transition:opacity .18s ease;z-index:80}
-.spf-ico:hover::before{opacity:1}
-/* BM12: в доке пространства скрыты — но НЕ мгновенно: класс .docked
-   ставится ПОСЛЕ анимации сжатия (см. .side-folding ниже) */
-.app.docked .spaces{display:none}
+/* подписи иконок меню — глобальный .g-tip (JS), не ::before */
+/* BM12/BM13: в доке ряд сжат анимацией до нуля; .docked дожимает только
+   visibility — display:none в конце анимации давал однокадровый скачок */
+.app.docked .spaces{visibility:hidden}
 .app.collapsed .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;
   margin:0;padding:4px 0;position:relative;
   animation:spDockIn .3s ease .2s backwards}
-/* BM13: ПОЛОСА ПОД КНОПКАМИ ДОКА НА ВСЮ ШИРИНУ сайдбара; граница
-   вкладок/кнопок — размытая (мягкий свет, без резкой линии) */
-.app.collapsed .sp-dock::before{content:'';position:absolute;left:-8px;right:-8px;
-  top:-6px;bottom:-6px;z-index:-1;border-radius:18px;pointer-events:none;
-  background:linear-gradient(90deg,rgba(0,212,255,.07),rgba(0,212,255,.025) 62%,transparent);
-  filter:blur(4px)}
+/* BM13: у дока НЕТ рамки-области (светлая плашка убрана); под иконкой
+   текущего пространства — полоса НА ВСЮ горизонталь, как верхняя */
 @keyframes spDockIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 /* BM12: СЖАТИЕ ПРИ СВОРАЧИВАНИИ — зеркально разжатию: ряд не пропадает
    резко, а сжимается (scale + высота в ноль) той же кривой, что меню */
-.side-folding .spaces{opacity:0;transform:scale(.42);transform-origin:left center;
-  max-height:0;padding-top:0;padding-bottom:0;border-bottom-color:transparent;
+.side-folding .spaces{opacity:0;transform:scale(.42);
   overflow:hidden;pointer-events:none}
+/* BM13: высотой ряда управляет JS честным замером (toggleSidebar):
+   класс не трогает max-height — никаких «доездов» под конец анимации */
 /* BM12: в доке вкладки есть ВСЕГДА — и в других пространствах;
    надпись про диалоги пространства в доке не живёт */
 /* BM13: в доке — только вкладки ТЕКУЩЕГО пространства: в чужих
@@ -575,16 +590,19 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
      список крутят (класс .scr ставит JS), потом гаснет; края списка
      сверху/снизу смягчены маской */
   scrollbar-width:thin;scrollbar-color:transparent transparent;
-  transition:scrollbar-color .35s ease;
-  -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 14px,
-    #000 calc(100% - 16px),transparent 100%);
-  mask-image:linear-gradient(180deg,transparent 0,#000 14px,
-    #000 calc(100% - 16px),transparent 100%)}
-.chat-list.scr{scrollbar-color:rgba(0,190,255,.28) transparent}
-.chat-list::-webkit-scrollbar{width:3px}
+  transition:scrollbar-color .35s ease}
+/* BM13: смягчение краёв — ТОЛЬКО когда список реально переполнен
+   (класс .over ставит JS): короткий список никогда не «затухает» */
+.chat-list.over{-webkit-mask-image:linear-gradient(180deg,transparent 0,
+    #000 16px,#000 calc(100% - 18px),transparent 100%);
+  mask-image:linear-gradient(180deg,transparent 0,
+    #000 16px,#000 calc(100% - 18px),transparent 100%)}
+.chat-list.scr{scrollbar-color:rgba(0,190,255,.22) transparent}
+/* палка — совсем тонкая и аккуратная */
+.chat-list::-webkit-scrollbar{width:2px}
 .chat-list::-webkit-scrollbar-track{background:transparent}
 .chat-list::-webkit-scrollbar-thumb{background:transparent;border-radius:2px}
-.chat-list.scr::-webkit-scrollbar-thumb{background:rgba(0,190,255,.24)}
+.chat-list.scr::-webkit-scrollbar-thumb{background:rgba(0,190,255,.2)}
 .chat-title.title-pending{animation:titlePulse 1.15s ease-in-out infinite}
 @keyframes titlePulse{0%,100%{opacity:.95}50%{opacity:.35}}
 .chat-item{display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:9px;cursor:pointer;
@@ -1426,17 +1444,19 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    узкий стоит у носика, широкий растёт ВЛЕВО — как в настоящей
    математике, и никогда не задевает штрих */
 /* BM13: СТЕПЕНЬ КОРНЯ ЖИВЁТ ВНУТРИ РАМКИ КОРНЯ. Прежде индекс висел
-   абсолютом ЗА ЛЕВЫМ краем корня (left:-.36em) и при широком индексе
-   («10», «k+1») наезжал на скобку или знак СЛЕВА от корня. Теперь у
-   корня со степенью (класс msqrt-i из рендера) есть запас слева:
-   индекс правым краем у носика, широким — растёт в резерв, но не
-   наружу. Соседи корня не перекрываются никогда */
-.msqrt .msq-i{position:absolute;top:0;font-size:.58em;opacity:.85;
+   абсолютом ЗА ЛЕВЫМ краем корня (left:-.36em) и наезжал на скобку
+   слева; первая правка (right в em индекса) уезжала влево из-за
+   масштаба: em считался от уменьшенного кегля индекса. Теперь индекс
+   лежит в БОКСЕ .msq-box базового кегля: ширина и позиция бокса — в
+   em корня, индекс прижат к правому краю бокса и широким растёт
+   ВЛЕВО В РЕЗЕРВ корня — не наружу и не на скобку */
+.msqrt .msq-box{position:absolute;top:0;left:0;width:1.02em;height:100%;
+  pointer-events:none}
+.msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;opacity:.85;
   z-index:1;line-height:1;white-space:nowrap;text-align:right}
 .msqrt.msqrt-i{padding-left:1.46em}
 .msqrt.msqrt-i .msq-svg{left:1.06em}
 .msqrt.msqrt-i::after{left:calc(1.06em + .35em)}
-.msqrt.msqrt-i .msq-i{left:auto;right:calc(100% - .98em);width:auto}
 /* BM12: СТЕПЕНЬ ОПУЩЕНА В ГРАНИЦЫ САМОГО КОРНЯ: верхняя граница степени
    не поднимается выше верхней границы корня (черты она не задевает —
    висит левее носика, где черты ещё нет). И корень в ЗНАМЕНАТЕЛЕ дроби
@@ -1534,9 +1554,9 @@ sup.msup,sub.msub{font-size:.72em}
   box-shadow:inset 0 0 24px rgba(0,200,240,.06);overflow:hidden}
 .emb-head{display:flex;align-items:center;gap:7px;padding:5px 10px;
   border-bottom:1px solid rgba(0,200,240,.14);
-  /* BM13: шапка ЕЩЁ ПЛОТНЕЕ — как вкладки инструментов агента
-     (.qt-head): вплотную, мелко, разрядка; тело сразу под ней */
-  background:rgba(9,20,33,.62)}
+  /* BM13: шапка ПОЧТИ НЕПРОЗРАЧНАЯ — как вкладки инструментов агента:
+     плотная тёмная полоса, имя вкладки читается твёрдо */
+  background:rgba(9,20,33,.94)}
 .emb-head .emb-ico{width:12px;height:12px;color:var(--cy);flex:none;
   display:grid;place-items:center}
 .emb-head .emb-ico svg{width:12px;height:12px}

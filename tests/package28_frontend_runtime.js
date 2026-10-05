@@ -2207,7 +2207,7 @@ function testProactiveModesBudgetAndAbortContracts() {
     /@keyframes tipIn/.test(css) && /max-width:180px/.test(css) &&
     /white-space:normal/.test(css) &&
     /id="attachBtn" data-tip="Вложить файл"/.test(html) &&
-    /id="micBtn" data-tip="Голосовой режим"/.test(html) &&
+    /id="micBtn" data-tip="Диктовка"/.test(html) &&
     /data-tip="AGENT — план и самостоятельная работа"/.test(html) &&
     /data-tip="Лимит ₽ на ответ"/.test(html),
   'tooltips wait ~1.5s, stay compact, mic and attach included');
@@ -2666,10 +2666,14 @@ function testIterationBKContracts() {
     css.includes('padding:0 .18em 0 .05em') &&
     css.includes('.msqrt::after{content:\'\';position:absolute;left:.35em;right:0;top:-.7px;') &&
     css.includes('height:1.4px;background:rgba(190,235,255,.85)') &&
-    !css.includes('.msq-b') && !css.includes('aspect-ratio:11/24') && !css.includes('border-top:1.4px') &&
-    css.includes('.msqrt .msq-i{position:absolute;top:0;font-size:.58em;') &&
+    /* BM14: индекс в БОКСЕ базового кегля (.msq-box) — em считаются от
+       размера корня, а не уменьшенного индекса; прежний right:calc уплывал */
+    !css.includes('aspect-ratio:11/24') && !css.includes('border-top:1.4px') &&
+    !css.includes('right:calc(100% - .98em)') &&
+    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.02em;height:100%;') &&
+    css.includes('.msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;') &&
     css.includes('.msqrt.msqrt-i{padding-left:1.46em}') &&
-    css.includes('.msqrt.msqrt-i .msq-i{left:auto;right:calc(100% - .98em);width:auto}') &&
+    markdown.includes('class="msq-box"><span class="msq-i">') &&
     markdown.includes("msqrt' + (root ? ' msqrt-i' : ''"),
     'BM3/BM13: the svg is cropped at the tip, the bar starts at the tip; the root index lives INSIDE the root box — it never overlaps the bracket on the left');
   // BK: ГРАФИК-ИНТЕРПРЕТАТОР — z(x,y)=, юникод-математика, спасение формул
@@ -2782,12 +2786,19 @@ function testIterationBM13Contracts() {
   const loader = js.split('function spacesVisibleLoad()')[1].split('\nfunction ')[0];
   assert(loader.includes("n !== 'chat'") && js.includes('chat-fixed'),
     'BM13: CHAT is not hideable — the visibility list holds only non-chat spaces');
-  assert(css.includes('backdrop-filter:blur(16px) saturate(1.35)') &&
-    css.includes('.sp-set-title{') &&
-    css.includes('.sp-mode:hover::after{transform:scale(2.6)}') &&
-    css.includes('.chat-list.scr::-webkit-scrollbar-thumb{background:rgba(0,190,255,.24)}') &&
+  /* BM14: панель плотнее и БЕЗ заголовка; LIVE — существующее свечение
+     расходится по кнопке (не radial-заливка scale(2.6)); палка тоньше
+     (rgba .2, width:2px), маска — только у переполненного списка */
+  assert(css.includes('backdrop-filter:blur(22px) saturate(1.4)') &&
+    css.includes('background:rgba(11,20,34,.84)') &&
+    !css.includes('.sp-set-title{') &&
+    css.includes('.sp-mode:hover::after{opacity:1;transform:scale(1)}') &&
+    !css.includes('.sp-mode:hover::after{transform:scale(2.6)}') &&
+    css.includes('.chat-list.scr::-webkit-scrollbar-thumb{background:rgba(0,190,255,.2)}') &&
+    css.includes('.chat-list::-webkit-scrollbar{width:2px}') &&
+    css.includes('.chat-list.over{') &&
     js.includes("cl.classList.add('scr')"),
-    'BM13: glass settings panel with a badge title, LIVE fills with light from the center, the chat-list scrollbar wakes only while scrolling');
+    'BM13/BM14: denser glass settings panel without a badge title, LIVE glow spreads across the button, the chat-list scrollbar is thinner and wakes only while scrolling');
   assert(html.includes('data-space="chat" data-tip="CHAT"') &&
     html.includes('data-space="math" data-tip="MATH"') &&
     html.includes('data-space="music" data-tip="MUSIC"') &&
@@ -2797,6 +2808,48 @@ function testIterationBM13Contracts() {
   assert(setsp.includes("name !== 'chat' && S.spacesVisible.indexOf(name) < 0") &&
     js.split('function spaceToggleVisible(name)')[1].split('\nfunction ')[0].includes("setSpace('chat')"),
     'BM13: chat is always reachable; hiding the CURRENT space returns you to chat');
+}
+
+function testIterationBM14Contracts() {
+  const pyAuto = fs.readFileSync(path.join(root, 'app/jarvis/auto.py'), 'utf8');
+  // КОРНИ: индекс в БОКСЕ базового кегля — em от размера корня
+  assert(markdown.includes('class="msq-box"><span class="msq-i">') &&
+    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.02em;height:100%;'),
+    'BM14: the root degree sits in a base-size box — its em units count from the ROOT size, so a wide index grows into the root reserve, never left past the bracket');
+  // МИКРОФОН: обычная диктовка, разговор уехал в LIVE
+  assert(html.includes('id="micBtn" data-tip="Диктовка"') &&
+    html.includes('M12 3.4a3.1 3.1 0 0 1 3.1 3.1') &&
+    js.includes("rec.lang = 'ru-RU'") &&
+    js.includes('box.value = (base + txt)') &&
+    !js.split("$('#micBtn').addEventListener('click'")[1].split('\n});')[0]
+      .includes('openVoiceMode'),
+    'BM14: the mic button is plain DICTATION — speech lands as text in the input; the voice chat moved to LIVE');
+  // ЖИВЫЕ КАРТОЧКИ: файл/факт — в момент события
+  assert(js.includes("function embedLiveCard(ui, view, title)") &&
+    js.includes("embedLiveCard(ui, 'files', 'файлы диалога')") &&
+    js.includes("embedLiveCard(ui, 'memory', 'что я запомнил')") &&
+    js.split("case 'background':")[1].split("case '")[0]
+      .includes('embedLiveAuto(ui)'),
+    'BM14: FILES card the moment a file is created, MEMORY card the moment a fact is saved, AUTO card the instant the server backgrounds a task');
+  // ТУЛТИПЫ: глобальный fixed-оверлей
+  assert(js.includes("document.addEventListener('pointerover'") &&
+    css.includes('.g-tip{position:fixed;z-index:300') &&
+    !css.includes('.sp-ico[data-tip]::before'),
+    'BM14: space tooltips are a global fixed overlay — never clipped by rows or sidebar borders again');
+  // ГЛАЙДЕР: сразу и чисто
+  assert(js.includes('function gliderWatchRun()') &&
+    js.includes("b.style.transform = ''"),
+    'BM14: the glider renders immediately and tracks the sidebar animation; FLIP leaves no stray transform behind (icon stays centered)');
+  // ПАРОЛЬ... нет: payload-guard честный (py)
+  assert(pyAgent.includes('if user_wants_json(user_text):') &&
+    pyAgent.includes('fix_hint') &&
+    pyAgent.includes('JSON и не перечисляй ссылки текстом'),
+    'BM14: the payload-guard retry no longer lies about JSON — the JSON branch fires only when the user actually asked for a JSON file');
+  // AUTO: вопросы о состоянии не уходят в фон; ответы — в диалог
+  assert(pyAuto.includes('_STATE_Q_RE') &&
+    pyAuto.includes('target_chat = task.get("chat_id") or ""') &&
+    pyAuto.includes('db.list_chats(1)'),
+    'BM14: state questions stay in the dialog; background task results and errors land as dialog messages, not note-dock cards');
 }
 
 function testIterationAOContracts() {
@@ -2957,8 +3010,9 @@ function testIterationBM9Contracts() {
     'BM10: folders animate via the JS waltz alone — no CSS transition fighting it at the end');
   // BM10: степень корня — ниже и левее: не залезает за черту корня;
   // корень в ЗНАМЕНАТЕЛЕ дроби опущен (не наезжает на знак дроби)
-  assert(css.includes('.msqrt .msq-i{position:absolute;top:0;font-size:.58em;') &&
-    css.includes('.msqrt.msqrt-i .msq-i{left:auto;right:calc(100% - .98em);width:auto}') &&
+  /* BM14: индекс в боксе базового кегля — .msq-box держит em корня */
+  assert(css.includes('.msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;') &&
+    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.02em;height:100%;') &&
     css.includes('.mfr-d .msqrt{margin-top:.22em}'),
     'BM12/BM13: the root degree stays INSIDE the root bounds (BM13: also inside the box — never onto the bracket); a root in the denominator drops below the fraction bar');
   // BM9: 3D — ЛКМ вращает, ПКМ пан; короткий ПКМ — обычное меню
@@ -3037,14 +3091,23 @@ function testIterationBM11Contracts() {
   // ДОК: пространств в доке нет — вкладки как раньше + LIVE + текущее
   assert(html.includes('id="spDock"') && html.includes('id="spdLive"') &&
     html.includes('id="spdCur"') && html.includes('id="spdFly"') &&
-    css.includes('.app.docked .spaces{display:none}') &&
+    /* BM14: .docked гасит только visibility (display:none в конце
+       анимации давал однокадровый скачок кнопок вверх) */
+    css.includes('.app.docked .spaces{visibility:hidden}') &&
     css.includes('.app.collapsed .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;'),
     'BM11/BM12: the dock stays as it was — tabs plus a LIVE icon and the current-space icon with a flyout');
-  // окошко вылетает из кнопки (JS open) и живёт, пока курсор в области
+  /* BM14: меню вырастает ИЗ САМОЙ КНОПКИ — левый край панели на кнопке,
+     рост scale(.22)->1 от её области; мостик не нужен: панель примыкает
+     вплотную, иконка текущего пространства плывёт на свой слот (FLIP),
+     кнопка гаснет (.ghost), уход курсора возвращает иконку */
   assert(css.includes('.spd-cur-wrap.open .spd-fly{opacity:1;pointer-events:auto;') &&
-    css.includes('left:calc(100% + 8px)') &&
-    css.includes('.spd-fly::before{content:\'\';position:absolute;right:100%;top:0;bottom:0;width:18px}'),
-    'BM12: the flyout grows out of the button and stays while the cursor is anywhere inside (bridge covers the gap)');
+    css.includes('left:0;top:50%;') &&
+    css.includes('transform:translateY(-50%) scale(.22);transform-origin:left center') &&
+    !css.includes('left:calc(100% + 8px)') &&
+    css.includes('.spd-cur.ghost{color:transparent}') &&
+    js.includes('const selShift = (sel) => {') &&
+    js.includes("icons.indexOf(sel) <= 0"),
+    'BM14: the flyout grows straight out of the button itself; the current-space icon glides to its slot and returns when the cursor leaves');
   // настройки — маленькая абсолютная кнопка + панель видимости
   assert(html.includes('id="spSettings"') && html.includes('id="spSetPanel"') &&
     css.includes('.sp-ico.sp-set{position:absolute;right:3px;top:56px;width:23px;height:21px;'),
@@ -3116,9 +3179,10 @@ function testIterationBM12Contracts() {
     pyAgent.includes('попробуй другой сайт или поисковый запрос, а не\n   сдавайся'),
     'BM12: media arrives as a FILE in the chat (like a messenger), a bare link instead is an error');
   // КОРЕНЬ: степень внутри границ корня
+  /* BM14: индекс в боксе базового кегля (.msq-box) — em от корня */
   assert(css.includes('.msqrt.msqrt-i{padding-left:1.46em}') &&
-    css.includes('top:0;font-size:.58em') &&
-    css.includes('.msqrt.msqrt-i .msq-i{left:auto;right:calc(100% - .98em);width:auto}'),
+    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.02em;height:100%;') &&
+    css.includes('.msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;'),
     'BM12/BM13: the root degree is down and left, never above the root, and (BM13) always inside the root box — never onto the bracket');
   // СВАЙП: распознание быстрее; кнопки реагируют мгновенно
   assert(js.includes('if (dx < 24 || dx < Math.abs(e.deltaY) * 1.15) return;') &&
@@ -3142,13 +3206,18 @@ function testIterationBM12Contracts() {
     css.includes('.spaces.no-spaces .sp-modes{padding-right:36px}'),
     'BM12/BM13: hidden rows grey out with a crossed eye; with only chat left, the row (chat included) fades out ANIMATED, the gear slides up beside LIVE');
   // СЖАТИЕ ДОКА: плавное, зеркально разворачиванию; вкладки в доке всегда
-  assert(js.includes("setTimeout(() => app.classList.add('docked'), 640);") &&
+  /* BM14: честная анимация высоты (JS замер), .docked гасит только
+     visibility, у дока НЕТ рамки-области, полоса — на весь док */
+  assert(js.includes("setTimeout(() => app.classList.add('docked'), 700);") &&
+    js.includes("sp.style.maxHeight = sp.offsetHeight + 'px'") &&
     js.includes("classList.add('collapsed', 'docked');") &&
     css.includes('.side-folding .spaces{opacity:0;transform:scale(.42);') &&
     css.includes('.app.collapsed .space-future{display:none!important}') &&
     !css.includes('.app.collapsed .nav.space-off{display:flex!important}') &&
-    css.includes('.app.collapsed .sp-dock::before{') &&
-    css.includes('filter:blur(4px)'),
+    !css.includes('.app.collapsed .sp-dock::before{') &&
+    css.includes('.spaces::after{') && css.includes('filter:blur(1.1px)') &&
+    css.includes('.app.collapsed .spd-cur-wrap{align-self:stretch') &&
+    css.includes('.app.docked .spaces{visibility:hidden}'),
     'BM12/BM13: collapsing SQUEEZES the spaces row smoothly (docked only after the animation); in the dock only the CURRENT space tabs show (no chat tabs abroad) and a full-width blurred strip backs the buttons');
   // LIVE ярче + чат — базовое в тихой рамке
   assert(css.includes('text-shadow:0 0 9px rgba(0,212,255,.35)') &&
@@ -3164,10 +3233,10 @@ function testIterationBM12Contracts() {
     js.includes("wrap.addEventListener('pointerenter'") &&
     js.includes("wrap.addEventListener('pointerleave'"),
     'BM12: the dock flyout bursts out of the current-space button — icons fly to their slots, the dash sits under the icon');
-  // МИНИ-ВКЛАДКИ: векторные иконки, шапка плотнее тела
+  // МИНИ-ВКЛАДКИ: векторные иконки, шапка ПОЧТИ НЕПРОЗРАЧНАЯ (BM14)
   assert(js.includes("ico: '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"") &&
-    css.includes('background:rgba(9,20,33,.62)'),
-    'BM12: embed tab icons are proper vectors; the title bar is more opaque than the body');
+    css.includes('background:rgba(9,20,33,.94)'),
+    'BM12: embed tab icons are proper vectors; the title bar is nearly solid — like the agent tool tabs');
 }
 
 function testIterationAXContracts() {
@@ -3693,7 +3762,9 @@ function testIterationAHContracts() {
        сворачивание сжимает пространства и ПОСЛЕ анимации гасит их (.docked);
        разворачивание снимает .docked и разжимает в следующий кадр */
     js.includes("app.classList.add('collapsed', 'side-folding');") &&
-    js.includes("setTimeout(() => app.classList.add('docked'), 640);") &&
+    /* BM14: честная анимация высоты — JS замеряет и ведёт max-height,
+       .docked ставится позже (700мс) и гасит только visibility */
+    js.includes("setTimeout(() => app.classList.add('docked'), 700);") &&
     js.includes("app.classList.remove('docked');") &&
     !/SIDE_FADE/.test(js) && !/SIDE_MORPH/.test(js) &&
     /cubic-bezier\(\.5,\.35,\.15,1\)/.test(dock) &&
@@ -3995,8 +4066,9 @@ function testIterationBHContracts() {
   testIterationBM11Contracts();
   testIterationBM12Contracts();
   testIterationBM13Contracts();
+  testIterationBM14Contracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 57 regression groups passed');
+  console.log('package28_frontend_runtime: 58 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
