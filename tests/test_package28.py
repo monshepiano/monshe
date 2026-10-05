@@ -3263,7 +3263,10 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.85", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.86", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        # BM14.1: кэш-бустер статики обновляется сборкой сам
+        self.assertIn("def _bump_asset_versions(",
+                      Path("install/build.py").read_text(encoding="utf-8"))
 
 
 class IterationAATests(unittest.TestCase):
@@ -4619,8 +4622,9 @@ class IterationAQTests(unittest.TestCase):
         # _send всегда отвечает no-store — статика никогда не кэшируется
         self.assertIn('"Cache-Control", "no-store"', src)
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
-        self.assertIn("/static/css/app.css?v=1.2.0-beta.83", html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.83", html)
+        ver = Path("app/jarvis/__init__.py").read_text(encoding="utf-8").split('"')[1]
+        self.assertIn("/static/css/app.css?v=" + ver, html)
+        self.assertIn("/static/js/app.js?v=" + ver, html)
 
     def test_ar6_sugg_even_grid(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
@@ -5873,7 +5877,8 @@ class IterationBJTests(unittest.TestCase):
     def test_bj8_version_b67(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.83", html)
+        ver = Path("app/jarvis/__init__.py").read_text(encoding="utf-8").split('"')[1]
+        self.assertIn("/static/js/app.js?v=" + ver, html)
 
 
 
@@ -5977,7 +5982,8 @@ class IterationBKTests(unittest.TestCase):
     def test_bk8_version_b68(self) -> None:
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="ver-chip">b70</span>', html)
-        self.assertIn("/static/js/app.js?v=1.2.0-beta.83", html)
+        ver = Path("app/jarvis/__init__.py").read_text(encoding="utf-8").split('"')[1]
+        self.assertIn("/static/js/app.js?v=" + ver, html)
 
 
 class IterationBLTests(unittest.TestCase):
@@ -7162,11 +7168,11 @@ class IterationBM8Tests(unittest.TestCase):
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
         # BM13: степень живёт ВНУТРИ рамки корня — не наезжает на скобку слева
         self.assertIn("msqrt' + (root ? ' msqrt-i' : ''", md)
-        self.assertIn(".msqrt.msqrt-i{padding-left:1.46em}", css)
-        # BM14: индекс в боксе базового кегля — em считаются от размера
-        # корня, а не от уменьшенного индекса (прежний right:calc уплывал)
-        self.assertIn(".msqrt .msq-box{position:absolute;top:0;left:0;width:1.02em;height:100%;", css)
+        self.assertIn(".msqrt.msqrt-i{padding-left:1.14em}", css)
+        # BM14.1: индекс в боксе базового кегля, прижат к штриху носика
+        self.assertIn(".msqrt .msq-box{position:absolute;top:0;left:0;width:1.05em;height:100%;", css)
         self.assertIn(".msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em", css)
+        self.assertIn(".msqrt.msqrt-i .msq-svg{left:.74em}", css)
         self.assertIn(".mfr-d .msqrt{margin-top:.22em}", css)
 
     def test_bm11_dock_untouched_spaces_flyout(self) -> None:
@@ -7471,10 +7477,11 @@ class IterationBM13Tests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
         self.assertIn("msqrt' + (root ? ' msqrt-i' : ''", md)
-        self.assertIn(".msqrt.msqrt-i{padding-left:1.46em}", css)
-        # BM14: индекс в БОКСЕ базового кегля — позиции в em корня
-        self.assertIn(".msqrt .msq-box{position:absolute;top:0;left:0;width:1.02em", css)
+        self.assertIn(".msqrt.msqrt-i{padding-left:1.14em}", css)
+        # BM14: индекс в боксе базового кегля, прижат к штриху носика
+        self.assertIn(".msqrt .msq-box{position:absolute;top:0;left:0;width:1.05em", css)
         self.assertIn(".msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em", css)
+        self.assertIn(".msqrt.msqrt-i .msq-svg{left:.74em}", css)
         # прежний вынос за левый край — запрещён (правило, не комментарий)
         self.assertNotIn(".msq-i{position:absolute;top:0;left:-.36em", css)
         self.assertNotIn("left:-.36em;width", css)
@@ -7662,8 +7669,12 @@ class IterationBM14Tests(unittest.TestCase):
     def test_bm14_state_question_not_background(self) -> None:
         """«Что ты делаешь в фоне?» — вопрос, а не фоновая задача."""
         auto = Path("app/jarvis/auto.py").read_text(encoding="utf-8")
-        self.assertIn("_STATE_Q_RE", auto)
-        self.assertIn("вопрос о состоянии фона", auto)
+        src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        # BM14.1: regex живёт в agent.py — правило одно для маршрутизатора
+        # фона и перехвата schedule_task внутри прогона
+        self.assertIn("STATE_Q_RE", src)
+        self.assertIn("def state_question_view(", src)
+        self.assertIn("agent.state_question(t)", auto)
         sys.path.insert(0, "app")
         try:
             from jarvis import auto as automod
@@ -7693,13 +7704,17 @@ class IterationBM14Tests(unittest.TestCase):
         head = src.split('final_text = auto_embed_block(')[-1]
         self.assertIn("final_text = auto_embed_block(", src)
         self.assertIn("memory_changed=", src)
+        self.assertIn("q_view=state_question_view(user_text)", src)
+        # BM14.1: show_media-теги в тексте исполняются и вычищаются
+        self.assertIn("def rescue_show_media_tags(", src)
+        self.assertIn("self._rescue_show_media_tags(final_text)", src)
 
     def test_bm14_embed_head_solid(self) -> None:
         """Шапка мини-вкладки почти непрозрачная — как вкладки агента."""
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         head = css.split(".emb-head{")[1].split("}")[0] + \
             css.split(".emb-head{")[1].split("}")[1]
-        self.assertIn("background:rgba(9,20,33,.94)", head)
+        self.assertIn("background:rgb(10,20,33)", head)
 
     def test_bm14_global_tooltip_overlay(self) -> None:
         """Подписи пространств — глобальный fixed-оверлей поверх границ."""
@@ -7786,6 +7801,54 @@ class IterationBM14Tests(unittest.TestCase):
         self.assertIn("embedLiveCard(ui, 'files', 'файлы диалога')", tr)
         self.assertIn("embedLiveCard(ui, 'memory', 'что я запомнил')", tr)
         self.assertIn("write_file|download_file|make_archive|generate_image", tr)
+
+    def test_bm14_rescue_show_media_tags_executes_and_strips(self) -> None:
+        """Теги <show_media/> в тексте исполняются и вычищаются."""
+        sys.path.insert(0, "app")
+        try:
+            from jarvis import agent as ag
+            calls = []
+
+            def fake_call(name, args):
+                calls.append((name, args))
+                return {"ok": True, "path": "media_x.mp4", "name": "media_x.mp4",
+                        "kind": "video", "size": 5,
+                        "download_url": "/dl/media_x.mp4"}
+
+            orig = ag.tools.call
+            ag.tools.call = fake_call
+            try:
+                text = ('Вот <show_media url="https://e.com/v.mp4" type="video"/> '
+                        'и <show_media url=\'https://e.com/a.mp3\' type=\'audio\'/> '
+                        'битый <show_media /> и ссылка https://e.com/page')
+                files = []
+                cleaned, rescued = ag.rescue_show_media_tags(text, files.append)
+            finally:
+                ag.tools.call = orig
+            self.assertTrue(rescued)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[0][1]["url"], "https://e.com/v.mp4")
+            self.assertEqual(len(files), 2)
+            self.assertNotIn("show_media", cleaned)
+            self.assertNotIn("e.com/v.mp4", cleaned)
+            self.assertIn("https://e.com/page", cleaned)
+        finally:
+            sys.path.remove("app")
+
+    def test_bm14_state_question_view_routing(self) -> None:
+        """Вопрос о состоянии — карточка соответствующей вкладки."""
+        sys.path.insert(0, "app")
+        try:
+            from jarvis import agent as ag
+            self.assertEqual(ag.state_question_view("что ты делаешь в фоне?"), "auto")
+            self.assertEqual(ag.state_question_view("покажи какие задачи фоном"), "auto")
+            self.assertEqual(ag.state_question_view("какие файлы ты создал?"), "files")
+            self.assertEqual(ag.state_question_view("что ты помнишь?"), "memory")
+            self.assertEqual(ag.state_question_view("какие сценарии есть?"), "scenarios")
+            self.assertIsNone(ag.state_question_view("создай файл тест.txt"))
+            self.assertIsNone(ag.state_question_view("сделай это в фоне"))
+        finally:
+            sys.path.remove("app")
 
     def test_bm14_background_event_embeds_immediately(self) -> None:
         """Серверный уход в фон рисует карточку СРАЗУ — не после ответа."""

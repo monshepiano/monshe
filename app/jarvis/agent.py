@@ -825,7 +825,10 @@ ui. Если вариантов нет, но ответ человека всё 
    show_media. Запрещено вместо медиа сохранять результаты поиска в
    JSON-файл, перечислять ссылки текстом или показывать сырой ответ
    инструмента: человек просил медиа — значит, в диалоге должно быть
-   медиа.
+   медиа. show_media — это ИНСТРУМЕНТ (function calling). Писать теги
+   вида <show_media url="…"/> в тексте ответа ЗАПРЕЩЕНО: они не
+   отображаются у человека, это мусор. Только настоящий вызов
+   инструмента — или обычная ссылка текстом, если инструмента нет.
 8. Развилка, где ты обязан ОСТАНОВИТЬСЯ и без ответа не можешь работать дальше
    (куда сохранить файл, продолжать ли рискованный путь) — вызови ask_user
    с 2-4 вариантами через |. Он ставит работу на паузу, поэтому используй его
@@ -1306,6 +1309,44 @@ def suggest_proactive(user_text: str, answer: str,
 # сервер сам прикладывает карточку вкладки к ответу — человек видит живое
 # состояние, даже если модель забыла про embed
 EMBED_TASK_TOOLS = {"schedule_task"}
+
+# BM14: ВОПРОС О СОСТОЯНИИ — это не поручение. «Что ты делаешь в фоне?»,
+# «покажи, какие задачи фоном» — человек СПРАШИВАЕТ; прежде такие фразы
+# ловились по «в фоне» и уезжали в AUTO-задачу, и вопрос оставался без
+# ответа. Живёт здесь (не в auto.py), чтобы и перехват schedule_task
+# внутри агентского прогона видел то же правило, что и маршрутизатор фона
+STATE_Q_RE = re.compile(
+    r"\b(?:что|чем|какие|как)\b.{0,26}\b(?:делаешь|делает|занимаешься|"
+    r"занят|работаешь|работает|происходит|происходят|идёт|идут|"
+    r"задачи|задача|процессы)\b|"
+    r"\b(?:покажи|покажись|расскажи|перечисли)\b.{0,34}\b(?:фон\w*|задач\w*)\b")
+
+
+def state_question_view(text: str) -> Optional[str]:
+    """Какая вкладка отвечает на вопрос о состоянии (None — не вопрос).
+
+    «Что в фоне?», «какие файлы?», «что ты помнишь?», «какие сценарии?» —
+    человек просит ПОКАЗАТЬ состояние, а не создать его. Правило 10а(D):
+    ответ — карточка соответствующей вкладки, ничего не запуская.
+    """
+    t = re.sub(r"\s+", " ", str(text or "").lower())
+    if re.search(r"\bсценари", t) and re.search(
+            r"\b(?:какие|что|покажи|перечисли|есть|список)\b", t):
+        return "scenarios"
+    if re.search(r"\bфайл", t) and re.search(
+            r"\b(?:какие|что|покажи|перечисли|создал|записал|сохранил)\b", t):
+        return "files"
+    if re.search(r"\b(?:помнишь|запомнил|записал\s+про|память)\b", t) and re.search(
+            r"\b(?:что|какая|какие|покажи|перечисли|твоя)\b", t):
+        return "memory"
+    if STATE_Q_RE.search(t):
+        return "auto"
+    return None
+
+
+def state_question(text: str) -> bool:
+    """Вопрос о состоянии — показывать, а не выполнять."""
+    return state_question_view(text) is not None
 # BM13: просьба «покажи файлы» идёт через list_files/sandbox_info — карточка
 # ФАЙЛОВ прикладывается сама, текст без карточки не остаётся
 EMBED_FILE_TOOLS = {"write_file", "download_file", "make_archive",
@@ -1316,13 +1357,17 @@ EMBED_MEMORY_TOOLS = {"remember", "recall"}
 
 def auto_embed_block(final_text: str,
                      tools_used: Optional[List[str]] = None,
-                     memory_changed: bool = False) -> str:
+                     memory_changed: bool = False,
+                     q_view: Optional[str] = None) -> str:
     """Карточка вкладки — сама, когда прогон что-то изменил.
 
     Решение человека (BM12): после агентского или тихого прогона, который
     запустил задачу, создал файл или сохранил факт, карточка соответствующей
     вкладки вставляется в ответ АВТОМАТИЧЕСКИ — модель может забыть, сервер
     не забудет. Уже готовая карточка (модель дала сама) не дублируется.
+    BM14: q_view — вопрос о состоянии («что в фоне?», «какие файлы?»):
+    карточка ГАРАНТИРОВАНА сервером, даже если модель ответила голым
+    текстовым перечислением.
     """
     text = str(final_text or "")
     if "```embed" in text:
@@ -1335,6 +1380,11 @@ def auto_embed_block(final_text: str,
         view, title = "files", "файлы диалога"
     elif memory_changed or (tools & EMBED_MEMORY_TOOLS):
         view, title = "memory", "что я запомнил"
+    if not view and q_view in ("auto", "files", "memory", "scenarios"):
+        view = q_view
+        title = {"auto": "что я делаю в фоне", "files": "файлы диалога",
+                 "memory": "что я запомнил",
+                 "scenarios": "мои сценарии"}[q_view]
     if not view:
         return text
     sep = "" if not text.strip() else "\n\n"
@@ -1929,6 +1979,47 @@ _REQUEST_MODE_SCHEMA = {
         }, "required": ["mode", "reason"]},
     },
 }
+
+
+_SHOW_MEDIA_TAG_RE = re.compile(
+    r"<\s*show_media\b[^>]*?url\s*=\s*(?:\"([^\"]+)\"|'([^']+)'|([^\s\"'>]+))"
+    r"[^>]*?/?>", re.IGNORECASE)
+
+
+def rescue_show_media_tags(text: str,
+                           sink=None) -> tuple:
+    """BM14: превратить текстовые теги <show_media url="…"/> в НАСТОЯЩИЙ показ.
+
+    Слабая модель иногда «вызывает» инструмент тегом прямо в тексте —
+    человек видит мешанину тегов и ссылок вместо медиа. Каждый тег
+    исполняется по-настоящему (файл скачивается в песочницу), неразобранные
+    остатки из текста убираются. sink(created_files, info) получает файлы.
+    Возвращает (чистый текст, было_ли_спасение).
+    """
+    t = str(text or "")
+    if "<" not in t or "show_media" not in t.lower():
+        return t, False
+
+    def _sub(m: "re.Match") -> str:
+        url = (m.group(1) or m.group(2) or m.group(3) or "").strip()
+        if not url:
+            return ""
+        try:
+            result = tools.call("show_media", {"url": url})
+        except Exception:
+            return ""
+        if isinstance(result, dict) and result.get("ok"):
+            info = _file_info_of(result)
+            if info and sink:
+                sink(info)
+            return ""
+        return ""
+
+    cleaned = _SHOW_MEDIA_TAG_RE.sub(_sub, t)
+    # неразобранные огрызки тега (без url и вовсе битые) не показываем
+    cleaned = re.sub(r"<\s*/?\s*show_media[^>]*?>", "", cleaned,
+                     flags=re.IGNORECASE)
+    return cleaned, cleaned != t
 
 
 def _timed_call(name: str, args: Dict[str, Any]) -> tuple:
@@ -2546,6 +2637,15 @@ class Agent:
     # (локальный запасной план без сети — см. local_plan выше)
 
     # ------------------------------------------------------------------ run
+    def _rescue_show_media_tags(self, text: str) -> str:
+        """BM14: теги <show_media/> в тексте — исполнить и вычистить."""
+        def sink(info: Dict[str, Any]) -> None:
+            if info not in self.created_files:
+                self.created_files.append(info)
+
+        cleaned, _ = rescue_show_media_tags(text, sink)
+        return cleaned
+
     def run(self, messages: List[Dict[str, Any]], user_text: str = "",
             has_image: bool = False, require_ui_choice: bool = False,
             preflight_resolved: bool = False) -> Generator[Dict[str, Any], None, None]:
@@ -3792,7 +3892,19 @@ class Agent:
                                     "group": tools.group_of(name)}
                             continue
 
-                    result, elapsed = _timed_call(name, args)
+                    # BM14: «Что ты делаешь в фоне?» — вопрос, а не поручение:
+                    # задача НЕ создаётся, модель получает наблюдение и
+                    # отвечает карточкой (карточку гарантирует auto_embed_block)
+                    if name == "schedule_task" and state_question(user_text):
+                        result = {"ok": False,
+                                  "error": "Пользователь СПРАШИВАЕТ о состоянии, "
+                                           "а не поручает фоновую работу. Задачу не "
+                                           "создавай. Ответь текстом и приложи "
+                                           "карточку ```embed auto со списком "
+                                           "текущих задач."}
+                        elapsed = 0
+                    else:
+                        result, elapsed = _timed_call(name, args)
                     if self._cancelled():
                         return
 
@@ -3964,10 +4076,19 @@ class Agent:
         # ответ дописан, а поток не закрыт и кнопка «стоп» продолжает гореть.
         # Теперь ответ завершается немедленно, а подсказки браузер запрашивает
         # отдельно (/api/replies) — они не могут задержать или сорвать ответ.
+        # BM14: СПАСЕНИЕ МЕДИА-ТЕГОВ. Слабая модель иногда «вызывает»
+        # show_media ТЕГОМ в тексте: <show_media url="…" type="video"/>.
+        # Человек видит мусорную мешанину тегов со ссылками вместо медиа.
+        # Настоящий вызов выполняем ЗДЕСЬ: тег -> реальный показ (файл в
+        # created_files, плеер в диалоге), из текста тег убираем совсем.
+        final_text = self._rescue_show_media_tags(final_text)
         # BM13: АВТО-КАРТОЧКА ДО done — файл создан или факт сохранён, карточка
         # вкладки приезжает в ТОМ ЖЕ ответе (прежде сервер доклеивал её после
         # done, и до перезагрузки диалога человек её не видел). Дубль-защита
         # внутри auto_embed_block: карточка в тексте уже есть — не добавляем.
+        # BM14: вопрос о состоянии («что в фоне?», «какие файлы?») — карточка
+        # соответствующей вкладки ГАРАНТИРОВАНА, даже если модель ответила
+        # одним текстовым перечислением.
         try:
             mem_now = db.memory_count()
         except Exception:
@@ -3975,7 +4096,8 @@ class Agent:
         final_text = auto_embed_block(
             final_text, self.used_tools,
             memory_changed=bool(self._mem0 is not None and mem_now is not None
-                                and self._mem0 != mem_now))
+                                and self._mem0 != mem_now),
+            q_view=state_question_view(user_text))
         yield {"type": "done", "content": final_text, "files": self.created_files,
                "tools": self.used_tools, "model": self.model_used, "tier": tier,
                "budget_spent": round(self._spent_rub, 2),

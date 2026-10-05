@@ -4529,7 +4529,7 @@ function plotCollectFormulas(spec) {
   return spec;
 }
 
-function mountPlotPanels(root) {
+function mountPlotPanels(root, isFinal) {
   $$('.plot-panel', root).forEach((panel) => {
     if (panel.dataset.live === '1') return;
     panel.dataset.live = '1';
@@ -4571,7 +4571,7 @@ function mountPlotPanels(root) {
   });
   /* BM11: мини-вкладки живут той же жизнью, что графики: монтируются
      там же, где панели графиков (печать — загрузка, финал — сборка) */
-  mountEmbedPanels(root);
+  mountEmbedPanels(root, isFinal);
 }
 
 /* ================= BM11: МИНИ-ВКЛАДКИ В ДИАЛОГЕ (```embed) =================
@@ -4619,20 +4619,29 @@ function embedParseSpec(raw) {
    ПАМЯТЬ при сохранении факта. Финальный рендер принесёт свою
    (серверную) карточку — дубль не ставим */
 function embedLiveCard(ui, view, title) {
-  if (!ui || !ui.mdEl || !ui.mdEl.isConnected) return;
+  if (!ui || !ui.node || !ui.node.body) return;
   if (!ui._liveCards) ui._liveCards = {};
   if (ui._liveCards[view]) return;
-  /* панель живёт в body ПОСЛЕ mdEl: тайпер пересобирает детей mdEl
-     каждый такт — внутрь его вставлять нельзя, сотрёт */
+  /* BM14: карточка нужна В МОМЕНТ события — а во время работы
+     инструментов текста ответа ещё НЕТ (mdEl не создан). Прежний код
+     молча уходил: требовал mdEl — и карточки Файлы/Память пропадали
+     вовсе. Теперь панель живёт в ТЕЛЕ сообщения, над строкой статуса,
+     а settle после done переносит её под текст (в mdEl) */
   const panel = el('div', 'embed-panel');
   panel.dataset.embed = '{"view": "' + view + '", "title": "'
     + String(title || '').replace(/"/g, '') + '"}';
-  ui.mdEl.parentNode.insertBefore(panel, ui.mdEl.nextSibling);
   /* строим карточку СРАЗУ (в обход отложенного mountEmbedPanels,
-     который во время печати показывает «собираю вкладку…») */
+     который во время печати показывает «собираю вкладку…»);
+     live='1' запрещает монтеру трогать уже собранную панель */
   let spec = null;
   try { spec = embedParseSpec(panel.dataset.embed); } catch (e) { spec = null; }
   if (spec && spec.view) buildEmbedPanel(panel, spec);
+  panel.dataset.live = '1';
+  const anchor = (ui.mdEl && ui.mdEl.isConnected)
+    ? ui.mdEl.nextSibling
+    : (ui.statusEl && ui.statusEl.parentNode === ui.node.body
+        ? ui.statusEl : null);
+  ui.node.body.insertBefore(panel, anchor);
   ui._liveCards[view] = panel;
   if (ui.node && ui.node.root && ui.node.root.isConnected) {
     chaseBottom(msgHost(), ui);
@@ -4654,20 +4663,25 @@ function embedLiveAutoSettle(ui) {
       if (!live.isConnected) return;
       const inText = (ui.mdEl && $$('.embed-panel', ui.mdEl)
         .some((p) => (p.dataset.embed || '').indexOf('"' + view + '"') >= 0));
-      if (inText || !ui.mdEl || !ui.mdEl.isConnected) { live.remove(); return; }
-      ui.mdEl.appendChild(live);
+      if (inText) { live.remove(); return; }
+      /* текст есть — карточка переезжает ПОД него; текста нет
+         (ответ без единой дельты) — остаётся в теле сообщения */
+      if (ui.mdEl && ui.mdEl.isConnected) ui.mdEl.appendChild(live);
     });
   }, 1200);
 }
 
-function mountEmbedPanels(root) {
+function mountEmbedPanels(root, isFinal) {
   $$('.embed-panel', root).forEach((panel) => {
     if (panel.dataset.live === '1') return;
     panel.dataset.live = '1';
     let spec = null;
     try { spec = embedParseSpec(panel.dataset.embed); } catch (e) { spec = null; }
-    /* печать ещё идёт — карточка собирается после финального рендера */
-    if (S.streaming && panel.closest && panel.closest('.msg-ai.live')) {
+    /* печать ещё идёт — карточка собирается после финального рендера.
+       BM14: isFinal снимает ГОНКУ ФЛАГОВ: финальный монтаж (onTyped)
+       бежит, пока S.streaming ещё не сброшен, а у сообщения ещё висит
+       .live — без флага карточка навсегда оставалась «собираю вкладку…» */
+    if (!isFinal && S.streaming && panel.closest && panel.closest('.msg-ai.live')) {
       panel.innerHTML = '<div class="embed-load"><i></i><span>собираю вкладку…</span></div>';
       panel.dataset.live = '';
       return;
@@ -9431,7 +9445,7 @@ function queueResponseFinish(ui, content, success) {
       // перед сворачиванием. foldCodeBlocks съёживает от видимой высоты.
       foldCodeBlocks(ui.mdEl, true);
       mountUiPanels(ui.mdEl);
-      mountPlotPanels(ui.mdEl);
+      mountPlotPanels(ui.mdEl, true);
       fixTables(ui.mdEl);
       /* BL/BM: метка, так и не дождавшаяся «своего» конца предложения
          (ответ кончился таблицей или без точки), всё равно показывается —
@@ -9441,7 +9455,7 @@ function queueResponseFinish(ui, content, success) {
         ui.marksEl.style.display = '';
         ui.freezePending = false;
       }
-      if (ui.replyLive && ui.replyLive.isConnected) mountPlotPanels(ui.replyLive);
+      if (ui.replyLive && ui.replyLive.isConnected) mountPlotPanels(ui.replyLive, true);
       $$('.img-out', ui.mdEl).forEach((im) => im.addEventListener('click',
         () => openPreview({ name: im.alt || 'изображение', url: im.src })));
 

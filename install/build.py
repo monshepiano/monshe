@@ -54,6 +54,22 @@ def _keys_from_previous_installer() -> tuple[str, str, str, str, str]:
         return "", "", "", "", ""
 
 
+def _bump_asset_versions(web_dir, version):
+    """BM14: кэш-бустер статики (?v=…) обновляется при КАЖДОЙ сборке.
+
+    Прежде значение было захардкожено и протухло на beta.83: браузер
+    продолжал тянуть старые app.js/app.css из кэша после апдейта —
+    человек смотрел на старый интерфейс с новым сервером."""
+    idx = web_dir / "index.html"
+    if not idx.exists():
+        return
+    html = idx.read_text(encoding="utf-8")
+    html = re.sub(r"\?v=[\d.]+-(?:beta\.|rc\.)?\d+[a-z0-9.]*",
+                   "?v=" + version, html)
+    idx.write_text(html, encoding="utf-8")
+
+
+
 def load_keys() -> tuple[str, str, str, str, str]:
     """Ключи: environment/ignored keys.json, затем рабочий старый updater.
 
@@ -164,6 +180,10 @@ def build_bundle() -> None:
 
 def main() -> None:
     ver = version()
+    # BM14: кэш-бустер статики живёт в index.html — обновляем ДО упаковки,
+    # чтобы установщик всегда получал свежие ?v= (иначе браузер тянет
+    # старые app.js/app.css из кэша после апдейта)
+    _bump_asset_versions(APP / "jarvis" / "web", ver)
     payload = build_payload()
     b64 = base64.b64encode(payload).decode("ascii")
     wrapped = "\n".join(b64[i:i + 76] for i in range(0, len(b64), 76))

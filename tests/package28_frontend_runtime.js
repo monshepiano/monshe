@@ -13,6 +13,7 @@ const js = fs.readFileSync(path.join(root, 'app/jarvis/web/js/app.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'app/jarvis/web/css/app.css'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'app/jarvis/web/index.html'), 'utf8');
 const pyAgent = fs.readFileSync(path.join(root, 'app/jarvis/agent.py'), 'utf8');
+const pyBuild = fs.readFileSync(path.join(root, 'install/build.py'), 'utf8');
 const pyLlm = fs.readFileSync(path.join(root, 'app/jarvis/llm.py'), 'utf8');
 const pyServer = fs.readFileSync(path.join(root, 'app/jarvis/server.py'), 'utf8');
 const markdown = fs.readFileSync(path.join(root, 'app/jarvis/web/js/markdown.js'), 'utf8');
@@ -2670,9 +2671,10 @@ function testIterationBKContracts() {
        размера корня, а не уменьшенного индекса; прежний right:calc уплывал */
     !css.includes('aspect-ratio:11/24') && !css.includes('border-top:1.4px') &&
     !css.includes('right:calc(100% - .98em)') &&
-    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.02em;height:100%;') &&
+    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.05em;height:100%;') &&
     css.includes('.msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;') &&
-    css.includes('.msqrt.msqrt-i{padding-left:1.46em}') &&
+    css.includes('.msqrt.msqrt-i{padding-left:1.14em}') &&
+    css.includes('.msqrt.msqrt-i .msq-svg{left:.74em}') &&
     markdown.includes('class="msq-box"><span class="msq-i">') &&
     markdown.includes("msqrt' + (root ? ' msqrt-i' : ''"),
     'BM3/BM13: the svg is cropped at the tip, the bar starts at the tip; the root index lives INSIDE the root box — it never overlaps the bracket on the left');
@@ -2812,10 +2814,37 @@ function testIterationBM13Contracts() {
 
 function testIterationBM14Contracts() {
   const pyAuto = fs.readFileSync(path.join(root, 'app/jarvis/auto.py'), 'utf8');
-  // КОРНИ: индекс в БОКСЕ базового кегля — em от размера корня
+  // КОРНИ: индекс в БОКСЕ базового кегля, прижат к штриху носика
   assert(markdown.includes('class="msq-box"><span class="msq-i">') &&
-    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.02em;height:100%;'),
-    'BM14: the root degree sits in a base-size box — its em units count from the ROOT size, so a wide index grows into the root reserve, never left past the bracket');
+    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.05em;height:100%;') &&
+    css.includes('.msqrt.msqrt-i .msq-svg{left:.74em}') &&
+    css.includes('.msqrt.msqrt-i{padding-left:1.14em}'),
+    'BM14: the root degree sits in a base-size box pressed against the nose stroke (svg .74em, no crazy left margin) — em units count from the ROOT size');
+  // BM14.1: мини-вкладки больше не висят «собираю вкладку…» вечно:
+  // финальный монтаж не зависит от гонки флагов стрима
+  assert(js.includes('function mountEmbedPanels(root, isFinal)') &&
+    js.includes('if (!isFinal && S.streaming') &&
+    js.includes('mountPlotPanels(ui.mdEl, true);') &&
+    js.includes('mountPlotPanels(ui.replyLive, true);'),
+    'BM14.1: the FINAL embed mount builds the card even while stream flags are still up — no card stuck on "собираю вкладку…"');
+  // BM14.1: живая карточка работает и ДО первого текста ответа
+  // (фаза инструментов: mdEl ещё не создан)
+  assert(js.includes("if (!ui || !ui.node || !ui.node.body) return;") &&
+    js.includes('ui.node.body.insertBefore(panel, anchor);') &&
+    js.includes("panel.dataset.live = '1';"),
+    'BM14.1: the live card attaches to the message body even before any answer text exists — FILES/MEMORY cards appear the moment the tool runs');
+  // BM14.1: show_media-теги в тексте — исполняются и вычищаются (py)
+  assert(pyAgent.includes('def rescue_show_media_tags(') &&
+    pyAgent.includes('_SHOW_MEDIA_TAG_RE') &&
+    pyAgent.includes('self._rescue_show_media_tags(final_text)'),
+    'BM14.1: <show_media url=…/> tags in the answer text are executed for real and stripped — no more tag soup instead of media');
+  // BM14.1: вопрос о состоянии — карточка гарантирована сервером,
+  // schedule_task на вопросах перехватывается
+  assert(pyAgent.includes('def state_question_view(') &&
+    pyAgent.includes('q_view=state_question_view(user_text)') &&
+    pyAgent.includes('name == "schedule_task" and state_question(user_text)') &&
+    pyAuto.includes('agent.state_question(t)'),
+    'BM14.1: state questions get their tab card GUARANTEED server-side, and a schedule_task call on a state question is intercepted');
   // МИКРОФОН: обычная диктовка, разговор уехал в LIVE
   assert(html.includes('id="micBtn" data-tip="Диктовка"') &&
     html.includes('M12 3.4a3.1 3.1 0 0 1 3.1 3.1') &&
@@ -2846,7 +2875,10 @@ function testIterationBM14Contracts() {
     pyAgent.includes('JSON и не перечисляй ссылки текстом'),
     'BM14: the payload-guard retry no longer lies about JSON — the JSON branch fires only when the user actually asked for a JSON file');
   // AUTO: вопросы о состоянии не уходят в фон; ответы — в диалог
-  assert(pyAuto.includes('_STATE_Q_RE') &&
+  /* BM14.1: regex вопроса переехал в agent.py (STATE_Q_RE) — его видят
+     и маршрутизатор фона, и перехват schedule_task внутри прогона */
+  assert(pyAuto.includes('agent.state_question(t)') &&
+    pyAgent.includes('STATE_Q_RE') &&
     pyAuto.includes('target_chat = task.get("chat_id") or ""') &&
     pyAuto.includes('db.list_chats(1)'),
     'BM14: state questions stay in the dialog; background task results and errors land as dialog messages, not note-dock cards');
@@ -3012,7 +3044,8 @@ function testIterationBM9Contracts() {
   // корень в ЗНАМЕНАТЕЛЕ дроби опущен (не наезжает на знак дроби)
   /* BM14: индекс в боксе базового кегля — .msq-box держит em корня */
   assert(css.includes('.msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;') &&
-    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.02em;height:100%;') &&
+    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.05em;height:100%;') &&
+    css.includes('.msqrt.msqrt-i .msq-svg{left:.74em}') &&
     css.includes('.mfr-d .msqrt{margin-top:.22em}'),
     'BM12/BM13: the root degree stays INSIDE the root bounds (BM13: also inside the box — never onto the bracket); a root in the denominator drops below the fraction bar');
   // BM9: 3D — ЛКМ вращает, ПКМ пан; короткий ПКМ — обычное меню
@@ -3180,8 +3213,9 @@ function testIterationBM12Contracts() {
     'BM12: media arrives as a FILE in the chat (like a messenger), a bare link instead is an error');
   // КОРЕНЬ: степень внутри границ корня
   /* BM14: индекс в боксе базового кегля (.msq-box) — em от корня */
-  assert(css.includes('.msqrt.msqrt-i{padding-left:1.46em}') &&
-    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.02em;height:100%;') &&
+  assert(css.includes('.msqrt.msqrt-i{padding-left:1.14em}') &&
+    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.05em;height:100%;') &&
+    css.includes('.msqrt.msqrt-i .msq-svg{left:.74em}') &&
     css.includes('.msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;'),
     'BM12/BM13: the root degree is down and left, never above the root, and (BM13) always inside the root box — never onto the bracket');
   // СВАЙП: распознание быстрее; кнопки реагируют мгновенно
@@ -3235,8 +3269,8 @@ function testIterationBM12Contracts() {
     'BM12: the dock flyout bursts out of the current-space button — icons fly to their slots, the dash sits under the icon');
   // МИНИ-ВКЛАДКИ: векторные иконки, шапка ПОЧТИ НЕПРОЗРАЧНАЯ (BM14)
   assert(js.includes("ico: '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"") &&
-    css.includes('background:rgba(9,20,33,.94)'),
-    'BM12: embed tab icons are proper vectors; the title bar is nearly solid — like the agent tool tabs');
+    css.includes('background:rgb(10,20,33)'),
+    'BM12: embed tab icons are proper vectors; the title bar is SOLID — like the agent tool tabs');
 }
 
 function testIterationAXContracts() {
@@ -3602,10 +3636,17 @@ function testIterationARContracts() {
   // AS: эстафеты нет — никаких relay- следов ни в JS, ни в CSS
   assert(!js.includes('relay') && !css.includes('relay'),
     'AS: the relay is cancelled — the dock reactor lives forever');
-  // AR: статика больше не кэшируется браузером
+  // AR: статика больше не кэшируется браузером; BM14: кэш-бустер ?v=
+  // обязан совпадать с РЕАЛЬНОЙ версией (протух на beta.83 — браузер
+  // тянул старые js/css после апдейта). build.py обновляет его сам.
+  const pyInit = fs.readFileSync(path.join(root, 'app/jarvis/__init__.py'), 'utf8');
+  const vmatch = pyInit.match(/__version__\s*=\s*"([^"]+)"/);
+  const ver = vmatch ? vmatch[1] : '';
   assert(pyServer.includes('"Cache-Control", "no-store"') &&
-    html.includes('/static/css/app.css?v=1.2.0-beta.83'),
-    'AR: statics are always fresh — no more week-old CSS in the browser');
+    html.includes('/static/css/app.css?v=' + ver) &&
+    html.includes('/static/js/app.js?v=' + ver) &&
+    pyBuild.includes('def _bump_asset_versions('),
+    'AR: statics are always fresh — and the ?v= cache-buster matches the real version');
   // AR: повтор потока reasoning склеивается обратно в чистый текст
   assert(pyLlm.includes('def _reasoning_increment(') &&
     pyLlm.includes('think = _reasoning_increment('),
