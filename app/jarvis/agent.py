@@ -829,6 +829,14 @@ ui. Если вариантов нет, но ответ человека всё 
    вида <show_media url="…"/> в тексте ответа ЗАПРЕЩЕНО: они не
    отображаются у человека, это мусор. Только настоящий вызов
    инструмента — или обычная ссылка текстом, если инструмента нет.
+   ССЫЛКИ НА СТРИМИНГИ (Яндекс Музыка, Spotify, YouTube) — НЕ
+   результат: человек найдёт их сам. Твоя работа — НАЙТИ источник,
+   который ложится прямо в чат: прямой файл (mp3/mp4/m4a — ищи
+   запросами вида «filetype:mp3», «… скачать mp3», «минусовка mp3»)
+   или RuTube/VK Видео (show_media сам вытащит файл со страницы).
+   Нашёл — ВЫЗВАЛ show_media. Прямого источника честно нет — так и
+   скажи и дай лучшую найденную ссылку текстом, объяснив, почему
+   напрямую не получилось.
 8. Развилка, где ты обязан ОСТАНОВИТЬСЯ и без ответа не можешь работать дальше
    (куда сохранить файл, продолжать ли рискованный путь) — вызови ask_user
    с 2-4 вариантами через |. Он ставит работу на паузу, поэтому используй его
@@ -1347,6 +1355,55 @@ def state_question_view(text: str) -> Optional[str]:
 def state_question(text: str) -> bool:
     """Вопрос о состоянии — показывать, а не выполнять."""
     return state_question_view(text) is not None
+
+
+def state_question_snapshot(view: str) -> str:
+    """BM15: ЧЕСТНЫЙ СНИМОК ВКЛАДКИ — модель отвечает фактами, не фантазией.
+
+    «Какие файлы?», «что ты помнишь?» — прежде модель перечисляла по памяти
+    контекста и ПРОТИВОРЕЧИЛА вкладке. Теперь перед таким вопросом в convo
+    кладётся реальное состояние: задачи, файлы песочницы, факты, сценарии.
+    """
+    try:
+        if view == "auto":
+            tasks = db.list_tasks(limit=10) or []
+            if not tasks:
+                return "фоновых задач сейчас нет (список пуст)"
+            rows = "; ".join(
+                "%s — %s%s" % (str(t.get("title") or "задача")[:60],
+                               str(t.get("status") or "?"),
+                               (" (" + str(t.get("next_run_human") or "") + ")")
+                               if t.get("next_run_human") else "")
+                for t in tasks[:10])
+            return "фоновые задачи: " + rows
+        if view == "files":
+            res = tools.call("list_files", {}) or {}
+            entries = res.get("entries") or []
+            if not entries:
+                return "в песочнице диалога файлов нет"
+            names = [str(e.get("name") or "?") for e in entries[:15]]
+            return "файлы диалога: " + ", ".join(names)
+        if view == "memory":
+            facts = db.recall(limit=20) or []
+            if not facts:
+                return "память пуста — фактов нет"
+            rows = "; ".join(
+                "%s: %s" % (str(f.get("key") or f.get("kind") or "?"),
+                            str(f.get("value") or "")[:60])
+                for f in facts[:20])
+            return "факты памяти: " + rows
+        if view == "scenarios":
+            scen = db.list_scenarios() or []
+            if not scen:
+                return "сценариев пока нет"
+            rows = "; ".join(
+                "%s (%d шагов)" % (str(sc.get("title") or "сценарий")[:50],
+                                   len(sc.get("steps") or []))
+                for sc in scen[:15])
+            return "сценарии: " + rows
+    except Exception:
+        return ""
+    return ""
 # BM13: просьба «покажи файлы» идёт через list_files/sandbox_info — карточка
 # ФАЙЛОВ прикладывается сама, текст без карточки не остаётся
 EMBED_FILE_TOOLS = {"write_file", "download_file", "make_archive",
@@ -2479,6 +2536,15 @@ class Agent:
         Так ответ переживает обрыв SSE и работает из любой вкладки.
         """
         record = db.create_question(self.chat_id, question, options)
+        # BM15: headless-задача (AUTO) спрашивает БЕЗ живого SSE — без
+        # этого человек вообще не видит вопроса, пока не истечёт таймаут
+        if self.task_id:
+            try:
+                db.notify("Вопрос по фоновой задаче",
+                          question[:260] + " Варианты: "
+                          + " / ".join(options[:5]), "warn")
+            except Exception:
+                pass
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self._cancelled():
@@ -2944,6 +3010,18 @@ class Agent:
                                   and (self.agent_mode or self.computer_use))
 
         convo = list(messages)
+        # BM15: вопрос о состоянии («что в фоне?», «какие файлы?») — модель
+        # видит РЕАЛЬНЫЙ снимок вкладки и отвечает по нему, а не по догадке
+        _q_view = state_question_view(user_text)
+        if _q_view:
+            _snap = state_question_snapshot(_q_view)
+            if _snap:
+                convo.append({"role": "system", "content":
+                              "ФАКТЫ (состояние вкладки %s прямо сейчас): %s. "
+                              "Отвечай пользователю строго по этим данным: не "
+                              "выдумывай задачи, файлы или факты, которых нет "
+                              "в списке, и не запускай ничего нового." %
+                              (_q_view, _snap)})
         final_text = ""
         reply_ui_sent = False
         retried_claim = False          # ловушку вранья взводим один раз за прогон

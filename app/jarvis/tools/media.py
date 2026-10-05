@@ -1038,6 +1038,10 @@ def _media_from_page(html: str, base: str) -> str:
     return ""
 
 
+_STREAMING_RE = re.compile(
+    r"(?:music\.yandex|spotify\.com|zvuk\.com|apple\.com/music|deezer)", re.IGNORECASE)
+
+
 def show_media(url: str, _depth: int = 0) -> Dict[str, Any]:
     """Показать человеку медиа из интернета: картинку, аудио или видео.
 
@@ -1050,9 +1054,19 @@ def show_media(url: str, _depth: int = 0) -> Dict[str, Any]:
         return {"ok": False, "error": "нужна ссылка на медиа"}
     if _YOUTUBE_RE.search(src):
         return {"ok": False,
-                "error": "YouTube в России без VPN недоступен — видео не "
-                         "загрузить ни встроенно, ни скачиванием. Дай прямую "
-                         "ссылку на файл (mp4) либо ссылку RuTube/VK Видео."}
+                "error": "YouTube в России без VPN недоступен. НЕ давай ссылку "
+                         "на YouTube в ответе. Поищи RuTube/VK Видео или прямой "
+                         "файл (mp4) и вызови show_media с новой ссылкой."}
+    # BM15: стриминги с DRM — честный отказ + инструкция модели искать
+    # ТО, что ложится в чат (прямой файл / RuTube / VK), а не скидывать
+    # ссылку на стриминг как «результат»
+    if _STREAMING_RE.search(src):
+        return {"ok": False,
+                "error": "Это стриминг-сервис с защитой (DRM): прямого файла "
+                         "здесь нет. НЕ давай ссылку на него в ответе. Поищи "
+                         "прямой файл (запросы «filetype:mp3», «… скачать mp3») "
+                         "или RuTube/VK Видео — и вызови show_media с новой "
+                         "ссылкой."}
     parsed = urllib.parse.urlparse(src)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         return {"ok": False, "error": "ссылка должна начинаться с http:// или https://"}

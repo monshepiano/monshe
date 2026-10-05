@@ -3263,7 +3263,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.86", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.87", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
         # BM14.1: кэш-бустер статики обновляется сборкой сам
         self.assertIn("def _bump_asset_versions(",
                       Path("install/build.py").read_text(encoding="utf-8"))
@@ -3359,8 +3359,11 @@ class IterationAATests(unittest.TestCase):
         # разговор переезжает в LIVE, из чата кнопкой не открывается
         self.assertIn('id="micBtn" data-tip="Диктовка"', html)
         handler = js.split("$('#micBtn').addEventListener('click'")[1].split("\n});")[0]
-        self.assertIn("SpeechRecognition", handler)
+        # BM15: запись -> сервер -> текст (браузерный ASR в РФ не работает)
+        self.assertIn("MediaRecorder", handler)
         self.assertIn("DICT", handler)
+        self.assertIn("/api/transcribe", handler)
+        self.assertNotIn("SpeechRecognition", handler)
         self.assertNotIn("openVoiceMode()", handler)
         self.assertNotIn("closeVoiceMode()", handler)
         # разговорный режим жив отдельными функциями (для LIVE), не на micBtn
@@ -7168,11 +7171,11 @@ class IterationBM8Tests(unittest.TestCase):
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
         # BM13: степень живёт ВНУТРИ рамки корня — не наезжает на скобку слева
         self.assertIn("msqrt' + (root ? ' msqrt-i' : ''", md)
-        self.assertIn(".msqrt.msqrt-i{padding-left:1.14em}", css)
-        # BM14.1: индекс в боксе базового кегля, прижат к штриху носика
-        self.assertIn(".msqrt .msq-box{position:absolute;top:0;left:0;width:1.05em;height:100%;", css)
+        # BM15: носик на родном месте, степень в углу, сдвиг по выносу
+        self.assertIn(".msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}", css)
+        self.assertIn(".msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;", css)
         self.assertIn(".msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em", css)
-        self.assertIn(".msqrt.msqrt-i .msq-svg{left:.74em}", css)
+        self.assertIn(".msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}", css)
         self.assertIn(".mfr-d .msqrt{margin-top:.22em}", css)
 
     def test_bm11_dock_untouched_spaces_flyout(self) -> None:
@@ -7476,12 +7479,15 @@ class IterationBM13Tests(unittest.TestCase):
         """Степень корня — внутри рамки корня: не наезжает на скобку слева."""
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         md = Path("app/jarvis/web/js/markdown.js").read_text(encoding="utf-8")
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         self.assertIn("msqrt' + (root ? ' msqrt-i' : ''", md)
-        self.assertIn(".msqrt.msqrt-i{padding-left:1.14em}", css)
-        # BM14: индекс в боксе базового кегля, прижат к штриху носика
-        self.assertIn(".msqrt .msq-box{position:absolute;top:0;left:0;width:1.05em", css)
+        # BM15: носик на родном месте (left:var(--msq-x)), степень в углу,
+        # пустого резерва нет: padding = .40em + фактический вынос степени
+        self.assertIn(".msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}", css)
+        self.assertIn(".msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;", css)
         self.assertIn(".msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em", css)
-        self.assertIn(".msqrt.msqrt-i .msq-svg{left:.74em}", css)
+        self.assertIn(".msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}", css)
+        self.assertIn("function fixRootIndices(root)", js)
         # прежний вынос за левый край — запрещён (правило, не комментарий)
         self.assertNotIn(".msq-i{position:absolute;top:0;left:-.36em", css)
         self.assertNotIn("left:-.36em;width", css)
@@ -7690,9 +7696,13 @@ class IterationBM14Tests(unittest.TestCase):
     def test_bm14_auto_answers_go_to_dialog(self) -> None:
         """Результат/ошибка задачи без чата — сообщением в диалог, не в док."""
         auto = Path("app/jarvis/auto.py").read_text(encoding="utf-8")
-        self.assertIn("target_chat = task.get(\"chat_id\") or \"\"", auto)
-        self.assertIn("db.list_chats(1)", auto)
-        self.assertIn("err_chat", auto)
+        # BM15: в диалоге — только результаты задач ЭТОГО диалога; чужие
+        # результаты выглядели как «ответ на прошлый запрос»
+        self.assertIn('if task.get("chat_id"):', auto)
+        self.assertIn('db.add_message(task["chat_id"], "assistant", content', auto)
+        self.assertIn('db.notify("AUTO: " + task["title"]', auto)
+        self.assertNotIn("target_chat", auto)
+        self.assertNotIn("db.list_chats(1)", auto)
 
     def test_bm14_auto_card_before_done(self) -> None:
         """Карточка вкладки вкладывается в ответ ДО done — и по памяти."""
@@ -7789,10 +7799,12 @@ class IterationBM14Tests(unittest.TestCase):
         self.assertIn("M12 3.4a3.1 3.1 0 0 1 3.1 3.1", html)
         handler = js.split("$('#micBtn').addEventListener('click'")[1] \
             .split("\n});")[0]
-        self.assertIn("SpeechRecognition", handler)
-        self.assertIn("rec.lang = 'ru-RU'", handler)
-        self.assertIn("interimResults", handler)
-        self.assertIn("box.value = (base + txt)", handler)
+        self.assertIn("getUserMedia", handler)
+        self.assertIn("MediaRecorder", handler)
+        self.assertIn("/api/transcribe", handler)
+        self.assertIn("blobToWav16k", handler)
+        self.assertIn("box.value = (base + text)", handler)
+        self.assertNotIn("SpeechRecognition", handler)
 
     def test_bm14_live_card_files_memory_at_event(self) -> None:
         """Файл создан — карточка ФАЙЛЫ сразу; факт — карточка ПАМЯТЬ."""

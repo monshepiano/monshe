@@ -248,20 +248,16 @@ def _execute_reserved(task: Dict[str, Any], cancelled: threading.Event) -> None:
 
         # Результат показываем ОДИН раз. Уведомление нужно только тогда, когда
         # ответ некуда положить — если задача пришла из диалога, ответ и есть оно.
-        # BM13: задача БЕЗ чата (создана руками во вкладке AUTO) тоже несёт
-        # ответ В ДИАЛОГ — в последний активный разговор человека. Прежде
-        # такой ответ выпадал «табличкой» в док уведомлений над полем ввода
-        # (в зоне чипов) — а человек ждёт его именно в ленте диалога.
-        target_chat = task.get("chat_id") or ""
-        if not target_chat:
-            last = db.list_chats(1)
-            if last:
-                target_chat = last[0].get("id") or ""
-        if target_chat:
+        # BM15: результат задачи БЕЗ чата остаётся УВЕДОМЛЕНИЕМ (note-dock):
+        # прежде его вклеивали в «последний активный диалог» — и человек,
+        # обсуждая новое, внезапно получал в ленте ответ на СТАРУЮ задачу
+        # («он снова начал отвечать на прошлый запрос»). Диалог получает
+        # только результаты задач, которые из него и родились.
+        if task.get("chat_id"):
             # BM12: тихий прогон тоже меняет вкладку AUTO — карточка
             # прикладывается к результату сама
             content = agent.auto_embed_block(content, ["schedule_task"])
-            db.add_message(target_chat, "assistant", content,
+            db.add_message(task["chat_id"], "assistant", content,
                            {"task_id": task_id, "from_auto": True,
                             "files": files, "title": task.get("title", "")})
         else:
@@ -275,15 +271,11 @@ def _execute_reserved(task: Dict[str, Any], cancelled: threading.Event) -> None:
                 db.update_task(task_id, status="error", resume_status="",
                                result="Ошибка: %s" % exc)
                 db.append_task_event(task_id, {"type": "error", "text": str(exc)[:300]})
-                # BM13: ошибка — тоже сообщение в диалог (не табличка у чипов);
-                # уведомление остаётся только когда диалога нет вовсе
-                err_chat = task.get("chat_id") or ""
-                if not err_chat:
-                    last = db.list_chats(1)
-                    if last:
-                        err_chat = last[0].get("id") or ""
-                if err_chat:
-                    db.add_message(err_chat, "assistant",
+                # BM15: ошибка — уведомление; в диалоге — только ошибки
+                # задач этого диалога (чужие выглядели как «ответ на
+                # прошлый запрос»)
+                if task.get("chat_id"):
+                    db.add_message(task["chat_id"], "assistant",
                                    "Задача «%s» не удалась: %s" % (task["title"], exc),
                                    {"task_id": task_id, "from_auto": True,
                                     "title": task.get("title", "")})

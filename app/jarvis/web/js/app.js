@@ -4529,7 +4529,26 @@ function plotCollectFormulas(spec) {
   return spec;
 }
 
+/* BM15: ТОЧНАЯ ШИРИНА СТЕПЕНИ КОРНЯ. CSS даёт степени угловое место
+   в колонке носика; широкая степень («10», «k+1») меряется здесь, и
+   корень сдвигается вправо ровно на её вынос (--msq-x) — ни пустых
+   резервов слева, ни наезда на соседний знак. Пиксель в пиксель */
+function fixRootIndices(root) {
+  $$('.msqrt.msqrt-i', root).forEach((m) => {
+    const ind = m.querySelector('.msq-i');
+    if (!ind) return;
+    const fs = parseFloat(getComputedStyle(m).fontSize) || 16;
+    const w = ind.getBoundingClientRect().width / fs;   // em кегля корня
+    /* вынос за левый край: колонка носика даёт степени .30em; всё, что
+       шире, сдвигает корень — но крошечный вынос (до .04em, полпикселя)
+       не считается: обычные цифры не двигают корень вовсе */
+    const shift = Math.max(0, w - 0.34);
+    m.style.setProperty('--msq-x', shift.toFixed(3) + 'em');
+  });
+}
+
 function mountPlotPanels(root, isFinal) {
+  fixRootIndices(root);
   $$('.plot-panel', root).forEach((panel) => {
     if (panel.dataset.live === '1') return;
     panel.dataset.live = '1';
@@ -4583,15 +4602,15 @@ function mountPlotPanels(root, isFinal) {
    вольются той же карточкой */
 /* BM12: иконки вкладок — векторные, как в меню (текстовые глифы ◎ ▤ ◇
    стояли криво на базовой линии) */
+/* BM15: иконки и краски — В ТОЧНОСТИ как у пунктов левого меню:
+   AUTO «◎», ФАЙЛЫ «▤», ПАМЯТЬ «◇», СЦЕНАРИИ — та же молния;
+   цвета задаёт .emb-v-<view> (те же переменные, что у .nav-ico) */
 const EMBED_VIEWS = {
-  auto: { name: 'AUTO', sub: 'фоновые задачи', view: 'auto',
-    ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="7.2"/><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/></svg>' },
-  files: { name: 'ФАЙЛЫ', sub: 'песочница диалога', view: 'files',
-    ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="4" y="4.5" width="7" height="7" rx="1.4"/><rect x="13" y="4.5" width="7" height="7" rx="1.4"/><rect x="4" y="13.5" width="7" height="7" rx="1.4"/><rect x="13" y="13.5" width="7" height="7" rx="1.4"/></svg>' },
-  memory: { name: 'ПАМЯТЬ', sub: 'что Джарвис помнит', view: 'memory',
-    ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.8l7 4.1v8.2l-7 4.1-7-4.1V7.9z"/></svg>' },
+  auto: { name: 'AUTO', sub: 'фоновые задачи', view: 'auto', ico: '◎' },
+  files: { name: 'ФАЙЛЫ', sub: 'песочница диалога', view: 'files', ico: '▤' },
+  memory: { name: 'ПАМЯТЬ', sub: 'что Джарвис помнит', view: 'memory', ico: '◇' },
   scenarios: { name: 'СЦЕНАРИИ', sub: 'автозапуски', view: 'scenarios',
-    ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M13 2.8L5.8 13.4h4.9l-1 7.8 7.5-10.8h-4.8z"/></svg>' },
+    ico: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2.8L5.8 13.4h4.9l-1 7.8 7.5-10.8h-4.8z"/></svg>' },
 };
 const EMBED_TASK_ST = {
   queued: 'в очереди', running: 'работает', paused: 'пауза',
@@ -4641,7 +4660,8 @@ function embedLiveCard(ui, view, title) {
     ? ui.mdEl.nextSibling
     : (ui.statusEl && ui.statusEl.parentNode === ui.node.body
         ? ui.statusEl : null);
-  ui.node.body.insertBefore(panel, anchor);
+  if (anchor) ui.node.body.insertBefore(panel, anchor);
+  else ui.node.body.appendChild(panel);
   ui._liveCards[view] = panel;
   if (ui.node && ui.node.root && ui.node.root.isConnected) {
     chaseBottom(msgHost(), ui);
@@ -4664,9 +4684,14 @@ function embedLiveAutoSettle(ui) {
       const inText = (ui.mdEl && $$('.embed-panel', ui.mdEl)
         .some((p) => (p.dataset.embed || '').indexOf('"' + view + '"') >= 0));
       if (inText) { live.remove(); return; }
-      /* текст есть — карточка переезжает ПОД него; текста нет
-         (ответ без единой дельты) — остаётся в теле сообщения */
-      if (ui.mdEl && ui.mdEl.isConnected) ui.mdEl.appendChild(live);
+      /* BM15: карточка ОСТАЁТСЯ на месте — сразу после mdEl, в теле
+         сообщения. Внутрь mdEl её совать нельзя (тайпер пересобирает
+         его детей каждый такт — карточка «пропадала»), и перенос в
+         конец mdEl менял порядок с другими карточками (пертурбации) */
+      if (ui.mdEl && ui.mdEl.isConnected &&
+          live.parentNode === ui.mdEl) {
+        ui.mdEl.parentNode.insertBefore(live, ui.mdEl.nextSibling);
+      }
     });
   }, 1200);
 }
@@ -4697,7 +4722,7 @@ function mountEmbedPanels(root, isFinal) {
 
 function buildEmbedPanel(panel, spec) {
   const meta = EMBED_VIEWS[spec.view];
-  const card = el('div', 'embed-card');
+  const card = el('div', 'embed-card emb-v-' + spec.view);
   const head = el('div', 'emb-head');
   head.innerHTML = '<span class="emb-ico">' + (meta.ico || '') + '</span><b>'
     + esc(meta.name) + '</b><span class="emb-sub">'
@@ -4716,6 +4741,23 @@ function buildEmbedPanel(panel, spec) {
   };
   const emptyNote = (t) => {
     body.innerHTML = '<div class="emb-empty">' + esc(t) + '</div>';
+  };
+  /* BM15: ЖИВАЯ СИНХРОНИЗАЦИЯ ЛЮБОЙ КАРТОЧКИ — не только AUTO.
+     Раз в 4с сверяем данные вкладки с отпечатком; изменилось —
+     карточка перерисовывается. Карточка ушла с экрана — таймер гаснет */
+  const embSync = (fetchCall, fingerprint) => {
+    if (panel._embSync) return;
+    panel._embSync = setInterval(() => {
+      if (!panel.isConnected) {
+        clearInterval(panel._embSync); panel._embSync = null; return;
+      }
+      fetchCall().then((r) => {
+        const fp = fingerprint(r);
+        if (fp === panel._embFp) return;
+        panel._embFp = fp;
+        buildEmbedPanel(panel, spec);
+      }, () => {});
+    }, 4000);
   };
   if (spec.view === 'auto') {
     /* BM13: ЖИВАЯ СИНХРОНИЗАЦИЯ. Удалил задачу во вкладке AUTO — карточка
@@ -4769,6 +4811,7 @@ function buildEmbedPanel(panel, spec) {
   } else if (spec.view === 'files') {
     const q = '/api/files/browse?dir=' + (S.chatId
       ? '&chat_id=' + encodeURIComponent(S.chatId) : '');
+    embSync(() => api(q), (r) => JSON.stringify((r && r.entries) || []));
     api(q).then((r) => {
       const es = (r && r.ok && r.entries) || [];
       if (!es.length) { emptyNote('Песочница диалога пуста — файлы появятся, как только я что-нибудь создам.'); return; }
@@ -4790,6 +4833,7 @@ function buildEmbedPanel(panel, spec) {
         body.innerHTML = '<div class="emb-empty">Память собирается дольше обычного.</div>';
       }
     }, 8000);
+    embSync(() => api('/api/memory'), (r) => JSON.stringify((r && r.memory) || []));
     api('/api/memory').then((r) => {
       done = true; clearTimeout(timer);
       if (!r || r.ok === false) { fail(new Error('не удалось открыть память')); return; }
@@ -4806,6 +4850,8 @@ function buildEmbedPanel(panel, spec) {
       });
     }, (e) => { done = true; clearTimeout(timer); fail(e); });
   } else if (spec.view === 'scenarios') {
+    embSync(() => api('/api/scenarios'),
+      (r) => JSON.stringify((r && r.scenarios) || []));
     api('/api/scenarios').then((r) => {
       const scs = (r && r.ok && r.scenarios) || [];
       if (!scs.length) { emptyNote('Сценариев пока нет — сохрани частый запрос из диалога.'); return; }
@@ -10188,20 +10234,14 @@ function handleEvent(ev, ui) {
 
     case 'background': {
       /* BM13: сервер уводит задачу в фон САМ (агентский прогон не стартует) —
-         живая AUTO-карточка появляется здесь СРАЗУ, в момент ухода в фон,
-         а не после окончания ответа */
+         живая AUTO-карточка появляется здесь СРАЗУ, в момент ухода в фон.
+         BM15: карточка ОДНА — прежде рядом всплывала ещё и bg-плашка
+         «В фоне: …», а потом они менялись местами. Название и срок
+         сообщает toast, живой список задач — сама карточка */
       embedLiveAuto(ui);
       const when = ev.when || ev.schedule || '';
       toast('Задача «' + ev.title + '» ушла в фон' + (when ? ' · ' + when : ''), 'info', 'AUTO');
       dropStatus(ui);
-      const bg = el('div', 'panel-card bg-card');
-      bg.innerHTML = '<div class="card-inner" style="padding:12px 14px">' +
-        '<b style="color:var(--teal)">В фоне: ' + esc(ev.title || 'задача') + '</b>' +
-        (when ? '<div class="muted" style="margin-top:5px">Когда: ' + esc(when) + '</div>' : '') +
-        (ev.reason ? '<div class="muted" style="margin-top:3px">' + esc(ev.reason) + '</div>' : '') +
-        '<div class="muted" style="margin-top:6px">Результат придёт уведомлением и во вкладке AUTO.</div>' +
-        '</div>';
-      node.body.appendChild(bg);
       refreshState();
       scrollDown();
       break;
@@ -10448,44 +10488,68 @@ async function blobToWav16k(blob) {
    была лишней (и из-за дубля id вообще не реагировала): диктовка в поле
    уступила место живому диалогу — говоришь, Джарвис отвечает голосом,
    разговор пишется в текущий диалог. */
-/* BM13: КНОПКА МИКРОФОНА — ОБЫЧНАЯ ДИКТОВКА: голос превращается в текст
-   в поле ввода, как раньше. Разговорный режим переезжает в LIVE (там он
-   будет сильно прокачан) — из чата кнопкой больше не открывается */
+/* BM15: КНОПКА МИКРОФОНА — ДИКТОВКА ЧЕРЕЗ СЕРВЕР. Браузерный
+   SpeechRecognition в РФ не работает (распознавание Chrome ходит
+   на сервера Google — блокируются). Как и раньше: пишем звук
+   MediaRecorder'ом (кнопка светится красным + волна), по повторному
+   клику запись идёт на сервер (/api/transcribe), текст ложится
+   в поле ввода */
 let DICT = null;
-$('#micBtn').addEventListener('click', () => {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+$('#micBtn').addEventListener('click', async () => {
   const mb = $('#micBtn');
-  if (DICT) { try { DICT.stop(); } catch (e) {} return; }
-  if (!SR) { toast('Браузер не поддерживает распознавание речи', 'error'); return; }
-  const rec = new SR();
-  DICT = rec;
-  rec.lang = 'ru-RU';
-  rec.interimResults = true;
-  rec.continuous = true;
-  const box = $('#input');
-  const base = box && box.value ? box.value.replace(/\s+$/, '') + ' ' : '';
-  rec.onresult = (ev) => {
-    let txt = '';
-    for (let i = ev.resultIndex; i < ev.results.length; i++) {
-      txt += ev.results[i][0].transcript;
-    }
-    if (!box) return;
-    box.value = (base + txt).replace(/^\s+/, '');
-    try {
-      box.style.height = 'auto';
-      box.style.height = box.scrollHeight + 'px';
-    } catch (e) {}
-  };
-  rec.onend = () => { DICT = null; mb.classList.remove('rec'); };
-  rec.onerror = (ev) => {
-    if (ev && ev.error === 'not-allowed') toast('Нет доступа к микрофону', 'error');
-    DICT = null; mb.classList.remove('rec');
-  };
+  if (DICT) { try { DICT.rec.stop(); } catch (e) {} return; }
+  if (!window.MediaRecorder || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast('Браузер не поддерживает запись звука', 'error');
+    return;
+  }
   try {
-    rec.start();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4',
+                  'audio/ogg;codecs=opus']
+      .find((t) => MediaRecorder.isTypeSupported(t)) || '';
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    const chunks = [];
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      mb.classList.remove('rec');
+      DICT = null;
+      if (!chunks.length) return;
+      toast('Распознаю запись…', 'info', 'Микрофон');
+      try {
+        const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+        const wav = await blobToWav16k(blob);
+        const b64 = await new Promise((res) => {
+          const fr = new FileReader();
+          fr.onload = () => res(fr.result);
+          fr.readAsDataURL(wav);
+        });
+        const r = await api('/api/transcribe', { audio: b64, language: 'ru' });
+        const text = String((r && r.text) || '').trim();
+        if (!r || r.ok === false || !text) {
+          toast((r && r.error) || 'Не удалось распознать речь', 'error');
+          return;
+        }
+        const box = $('#input');
+        const base = box.value ? box.value.replace(/\s+$/, '') + ' ' : '';
+        box.value = (base + text).replace(/^\s+/, '');
+        autoGrow();
+        toast('Готово — текст в поле ввода', 'success', 'Микрофон');
+      } catch (e) {
+        toast('Не удалось распознать речь', 'error');
+      }
+    };
+    rec.start(250);
+    DICT = { rec, stream };
     mb.classList.add('rec');
-    toast('Диктовка включена — говори, текст появится в поле', 'success', 'Микрофон');
-  } catch (e) { DICT = null; }
+    toast('Говори — нажми кнопку ещё раз, чтобы расшифровать', 'info', 'Микрофон');
+  } catch (e) {
+    if (e && (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError')) {
+      toast('Нет доступа к микрофону — разреши его в браузере', 'error');
+    } else {
+      toast('Микрофон недоступен', 'error');
+    }
+  }
 });
 
 /* ============================ ГОЛОСОВОЙ РЕЖИМ ============================

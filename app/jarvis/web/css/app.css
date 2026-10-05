@@ -1443,21 +1443,23 @@ pre.out{margin:6px 0 0;padding:10px 12px;border-radius:9px;background:rgba(0,0,0
    Теперь индекс выровнен по правому краю узкой зоны у кончика:
    узкий стоит у носика, широкий растёт ВЛЕВО — как в настоящей
    математике, и никогда не задевает штрих */
-/* BM14: СТЕПЕНЬ ПРИЖАТА К НОСИКУ КОРНЯ, как в настоящей вёрстке ∛.
-   Прежние попытки давали огромный запас слева (1.46em) и степень,
-   висящую ОТДЕЛЬНО от знака — у самого левого края рамки. Теперь
-   носик стоит ближе (left:.74em), а бокс .msq-box базового кегля
-   (em считаются от размера КОРНЯ, не индекса) заканчивается прямо
-   у восходящего штриха носика: правый край степени касается штриха,
-   как «3» прижимается к галочке в ∛. Широкая степень растёт влево
-   ВНУТРИ рамки — не наружу и не на скобку */
-.msqrt .msq-box{position:absolute;top:0;left:0;width:1.05em;height:100%;
-  pointer-events:none}
+/* BM15: СТЕПЕНЬ — В УГЛУ КОРНЯ, БЕЗ ЛЮБЫХ ПРОМЕЖУТКОВ. Носик стоит
+   РОВНО там же, где у корня без степени (left:0 — «хорошее»
+   состояние). Степень лежит в верхнем-левом углу: её правый край
+   у восходящего штриха (бокс .30em), визуально «3» сидит в галочке
+   ∛, над крючком (крючок внизу — не мешает). Пустого запаса слева
+   НЕТ: обычная цифра целиком живёт в колонке носика (.40em).
+   Широкая степень («10», «k+1») не вылезает на соседний знак:
+   JS (fixRootIndices) меряет её ширину и сдвигает весь корень
+   вправо ровно на вынос (--msq-x) — пиксель в пиксель, без
+   фиксированных резервов */
+.msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;
+  height:100%;pointer-events:none}
 .msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;opacity:.85;
   z-index:1;line-height:1;white-space:nowrap;text-align:right}
-.msqrt.msqrt-i{padding-left:1.14em}
-.msqrt.msqrt-i .msq-svg{left:.74em}
-.msqrt.msqrt-i::after{left:calc(.74em + .35em)}
+.msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}
+.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}
+.msqrt.msqrt-i::after{left:calc(var(--msq-x,0em) + .35em)}
 /* BM12: СТЕПЕНЬ ОПУЩЕНА В ГРАНИЦЫ САМОГО КОРНЯ: верхняя граница степени
    не поднимается выше верхней границы корня (черты она не задевает —
    висит левее носика, где черты ещё нет). И корень в ЗНАМЕНАТЕЛЕ дроби
@@ -1555,13 +1557,19 @@ sup.msup,sub.msub{font-size:.72em}
   box-shadow:inset 0 0 24px rgba(0,200,240,.06);overflow:hidden}
 .emb-head{display:flex;align-items:center;gap:7px;padding:5px 10px;
   border-bottom:1px solid rgba(0,200,240,.14);
-  /* BM14: шапка ГЛУХАЯ — как строки вкладок инструментов агента:
-     ни грамма просвета, имя вкладки читается твёрдо на плотной полосе */
+  /* BM15: шапка ГЛУХАЯ — как строки вкладок инструментов агента;
+     цветовая маркировка и иконки — В ТОЧНОСТИ как у пунктов меню */
   background:rgb(10,20,33)}
-.emb-head .emb-ico{width:12px;height:12px;color:var(--cy);flex:none;
-  display:grid;place-items:center}
-.emb-head .emb-ico svg{width:12px;height:12px}
+.emb-head .emb-ico{width:16px;color:var(--cy);flex:none;
+  display:grid;place-items:center;font-size:13.5px;line-height:1}
+.emb-head .emb-ico svg{width:14px;height:14px}
 .emb-head b{font:600 9.5px/1 var(--ff);letter-spacing:1.9px;color:var(--tx2)}
+/* BM15: своя краска у каждой вкладки — ровно как в левом меню:
+   AUTO бирюза, ФАЙЛЫ лайм, ПАМЯТЬ фиолет, СЦЕНАРИИ приглушённый красный */
+.emb-v-auto .emb-ico{color:var(--teal)}
+.emb-v-files .emb-ico{color:var(--lime)}
+.emb-v-memory .emb-ico{color:var(--violet)}
+.emb-v-scenarios .emb-ico{color:#a84a5b}
 .emb-head .emb-sub{flex:1;font-size:10px;color:var(--tx3);overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 .emb-open{border:1px solid var(--line);border-radius:7px;background:transparent;

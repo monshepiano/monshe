@@ -2671,13 +2671,14 @@ function testIterationBKContracts() {
        размера корня, а не уменьшенного индекса; прежний right:calc уплывал */
     !css.includes('aspect-ratio:11/24') && !css.includes('border-top:1.4px') &&
     !css.includes('right:calc(100% - .98em)') &&
-    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.05em;height:100%;') &&
+    css.includes('.msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;') &&
     css.includes('.msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;') &&
-    css.includes('.msqrt.msqrt-i{padding-left:1.14em}') &&
-    css.includes('.msqrt.msqrt-i .msq-svg{left:.74em}') &&
+    css.includes('.msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}') &&
+    css.includes('.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}') &&
     markdown.includes('class="msq-box"><span class="msq-i">') &&
-    markdown.includes("msqrt' + (root ? ' msqrt-i' : ''"),
-    'BM3/BM13: the svg is cropped at the tip, the bar starts at the tip; the root index lives INSIDE the root box — it never overlaps the bracket on the left');
+    markdown.includes("msqrt' + (root ? ' msqrt-i' : ''") &&
+    js.includes('function fixRootIndices(root)'),
+    'BM3/BM13/BM15: the root svg stays at its native place (left:var(--msq-x)); the degree sits in the corner box, and a WIDE degree shifts the root by its measured overhang via --msq-x — no gap to the left of the root');
   // BK: ГРАФИК-ИНТЕРПРЕТАТОР — z(x,y)=, юникод-математика, спасение формул
   assert(js.includes("src.replace(/(^|[^\\w])([a-zA-Z])\\s*\\(([^)]*)\\)\\s*=/g,") &&
     js.includes(".replace(/[·×]/g, '*')") &&
@@ -2816,10 +2817,10 @@ function testIterationBM14Contracts() {
   const pyAuto = fs.readFileSync(path.join(root, 'app/jarvis/auto.py'), 'utf8');
   // КОРНИ: индекс в БОКСЕ базового кегля, прижат к штриху носика
   assert(markdown.includes('class="msq-box"><span class="msq-i">') &&
-    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.05em;height:100%;') &&
-    css.includes('.msqrt.msqrt-i .msq-svg{left:.74em}') &&
-    css.includes('.msqrt.msqrt-i{padding-left:1.14em}'),
-    'BM14: the root degree sits in a base-size box pressed against the nose stroke (svg .74em, no crazy left margin) — em units count from the ROOT size');
+    css.includes('.msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;') &&
+    css.includes('.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}') &&
+    css.includes('.msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}'),
+    'BM15: the degree nestles into the check corner and the root svg keeps its native place; a wide degree shifts the whole root by its measured overhang (--msq-x)');
   // BM14.1: мини-вкладки больше не висят «собираю вкладку…» вечно:
   // финальный монтаж не зависит от гонки флагов стрима
   assert(js.includes('function mountEmbedPanels(root, isFinal)') &&
@@ -2847,12 +2848,15 @@ function testIterationBM14Contracts() {
     'BM14.1: state questions get their tab card GUARANTEED server-side, and a schedule_task call on a state question is intercepted');
   // МИКРОФОН: обычная диктовка, разговор уехал в LIVE
   assert(html.includes('id="micBtn" data-tip="Диктовка"') &&
-    html.includes('M12 3.4a3.1 3.1 0 0 1 3.1 3.1') &&
-    js.includes("rec.lang = 'ru-RU'") &&
-    js.includes('box.value = (base + txt)') &&
+    js.includes('function blobToWav16k(') &&
+    js.includes("api('/api/transcribe'") &&
+    js.includes("mb.classList.add('rec')") &&
+    js.includes('box.value = (base + text)') &&
     !js.split("$('#micBtn').addEventListener('click'")[1].split('\n});')[0]
-      .includes('openVoiceMode'),
-    'BM14: the mic button is plain DICTATION — speech lands as text in the input; the voice chat moved to LIVE');
+      .includes('openVoiceMode') &&
+    !js.split("$('#micBtn').addEventListener('click'")[1].split('\n});')[0]
+      .includes('SpeechRecognition'),
+    'BM15: the mic button records via MediaRecorder, sends the wav to the SERVER /api/transcribe (browser ASR is dead in RU) and lands the text in the input; red .rec + wave stays');
   // ЖИВЫЕ КАРТОЧКИ: файл/факт — в момент события
   assert(js.includes("function embedLiveCard(ui, view, title)") &&
     js.includes("embedLiveCard(ui, 'files', 'файлы диалога')") &&
@@ -2879,9 +2883,58 @@ function testIterationBM14Contracts() {
      и маршрутизатор фона, и перехват schedule_task внутри прогона */
   assert(pyAuto.includes('agent.state_question(t)') &&
     pyAgent.includes('STATE_Q_RE') &&
-    pyAuto.includes('target_chat = task.get("chat_id") or ""') &&
-    pyAuto.includes('db.list_chats(1)'),
-    'BM14: state questions stay in the dialog; background task results and errors land as dialog messages, not note-dock cards');
+    pyAuto.includes('if task.get("chat_id"):') &&
+    pyAuto.includes('db.notify("AUTO: " + task["title"]') &&
+    !pyAuto.includes('target_chat') && !pyAuto.includes('db.list_chats(1)'),
+    'BM15: a task result lands in ITS OWN dialog (chat_id) — a chatless task is a note-dock notification, never pasted into the last active chat (the «answer to a previous request» bug)');
+}
+
+function testIterationBM15Contracts() {
+  const pyAuto = fs.readFileSync(path.join(root, 'app/jarvis/auto.py'), 'utf8');
+  const pyMedia = fs.readFileSync(path.join(root, 'app/jarvis/tools/media.py'), 'utf8');
+  // КОРНИ: степень ПРИЖАТА в галочку, носик на родном месте, никакого
+  // промежутка слева; широкая степень сдвигает корень JS-мерой (--msq-x)
+  assert(js.includes('function fixRootIndices(root)') &&
+    js.includes('--msq-x') &&
+    css.includes('.msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;') &&
+    css.includes('.msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}'),
+    'BM15 roots: the degree nestles into the check corner at the native svg place; a wide degree shifts the whole root by its measured overhang — zero gap on the left');
+  // МИНИ-ВКЛАДКИ: покраска и иконки — как у настоящих вкладок меню
+  assert(css.includes('.emb-v-auto') && css.includes('.emb-v-files') &&
+    css.includes('.emb-v-memory') && css.includes('.emb-v-scenarios') &&
+    js.includes("auto: { name: 'AUTO', sub: 'фоновые задачи', view: 'auto', ico: '◎' }"),
+    'BM15 embed cards: each view is painted from the nav variables and carries its menu icon');
+  // ФОНОВАЯ ЗАДАЧА = ОДНА карточка; карточки не пропадают и не меняются местами
+  assert(js.includes("case 'background': {") &&
+    js.split("case 'background': {")[1].split("case '")[0].includes('embedLiveAuto(ui);') &&
+    !js.split("case 'background': {")[1].split("case '")[0].includes('bg-card') &&
+    js.includes('function embedLiveAutoSettle(ui)') &&
+    js.includes("else ui.node.body.appendChild(panel);"),
+    'BM15: a background task produces exactly ONE embed card (no bg-card swap dance); a live card whose anchor died is appended to the body instead of vanishing');
+  // ЖИВАЯ СИНХРОНИЗАЦИЯ всех мини-вкладок (не только AUTO)
+  assert(js.includes('const embSync = (fetchCall, fingerprint) => {') &&
+    js.includes("embSync(() => api('/api/memory')") &&
+    js.includes("embSync(() => api('/api/scenarios')"),
+    'BM15: files/memory/scenarios embed cards re-check their tab every 4s by fingerprint and rebuild on change');
+  // ОТВЕТ ПО ВКЛАДКЕ — по реальному снимку, а не по памяти контекста
+  assert(pyAgent.includes('def state_question_snapshot(view: str)') &&
+    pyAgent.includes('Отвечай пользователю строго по этим данным'),
+    'BM15: a state question gets the REAL tab snapshot injected into convo — the answer can no longer contradict the tab');
+  // МЕДИА: стриминги — не результат; искать прямой файл / RuTube / VK
+  assert(pyMedia.includes('_STREAMING_RE') &&
+    pyMedia.includes('music\\.yandex') && pyMedia.includes('spotify\\.com') &&
+    pyMedia.includes('RuTube/VK'),
+    'BM15 media: Yandex Music/Spotify/YouTube links are a dead end, not a result — the model must fetch a direct file or RuTube/VK source');
+  // МИКРОФОН: серверная диктовка MediaRecorder -> /api/transcribe
+  assert(js.includes('function blobToWav16k(') &&
+    js.includes("api('/api/transcribe'") &&
+    js.includes("mb.classList.add('rec')"),
+    'BM15 mic: dictation records via MediaRecorder and transcribes server-side (browser ASR does not work in RU)');
+  // РЕЗУЛЬТАТ ЧУЖОЙ ЗАДАЧИ — уведомлением, не в последний диалог
+  assert(pyAuto.includes('if task.get("chat_id"):') &&
+    pyAuto.includes('db.notify("AUTO: " + task["title"]') &&
+    !pyAuto.includes('db.list_chats(1)'),
+    'BM15 auto: only THIS dialog tasks write into the dialog; chatless results are note-dock notifications');
 }
 
 function testIterationAOContracts() {
@@ -3044,10 +3097,10 @@ function testIterationBM9Contracts() {
   // корень в ЗНАМЕНАТЕЛЕ дроби опущен (не наезжает на знак дроби)
   /* BM14: индекс в боксе базового кегля — .msq-box держит em корня */
   assert(css.includes('.msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;') &&
-    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.05em;height:100%;') &&
-    css.includes('.msqrt.msqrt-i .msq-svg{left:.74em}') &&
+    css.includes('.msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;') &&
+    css.includes('.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}') &&
     css.includes('.mfr-d .msqrt{margin-top:.22em}'),
-    'BM12/BM13: the root degree stays INSIDE the root bounds (BM13: also inside the box — never onto the bracket); a root in the denominator drops below the fraction bar');
+    'BM12/BM13/BM15: the root degree stays INSIDE the root bounds, nestled into the corner (wide degrees shift the root via --msq-x); a root in the denominator drops below the fraction bar');
   // BM9: 3D — ЛКМ вращает, ПКМ пан; короткий ПКМ — обычное меню
   const p3 = js.split('function buildPlot3Panel(')[1].split('\nfunction ')[0];
   assert(p3.includes("(e.button === 0 || e.button === 1) ? 'rot' : (e.button === 2 ? 'pan' : null)"),
@@ -3213,9 +3266,9 @@ function testIterationBM12Contracts() {
     'BM12: media arrives as a FILE in the chat (like a messenger), a bare link instead is an error');
   // КОРЕНЬ: степень внутри границ корня
   /* BM14: индекс в боксе базового кегля (.msq-box) — em от корня */
-  assert(css.includes('.msqrt.msqrt-i{padding-left:1.14em}') &&
-    css.includes('.msqrt .msq-box{position:absolute;top:0;left:0;width:1.05em;height:100%;') &&
-    css.includes('.msqrt.msqrt-i .msq-svg{left:.74em}') &&
+  assert(css.includes('.msqrt.msqrt-i{padding-left:calc(.40em + var(--msq-x,0em))}') &&
+    css.includes('.msqrt .msq-box{position:absolute;top:0;left:var(--msq-x,0em);width:.30em;') &&
+    css.includes('.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}') &&
     css.includes('.msqrt .msq-i{position:absolute;top:0;right:0;font-size:.58em;'),
     'BM12/BM13: the root degree is down and left, never above the root, and (BM13) always inside the root box — never onto the bracket');
   // СВАЙП: распознание быстрее; кнопки реагируют мгновенно
@@ -4108,8 +4161,9 @@ function testIterationBHContracts() {
   testIterationBM12Contracts();
   testIterationBM13Contracts();
   testIterationBM14Contracts();
+  testIterationBM15Contracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 58 regression groups passed');
+  console.log('package28_frontend_runtime: 59 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
