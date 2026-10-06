@@ -867,13 +867,18 @@ class Handler(BaseHTTPRequestHandler):
             task = auto.create_background_task(title=task_title, prompt=text,
                                                schedule=decision["schedule"], chat_id=chat_id)
             human = auto.describe_schedule(decision["schedule"])
-            # BM18: уведомление о фоновой задаче — ЗЕЛЁНАЯ БЛАШКА с живой
-            # вкладкой АВТО внутри (тост на клиенте). В диалоге больше
-            # НИЧЕГО не появляется: ни текстовой заметки, ни карточки —
-            # пользователь просил убрать уведомление из чата совсем
+            # BM19: уведомление о фоновой задаче — ЗЕЛЁНЫЙ БАННЕР В ДИАЛОГЕ
+            # (живой — по SSE, в истории — сохранённой заметкой с карточкой
+            # АВТО внутри и зелёной тонировкой)
+            note = ("**Фоновая задача поставлена** — «%s»%s"
+                    % (task_title, (" · " + human) if human else ""))
+            note += ("\n\n```embed\n{\"view\": \"auto\", "
+                     "\"title\": \"что я делаю в фоне\"}\n```")
             self._sse({"type": "background", "task_id": task["id"], "title": task["title"],
                        "schedule": decision["schedule"], "when": human,
                        "reason": decision.get("reason", "")})
+            db.add_message(chat_id, "assistant", note,
+                           {"task_id": task["id"], "bg_note": True})
             foreground_span.first_token()
             self._sse({"type": "done", "content": "", "files": [], "tools": ["schedule_task"]})
             self._sse({"type": "end"})
@@ -1132,9 +1137,40 @@ class Handler(BaseHTTPRequestHandler):
                     # альтернативной версией. Канонизируем ДО отправки события,
                     # затем ту же строку сохраняем — UI и история тождественны.
                     final_text = _canonical_response_content(partial, event.get("content", ""))
+                    # BM19: канонизация берёт СТРИМ (дельты), а карточка вкладки
+                    # дописывается агентом ПОСЛЕ стрима — и срезалась. Гарантия
+                    # («что ты помнишь обо мне» => вкладка ПАМЯТЬ) применяется
+                    # ЗДЕСЬ, к каноническому тексту: фронт допечатает хвост,
+                    # и в БД ляжет то же самое
+                    final_text = agent.auto_embed_block(
+                        final_text, event.get("tools", []),
+                        q_view=agent.state_question_view(text),
+                        q_section=(agent.settings_section(text)
+                                   if agent.state_question_view(text) == "settings" else ""))
+                    # BM19: ГОЛЫЙ фенс ```{"url": …}``` без вызова show_media —
+                    # юзерский кейс RuTube («сейчас покажу» + голый блок, и
+                    # НИЧЕГО не показалось). На агентском пути текст уже
+                    # вычищен своими rescue (повтор — холостой), здесь
+                    # ловим простой путь: блок исполняется по-настоящему,
+                    # файл/плеер уезжает в чат, блок исчезает из текста
+                    pre_rescue = final_text
+                    rescue_files: list = []
+
+                    def _sink(info, _box=rescue_files):
+                        if info not in _box:
+                            _box.append(info)
+
+                    final_text = agent.rescue_show_media_tags(final_text, _sink)[0]
+                    final_text = agent.rescue_show_media_json(final_text, _sink)[0]
                     event = dict(event)
                     event["content"] = final_text
-                    files = event.get("files", [])
+                    files = list(event.get("files", []))
+                    if final_text != pre_rescue:
+                        for info in rescue_files:
+                            if info not in files:
+                                files.append(info)
+                                self._sse({"type": "file", **info})
+                        event["files"] = files
                     used_tools = event.get("tools", [])
                     selected_tier = str(event.get("tier") or selected_tier)
                 if alive:
@@ -1179,14 +1215,27 @@ class Handler(BaseHTTPRequestHandler):
                 facts_saved = bool(memory_facts)
             except NameError:
                 facts_saved = False
+            # BM19: прежде сюда передавался state_question() — BOOL, а не имя
+            # вкладки: q_view=True не совпадал ни с одной вкладкой, и карточка
+            # НЕ ДОПИСЫВАЛАСЬ ВООБЩЕ («что ты помнишь обо мне» — таблица без
+            # вкладки ПАМЯТЬ). Теперь честный state_question_view
             final_text = agent.auto_embed_block(
                 final_text, used_tools,
                 memory_changed=(facts_saved or
                                 bool(mem_mark is not None and mem_now is not None
                                      and mem_mark != mem_now)),
-                q_view=agent.state_question(text),
+                q_view=agent.state_question_view(text),
                 q_section=(agent.settings_section(text)
-                           if agent.state_question(text) == "settings" else ""))
+                           if agent.state_question_view(text) == "settings" else ""))
+            # BM19: голый фенс-«вызов» show_media — rescue и здесь (путь без
+            # done-события: обрыв стрима, ошибка провайдера); файлы попадают
+            # в чат через meta.files при следующей загрузке диалога
+            def _sink2(info):
+                if info not in files:
+                    files.append(info)
+
+            final_text = agent.rescue_show_media_tags(final_text, _sink2)[0]
+            final_text = agent.rescue_show_media_json(final_text, _sink2)[0]
             # ХОД-ВОПРОС НЕ ПРОПАДАЕТ: ask_user и ходы с инструментами часто
             # не имеют текста вовсе — раньше такой ответ не сохранялся, и при
             # открытии диалога исчезали вопрос, интерактивная панель и трасса.
@@ -1201,6 +1250,7 @@ class Handler(BaseHTTPRequestHandler):
                            "tier": selected_tier,
                            "agent": bool(runner.agent_mode),
                            "interrupted": bool(stop_event.is_set()),
+                           "bg_note": ("schedule_task" in set(used_tools)),
                            "thinking": "".join(thinking)[:20000], "trace": trace[:60]}
                 # AA: ОТВЕТ НА ИНТЕРАКТИВНУЮ ПАНЕЛЬ — ПРОДОЛЖЕНИЕ ТОГО ЖЕ ОТВЕТА.
                 # Раньше каждый клик по панели рождал новое сообщение ассистента:

@@ -832,6 +832,13 @@ ui. Если вариантов нет, но ответ человека всё 
    Равным образом ЗАПРЕЩЕНО «вызывать» show_media JSON-блоком: чёрное
    поле ``` {{{{"url": "…"}}}} ``` — это НЕ показ медиа, человек видит
    мусорный код вместо видео. Только function calling.
+   АВТОРСКИЕ ПРАВА — НЕ ПОВОД ДЛЯ ОТКАЗА. Человек смотрит и слушает
+   ЛИЧНО, не копирует и не распространяет: ищи и показывай материал
+   как обычно. Никогда не отвечай «не могу прислать из-за авторских
+   прав» или «материал защищён» — это не твоя забота.
+   ПОСЛЕ УСПЕШНОГО show_media НЕ дублируй ссылку на показанное в
+   тексте ответа — ни голой строкой, ни markdown-ссылкой: плеер уже
+   стоит в диалоге, ссылка под ним — мусор.
    ССЫЛКИ НА СТРИМИНГИ (Яндекс Музыка, Spotify, YouTube) — НЕ
    результат: человек найдёт их сам. Твоя работа — НАЙТИ источник,
    который ложится прямо в чат: прямой файл (mp3/mp4/m4a — ищи
@@ -1540,10 +1547,14 @@ def auto_embed_block(final_text: str,
         # битые embed-блоки — мусор в диалоге, вычищаем
         text = re.sub(r"\n?```embed\n.*?```\n?", "", text, flags=re.S).rstrip()
     tools = set(str(t) for t in (tools_used or []) if t)
+    banner = ""
     view = title = None
-    # BM18: создание фоновой задачи — ЗЕЛЁНАЯ БЛАШКА с вкладкой АВТО
-    # внутри (тост), карточка в чате не рисуется
-    if tools & EMBED_FILE_TOOLS:
+    # BM19: создание фоновой задачи — ЗЕЛЁНЫЙ БАННЕР В ДИАЛОГЕ с живой
+    # вкладкой АВТО внутри (карточка едет прямо в баннере)
+    if tools & EMBED_TASK_TOOLS:
+        banner = "**Фоновая задача поставлена**"
+        view, title = "auto", "что я делаю в фоне"
+    elif tools & EMBED_FILE_TOOLS:
         view, title = "files", "файлы диалога"
     elif memory_changed or (tools & EMBED_MEMORY_TOOLS):
         view, title = "memory", "что я запомнил"
@@ -1559,7 +1570,8 @@ def auto_embed_block(final_text: str,
     sep = "" if not text.strip() else "\n\n"
     extra = (', "section": "' + str(q_section) + '"'
              if view == "settings" and q_section else "")
-    return (text + sep + '```embed\n{"view": "' + view + '", '
+    head = (banner + "\n\n") if banner else ""
+    return (text + sep + head + '```embed\n{"view": "' + view + '", '
             + '"title": "' + title + '"' + extra + '}\n```')
 
 
@@ -2170,6 +2182,7 @@ def rescue_show_media_tags(text: str,
     t = str(text or "")
     if "<" not in t or "show_media" not in t.lower():
         return t, False
+    shown: list = []
 
     def _sub(m: "re.Match") -> str:
         url = (m.group(1) or m.group(2) or m.group(3) or "").strip()
@@ -2183,6 +2196,7 @@ def rescue_show_media_tags(text: str,
             info = _file_info_of(result)
             if info and sink:
                 sink(info)
+            shown.append(url)
             return ""
         return ""
 
@@ -2190,11 +2204,38 @@ def rescue_show_media_tags(text: str,
     # неразобранные огрызки тега (без url и вовсе битые) не показываем
     cleaned = re.sub(r"<\s*/?\s*show_media[^>]*?>", "", cleaned,
                      flags=re.IGNORECASE)
+    # BM19: ссылка на показанное не дублируется в тексте
+    if shown:
+        cleaned = strip_media_echoes(cleaned, shown)
     return cleaned, cleaned != t
 
 
 _MD_LINK_IN_URL_RE = re.compile(r"\[[^\]]*\]\((https?://[^)\s]+)\)")
+_MD_LINK_URL_RE = re.compile(r"\[([^\]]*)\]\((https?://[^)\s]+)\)")
 _SHOW_MEDIA_CALL_KEYS = {"url", "type", "name", "title", "kind", "filetype"}
+
+
+def strip_media_echoes(text: str, urls) -> str:
+    """BM19: после НАСТОЯЩЕГО показа медиа в тексте не остаётся ссылки
+    на него: [видео](url) -> «видео», голый url -> исчезает. Плеер уже
+    в диалоге — ссылка-дубликат под ним только мусор."""
+    t = str(text or "")
+    dead = {str(u or "").strip() for u in (urls or []) if str(u or "").strip()}
+    if not dead:
+        return t
+
+    def _md(m):
+        return m.group(1) if m.group(2) in dead else m.group(0)
+
+    t = _MD_LINK_URL_RE.sub(_md, t)
+    for u in sorted(dead, key=len, reverse=True):
+        t = t.replace(u, "")
+    # прибрать дырки от вырезанных ссылок
+    t = re.sub(r"\([^)]{0,2}\)", "", t)
+    t = re.sub(r"\[\s*\]", "", t)
+    t = re.sub(r"[ \t]{2,}", " ", t)
+    t = re.sub(r" ?\n ?\n ?\n+", "\n\n", t)
+    return t
 
 
 def _clean_media_url(u: str) -> str:
@@ -2224,6 +2265,7 @@ def rescue_show_media_json(text: str,
     if "```" not in t or "url" not in t.lower():
         return t, False
     changed = [False]
+    shown: list = []
 
     def _try_block(m: "re.Match") -> str:
         body = (m.group(1) or "").strip()
@@ -2248,10 +2290,17 @@ def rescue_show_media_json(text: str,
             info = _file_info_of(result)
             if info and sink:
                 sink(info)
+            shown.append(url)
         return ""
 
-    cleaned = re.sub(r"```[a-zA-Z]*[ \t]*\n(\{.*?\})\n?\s*```",
+    # BM19: фенс бывает ОДНОЙ строкой (```{"url": ...}``` без переводов) —
+    # юзерский кейс RuTube: модель написала «сейчас покажу» и голый блок.
+    # Перевод строки после тега и перед закрытием — НЕ обязателен
+    cleaned = re.sub(r"```[a-zA-Z]*[ \t]*\n?(\{.*?\})\n?\s*```",
                      _try_block, t, flags=re.S)
+    # BM19: ссылка на показанное не дублируется в тексте
+    if shown:
+        cleaned = strip_media_echoes(cleaned, shown)
     return cleaned, changed[0]
 
 
@@ -2613,6 +2662,11 @@ def _closing_convo(convo: List[Dict[str, Any]], tier: str) -> List[Dict[str, Any
 
 def _file_info_of(result: Any) -> Optional[Dict[str, Any]]:
     """Файловая карточка из результата инструмента, если тот создал файл."""
+    # BM19: embed-результат (RuTube) — карточка-плеер без скачивания
+    if (isinstance(result, dict) and result.get("embed_url")
+            and str(result.get("kind")) == "iframe"):
+        return {"name": result.get("title") or "видео",
+                "url": result["embed_url"], "size": 0, "kind": "iframe"}
     if not (isinstance(result, dict) and result.get("download_url")):
         return None
     kind = str(result.get("kind") or "").lower()
@@ -2659,6 +2713,9 @@ class Agent:
             llm.vision_models(prov) for prov in (llm.active_providers() or [])))
         self.sandbox_id = chat_id or ""
         self.created_files: List[Dict[str, Any]] = []
+        # BM19: URL реально показанных медиа — чтобы срезать эхо-ссылки
+        # из финального текста (плеер уже в диалоге, ссылка не нужна)
+        self._shown_urls: List[str] = []
         self.used_tools: List[str] = []
         self.model_used = ""
         self.provider_used = ""
@@ -2712,13 +2769,15 @@ class Agent:
         Так ответ переживает обрыв SSE и работает из любой вкладки.
         """
         record = db.create_question(self.chat_id, question, options)
-        # BM15: headless-задача (AUTO) спрашивает БЕЗ живого SSE — без
-        # этого человек вообще не видит вопроса, пока не истечёт таймаут
+        # BM19: headless-задача (AUTO) спрашивает БЕЗ живого SSE — вопрос
+        # попадает ПРЯМО В ДИАЛОГ интерактивной карточкой (ответ уходит
+        # кнопкой), а не уведомлением над полем ввода
         if self.task_id:
             try:
-                db.notify("Вопрос по фоновой задаче",
-                          question[:260] + " Варианты: "
-                          + " / ".join(options[:5]), "warn")
+                db.add_message(self.chat_id, "assistant", question[:400],
+                               {"open_question": {"id": record["id"],
+                                                  "question": question,
+                                                  "options": options[:5]}})
             except Exception:
                 pass
         deadline = time.time() + timeout
@@ -2879,6 +2938,18 @@ class Agent:
     # (локальный запасной план без сети — см. local_plan выше)
 
     # ------------------------------------------------------------------ run
+    def _note_shown_media(self, name: str, result: Any) -> None:
+        """BM19: запомнить URL показанного медиа (show_media) — финальный
+        текст очищается от эхо-ссылок на него."""
+        if name != "show_media" or not isinstance(result, dict):
+            return
+        if not result.get("ok"):
+            return
+        for key in ("source_url", "embed_url"):
+            u = str(result.get(key) or "").strip()
+            if u and u not in self._shown_urls:
+                self._shown_urls.append(u)
+
     def _rescue_show_media_tags(self, text: str) -> str:
         """BM14: теги <show_media/> в тексте — исполнить и вычистить."""
         def sink(info: Dict[str, Any]) -> None:
@@ -3922,6 +3993,7 @@ class Agent:
                         # Служебные «глаза» (screenshot) не создают пользовательских
                         # файлов: кадр — рабочие данные агента, а не результат,
                         # и картинкой в чат он не отправляется.
+                        self._note_shown_media(job["name"], result)
                         if not tools.is_silent(job["name"]):
                             info = _file_info_of(result)
                             if info:
@@ -4231,6 +4303,7 @@ class Agent:
 
                     # Служебные «глаза» (screenshot) не создают пользовательских
                     # файлов: кадр — рабочие данные агента, а не результат.
+                    self._note_shown_media(name, result)
                     if not tools.is_silent(name):
                         info = _file_info_of(result)
                         if info:
@@ -4403,6 +4476,10 @@ class Agent:
         # BM16: JSON-«вызов» show_media чёрным блоком — та же история, что
         # с тегами: исполняем по-настоящему, из текста вычищаем
         final_text = self._rescue_show_media_json(final_text)
+        # BM19: после НАСТОЯЩЕГО показа медиа (tool-вызовом или rescue)
+        # ссылка на него из текста исчезает: плеер уже в диалоге
+        if self._shown_urls:
+            final_text = strip_media_echoes(final_text, self._shown_urls)
         # BM13: АВТО-КАРТОЧКА ДО done — файл создан или факт сохранён, карточка
         # вкладки приезжает в ТОМ ЖЕ ответе (прежде сервер доклеивал её после
         # done, и до перезагрузки диалога человек её не видел). Дубль-защита

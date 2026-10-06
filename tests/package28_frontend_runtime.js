@@ -968,7 +968,7 @@ async function testCameraLifecycleOwnershipAndLateResults() {
     fastScrollToBottom() {},
     S: requestState, AbortController, fetch: fetchFake,
     flushTools() {},
-    setInterval, clearInterval,
+    setInterval, clearInterval, clearTimeout,
     $: (selector) => selector === '#input' ? input : (selector === '#replyBar' ? reply : null),
     foldAllNotes() {}, camLive() { return true; }, stream() { return mainHost; },
     renderAttachments() { renderedAttachments = requestState.attachments.length; },
@@ -2865,10 +2865,11 @@ function testIterationBM14Contracts() {
     js.includes("embedLiveCard(ui, 'files', 'файлы диалога')") &&
     js.includes("embedLiveCard(ui, 'memory', 'что я запомнил')") &&
     js.split("case 'background':")[1].split("case '")[0]
-      .includes('toastAutoCard(ev.title)') &&
+      .includes('bgTaskNote(ui, ev.title, ev.when') &&
     !js.split("case 'background':")[1].split("case '")[0]
-      .includes('embedLiveAuto(ui)'),
-    'BM14/BM18: FILES card the moment a file is created, MEMORY card the moment a fact is saved; a backgrounded task shows the GREEN BADGE carrying the live AUTO tab');
+      .includes('embedLiveAuto(ui)') &&
+    !js.includes('toastAutoCard'),
+    'BM14/BM19: FILES card the moment a file is created, MEMORY card the moment a fact is saved; a backgrounded task shows the GREEN IN-CHAT BANNER carrying the live AUTO tab (corner toasts are gone)');
   // ТУЛТИПЫ: глобальный fixed-оверлей
   assert(js.includes("document.addEventListener('pointerover'") &&
     css.includes('.g-tip{position:fixed;z-index:300') &&
@@ -2912,7 +2913,7 @@ function testIterationBM15Contracts() {
   // ФОНОВАЯ ЗАДАЧА = ОДНА зелёная блашка с вкладкой (BM18); карточки
   // не пропадают и не меняются местами
   assert(js.includes("case 'background': {") &&
-    js.split("case 'background': {")[1].split("case '")[0].includes('toastAutoCard(ev.title);') &&
+    js.split("case 'background': {")[1].split("case '")[0].includes("bgTaskNote(ui, ev.title, ev.when || '');") &&
     !js.split("case 'background': {")[1].split("case '")[0].includes('bg-card') &&
     js.includes('function embedLiveAutoSettle(ui)') &&
     js.includes("else ui.node.body.appendChild(panel);"),
@@ -2976,16 +2977,13 @@ function testIterationBM16Contracts() {
     css.includes('transform-origin:0 0;animation:embIn .6s cubic-bezier(.22,.61,.25,1) both') &&
     css.includes('@keyframes embIn{from{transform:scale(.5,.35);opacity:0}') &&
     css.includes('.embed-card.no-in{animation:none}') &&
-    /* BM18: объекты открываются КАК В ОСНОВНЫХ ВКЛАДКАХ — openObject
-       (переход + прокрутка + вспышка), никаких разворотов в карточке */
-    bep.includes('const openObject = (view, sel) => {') &&
-    bep.includes(".task-card[data-task-id=") &&
-    bep.includes(".mem-card[data-key=") &&
-    bep.includes(".scenario-card[data-title=") &&
-    bep.includes(".sset[data-section=") &&
-    bep.includes("node.scrollIntoView({ behavior: 'smooth', block: 'center' });") &&
-    css.includes('@keyframes flashIn') &&
-    !bep.includes('toggleMore') &&
+    /* BM19: содержимое открывается ПРЯМО ИЗ ДИАЛОГА — клик по строке
+       разворачивает детали ПОД ней (toggleMore), без ухода во вкладку */
+    bep.includes('const toggleMore = (row, html) => {') &&
+    bep.includes('row.after(more);') &&
+    css.includes('.emb-more{') &&
+    css.includes('@keyframes embMoreIn') &&
+    !bep.includes('openObject') &&
     /* изменённый файл — зелёный акцент вкладки «Файлы» */
     bep.includes('file-changed') &&
     css.includes('rgba(143,179,90,.12)') &&
@@ -3005,7 +3003,7 @@ function testIterationBM16Contracts() {
   // AUTO: уведомление при создании из чата; карточки на старте НЕТ
   const tr = js.split("case 'tool_result': {")[1].split("case '")[0];
   const ts = js.split("case 'tool_start': {")[1].split("case '")[0];
-  assert(tr.includes('toastAutoCard(tt);') &&
+  assert(tr.includes("bgTaskNote(ui, tt, '');") &&
     !tr.includes('embedLiveAuto(ui)') &&
     !ts.includes('embedLiveAuto(ui)') &&
     pyServer.includes('if agent.state_question(text):') &&
@@ -3055,18 +3053,19 @@ function testIterationBM17Contracts() {
       .includes('box.value = (base + String(text)'),
     'BM17 mic: dictation transcribes LIVE in 3s segments straight into the input (second click stops) — zero microphone notifications');
   // УВЕДОМЛЕНИЕ О ФОНОВОЙ ЗАДАЧЕ: вкладка АВТО — прямо в нём
-  const ta = js.split('function toastAutoCard(taskTitle)')[1].split('\nfunction ')[0];
-  assert(js.includes('function toastAutoCard(taskTitle)') &&
+  const ta = js.split('function bgTaskNote(ui, title, when)')[1].split('\nfunction ')[0];
+  assert(js.includes('function bgTaskNote(ui, title, when)') &&
     ta.includes('Фоновая задача поставлена') &&
     ta.includes('embedBuildSafe(panel, spec)') &&
-    !ta.includes("setTimeout(() => { t.classList.add('out')") &&
+    ta.includes("panel.dataset.live = '1'") &&
     js.split("case 'tool_result': {")[1].split("case '")[0]
-      .includes("toastAutoCard(tt);") &&
+      .includes("bgTaskNote(ui, tt, '');") &&
     js.split("case 'background': {")[1].split("case '")[0]
-      .includes("toastAutoCard(ev.title);") &&
-    css.includes('.toast.toast-auto{display:block;max-width:390px;padding:0}') &&
-    css.includes('.toast.toast-auto .emb-body{max-height:236px;overflow:auto}'),
-    'BM17 notification: a background task created via chat gets a notification with the AUTO tab unfolding RIGHT INSIDE it (live card, click-outside to close, no auto-dismiss)');
+      .includes("bgTaskNote(ui, ev.title, ev.when || '');") &&
+    !js.includes('toastAutoCard') &&
+    css.includes('.bg-note{') &&
+    css.includes('.bg-note .emb-body{max-height:236px;overflow:auto}'),
+    'BM17/BM19 notification: a background task created via chat gets the GREEN IN-CHAT BANNER with the AUTO tab unfolding right inside it (lives in the dialog feed, no corner toast, no auto-dismiss)');
   // ШАПКА МИНИ-ВКЛАДКИ: однородный синий; строки не белеют при ховере
   const head = css.split('.emb-head{')[1].split('}')[0] + css.split('.emb-head{')[1].split('}')[1];
   const hover = css.split('.emb-row:hover{')[1].split('}')[0];
@@ -3116,27 +3115,35 @@ function testIterationBM18Contracts() {
     'BM18 memory: a model-broken ```embed block is stripped and the guaranteed tab card is still appended — «что ты помнишь обо мне» always gets the MEMORY tab');
   // УВЕДОМЛЕНИЕ О ФОНЕ: заметка в чат НЕ сохраняется
   assert(pyServer.split('if server_scheduled:')[1].split('self._sse_close()')[0]
-      .includes('ЗЕЛЁНАЯ БЛАШКА') &&
-    !pyServer.includes('db.add_message(chat_id, "assistant", note') &&
+      .includes('ЗЕЛЁНЫЙ БАННЕР В ДИАЛОГЕ') &&
+    pyServer.includes('db.add_message(chat_id, "assistant", note') &&
+    pyServer.split('if server_scheduled:')[1].split('self._sse_close()')[0]
+      .includes('"bg_note": True') &&
     pyAgent.replace(/\s+/g, ' ').includes('НЕ вставляй карточку AUTO сам'),
-    'BM18 auto: the background route saves NO note into the dialog — only the green badge with the live AUTO tab; the prompt no longer asks the model to embed an auto card');
+    'BM19 auto: the background route shows the GREEN IN-CHAT BANNER live (SSE) AND saves the same banner note (AUTO tab card + bg_note tint) into the dialog history; the prompt never asks the model to embed an auto card itself');
   // ДОК: пустоты над LIVE нет; морф — одна траектория
   assert(css.includes('.app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden}') &&
     js.includes("if (sp) sp.style.maxHeight = '0px';") &&
     js.includes("app.classList.remove('side-folding');") &&
     css.includes('.app.collapsed .chats-block{flex-grow:0;') &&
     css.includes('.app.collapsed .side-foot{max-height:0;') &&
-    css.includes('.side-folding .brand{opacity:0}') &&
+    css.includes('--fold-t:.52s') &&
+    css.includes('.side-folding .spaces,.side-folding .chats-block') &&
+    !css.includes('\n.side-folding .brand{opacity:0}') &&
+    css.includes('.app.legacy-fold .side-folding .brand{opacity:0}') &&
+    css.includes('.spaces.no-spaces{padding-top:2px;padding-bottom:4px;gap:0}') &&
     !css.includes('cubic-bezier(.3,1.12,.4,1)') &&
     !js.includes('cubic-bezier(.3,1.1,.4,1)'),
-    'BM18 dock: no phantom space above LIVE (spaces collapse at startup too); the sidebar morph is ONE motion — chats/footer/brand/items glide on one curve with no display:none snaps and no overshoot bounce in the flyout');
+    'BM19 dock: the morph is rebuilt from scratch — ONE duration and ONE curve for every participant (nothing arrives late), the core and the arrow NEVER fade out (old drawing kept behind .legacy-fold); with all spaces hidden LIVE sits tight under the brand (no phantom strip)');
   // МЕДИА: стоки скипаются, прямые файлы — первыми
   const pyMedia = fs.readFileSync(path.join(root, 'app/jarvis/tools/media.py'), 'utf8');
-  assert(pyMedia.includes('_STOCK_RE') && pyMedia.includes('dreamstime') &&
-    pyMedia.includes('_DIRECT_FILE_RE') &&
-    pyMedia.split('def _media_from_query')[1]
-      .includes('if pass_no == 1 and not _DIRECT_FILE_RE.search(link):'),
-    'BM18 media: stock sites (Dreamstime/Pikbest/… — 403 and no file) are skipped, direct .mp3/.mp4 links are tried first, query variants follow the intent');
+  assert(!pyMedia.includes('_STOCK_RE') && !pyMedia.includes('dreamstime') &&
+    !pyMedia.includes('_DIRECT_FILE_RE') &&
+    !pyMedia.split('def _media_from_query')[1].includes('pass_no') &&
+    pyMedia.includes('_RUTUBE_RE') &&
+    pyMedia.includes('rutube.ru/play/embed/') &&
+    pyMedia.split('def show_media')[1].includes('"kind": "iframe"'),
+    'BM19 media: the search scaffolding (stock skips, direct-first passes, intent variants) is GONE — the search is simple again; a RuTube page link becomes the official embed player (kind:"iframe"), no downloading');
 }
 
 function testIterationAOContracts() {

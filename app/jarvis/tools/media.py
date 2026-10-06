@@ -1042,22 +1042,18 @@ _STREAMING_RE = re.compile(
     r"(?:music\.yandex|spotify\.com|zvuk\.com|apple\.com/music|deezer)", re.IGNORECASE)
 
 
+# BM19: RuTube — ссылка на страницу видео (rutube.ru/video/ID) НЕ содержит
+# прямого файла, но у каждой страницы есть официальный embed-плеер
+# rutube.ru/play/embed/ID. Качать страницу бессмысленно: возвращаем
+# embed-результат, фронт рисует iframe
+_RUTUBE_RE = re.compile(
+    r"(?i)^https?://(?:www\.)?rutube\.ru/(?:video|play/embed|shorts)/([0-9a-f]{6,32})/?$")
+
+
 _QUERY_EMBED_HINT = (
     "ссылка не нужна: покажи запрос текстом или воспользуйся web_search и "
     "передай show_media найденную страницу/файл")
 
-# BM18: стоки и платные медиатеки — глухой край: плеера у них нет, файл
-# прячут за оплатой, а роботов встречают 403. Иметь их в результате —
-# значит гарантированно НЕ найти файл. Скипаем сразу
-_STOCK_RE = re.compile(
-    r"(?:dreamstime|pikbest|shutterstock|gettyimages|istockphoto|"
-    r"stock\.adobe|depositphotos|123rf|alamy|storyblocks|pond5|artlist|"
-    r"epidemicsound|freepik|vecteezy|mixkit|motionarray|motionarray\.com|"
-    r"magnific\.ai|freepik\.com|vecteezy\.com)", re.IGNORECASE)
-
-# прямое расширение файла в ссылке — самый желанный результат
-_DIRECT_FILE_RE = re.compile(
-    r"\.mp[34]|\.m4a|\.webm|\.ogg|\.mov|\.m3u8?$|\.aac", re.IGNORECASE)
 
 
 def _looks_like_domain(s: str) -> bool:
@@ -1074,57 +1070,39 @@ def _media_from_query(query: str) -> Dict[str, Any]:
     q = re.sub(r"\s+", " ", str(query or "")).strip()
     if not q:
         return {"ok": False, "error": "пустой запрос"}
-    # BM18: интент запроса задаёт порядок вариантов — видео-просьба не
-    # начинает жизнь с mp3-поиска, и наоборот
-    low = q.lower()
-    want_video = any(w in low for w in ("видео", "фильм", "клип", "ролик",
-                                        "мультфильм", "трейлер"))
-    want_audio = any(w in low for w in ("музык", "песн", "трек", "mp3",
-                                        "аудиокниг", "звук", "минус"))
-    video_variants = ["%s filetype:mp4" % q, "%s mp4 скачать" % q,
-                      "%s видео mp4 прямая ссылка" % q, "%s смотреть mp4" % q]
-    audio_variants = ["%s filetype:mp3" % q, "%s скачать mp3" % q,
-                      "%s mp3 слушать" % q, "%s аудио" % q]
-    if want_audio:
-        variants = audio_variants + video_variants + [q]
-    elif want_video:
-        variants = video_variants + audio_variants + [q]
-    else:
-        variants = [q, "%s filetype:mp3" % q, "%s filetype:mp4" % q,
-                    "%s скачать mp3" % q, "%s mp4" % q]
-
+    variants = [
+        q,
+        "%s filetype:mp3" % q,
+        "%s скачать mp3" % q,
+        "%s filetype:mp4" % q,
+        "%s mp4 смотреть" % q,
+        "%s видео" % q,
+    ]
     tried = 0
     tried_links = []
-    # проход 1 — ссылки на ПРЯМЫЕ ФАЙЛЫ (самый надёжный результат),
-    # проход 2 — обычные страницы (в них ищем плеер/og:video)
-    for pass_no in (1, 2):
-        for v in variants:
-            try:
-                res = web_tools.web_search(v, count=6)
-            except Exception as exc:
+    for v in variants:
+        try:
+            res = web_tools.web_search(v, count=6)
+        except Exception:
+            continue
+        for item in (res or {}).get("results") or []:
+            link = str(item.get("url") or "").strip()
+            if not link or not link.lower().startswith("http"):
                 continue
-            for item in (res or {}).get("results") or []:
-                link = str(item.get("url") or "").strip()
-                if not link or not link.lower().startswith("http"):
-                    continue
-                if link in tried_links:
-                    continue
-                if (_YOUTUBE_RE.search(link) or _STREAMING_RE.search(link)
-                        or _STOCK_RE.search(link)):
-                    continue
-                if pass_no == 1 and not _DIRECT_FILE_RE.search(link):
-                    continue
-                tried_links.append(link)
-                tried += 1
-                if tried > 14:
-                    break
-                out = show_media(link, _depth=1)
-                if out.get("ok"):
-                    return out
+            if link in tried_links:
+                continue
+            if _YOUTUBE_RE.search(link) or _STREAMING_RE.search(link):
+                continue
+            tried_links.append(link)
+            tried += 1
             if tried > 14:
                 break
+            out = show_media(link, _depth=1)
+            if out.get("ok"):
+                return out
         if tried > 14:
             break
+
     return {"ok": False,
             "error": "по запросу «%s» не нашлось медиа, которое ложится "
                      "прямо в чат (прямой файл или страница с плеером). "
@@ -1149,6 +1127,13 @@ def show_media(url: str, _depth: int = 0) -> Dict[str, Any]:
         return _media_from_query(src)
     if _depth == 0 and _looks_like_domain(src):
         src = "https://" + src
+    # BM19: RuTube-страница — официальный embed-плеер, без скачивания
+    m = _RUTUBE_RE.match(src)
+    if m:
+        vid = m.group(1)
+        return {"ok": True, "embed_url": "https://rutube.ru/play/embed/%s" % vid,
+                "kind": "iframe", "title": "RuTube",
+                "source_url": src[:300]}
     if _YOUTUBE_RE.search(src):
         return {"ok": False,
                 "error": "YouTube в России без VPN недоступен. НЕ давай ссылку "

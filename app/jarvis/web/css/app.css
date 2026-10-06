@@ -11,6 +11,12 @@
 
 /* ========= JARVIS HUD ========= */
 :root{
+  /* BM19: АНИМАЦИЯ ДОКА С НУЛЯ — одна длительность и одна кривая для ВСЕХ
+     участников морфа (панель, док, бренд, вкладки, пространства, диалоги,
+     футер). Прежде было три разные кривые и длительности .34–.6с —
+     элементы заканчивали движение в разное время («доезжали») */
+  --fold-t:.52s;
+  --fold-ease:cubic-bezier(.45,.05,.2,1);
   --bg:#04070d; --bg2:#070d17; --panel:rgba(10,20,34,.72); --panel2:rgba(12,24,40,.55);
   --line:rgba(0,212,255,.18); --line2:rgba(0,212,255,.34);
   --cy:#00c8f0; --cy2:#5fe6ff; --gold:#d9a441; --red:#dd5566; --green:#3fbf95; --violet:#8f86cf;
@@ -196,8 +202,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   margin:0;border-bottom:1px solid rgba(0,212,255,.1);
   transition:padding .6s cubic-bezier(.5,.35,.15,1),gap .6s cubic-bezier(.5,.35,.15,1),
     border-color .45s ease,opacity .22s ease}
-.app.collapsed .brand-text{display:none}
-.app.collapsed .collapse-btn{transform:rotate(180deg)}
+/* BM19: подпись бренда СХЛОПЫВАЕТСЯ ПЛАВНО (как подписи вкладок), а не
+   пропадает мгновенно: разворот в миниатюру — одно непрерывное движение */
+.brand-text{max-height:64px;transition:max-height var(--fold-t) var(--fold-ease),
+  opacity calc(var(--fold-t)*.55) ease}
+.app.collapsed .brand-text{max-height:0;opacity:0;overflow:hidden;padding:0;margin:0}
+.app.collapsed .collapse-btn{transform:rotate(180deg);
+  transition:transform var(--fold-t) var(--fold-ease)}
 /* AL: ГЕОМЕТРИЯ ДОКА — nav занимает ВСЮ ширину стекла (52px), без своих
    отступов (двойной отступ сжимал пункты до 24px — «супер узко» и сбоку);
    пункты width:auto с justify-content:center: ровно 40px, иконка строго
@@ -205,8 +216,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .app.collapsed .nav{margin:0}
 /* подписи плавно сворачиваются в ноль; иконка (слот 18px) остаётся ровно
    по центру пункта — подсветка нигде не выпирает из дока */
-.app.collapsed .nav-label{opacity:0;max-width:0;
-  transition:max-width .6s cubic-bezier(.5,.35,.15,1)}
+.nav-label{transition:max-width var(--fold-t) var(--fold-ease),
+  opacity calc(var(--fold-t)*.55) ease}
+.app.collapsed .nav-label{opacity:0;max-width:0}
 .app.collapsed .nav-item{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none;
   transition:padding .6s cubic-bezier(.5,.35,.15,1),gap .6s cubic-bezier(.5,.35,.15,1),
     margin .6s cubic-bezier(.5,.35,.15,1),
@@ -241,6 +253,20 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   color:var(--tx);font-size:12px;white-space:nowrap;opacity:0;pointer-events:none;transform:translateX(-6px);
   transition:.18s;z-index:80;box-shadow:var(--shadow)}
 .app.collapsed .nav-item:hover::after{opacity:1;transform:none}
+/* BM19: ОДНА ТРАЕКТОРИЯ. Пока идёт морф (.side-folding на #app), все
+   участники — панель, контент, док, бренд, вкладки, пространства,
+   диалоги, футер — анимируются ОДНОЙ кривой и ОДНОЙ длительностью:
+   сворачивание — меню складывается вбок, всё уезжает и сжимается
+   влево; разворачивание — выжимается и выпрямляется вправо. Никаких
+   «доездов»: движение заканчивается у всех одновременно */
+.side-folding .sidebar,.side-folding .main,.side-folding .main .view,
+.side-folding .dock,.side-folding .brand,.side-folding .brand-text,
+.side-folding .nav,.side-folding .nav-item,.side-folding .nav-label,
+.side-folding .spaces,.side-folding .chats-block,.side-folding .side-foot,
+.side-folding .topbar,.side-folding .collapse-btn{
+  transition-duration:var(--fold-t)!important;
+  transition-timing-function:var(--fold-ease)!important;
+  transition-delay:0s!important}
 }
 
 .dock{display:flex;flex-direction:column;gap:12px;border:1px solid transparent;border-radius:0;
@@ -254,7 +280,6 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
      что и меню; переключение раскладки маскируется быстрым затуханием */
   transition:padding .6s cubic-bezier(.22,.68,.18,1),gap .6s cubic-bezier(.22,.68,.18,1),
     border-color .45s ease,opacity .22s ease}
-.side-folding .brand{opacity:0}
 .brand-text{flex:1;min-width:0}
 .brand-name{font-size:17px;font-weight:600;letter-spacing:4px;color:#eaf9ff;text-shadow:0 0 18px rgba(0,212,255,.5)}
 .brand-sub{font-size:10.5px;color:var(--tx3);letter-spacing:.4px;margin-top:1px}
@@ -315,6 +340,14 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    обратный выбор — обратная анимация */
 .spaces.no-spaces .sp-row{opacity:0;transform:scale(.42);
   max-height:0;pointer-events:none}
+/* BM19: ПУСТОТА НАД LIVE. Все пространства скрыты глазиком — ряда
+   иконок нет, но контейнер держал над LIVE пустые 10px паддинга и
+   9px flex-gap от скрытого ряда (под LIVE — ещё 12px). Сжимаем:
+   LIVE стоит вплотную под брендом, без мёртвых полос */
+.spaces.no-spaces{padding-top:2px;padding-bottom:4px;gap:0}
+/* тот же ритм, что между остальными секциями дока: когда ряда нет,
+   бренд не держит запас под несуществующий ряд */
+.dock:has(.spaces.no-spaces) .brand{padding-bottom:2px}
 .sp-ico{position:relative;width:36px;height:34px;border:1px solid transparent;
   border-radius:10px;background:transparent;color:var(--tx3);cursor:pointer;
   display:grid;place-items:center;
@@ -459,13 +492,16 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden}
 .app.collapsed .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;
   margin:0;padding:4px 0;position:relative;
-  animation:spDockIn .3s ease .2s backwards}
+  animation:spDockIn var(--fold-t) var(--fold-ease) .12s backwards}
 /* BM13: у дока НЕТ рамки-области (светлая плашка убрана); под иконкой
    текущего пространства — полоса НА ВСЮ горизонталь, как верхняя */
 @keyframes spDockIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
-/* BM12: СЖАТИЕ ПРИ СВОРАЧИВАНИИ — зеркально разжатию: ряд не пропадает
-   резко, а сжимается (scale + высота в ноль) той же кривой, что меню */
-.side-folding .spaces{opacity:0;transform:scale(.42);
+/* BM19: РЕЗЕРВ — прежний рисунок морфа (BM12/BM18: гашение бренда и
+   сжатие ряда scale(.42)). Включается классом .legacy-fold на #app;
+   в новом рисунке ядро и кнопка-стрелка НЕ исчезают, ряд пространств
+   складывается честной высотой — ничего не гаснет и не «доезжает» */
+.app.legacy-fold .side-folding .brand{opacity:0}
+.app.legacy-fold .side-folding .spaces{opacity:0;transform:scale(.42);
   overflow:hidden;pointer-events:none}
 /* BM13: высотой ряда управляет JS честным замером (toggleSidebar):
    класс не трогает max-height — никаких «доездов» под конец анимации */
@@ -1647,6 +1683,15 @@ sup.msup,sub.msub{font-size:.72em}
 .emb-row.file-changed .emb-name{color:#b9d59a}
 @keyframes embChangedIn{0%{background:rgba(143,179,90,.34)}100%{background:rgba(143,179,90,.12)}}
 .emb-row.file-changed{animation:embChangedIn 1.4s ease-out both}
+/* BM19: раскрытие объекта ПРЯМО В КАРТОЧКЕ — клик по строке разворачивает
+   детали под ней (задача/факт/сценарий/секция настроек), без ухода
+   во вкладку */
+.emb-more{margin:0 8px 4px 22px;padding:7px 9px;border-radius:8px;
+  background:rgba(0,0,0,.22);font-size:11px;color:var(--tx2);
+  line-height:1.5;white-space:pre-wrap;word-break:break-word;
+  animation:embMoreIn .22s ease-out both}
+@keyframes embMoreIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+.emb-row.open{background:rgba(0,212,255,.09)}
 /* подсветка объекта, открытого из мини-вкладки: строка вспыхивает и гаснет */
 .flash-in{animation:flashIn 1.6s ease-out both}
 @keyframes flashIn{0%,45%{background:rgba(0,212,255,.16);box-shadow:0 0 0 1px rgba(0,212,255,.25) inset}
@@ -2402,18 +2447,28 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
 .toast.error{border-color:rgba(221,85,102,.45)}.toast.error .ti{color:var(--red)}
 .toast.warn{border-color:rgba(217,164,65,.45)}.toast.warn .ti{color:var(--gold)}
 .toast.info{border-color:rgba(79,150,201,.45)}.toast.info .ti{color:var(--sky)}
-/* BM18: ЗЕЛЁНАЯ БЛАШКА «фонова задача поставлена» — как обычный
-   success-тост, но мини-вкладка АВТО живёт прямо в нём. Не гаснет
-   по таймеру: закрывается кликом по тексту; клик внутри вкладки —
-   жизнь самой вкладки (запуск/стоп задач) */
-.toast.toast-auto{display:block;max-width:390px;padding:0}
-.toast.toast-auto .ta-body{cursor:pointer;padding:11px 15px 9px;display:flex;
-  align-items:center;gap:10px;font-size:12.5px}
-.toast.toast-auto .ta-body b{font-weight:600}
-.toast.toast-auto .ta-name{margin-left:7px;color:var(--tx2)}
-.toast.toast-auto .embed-panel{margin:0 10px 10px}
-.toast.toast-auto .embed-card{margin:0;max-width:none}
-.toast.toast-auto .emb-body{max-height:236px;overflow:auto}
+/* BM19: RuTube — embed-плеер в диалоге (16:9, скруглён, чёрная подложка) */
+.embed-player{width:100%;aspect-ratio:16/9;border:0;border-radius:10px;
+  display:block;background:#000}
+.media-embed{position:relative}
+
+/* BM19: ЗЕЛЁНЫЙ БАННЕР «Фоновая задача поставлена» — ПРЯМО В ДИАЛОГЕ,
+   мини-вкладка АВТО живёт внутри него. Живёт в ленте, никуда не
+   исчезает и виден после перезагрузки (сообщение с bg_note) */
+.bg-note{margin:10px 0;padding:10px 14px;border-radius:12px;
+  border:1px solid rgba(63,191,149,.4);background:rgba(63,191,149,.1);
+  display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12.5px;
+  animation:bgNoteIn .4s cubic-bezier(.2,.8,.3,1) both}
+.bg-note .bg-ico{color:var(--green);font-size:14px}
+.bg-note b{color:#8fe6c0}
+.bg-note .bg-name{color:var(--tx2)}
+.bg-note .bg-when{color:var(--tx3);font-size:11.5px}
+.bg-note .embed-panel{flex-basis:100%;margin:8px 0 0}
+.bg-note .embed-card{margin:0;max-width:none}
+.bg-note .emb-body{max-height:236px;overflow:auto}
+@keyframes bgNoteIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+/* сохранённое уведомление из истории — та же зелёная тонировка */
+.msg-bg-note .md{border-left:2px solid rgba(63,191,149,.45);padding-left:10px}
 
 /* модалка */
 .modal-back{position:fixed;inset:0;z-index:150;background:rgba(2,5,10,.78);backdrop-filter:blur(7px);

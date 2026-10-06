@@ -3316,7 +3316,7 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
         # версия
-        self.assertIn("beta.90", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertIn("beta.91", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
         # BM14.1: кэш-бустер статики обновляется сборкой сам
         self.assertIn("def _bump_asset_versions(",
                       Path("install/build.py").read_text(encoding="utf-8"))
@@ -3924,7 +3924,9 @@ class IterationAGTests(unittest.TestCase):
         self.assertIn("transition:width .6s", dock)
         self.assertIn(".app.collapsed .nav-item.active::before{display:none}", dock)
         self.assertIn(".app.collapsed .nav-item:hover{transform:none;background:rgba(0,212,255,.09)}", dock)
-        self.assertIn(".app.collapsed .nav-label{opacity:0;max-width:0;", dock)
+        # BM19: переход подписей вынесен в базу (плавно в ОБЕ стороны)
+        self.assertIn(".nav-label{transition:max-width var(--fold-t) var(--fold-ease),", dock)
+        self.assertIn(".app.collapsed .nav-label{opacity:0;max-width:0}", dock)
         # контент не едет под док
         self.assertIn(".app.collapsed .main .view{padding-left:76px", dock)
         # BM18: ОДНО ДВИЖЕНИЕ — диалоги и футер схлопываются плавно
@@ -7279,10 +7281,10 @@ class IterationBM8Tests(unittest.TestCase):
 
     def test_bm12_auto_embed_after_tool_run(self) -> None:
         """Карточка вкладки — сама после прогона с изменениями (A+B+D)."""
-        # BM18: задача запущена — ЗЕЛЁНАЯ БЛАШКА с вкладкой внутри,
-        # карточки AUTO в чате больше НЕТ
+        # BM19: задача запущена — ЗЕЛЁНЫЙ БАННЕР В ДИАЛОГЕ + карточка АВТО
         out = agent.auto_embed_block("Поставил задачу.", ["schedule_task"])
-        self.assertNotIn('```embed', out)
+        self.assertIn("**Фоновая задача поставлена**", out)
+        self.assertIn('"view": "auto"', out)
         # файл создан — карточка ФАЙЛОВ
         out = agent.auto_embed_block("Готово.", ["write_file", "run_python"])
         self.assertIn('"view": "files"', out)
@@ -7308,9 +7310,11 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn('"view": "memory"', rescued)
         # ничего не изменилось — ответ не трогаем
         self.assertEqual(agent.auto_embed_block("просто ответ", []), "просто ответ")
-        # BM18: пустой ответ с задачей — карточки в чате нет (блашка);
+        # BM19: пустой ответ с задачей — ЗЕЛЁНЫЙ БАННЕР + карточка АВТО;
         # вопрос о состоянии — карточка ГАРАНТИРОВАНА
-        self.assertEqual(agent.auto_embed_block("", ["schedule_task"]), "")
+        out = agent.auto_embed_block("", ["schedule_task"])
+        self.assertIn("**Фоновая задача поставлена**", out)
+        self.assertIn('"view": "auto"', out)
         self.assertIn('"view": "auto"',
                       agent.auto_embed_block("", [], q_view="auto"))
 
@@ -7986,9 +7990,10 @@ class IterationBM14Tests(unittest.TestCase):
         """Серверный уход в фон: ЗЕЛЁНАЯ БЛАШКА с вкладкой АВТО сразу."""
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         bg = js.split("case 'background':")[1].split("case '")[0]
-        # BM18: карточка в чате не рисуется — всё живёт в блашке
-        self.assertIn("toastAutoCard(ev.title);", bg)
+        # BM19: ЗЕЛЁНЫЙ БАННЕР ПРЯМО В ЧАТЕ (не угловой тост), АВТО внутри
+        self.assertIn("bgTaskNote(ui, ev.title, ev.when || '');", bg)
         self.assertNotIn("embedLiveAuto(ui)", bg)
+        self.assertNotIn("toastAutoCard", js)
 
 
 class IterationBM16Tests(unittest.TestCase):
@@ -8092,17 +8097,13 @@ class IterationBM16Tests(unittest.TestCase):
         self.assertIn("transform-origin:0 0;animation:embIn .6s cubic-bezier(.22,.61,.25,1) both", css)
         self.assertIn("@keyframes embIn{from{transform:scale(.5,.35);opacity:0}", css)
         self.assertIn(".embed-card.no-in{animation:none}", css)
-        # BM18: объекты открываются ТОЧНО КАК В ОСНОВНЫХ ВКЛАДКАХ —
-        # переход во вкладку + прокрутка + вспышка (никаких разворотов
-        # внутри мини-вкладки)
-        self.assertIn("const openObject = (view, sel) => {", bep)
-        self.assertIn(".task-card[data-task-id=", bep)
-        self.assertIn(".mem-card[data-key=", bep)
-        self.assertIn(".scenario-card[data-title=", bep)
-        self.assertIn(".sset[data-section=", bep)
-        self.assertIn("node.scrollIntoView({ behavior: 'smooth', block: 'center' });", bep)
-        self.assertIn("@keyframes flashIn", css)
-        self.assertNotIn("toggleMore", bep)
+        # BM19: содержимое открывается ПРЯМО ИЗ ДИАЛОГА — клик по строке
+        # разворачивает детали ПОД ней, без ухода во вкладку
+        self.assertIn("const toggleMore = (row, html) => {", bep)
+        self.assertIn("row.after(more);", bep)
+        self.assertIn(".emb-more{", css)
+        self.assertIn("@keyframes embMoreIn", css)
+        self.assertNotIn("openObject", bep)
         # файл: изменённый подсвечен ЗЕЛЁНЫМ акцентом вкладки «Файлы»
         self.assertIn("file-changed", bep)
         self.assertIn("rgba(143,179,90,.12)", css)
@@ -8128,18 +8129,23 @@ class IterationBM16Tests(unittest.TestCase):
         srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
         auto = Path("app/jarvis/auto.py").read_text(encoding="utf-8")
         tr = js.split("case 'tool_result': {")[1].split("case '")[0]
-        # BM18: ЗЕЛЁНАЯ БЛАШКА с вкладкой АВТО внутри, карточки в чате нет
-        self.assertIn("toastAutoCard(tt);", tr)
+        # BM19: ЗЕЛЁНЫЙ БАННЕР ПРЯМО В ДИАЛОГЕ с вкладкой АВТО внутри
+        self.assertIn("bgTaskNote(ui, tt, '');", tr)
         self.assertNotIn("embedLiveAuto(ui)", tr)
+        self.assertNotIn("toastAutoCard", js)
         # карточки на СТАРТЕ вызова больше нет — сентинел не создаёт задач
         ts = js.split("case 'tool_start': {")[1].split("case '")[0]
         self.assertNotIn("embedLiveAuto(ui)", ts)
         # маршрутизатор не уводит вопрос о состоянии в фон
         self.assertIn("if agent.state_question(text):", srv)
-        # BM18: уведомление в чат НЕ сохраняется — только блашка (тост)
+        # BM19: уведомление — ЗЕЛЁНЫЙ БАННЕР В ДИАЛОГЕ: живой по SSE +
+        # сохранённая заметка с карточкой АВТО и меткой bg_note (видна
+        # после перезагрузки, зелёная тонировка)
         bg = srv.split("if server_scheduled:")[1].split("self._sse_close()")[0]
-        self.assertNotIn('```embed', bg)
-        self.assertNotIn("db.add_message(chat_id, \"assistant\", note", srv)
+        self.assertIn("**Фоновая задача поставлена**", bg)
+        # карточка АВТО внутри заметки (в исходнике — экранированные кавычки)
+        self.assertIn('\\"view\\": \\"auto\\"', bg)
+        self.assertIn('"bg_note": True', bg)
         # сработавшая задача — просто отложенное сообщение
         self.assertNotIn("agent.auto_embed_block(content", auto)
 
@@ -8209,22 +8215,23 @@ class IterationBM17Tests(unittest.TestCase):
         ПРЯМО В ОБЛАСТИ УВЕДОМЛЕНИЯ, не отдельной всплывашкой."""
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn("function toastAutoCard(taskTitle)", js)
-        ta = js.split("function toastAutoCard(taskTitle)")[1].split("\nfunction ")[0]
+        self.assertIn("function bgTaskNote(ui, title, when)", js)
+        ta = js.split("function bgTaskNote(ui, title, when)")[1].split("\nfunction ")[0]
         self.assertIn("Фоновая задача поставлена", ta)
         self.assertIn("embedBuildSafe(panel, spec)", ta)
-        self.assertIn("'$('＃toasts')".replace("＃", "#")[1:], ta)
-        # оба пути ставят блашку; карточки в чате больше нет
+        self.assertIn("panel.dataset.live = '1'", ta)
+        # оба пути ставят баннер в чат; угловых тостов больше нет
         tr = js.split("case 'tool_result': {")[1].split("case '")[0]
-        self.assertIn("toastAutoCard(tt);", tr)
-        bg = js.split("case 'background': {")[1].split("case '")[0]
-        self.assertIn("toastAutoCard(ev.title);", bg)
+        self.assertIn("bgTaskNote(ui, tt, '');", tr)
+        bg = js.split("case 'background':")[1].split("case '")[0]
+        self.assertIn("bgTaskNote(ui, ev.title, ev.when || '');", bg)
         self.assertNotIn("embedLiveAuto(ui)", tr + bg)
-        # зелёная (success), закрывается кликом по тексту, не по таймеру
-        self.assertIn("'toast success toast-auto'", ta)
-        self.assertNotIn("setTimeout(() => { t.classList.add('out')", ta)
-        self.assertIn(".toast.toast-auto{display:block;max-width:390px;padding:0}", css)
-        self.assertIn(".toast.toast-auto .emb-body{max-height:236px;overflow:auto}", css)
+        self.assertNotIn("toastAutoCard", js)
+        # зелёная плашка в ленте диалога + та же тонировка в истории
+        self.assertIn("'bg-note'", ta)
+        self.assertIn(".bg-note{", css)
+        self.assertIn(".bg-note .emb-body{max-height:236px;overflow:auto}", css)
+        self.assertIn("msg-bg-note", js)
 
     def test_bm17_embed_head_and_rows(self) -> None:
         """Шапка мини-вкладки — однородный синий; строка файла при ховере
@@ -8336,16 +8343,21 @@ class IterationBM18Tests(unittest.TestCase):
         """Поиск медиа: стоки (403 без файла) скипаются, прямые файлы
         пробуются первыми, варианты — по интенту запроса."""
         code = Path("app/jarvis/tools/media.py").read_text(encoding="utf-8")
-        self.assertIn("_STOCK_RE", code)
-        self.assertIn("dreamstime", code)
-        self.assertIn("pikbest", code)
-        self.assertIn("_DIRECT_FILE_RE", code)
+        self.assertNotIn("_STOCK_RE", code)
+        self.assertNotIn("_DIRECT_FILE_RE", code)
         body = code.split("def _media_from_query")[1]
-        self.assertIn('if pass_no == 1 and not _DIRECT_FILE_RE.search(link):', body)
-        self.assertIn('"%s mp4 скачать" % q', body)
-        self.assertIn('"%s mp3 слушать" % q', body)
-        self.assertIn("want_video", body)
-        self.assertIn("want_audio", body)
+        self.assertNotIn("pass_no", body)
+        self.assertNotIn("want_video", body)
+        self.assertNotIn("want_audio", body)
+        self.assertIn('"%s filetype:mp3" % q', body)
+        # RuTube: страница -> официальный embed-плеер, без скачивания
+        self.assertIn("_RUTUBE_RE", code)
+        self.assertIn("rutube.ru/play/embed/", code)
+        out = media.show_media("https://rutube.ru/video/12345678/")
+        self.assertTrue(out.get("ok"))
+        self.assertEqual(out.get("kind"), "iframe")
+        self.assertEqual(out.get("embed_url"),
+                         "https://rutube.ru/play/embed/12345678")
 
     def test_bm18_rename_input_dark_like_files_tab(self) -> None:
         """Поле переименования в мини-вкладке ФАЙЛЫ — тот же тёмный

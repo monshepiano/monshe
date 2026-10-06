@@ -268,29 +268,29 @@ function toast(text, kind, title) {
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 400); }, 5200);
 }
 
-/* BM18: ЗЕЛЁНАЯ БЛАШКА «ФОНОВАЯ ЗАДАЧА ПОСТАВЛЕНА» — как прежде, но
-   теперь мини-вкладка АВТО живёт ПРЯМО В НЕЙ (вместо отдельной
-   карточки в чате). Блашка не гаснет по таймеру: закрывается кликом
-   по тексту; клик внутри вкладки живёт её жизнью (запуск/стоп задач) */
-function toastAutoCard(taskTitle) {
-  const t = el('div', 'toast success toast-auto');
-  t.innerHTML = '<div class="ta-body"><span class="ti">✓</span>'
-    + '<div><b>Фоновая задача поставлена</b>'
-    + (taskTitle ? '<span class="ta-name">«' + esc(taskTitle) + '»</span>' : '')
-    + '</div></div>';
+/* BM19: уведомление о фоновой задаче — ЗЕЛЁНЫЙ БАННЕР ПРЯМО В ДИАЛОГЕ
+   (как было всегда), а мини-вкладка АВТО живёт ПРЯМО В НЁМ. Никаких
+   угловых тостов: задача видна в ленте сразу и остаётся в истории */
+function bgTaskNote(ui, title, when) {
+  if (!ui || !ui.node || !ui.node.body) return;
+  if (ui._bgNote) return;                    // один баннер на прогон
+  ui._bgNote = true;
+  const note = el('div', 'bg-note');
+  note.innerHTML = '<span class="bg-ico">✓</span><b>Фоновая задача поставлена</b>'
+    + (title ? '<span class="bg-name">«' + esc(title) + '»</span>' : '')
+    + (when ? '<span class="bg-when">· ' + esc(when) + '</span>' : '');
   const panel = el('div', 'embed-panel');
   panel.dataset.embed = '{"view": "auto", "title": "что я делаю в фоне"}';
   let spec = null;
   try { spec = embedParseSpec(panel.dataset.embed); } catch (e) { spec = null; }
   if (spec && spec.view) embedBuildSafe(panel, spec);
   panel.dataset.live = '1';            // отложенный монтер вкладок её не трогает
-  t.appendChild(panel);
-  t.querySelector('.ta-body').title = 'Кликни, чтобы убрать';
-  t.querySelector('.ta-body').addEventListener('click', () => {
-    t.classList.add('out');
-    setTimeout(() => t.remove(), 300);
-  });
-  $('#toasts').appendChild(t);
+  note.appendChild(panel);
+  const anchor = (ui.statusEl && ui.statusEl.parentNode === ui.node.body)
+    ? ui.statusEl : null;
+  if (anchor) ui.node.body.insertBefore(note, anchor);
+  else ui.node.body.appendChild(note);
+  sfx('ok');
 }
 
 /* BE: включение/отключение инструмента — стильная строка В ЧАТЕ, а не
@@ -740,7 +740,7 @@ let _gliderWatch = 0;
    каждый кадр, пока меню меняет ширину */
 function gliderWatchRun() {
   cancelAnimationFrame(_gliderWatch);
-  const until = performance.now() + 760;
+  const until = performance.now() + 660;
   const tick = () => {
     spaceGlider();
     if (performance.now() < until) _gliderWatch = requestAnimationFrame(tick);
@@ -760,6 +760,11 @@ function toggleSidebar() {
      — отсюда «однокадровый скачок вверх». Теперь фиксируем фактическую
      высоту инлайном и ведём её к нулю/высоте той же кривой, что меню */
   clearTimeout(_dockedT);
+  /* BM19: АНИМАЦИЯ С НУЛЯ — одна кривая/длительность для всех участников
+     (CSS --fold-t/--fold-ease + блок .side-folding унификации). JS больше
+     не дирижирует разными таймингами: честная высота ряда + один общий
+     финал. Ядро и кнопка-стрелка не гаснут, ряд пространств складывается
+     высотой — полоса под ним едет непрерывно, без «доезда вниз» */
   if (collapsing) {
     if (sp) {
       sp.style.maxHeight = sp.offsetHeight + 'px';
@@ -769,10 +774,8 @@ function toggleSidebar() {
     if (sp) requestAnimationFrame(() => { sp.style.maxHeight = '0px'; });
     _dockedT = setTimeout(() => {
       app.classList.add('docked');
-      /* BM18: класс морфинга снимается по завершению — иначе brand
-         остаётся прозрачным, а правила «складывания» висят зря */
       app.classList.remove('side-folding');
-    }, 700);
+    }, 560);
   } else {
     app.classList.remove('docked');
     app.classList.add('side-folding');
@@ -785,10 +788,9 @@ function toggleSidebar() {
       requestAnimationFrame(() => { sp.style.maxHeight = h + 'px'; });
       setTimeout(() => {
         if (!app.classList.contains('collapsed')) sp.style.maxHeight = '';
-      }, 760);
+      }, 620);
     }
-    requestAnimationFrame(() => requestAnimationFrame(() =>
-      app.classList.remove('side-folding')));
+    _dockedT = setTimeout(() => app.classList.remove('side-folding'), 620);
   }
   dockY(collapsing);
   gliderWatchRun();
@@ -1924,6 +1926,8 @@ function renderMessageInto(host, m, activePanel) {
     const node = addAiMsg(m.created_at);
     node.root.dataset.msgId = m.id;
     const meta = m.meta || {};
+    // BM19: уведомление о фоновой задаче из истории — зелёная тонировка
+    if (meta.bg_note) node.root.classList.add('msg-bg-note');
     updateResponseMeta({
       node,
       routeTier: meta.tier || '',
@@ -1933,7 +1937,16 @@ function renderMessageInto(host, m, activePanel) {
     });
     // ход мыслей и действия из прошлого ответа — свёрнутыми строчками
     restoreTrace(node, meta);
-    node.body.appendChild(el('div', 'md', MD.render(m.content)));
+    // BM19: вопрос фоновой задачи из истории — ИНТЕРАКТИВНОЙ карточкой
+    // прямо в диалоге (ответ кнопкой уходит в /api/questions/answer)
+    if (meta.open_question) {
+      const q = meta.open_question;
+      node.body.appendChild(questionCard(
+        { id: q.id, question: q.question, options: q.options || [] },
+        (choice) => api('/api/questions/answer', { id: q.id, answer: choice })));
+    } else {
+      node.body.appendChild(el('div', 'md', MD.render(m.content)));
+    }
     foldCodeBlocks(node.body);
     // AD: панели прошлого законсервированы; кликабельна только панель
     // ПОСЛЕДНЕГО ответа — старый интерактивчик больше не принимает ответы
@@ -3275,6 +3288,25 @@ function dlCorner(host, f) {
 }
 
 function attachFileChip(container, f) {
+  /* BM19: RuTube — официальный embed-плеер (iframe): прямого файла у
+     страницы нет и не будет, видео играет прямо в диалоге */
+  if (f.kind === 'iframe'
+      || String(f.url || '').indexOf('https://rutube.ru/play/embed/') === 0) {
+    const vw = el('div', 'img-wrap media-wrap media-embed');
+    const fr = el('iframe', 'embed-player');
+    fr.src = f.url;
+    fr.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture');
+    fr.setAttribute('allowfullscreen', '');
+    fr.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+    vw.appendChild(fr);
+    container.appendChild(vw);
+    const a = el('a', 'file-chip');
+    a.href = f.url; a.target = '_blank'; a.rel = 'noopener';
+    a.innerHTML = '<span class="fi">' + fileIcon(f.name || '') + '</span><span>'
+      + esc(f.name || 'RuTube') + '</span><small>плеер RuTube</small>';
+    container.appendChild(a);
+    return;
+  }
   /* BM10: НАТИВНЫЕ ПЛЕЕРЫ. Видео из интернета открывается сразу
      воспроизведением (autoplay muted — звук человек включит сам),
      аудио — стандартным плеером */
@@ -4893,22 +4925,21 @@ function buildEmbedPanel(panel, spec) {
   /* BM17: клик по строке разворачивает объект ПРЯМО В КАРТОЧКЕ —
      задача, факт, сценарий или пункт настроек раскрываются под своей
      строкой в чате, без ухода во вкладку */
-  /* BM18: объекты из мини-вкладки открываются ТОЧНО КАК В ОСНОВНЫХ
-     вкладках — переход во вкладку, прокрутка к объекту, вспышка.
-     Прежний «расворот прямо в карточке» пользователь отверг */
-  const openObject = (view, sel) => {
-    showView(view);
-    setTimeout(() => {
-      const node = sel && document.querySelector(sel);
-      if (!node) return;
-      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      node.classList.remove('flash-in');
-      void node.offsetWidth;
-      node.classList.add('flash-in');
-      setTimeout(() => node.classList.remove('flash-in'), 1700);
-    }, 240);
+  /* BM19: содержимое вкладок открывается ПРЯМО ИЗ ДИАЛОГА — клик по
+     строке разворачивает детали ПОД ней (задача: статус+расписание+
+     результат; факт: значение; сценарий: шаги; настройки: где менять) */
+  const toggleMore = (row, html) => {
+    const exist = row.nextElementSibling;
+    if (exist && exist.classList.contains('emb-more')) {
+      exist.remove(); row.classList.remove('open'); return;
+    }
+    $$('.emb-more', body).forEach((n) => n.remove());
+    $$('.emb-row.open', body).forEach((n) => n.classList.remove('open'));
+    const more = el('div', 'emb-more');
+    more.innerHTML = html;
+    row.after(more);
+    row.classList.add('open');
   };
-  const attrSel = (v) => '"' + String(v || '').replace(/(["\\])/g, '\\$1') + '"';
   const fail = (e) => {
     body.innerHTML = '<div class="emb-empty">'
       + esc((e && e.message) || 'не удалось открыть вкладку') + '</div>';
@@ -4965,8 +4996,11 @@ function buildEmbedPanel(panel, spec) {
           });
           row.appendChild(stop);
         }
-        row.addEventListener('click', () =>
-          openObject('auto', '.task-card[data-task-id=' + attrSel(t.id) + ']'));
+        row.addEventListener('click', () => toggleMore(row,
+          'статус: ' + esc(EMBED_TASK_ST[t.status] || t.status || '')
+          + (t.next_run_human ? '\nследующий запуск: ' + esc(t.next_run_human) : '')
+          + (t.schedule ? '\nрасписание: ' + esc(t.schedule) : '')
+          + (t.result ? '\n\n' + esc(String(t.result).slice(0, 400)) : '')));
         body.appendChild(row);
       });
     };
@@ -5083,8 +5117,7 @@ function buildEmbedPanel(panel, spec) {
         row.innerHTML = '<i class="emb-dot"></i><span class="emb-name">'
           + esc(m.key || m.kind) + '</span><span class="emb-meta">'
           + esc(val.length > 42 ? val.slice(0, 42) + '…' : val) + '</span>';
-        row.addEventListener('click', () =>
-          openObject('memory', '.mem-card[data-key=' + attrSel(m.key || m.kind) + ']'));
+        row.addEventListener('click', () => toggleMore(row, esc(m.value || '')));
         body.appendChild(row);
       });
     }, (e) => { done = true; clearTimeout(timer); fail(e); });
@@ -5099,8 +5132,10 @@ function buildEmbedPanel(panel, spec) {
         row.innerHTML = '<i class="emb-dot"></i><span class="emb-name">'
           + esc(sc.title || 'сценарий') + '</span><span class="emb-meta">'
           + ((sc.steps || []).length) + ' шагов</span>';
-        row.addEventListener('click', () =>
-          openObject('scenarios', '.scenario-card[data-title=' + attrSel(sc.title || '') + ']'));
+        row.addEventListener('click', () => toggleMore(row,
+          (sc.steps || []).map((s, i) => (i + 1) + '. '
+            + esc(typeof s === 'string' ? s : (s && (s.text || s.action || s.prompt)) || JSON.stringify(s)))
+            .join('\n') || 'шагов нет'));
         body.appendChild(row);
       });
     }, fail);
@@ -5174,9 +5209,12 @@ function buildEmbedPanel(panel, spec) {
         row('звуки интерфейса', (u.sound == null || u.sound) ? 'включены' : 'выключены', u.sound == null || !!u.sound);
       }
       body.innerHTML = rows.join('');
+      const TITLES = { providers: 'Модели и ключи', images: 'Генерация изображений',
+        safety: 'Безопасность', auto: 'AUTO · фоновый режим', telegram: 'Telegram',
+        profile: 'Обо мне', billing: 'Биллинг Cloud.ru', interface: 'Интерфейс' };
+      const hint = 'Изменить: вкладка «Настройки» → ' + (TITLES[sec] || 'Настройки');
       $$('.emb-row', body).forEach((r2) =>
-        r2.addEventListener('click', () =>
-          openObject('settings', '.sset[data-section=' + attrSel(sec) + ']')));
+        r2.addEventListener('click', () => toggleMore(r2, esc(hint))));
     };
     embSync(() => api('/api/config'),
       (r) => JSON.stringify((r && (r.providers || r.safety || r.auto || r.media)) || {}));
@@ -7201,6 +7239,10 @@ async function send(opts) {
 
   const controller = new AbortController();
   S.abort = controller;
+  /* BM19: сторож потока — объявления ДО try: обрыв загрузки вложения
+     случается раньше стрима, и catch не должен ловить ReferenceError */
+  let wdTimer = null;
+  let wdFired = false;
   try {
     // Камера включена — молча прикладываем снимок именно к локальному atts.
     // Upload слушает тот же AbortController, что и SSE: Stop во время медленной
@@ -7239,6 +7281,20 @@ async function send(opts) {
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
+    /* BM19 (объявления выше try): СТОРОЖ ПОТОКА. Лежащий провайдер
+       ключ бит) молчит ВСЕ 180 секунд серверного таймаута — юзер смотрел
+       на вечный курсор («сразу зависает»). Если 75 секунд от потока не
+       пришло НИ БАЙТА — обрываем сами и честно говорим, что провайдер
+       молчит. Серверные ходы (план 25с, ген-улучшение 12с, первая мысль)
+       укладываются с запасом */
+    const wdArm = () => {
+      clearTimeout(wdTimer);
+      wdTimer = setTimeout(() => {
+        wdFired = true;
+        try { controller.abort(); } catch (e0) {}
+      }, 75000);
+    };
+    wdArm();
     const dispatchSse = (part) => {
       const line = part.split(/\r?\n/).find((l) => l.startsWith('data:'));
       if (!line) return;
@@ -7256,6 +7312,7 @@ async function send(opts) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      wdArm();
       buf += dec.decode(value, { stream: true });
       const parts = buf.split(/\r?\n\r?\n/);
       buf = parts.pop();
@@ -7266,7 +7323,19 @@ async function send(opts) {
     // бортом и заставляла UI завершать удачный ответ как сетевой обрыв.
     buf += dec.decode();
     if (buf.trim()) buf.split(/\r?\n\r?\n/).forEach(dispatchSse);
+    clearTimeout(wdTimer);
   } catch (e) {
+    clearTimeout(wdTimer);
+    if (wdFired) {
+      // сторож: провайдер молчал — не «зависание», а честный вердикт
+      cancelPlanGate(ui);
+      showError(ui, 'Провайдер молчит: за 75 секунд от потока не пришло '
+        + 'ни одного события. Проверь подключение и ключи: Настройки → '
+        + '«Модели и ключи» → «Проверить всех».');
+      queueResponseFinish(ui, ui.buffer, false);
+      refreshState();
+      return;
+    }
     if (e.name === 'AbortError') cancelPlanGate(ui);
     else await waitForPlanGate(ui);
     if (e.name !== 'AbortError') {
@@ -8745,6 +8814,41 @@ function renderTyped(ui) {
       }
     }
   }
+  /* BM19: ТАБЛИЦЫ ЗАМОРАЖИВАЮТСЯ ПО ЗАКРЫТИЮ. Прежние границы — только
+     абзацы (\n\n): большая таблица внутри абзаца пересобиралась в хвосте
+     КАЖДЫЙ такт печати (markdown-парс + DOM нескольких КБ, 12 раз в
+     секунду) — на слабой машине главный поток уставал настолько, что
+     интерфейс «зависал» (ответ о настройках/памяти = таблица!). Теперь
+     закрытая таблица (за ней строка не с «|») уезжает в заморозку
+     целиком — хвост остаётся маленьким при любой длине ответа */
+  if (!ui.freezePending && text.length - src.length > 500) {
+    const tail = text.slice(src.length);
+    const lines = tail.split('\n');
+    let off = 0, tblStart = -1, boundary = -1;
+    for (let li = 0; li < lines.length; li++) {
+      const isRow = lines[li].trim().startsWith('|');
+      if (isRow && tblStart < 0) tblStart = off;
+      if (!isRow && tblStart >= 0) {
+        if (off - tblStart > 40 && li + 1 < lines.length) {
+          boundary = Math.max(boundary, src.length + off);
+        }
+        tblStart = -1;
+      }
+      off += lines[li].length + 1;
+    }
+    if (boundary > src.length && text.length - boundary > 30 &&
+        boundary > (ui._blockFreeze || 0)) {
+      const cand = text.slice(0, boundary);
+      const mathOk3 = (cand.match(/\\\[/g) || []).length ===
+                      (cand.match(/\\\]/g) || []).length;
+      if (!inCodeBlock(cand) && mathOk3 && !endsInOpenTable(cand)) {
+        src = cand;
+        html = MD.render(stripSteps(cand.slice(base)));
+        ui.frozen = { src, html };
+        ui._blockFreeze = cand.length;
+      }
+    }
+  }
   /* BM17: ОГРАНИЧЕНИЕ ПЕРЕРЕНДЕРА. Ответ без пустых строк (один гигантский
      абзац — например, список в одну строку) НИКОГДА не замораживался: каждый
      такт печати перерисовывал ВЕСЬ текст заново, квадратично, — длинный
@@ -9824,6 +9928,24 @@ function queueResponseFinish(ui, content, success) {
   // права откатывать показанное. doneContent используется лишь для действительно
   // непроточного ответа, когда ни одного delta не было.
   if (!ui.buffer) ui.buffer = doneContent;
+  // BM19: СЕРВЕР ВЫЧИСТИЛ ХВОСТ. done-текст КОРОЧЕ буфера, но буфер
+  // начинается с него — это rescue убрал из ответа голый фенс
+  // ```{"url":…}``` (медиа исполняется по-настоящему, плеер приезжает
+  // отдельным файлом). Показанный текст — то же самое начало: никакой
+  // подмены нет, печать просто останавливается на вычищенной границе.
+  if (doneContent.length < ui.buffer.length &&
+      ui.buffer.startsWith(doneContent)) {
+    ui.buffer = doneContent;
+    if (ui.frozen && (ui.frozen.src || '').length > doneContent.length) {
+      ui.frozen = null;          // граница заморозки была в вычищенном хвосте
+    }
+    // уже напечатанные знаки вычищенного хвоста убираем из цели печати и
+    // из показа: renderTyped перерисует хвост по чистому тексту
+    if (typeof ui.shown === 'string' && ui.shown.length > doneContent.length) {
+      ui.shown = ui.shown.slice(0, doneContent.length);
+      try { renderTyped(ui); } catch (e) { /* броня: чистый финиш ниже */ }
+    }
+  }
   // ГОНКА ПЛАНА. Дельты могли прийти не все: стрим сетевого события done —
   // канонический текст ответа, и он бывает ДЛИННЕЕ накопленного buffer
   // (последний сегмент не стримился дельтами). Раньше печать завершалась на
@@ -10523,12 +10645,10 @@ function handleEvent(ev, ui) {
          вкладка открывается в момент события, а не после ответа */
       if (ev.result && ev.result.ok !== false) {
         if (ev.name === 'schedule_task') {
-          /* BM18: создание фоновой задачи — ЗЕЛЁНАЯ БЛАШКА с вкладкой
-             АВТО внутри (в чате больше ничего не появляется) */
+          /* BM19: ЗЕЛЁНЫЙ БАННЕР ПРЯМО В ЧАТЕ с вкладкой АВТО внутри */
           const tt = (ev.result && ev.result.task && ev.result.task.title)
             || (ev.result && ev.result.title) || '';
-          toastAutoCard(tt);
-          sfx('ok');
+          bgTaskNote(ui, tt, '');
         } else if (/^(write_file|download_file|make_archive|generate_image)$/.test(ev.name)) {
           embedLiveCard(ui, 'files', 'файлы диалога');
         } else if (ev.name === 'remember') {
@@ -10621,11 +10741,9 @@ function handleEvent(ev, ui) {
     }
 
     case 'background': {
-      /* BM13: сервер уводит задачу в фон САМ (агентский прогон не стартует) —
-         живая AUTO-карточка появляется здесь СРАЗУ, в момент ухода в фон.
-         BM18: ЗЕЛЁНАЯ БЛАШКА с вкладкой АВТО внутри — единый вид
-         постановки фоновой задачи (карточка в чате не рисуется) */
-      toastAutoCard(ev.title);
+      /* BM13: сервер уводит задачу в фон САМ (агентский прогон не стартует).
+         BM19: ЗЕЛЁНЫЙ БАННЕР ПРЯМО В ДИАЛОГЕ с вкладкой АВТО внутри */
+      bgTaskNote(ui, ev.title, ev.when || '');
       dropStatus(ui);
       refreshState();
       scrollDown();
@@ -10735,6 +10853,19 @@ function handleEvent(ev, ui) {
       dropStatus(ui);
       // ответ завершён: всё открытое прячется в папки немедленно
       flushTools(ui);
+      // BM19: файлы, приехавшие ТОЛЬКО в done (rescue голого фенса —
+      // RuTube-плеер): SSE-события 'file' для них не было, рисуем сами,
+      // пропуская уже показанные (по url)
+      (ev.files || []).forEach((f) => {
+        if (!f || !f.url) return;
+        const seen = (ui.files || []).some((x) => x.url === f.url);
+        if (seen) return;
+        ui.files.push(f);
+        const wrap = ui.filesBox || (ui.filesBox = el('div', ''));
+        if (!wrap.parentNode) node.body.insertBefore(wrap, ui.statusEl);
+        attachFileChip(wrap, f);
+        flyToFiles(wrap.lastElementChild, f.name);
+      });
       if (ev.tier) ui.routeTier = ev.tier;
       if (ev.model) ui.modelName = ev.model;
       updateResponseMeta(ui);
