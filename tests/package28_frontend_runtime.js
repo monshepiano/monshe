@@ -3121,31 +3121,23 @@ function testIterationBM18Contracts() {
       .includes('"bg_note": True') &&
     pyAgent.replace(/\s+/g, ' ').includes('НЕ вставляй карточку AUTO сам'),
     'BM19 auto: the background route shows the GREEN IN-CHAT BANNER live (SSE) AND saves the same banner note (AUTO tab card + bg_note tint) into the dialog history; the prompt never asks the model to embed an auto card itself');
-  // ДОК BM20: морф С НУЛЯ — один часы, честный grid, ничего не доезжает
-  assert(css.includes('--fold-t:.48s') &&
-    css.includes('--fold-ease:cubic-bezier(.55,.06,.22,1)') &&
-    css.includes('.spaces{display:grid;grid-template-rows:1fr;position:relative;') &&
-    css.includes('.spaces-in{display:flex;flex-direction:column;gap:9px;min-height:0;') &&
-    css.includes('.app.collapsed .spaces{grid-template-rows:0fr;opacity:0;margin-top:0;padding-top:0;padding-bottom:0}') &&
-    css.includes('.sp-dock{display:grid;grid-template-rows:0fr;opacity:0;pointer-events:none;') &&
-    css.includes('.spd-in{display:flex;flex-direction:column;align-items:center;gap:5px;') &&
-    css.includes('.app.collapsed .sp-dock{grid-template-rows:1fr;margin-top:9px;opacity:1;pointer-events:auto}') &&
-    css.includes('.spaces.no-spaces{padding-bottom:3px}') &&
-    css.includes('.spaces.no-spaces .spaces-in{gap:0}') &&
+  // ДОК: пустоты над LIVE нет; морф — одна траектория (BM21)
+  const dockRule = css.split('\n.dock{')[1] ? css.split('\n.dock{')[1].split('}')[0] : '';
+  assert(css.includes('.app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden;margin:-10px 0}') &&
+    js.includes("sp.style.maxHeight = '0px'") &&
+    !js.includes('side-folding') &&
+    !css.includes('.side-folding') &&
+    !css.includes('.legacy-fold') &&
     css.includes('.app.collapsed .chats-block{flex-grow:0;') &&
     css.includes('.app.collapsed .side-foot{max-height:0;') &&
-    css.includes('.brand .collapse-btn{position:absolute;top:8px;right:6px;width:26px;height:26px;') &&
-    css.includes('.app.collapsed .collapse-btn{top:44px;right:13px;transform:rotate(180deg)}') &&
-    css.includes('.app.collapsed .brand{gap:0;padding:6px 0 32px 9px;') &&
-    !css.includes('.app.collapsed .brand{flex-direction:column') &&
-    !/\.side-folding /.test(css) && !/\.legacy-fold /.test(css) &&
-    !css.includes('side-folding .sidebar') &&
-    !css.includes('@keyframes spDockIn') &&
-    !js.includes('side-folding') && !js.includes('sp.style.maxHeight') &&
-    !css.includes('.app.collapsed .spaces{max-height:0') &&
+    css.includes('--fold-t:.52s') &&
+    css.includes('--fold-ease:cubic-bezier(.45,.05,.2,1)') &&
+    css.includes('margin var(--fold-t) var(--fold-ease)') &&
+    dockRule && !/transition:[^}]*transform/.test(dockRule) &&
+    css.includes('.spaces.no-spaces{padding-top:2px;padding-bottom:4px;gap:0}') &&
     !css.includes('cubic-bezier(.3,1.12,.4,1)') &&
     !js.includes('cubic-bezier(.3,1.1,.4,1)'),
-    'BM20 dock: the morph is REBUILT FROM SCRATCH — one clock in BASE rules (declared once, same move both ways), honest grid 1fr<->0fr rows (no JS height juggling, no display:none pop-ins, no delayed keyframes), the brand NEVER switches layout and the arrow rides absolute coordinates; with all spaces hidden LIVE sits tight under the brand (no phantom strip)');
+    'BM21 dock: the morph runs on ONE shared clock (--fold-t/--fold-ease live in the BASE rules; the side-folding choreographer and legacy layers are gone), the pill vertical is driven per-frame by JS (no transform in the .dock transition), and the brand-line→LIVE gap equals the cur→dash gap (margin compensation keeps both at 8px)');
   // МЕДИА: стоки скипаются, прямые файлы — первыми
   const pyMedia = fs.readFileSync(path.join(root, 'app/jarvis/tools/media.py'), 'utf8');
   assert(!pyMedia.includes('_STOCK_RE') && !pyMedia.includes('dreamstime') &&
@@ -3158,17 +3150,14 @@ function testIterationBM18Contracts() {
 }
 
 function testIterationAOContracts() {
-  // AO: РАБОЧАЯ ОБЛАСТЬ ЖИВЁТ В ТАКТ ДОКУ — та же кривая дока в каждую
-  // сторону, отступ вида скользит, а не прыгает
+  // AO: РАБОЧАЯ ОБЛАСТЬ ЖИВЁТ В ТАКТ ДОКУ — общие часы морфа в каждую
+  // сторону (BM21: одна кривая --fold-ease, переходы в базовых правилах)
   assert(css.includes('.main{grid-column:1;margin-left:262px;') &&
     css.includes('transition:margin-left var(--fold-t) var(--fold-ease)}') &&
-    /\.app\.collapsed \.main\{margin-left:0;?\}/.test(css) &&
+    css.includes('.app.collapsed .main{margin-left:0;}') &&
     css.includes('.main .view{transition:padding-left var(--fold-t) var(--fold-ease)}') &&
-    css.includes('transition:width var(--fold-t) var(--fold-ease)') &&
-    css.includes('transition:grid-template-rows var(--fold-t) var(--fold-ease)') &&
-    !css.includes('cubic-bezier(.5,.35,.15,1)') &&
-    !css.includes('cubic-bezier(.22,.68,.18,1)'),
-    'AO/AP: work area slides with the DOCK curve in both directions (margin, Safari-proof); BM20: ONE curve for everything — the old three different beziers are gone');
+    css.includes('transition:width var(--fold-t) var(--fold-ease)'),
+    'AO/AP: work area slides on the shared fold clock in both directions (margin, Safari-proof)');
   // AO: ВОЛНА СИГИЛА — печать развязывает фигуру в линию волн (жёлтая,
   // яркий пульс), конец печати медленно замеряет её в последней позе
   assert(css.includes('transition:opacity .18s ease}') &&
@@ -3311,9 +3300,9 @@ function testIterationBM9Contracts() {
   // BM10: папки анимирует JS-вальс (Web Animations + rAF высота);
   // CSS-переход(grid) конкурировал с ним и давал резкий кадр в конце
   assert(css.includes('.qt-folder .qt-kids{display:none}') &&
-    !css.split('.qt-folder')[1].slice(0, 500).includes('grid-template-rows') &&
+    !css.includes('grid-template-rows:0fr') &&
     js.includes("kids.style.height = (wasOpen ? H : 0) + 'px';"),
-    'BM10: folders animate via the JS waltz alone — no CSS transition fighting it at the end (BM20 grid rows for the dock morph are fine — they live in .spaces/.sp-dock)');
+    'BM10: folders animate via the JS waltz alone — no CSS transition fighting it at the end');
   // BM10: степень корня — ниже и левее: не залезает за черту корня;
   // корень в ЗНАМЕНАТЕЛЕ дроби опущен (не наезжает на знак дроби)
   /* BM16: степень над нижним загибом — em от корня */
@@ -3362,8 +3351,8 @@ function testIterationBM10Contracts() {
     'BM12/BM13: spaces switch by tap or a fast two-finger swipe — ONE transition per gesture (arm/disarm); the app always boots into CHAT');
   // под чертой — вкладки пространства; чат — базовое: заполнен и синий
   assert(js.includes("$$('.nav, .chats-block').forEach((n) => n.classList.toggle('space-off', !isChat));") &&
-    css.includes('.sp-ico.base{color:var(--tx3);') &&
-    css.includes('.sp-ico.base.sel{filter:none}') &&
+    css.includes('.sp-ico.base{color:var(--tx);font-weight:700}') &&
+    !css.includes('.sp-ico.base.sel{filter:none}') &&
     !css.includes('.sp-ico.sel::after') &&
     css.includes('.sp-mode.active{'),
     'BM11: below the line the tabs belong to the space; the chat icon is the filled bright-blue base, the selected one glows with no underline');
@@ -3401,9 +3390,8 @@ function testIterationBM11Contracts() {
     /* BM14: .docked гасит только visibility (display:none в конце
        анимации давал однокадровый скачок кнопок вверх) */
     css.includes('.app.docked .spaces{visibility:hidden}') &&
-    css.includes('.app.collapsed .sp-dock{grid-template-rows:1fr;margin-top:9px;opacity:1;pointer-events:auto}') &&
-    html.includes('class="spd-in"') && html.includes('class="spaces-in"'),
-    'BM11/BM12: the dock stays as it was — tabs plus a LIVE icon and the current-space icon with a flyout (BM20: the mini-row grows via an honest grid row, no display:none pop)');
+    css.includes('.app.collapsed .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;'),
+    'BM11/BM12: the dock stays as it was — tabs plus a LIVE icon and the current-space icon with a flyout');
   /* BM14: меню вырастает ИЗ САМОЙ КНОПКИ — левый край панели на кнопке,
      рост scale(.22)->1 от её области; мостик не нужен: панель примыкает
      вплотную, иконка текущего пространства плывёт на свой слот (FLIP),
@@ -3418,8 +3406,24 @@ function testIterationBM11Contracts() {
     'BM14: the flyout grows straight out of the button itself; the current-space icon glides to its slot and returns when the cursor leaves');
   // настройки — маленькая абсолютная кнопка + панель видимости
   assert(html.includes('id="spSettings"') && html.includes('id="spSetPanel"') &&
-    css.includes('.sp-ico.sp-set{position:absolute;right:3px;top:56px;width:23px;height:21px;'),
+    css.includes('.sp-ico.sp-set{position:absolute;right:3px;top:59.5px;width:23px;height:21px;'),
     'BM12/BM13: a smaller settings button sits at the right edge of the icons row, opening the glass visibility panel');
+  // BM21: анимация «как было» + доводка «в одно место»; док-симметрия; CHAT; глайдер; менышка
+  assert(
+    js.includes('const flipEls = [document.querySelector(\'#brandReactor\'), document.querySelector(\'#collapseBtn\')]') &&
+    js.includes('gliderWatchRun();') &&
+    css.includes('.app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden;margin:-10px 0}') &&
+    css.includes('.app.collapsed .spd-dash{margin-top:8px}') &&
+    css.includes('.brand{display:flex;align-items:center;gap:10px;padding:8px 6px 8px;') &&
+    css.includes('.spaces.no-spaces .sp-ico.sp-set{top:8.5px}') &&
+    js.includes("gl.style.transition = 'opacity .25s ease'") &&
+    js.includes('g.style.left = sel.offsetLeft') &&
+    css.includes('.dock{display:flex;flex-direction:column;gap:12px;border:1px solid transparent;border-radius:0;position:relative;z-index:2;') &&
+    js.includes("const off = n !== 'chat' && S.spacesVisible.indexOf(n) < 0;") &&
+    js.includes('window.__gTipHide') &&
+    js.includes("['chat'].concat(S.spacesVisible)") &&
+    css.includes('background:rgba(13,24,40,.62)'),
+    'BM21: fold morph keeps the beta.91 feel but arrives in one place (FLIP core+arrow, honest max-height for spaces AND brand caption, per-frame pill verticality); dock stripes are symmetric (brand-line→LIVE == cur→dash), the gear is centered against the row/LIVE, CHAT is bold and bright in row and panel (never .off), the glider jumps to the final spot during eye-FLIP (its left/width transition is suspended), the settings caption dies while the panel is open, and the dock flyout carries THREE glass slots');
   // ГЛАЙДЕР: подсветка морфом перетекает на выбранную иконку
   assert(html.includes('id="spGlider"') &&
     js.includes('function spaceGlider()') &&
@@ -3511,29 +3515,34 @@ function testIterationBM12Contracts() {
     css.includes('.sp-eye.off::after') &&
     css.includes('.sp-set-row.off{opacity:.4;filter:saturate(.3)}') &&
     css.includes('.spaces.no-spaces .sp-row{opacity:0;transform:scale(.42);') &&
-    css.includes('.spaces.no-spaces .sp-ico.sp-set{top:14px}') &&
+    css.includes('.spaces.no-spaces .sp-ico.sp-set{top:8.5px}') &&
     css.includes('.spaces.no-spaces .sp-modes{padding-right:36px}'),
     'BM12/BM13: hidden rows grey out with a crossed eye; with only chat left, the row (chat included) fades out ANIMATED, the gear slides up beside LIVE');
   // СЖАТИЕ ДОКА: плавное, зеркально разворачиванию; вкладки в доке всегда
   /* BM14: честная анимация высоты (JS замер), .docked гасит только
      visibility, у дока НЕТ рамки-области, полоса — на весь док */
   assert(js.includes("app.classList.add('docked')") &&
+    js.includes("sp.style.maxHeight = sp.offsetHeight + 'px'") &&
+    js.includes("bt.style.maxHeight = bt.offsetHeight + 'px'") &&
     js.includes("classList.add('collapsed', 'docked');") &&
+    js.includes("sp.style.maxHeight = '0px'") &&
+    css.includes('.app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden;margin:-10px 0}') &&
+    !css.includes('.side-folding .spaces') &&
     css.includes('.app.collapsed .space-future{display:none!important}') &&
     !css.includes('.app.collapsed .nav.space-off{display:flex!important}') &&
     !css.includes('.app.collapsed .sp-dock::before{') &&
     css.includes('.spaces::after{') && css.includes('filter:blur(1.1px)') &&
     css.includes('.app.collapsed .spd-cur-wrap{align-self:stretch') &&
     css.includes('.app.docked .spaces{visibility:hidden}'),
-    'BM12/BM13: collapsing SQUEEZES the spaces row smoothly (docked only after the animation); in the dock only the CURRENT space tabs show (no chat tabs abroad) and a full-width blurred strip backs the buttons');
+    'BM12/BM13/BM21: collapsing SQUEEZES the spaces row smoothly with an honest JS-measured max-height (the brand caption rides the same mechanism), .docked only mutes visibility after the animation; in the dock only the CURRENT space tabs show (no chat tabs abroad) and a full-width blurred strip backs the buttons');
   // LIVE ярче + чат — базовое в тихой рамке
   assert(css.includes('text-shadow:0 0 9px rgba(0,212,255,.35)') &&
     css.includes('radial-gradient(circle at 50% 50%,rgba(0,212,255,.11)'),
     'BM12: LIVE glows from its center, brighter text and border');
-  assert(css.includes('.sp-ico.base{color:var(--tx3);') &&
-    css.includes('.sp-ico.base.sel{filter:none}') &&
+  assert(css.includes('.sp-ico.base{color:var(--tx);font-weight:700}') &&
+    !css.includes('.sp-ico.base.sel{filter:none}') &&
     !css.includes('.spf-ico.base'),
-    'BM12/BM13: the chat icon is hollow and quiet — like the others, with a barely visible transparent frame; no glow when selected; not singled out in the flyout');
+    'BM21: the chat icon is BOLD and bright like a selected one (never muted, never boxed); not singled out in the flyout');
   // ФЛАЙАУТ ДОКА: вылетает из кнопки, иконки разлетаются по местам
   assert(html.includes('id="spdCurWrap"') && html.includes('class="spd-dash"') &&
     js.includes('function dockFlyIcons()') &&
@@ -3878,7 +3887,7 @@ function testIterationATContracts() {
   assert(!css.includes('backdrop-filter .5s') &&
     !css.includes('gap .6s ease') &&
     css.includes('transition:width var(--fold-t) var(--fold-ease),padding'),
-    'AT: dock FPS — no blur/gap transitions, geometry only');
+    'AT: dock FPS — no blur/gap transitions, geometry only (BM21: the width rides the shared fold clock)');
   // AT: перелёт v2 — места пусты до прилёта, призраки по своим классам
   assert(js.includes("core.classList.add('pre-flight')") &&
     js.includes("name.classList.add('pre-flight')") &&
@@ -3941,9 +3950,11 @@ function testIterationAQContracts() {
   assert(css.includes('padding-top:56px}') &&
     css.includes('.topbar{padding-left:80px}'),
     'AQ: content starts below the band; mobile band clears the icon strip');
-  // AR: элементы панели едут на новую площадь кривыми дока (BM20: одни часы)
-  assert(css.includes('transition:padding-left var(--fold-t) var(--fold-ease)}') &&
-    css.includes('.app.collapsed .topbar{padding-left:18px}'),
+  // AR: элементы панели едут на новую площадь кривыми дока (BM21: переход
+  // живёт в базовом .topbar — свёрнутое состояние меняет только значение)
+  assert(css.includes('transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}') &&
+    css.includes('.app.collapsed .topbar{padding-left:18px;}') &&
+    !css.includes('cubic-bezier(.5,.35,.15,1)'),
     'AR: band content slides with the dock and redistributes');
   // AQ: ХОД МЫСЛЕЙ — целые предложения, дубли и огрызки умирают в буфере
   assert(pyAgent.includes('class _ThinkFilter:') &&
@@ -3978,7 +3989,7 @@ function testIterationAPContracts() {
   assert(pyAgent.includes('cyr >= 4 and cyr >= lat'),
     'AP: backend reasoning filter demands real Cyrillic — garbage never shown');
   // AP: ВЕРХНЯЯ ПАНЕЛЬ — margin вместо grid-колонок (Safari их не анимирует)
-  assert(/\.app\.collapsed \.main\{margin-left:0;?\}/.test(css) &&
+  assert(css.includes('.app.collapsed .main{margin-left:0;') &&
     !css.includes('grid-template-columns .6s'),
     'AP: no more left-edge snapping — margin slides everywhere');
 }
@@ -4056,7 +4067,7 @@ function testIterationAHContracts() {
     /setKeyframes\(flyKeys\(aim\)\)/.test(foldFn),
     'AG3: dimming keys travel inside the flight, homing keeps them');
   // AH: свёрнутое меню — плавающий док, контент на всю ширину
-  assert(/\.app\.collapsed \.main\{margin-left:0;?\}/.test(css) &&
+  assert(/\.app\.collapsed \.main\{margin-left:0;/.test(css) &&
     /\.main\{grid-column:1;margin-left:262px;/.test(css),
     'AH: content spans full width when collapsed; topbar reaches the left edge');
   const dock = css.split('/* ---- свёрнутый режим: панель превращается в плавающий DOCK')[1].split('/* подпись иконки')[0];
@@ -4065,29 +4076,26 @@ function testIterationAHContracts() {
     /backdrop-filter:blur\(18px\) saturate\(1\.2\)/.test(dock) &&
     /border-radius:20px/.test(dock) &&
     /background:rgba\(15,27,44,\.38\)/.test(dock) &&
-    /\.nav\{display:flex;flex-direction:column;gap:3px;margin-top:9px;/.test(css) &&
-    /\.app\.collapsed \.nav-item\{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none;?\}/.test(dock) &&
+    /\.app\.collapsed \.nav\{margin:0\}/.test(dock) &&
+    /\.app\.collapsed \.nav-item\{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none;/.test(dock) &&
     /\.app\.collapsed \.nav-item\.active::before\{display:none\}/.test(dock) &&
     /padding-left:76px/.test(dock) &&
     !/transform:scale/.test(dock),
     'AH: dock is matte glass, nothing protrudes beyond the pill');
   assert(/--dock-y/.test(js) && /function dockY\(on\)/.test(js) &&
-    /* BM20: хореография — ОДНО состояние (.collapsed) и два финализатора;
-       никаких side-folding/maxHeight: высоты складывает сам grid,
-       финализаторы встают ПОСЛЕ анимации (.48s) */
-    js.includes('function foldWatchRun(collapsing)') &&
-    js.includes("dock.style.transition = 'none';") &&
+    !/side-folding/.test(js) && !css.includes('.side-folding') &&
+    /* BM21: хореография без дирижёра — collapsed ставится сразу,
+       .docked дозревает к концу морфа (560мс) и гасит только
+       visibility; вертикаль пилюли JS ведёт покадрово (gliderWatchRun) */
     js.includes("app.classList.add('collapsed');") &&
-    js.includes("app.classList.add('docked'), 500") &&
-    js.includes("app.classList.add('opened'), 500") &&
-    js.includes("app.classList.remove('opened');") &&
+    js.includes("$('#app').classList.add('collapsed', 'docked');") &&
+    js.includes("app.classList.add('docked')") &&
+    js.includes("sp0.style.maxHeight = '0px'") &&
     js.includes("app.classList.remove('docked');") &&
-    js.includes("app.classList.remove('collapsed');") &&
     !/SIDE_FADE/.test(js) && !/SIDE_MORPH/.test(js) &&
-    !/side-folding/.test(js) &&
     /var\(--fold-ease\)/.test(dock) &&
     /localStorage\.removeItem\('jarvis\.sidebar2'\)/.test(js),
-    'AJ: one-state choreography with post-animation finalizers, per-frame dockY during the morph (transform rides without transition), default opens with dock');
+    'AJ/BM21: mirrored choreography on the shared fold clock, default opens with dock');
 }
 
 function testIterationAFContracts() {

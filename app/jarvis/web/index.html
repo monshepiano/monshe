@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#04070d">
 <title>JARVIS</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='42' fill='none' stroke='%2300d4ff' stroke-width='6'/><circle cx='50' cy='50' r='18' fill='%2300d4ff'/></svg>">
-<link rel="stylesheet" href="/static/css/app.css?v=1.2.0-beta.92">
+<link rel="stylesheet" href="/static/css/app.css?v=1.2.0-beta.93">
 </head>
 <body>
 
@@ -58,7 +58,6 @@
          на иконку при переключении. Справа от иконок — настройки.
          Переключение: клик или свайп двумя пальцами. -->
     <div class="spaces" id="spacesBar">
-      <div class="spaces-in">
       <div class="sp-modes">
         <button class="sp-mode" id="spModeLive" title="LIVE">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
@@ -102,14 +101,12 @@
       </button>
       <!-- панель видимости: строка на пространство + глазик -->
       <div class="sp-set-panel" id="spSetPanel"></div>
-      </div>
     </div>
 
     <!-- BM11: ДОК (свёрнутое меню). В доке — только вкладки, как раньше,
          плюс иконка LIVE и значок текущего пространства: наведение плавно
          выплывает панелью со всеми пространствами и настройками -->
     <div class="sp-dock" id="spDock">
-      <div class="spd-in">
       <button class="spd-live" id="spdLive" title="LIVE">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -124,7 +121,6 @@
         <i class="spd-dash" aria-hidden="true"></i>
         <!-- окошко пространств: вылетает из кнопки, иконки строит JS -->
         <div class="spd-fly" id="spdFly"></div>
-      </div>
       </div>
     </div>
 
@@ -462,7 +458,7 @@
   <div class="modal" id="modal"></div>
 </div>
 
-<script src="/static/js/markdown.js?v=1.2.0-beta.92"></script>
-<script src="/static/js/app.js?v=1.2.0-beta.92"></script>
+<script src="/static/js/markdown.js?v=1.2.0-beta.93"></script>
+<script src="/static/js/app.js?v=1.2.0-beta.93"></script>
 </body>
 </html>

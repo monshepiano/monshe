@@ -3315,8 +3315,11 @@ class IterationZTests(unittest.TestCase):
         self.assertIn("&negative_prompt=%s", code)
         self.assertIn("watermark", code)
         self.assertIn("bad anatomy", code)
-        # версия
-        self.assertIn("beta.92", Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        # версия: фича уже была в beta.91 (не откатывается)
+        import re as _re
+        _m = _re.search(r"1\.2\.0-beta\.(\d+)",
+                        Path("app/jarvis/__init__.py").read_text(encoding="utf-8"))
+        self.assertTrue(_m and int(_m.group(1)) >= 91)
         # BM14.1: кэш-бустер статики обновляется сборкой сам
         self.assertIn("def _bump_asset_versions(",
                       Path("install/build.py").read_text(encoding="utf-8"))
@@ -3903,7 +3906,8 @@ class IterationAGTests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         # AP: место под меню держит margin, а не grid-анимация (Safari)
-        self.assertRegex(css, r"\.app\.collapsed \.main\{margin-left:0;?\}")
+        self.assertIn(".app.collapsed .main{margin-left:0;", css)
+        # BM21: одна кривая морфа в базовом правиле
         self.assertIn("transition:margin-left var(--fold-t) var(--fold-ease)}", css)
         self.assertIn(".main{grid-column:1;margin-left:262px;", css)
         dock = css.split("/* ---- свёрнутый режим: панель превращается в плавающий DOCK")[1].split("/* подпись иконки")[0]
@@ -3917,15 +3921,15 @@ class IterationAGTests(unittest.TestCase):
         self.assertIn("padding:10px 0;", dock)
         # AK: КОРЕНЬ ВЫПИРАНИЯ вылечен — .nav сужается до стекла,
         # пункты width:auto (были шире дока на width:100% сайдбара)
-        self.assertIn(".nav{display:flex;flex-direction:column;gap:3px;margin-top:9px;", css)
-        self.assertRegex(dock, r"\.app\.collapsed \.nav-item\{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none;?\}")
-        # BM20: одни часы на весь морф — одна кривая в базовых правилах
-        self.assertIn("var(--fold-ease)", dock)
-        self.assertNotIn("cubic-bezier(.5,.35,.15,1)", css)
+        self.assertIn(".app.collapsed .nav{margin:0}", dock)
+        self.assertIn(".app.collapsed .nav-item{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none;", dock)
+        # анимация медленнее и плавнее: общие часы морфа (BM21)
+        self.assertIn("--fold-ease:cubic-bezier(.45,.05,.2,1)", css)
+        self.assertIn("var(--fold-t) var(--fold-ease)", dock)
         self.assertIn(".app.collapsed .nav-item.active::before{display:none}", dock)
         self.assertIn(".app.collapsed .nav-item:hover{transform:none;background:rgba(0,212,255,.09)}", dock)
-        # BM19/BM20: переход подписей — в базовом блоке навигации (плавно в ОБЕ стороны)
-        self.assertIn(".nav-label{min-width:0;max-width:170px;overflow:hidden;white-space:nowrap;", css)
+        # BM19: переход подписей вынесен в базу (плавно в ОБЕ стороны)
+        self.assertIn(".nav-label{transition:max-width var(--fold-t) var(--fold-ease),", dock)
         self.assertIn(".app.collapsed .nav-label{opacity:0;max-width:0}", dock)
         # контент не едет под док
         self.assertIn(".app.collapsed .main .view{padding-left:76px", dock)
@@ -3934,23 +3938,26 @@ class IterationAGTests(unittest.TestCase):
         self.assertIn(".app.collapsed .chats-block{flex-grow:0;", css)
         self.assertIn(".app.collapsed .side-foot{max-height:0;", css)
         self.assertNotIn(".app.collapsed .chats-block,\n.app.collapsed .side-foot{display:none}", css)
-        # BM20: бренд не гаснет и не меняет раскладку; морф — одно состояние
+        # BM21: дирижёр side-folding удалён — переходы живут в базовых правилах
+        self.assertNotIn(".side-folding", css)
         self.assertNotIn("side-folding", js)
-        self.assertIn("app.classList.add('collapsed')", js)
+        # BM12: сворачивание — явные шаги: сжать пространства, ПОСЛЕ анимации
+        # погасить (.docked); разворачивание — снять .docked и разжать в след. кадр
+        self.assertIn("app.classList.add('collapsed');", js)
         self.assertIn("app.classList.add('docked')", js)
         self.assertIn("app.classList.remove('docked');", js)
         self.assertNotIn("SIDE_FADE", js)
         self.assertNotIn("SIDE_MORPH", js)
-        # BM20: направления различаются только направлением — кривая ОДНА
-        self.assertNotIn("cubic-bezier(.5,.35,.15,1)", css)
-        self.assertNotIn("cubic-bezier(.22,.68,.18,1)", css)
+        # направления различаются ТОЛЬКО кривой (BM21: одна кривая морфа)
+        self.assertIn("--fold-ease:cubic-bezier(.45,.05,.2,1)", css)
+        self.assertIn("cubic-bezier(.22,.68,.18,1)", css)
         # AJ: по умолчанию Джарвис открывается с доком
         self.assertIn("localStorage.removeItem('jarvis.sidebar2');", js)
         self.assertIn("function dockY(on)", js)
         self.assertIn("--dock-y", js)
         self.assertIn('<div class="dock">', html)
-        # AK: стрелка — SVG-шеврон; BM20: absolute-координаты, едет плавно
-        self.assertIn(".brand .collapse-btn{position:absolute;top:8px;right:6px;width:26px;height:26px;", css)
+        # AK: стрелка — SVG-шеврон, математически по центру в обоих режимах
+        self.assertIn(".collapse-btn{width:26px;height:26px;font-size:16px;display:grid;place-items:center;", css)
         self.assertIn('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"', html)
         self.assertNotIn(">‹</button>", html)
         # AL: стрелка МАЛЕНЬКАЯ (14px), по центру кнопки
@@ -4514,13 +4521,14 @@ class IterationAOTests(unittest.TestCase):
         # панель «примагничивалась» к краю), место держит margin-left,
         # он анимируется везде и в такт доку
         self.assertIn(".main{grid-column:1;margin-left:262px;", css)
+        self.assertIn(".app.collapsed .main{margin-left:0;", css)
+        # BM21: одна кривая морфа в базовом правиле
         self.assertIn("transition:margin-left var(--fold-t) var(--fold-ease)}", css)
-        self.assertRegex(css, r"\.app\.collapsed \.main\{margin-left:0;?\}")
         self.assertIn("grid-template-columns:1fr;height:100vh", css)
         self.assertNotIn("grid-template-columns .6s", css)
         # мобильный каркас: узкая полоса 62px
         self.assertIn(".main,.app.collapsed .main{margin-left:62px}", css)
-        # отступ вида скользит, а не прыгает (BM20: той же кривой, что и всё)
+        # отступ вида скользит, а не прыгает (BM21: общие часы морфа)
         self.assertIn(
             ".main .view{transition:padding-left var(--fold-t) var(--fold-ease)}", css)
         # AQ: полоса закреплена и контент начинается ниже неё
@@ -4602,9 +4610,11 @@ class IterationAQTests(unittest.TestCase):
         self.assertIn("padding:11px 18px 11px 280px", topbar)   # чипы правее меню
         # контент — ниже полосы
         self.assertIn("padding-top:56px}", css)
-        # AR: элементы панели едут за доком на новую площадь (BM20: одни часы)
-        self.assertIn("transition:padding-left var(--fold-t) var(--fold-ease)}", css)
-        self.assertIn(".app.collapsed .topbar{padding-left:18px}", css)
+        # AR: элементы панели едут за доком на новую площадь (кривые дока)
+        self.assertIn("transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}", css)
+        self.assertIn(".app.collapsed .topbar{padding-left:18px;", css)
+        # BM21: свёрнутое состояние меняет только значение — переход в базе
+        self.assertNotIn("cubic-bezier(.5,.35,.15,1)", css)
         # мобильная полоса: отступ узкой полосы иконок (62+18)
         self.assertIn(".topbar{padding-left:80px}", css)
 
@@ -4740,8 +4750,8 @@ class IterationAQTests(unittest.TestCase):
         self.assertIn("def think_close_events(", src)
     def test_as2_flight_and_curve(self) -> None:
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        # кривая разворачивания панели: BM20 — единые часы морфа
-        self.assertIn("transition:padding-left var(--fold-t) var(--fold-ease)}", css)
+        # кривая разворачивания панели исправлена (была .2 — рывок в конце)
+        self.assertIn("transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}", css)
         self.assertNotIn("cubic-bezier(.22,.68,.18,.2)", css)
 
     def test_as3_web_search_paced(self) -> None:
@@ -4780,7 +4790,7 @@ class IterationATTests(unittest.TestCase):
         # blur-стекло не анимируется (пересчёт размытия рвал кадры, Safari)
         self.assertNotIn("backdrop-filter .5s", css)
         self.assertNotIn("gap .6s ease", css)
-        # геометрия по-прежнему едет кривыми дока (BM20: единые часы)
+        # геометрия едет общими часами морфа (BM21)
         self.assertIn("transition:width var(--fold-t) var(--fold-ease),padding", css)
 
     def test_at4_flight_v2(self) -> None:
@@ -7264,7 +7274,7 @@ class IterationBM8Tests(unittest.TestCase):
                        'id="spGlider"', 'id="spSetPanel"'):
             self.assertIn(marker, html)
         self.assertIn(".app.docked .spaces{visibility:hidden}", css)
-        self.assertIn(".app.collapsed .sp-dock{grid-template-rows:1fr;", css)
+        self.assertIn(".app.collapsed .sp-dock{display:flex", css)
         self.assertIn(".spd-cur-wrap.open .spd-fly{opacity:1", css)
         # BM14: меню пространств вырастает ИЗ кнопки (left:0), не сбоку
         self.assertIn("transform:translateY(-50%) scale(.22);transform-origin:left center", css)
@@ -7381,9 +7391,9 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn(".sp-eye.off::after", css)
         self.assertIn(".sp-set-row.off{opacity:.4;filter:saturate(.3)}", css)
         # все НЕ-чатовые скрыты: ряд с чатом исчезает С АНИМАЦИЕЙ (BM13),
-        # шестерёнка вверх к LIVE
+        # шестерёнка вверх к LIVE — по центру LIVE-строки (BM21)
         self.assertIn(".spaces.no-spaces .sp-row{opacity:0;transform:scale(.42);", css)
-        self.assertIn(".spaces.no-spaces .sp-ico.sp-set{top:14px}", css)
+        self.assertIn(".spaces.no-spaces .sp-ico.sp-set{top:8.5px}", css)
 
     def test_bm12_dock_collapse_squeeze(self) -> None:
         """Сворачивание в док сжимает пространства плавно; в доке вкладки
@@ -7392,18 +7402,22 @@ class IterationBM8Tests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         self.assertIn("app.classList.add('docked')", js)
         self.assertIn("classList.add('collapsed', 'docked');", js)
-        # BM20: свёрнутый ряд — grid 0fr (честная высота, без JS), док-
-        # миниатюры вырастают grid 1fr + прозрачность, без display:none
-        self.assertIn(".app.collapsed .spaces{grid-template-rows:0fr;", css)
+        self.assertNotIn(".side-folding .spaces", css)
         # BM14: .docked гасит только visibility — display:none в конце
         # анимации давал однокадровый скачок кнопок вверх
         self.assertIn(".app.docked .spaces{visibility:hidden}", css)
+        # BM18: свёрнутое меню не оставляет места невидимому ряду
+        # пространств (пустота над LIVE) и стартует УЖЕ схлопнутым;
+        # BM21: margin компенсирует gap'ы дока — полосы симметричны
+        self.assertIn(".app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden;margin:-10px 0}", css)
+        self.assertIn("sp.style.maxHeight = '0px'", js)
+        self.assertIn("sp0.style.maxHeight = '0px'", js)
         self.assertIn(".app.collapsed .space-future{display:none!important}", css)
         # BM14: у дока НЕТ рамки-области (светлая плашка с границами убрана);
-        # BM20: высотой ряда управляет grid — класс и JS её не трогают
+        # высотой ряда управляет JS честным замером — класс её не трогает
         self.assertNotIn(".app.collapsed .sp-dock::before{", css)
-        self.assertIn("складывает 1fr→0fr", js)
-        self.assertNotIn("sp.style.maxHeight", js)
+        self.assertIn("класс не трогает max-height", css)
+        self.assertIn("sp.style.maxHeight = sp.offsetHeight + 'px'", js)
 
     def test_bm12_space_chrome_instant(self) -> None:
         """Клик по пространству красит иконки/глайдер мгновенно, не после анимации."""
@@ -7692,9 +7706,9 @@ class IterationBM13Tests(unittest.TestCase):
         # полая иконка: stroke вместо fill в SPACE_META и в html
         chat_block = js.split("chat: { name: 'CHAT'")[1].split("},")[0]
         self.assertIn('fill="none" stroke="currentColor"', chat_block)
-        # тихая: без ярко-синей заливки и свечения
-        self.assertIn(".sp-ico.base{color:var(--tx3);", css)
-        self.assertIn(".sp-ico.base.sel{filter:none}", css)
+        # BM21: ЖИРНАЯ и яркая (юзер отверг тусклую), свечение положено
+        self.assertIn(".sp-ico.base{color:var(--tx);font-weight:700}", css)
+        self.assertNotIn(".sp-ico.base.sel{filter:none}", css)
         self.assertIn(".spd-cur{color:var(--tx3)}", css)
 
     def test_bm13_live_fill_from_center(self) -> None:
@@ -7845,8 +7859,7 @@ class IterationBM14Tests(unittest.TestCase):
         """Глайдер рисуется сразу и ведёт анимацию; FLIP не оставляет transform."""
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         self.assertIn("function gliderWatchRun()", js)
-        self.assertIn("function foldWatchRun(collapsing)", js)
-        self.assertIn("foldWatchRun(collapsing);", js)
+        self.assertIn("gliderWatchRun();", js)
         self.assertIn("b.style.transform = ''", js)
         self.assertIn("requestAnimationFrame(spaceGlider)", js)
 
@@ -7855,12 +7868,12 @@ class IterationBM14Tests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         fold = js.split("function toggleSidebar()")[1].split("\nfunction ")[0]
-        # BM20: высоту ряда складывает сам grid 1fr<->0fr — JS не меряет
-        self.assertNotIn("maxHeight", fold)
-        self.assertIn("app.classList.add('collapsed')", fold)
-        self.assertIn(".spaces{display:grid;grid-template-rows:1fr;", css)
-        self.assertIn(".spaces-in{display:flex;flex-direction:column;gap:9px;min-height:0;", css)
-        self.assertIn(".app.collapsed .spaces{grid-template-rows:0fr;", css)
+        self.assertIn("sp.style.maxHeight = sp.offsetHeight + 'px'", fold)
+        self.assertIn("sp.style.maxHeight = '0px'", fold)
+        self.assertIn("const h = node.offsetHeight", fold)
+        self.assertIn("node.style.maxHeight = h + 'px'", fold)
+        # класс больше не рулит высотой ряда
+        self.assertNotIn("max-height:0;padding-top:0;padding-bottom:0", css)
 
     def test_bm14_dock_full_dash_and_blurred_border(self) -> None:
         """Полоса под текущим пространством — на весь док; граница размыта."""
@@ -8314,12 +8327,10 @@ class IterationBM18Tests(unittest.TestCase):
         невидимому ряду пространств; старт — уже схлопнутым."""
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        # BM20: ряд сложен честным grid-рядом, старт — сразу свёрнутым,
-        # никаких JS-замеров высоты; финализатор .docked — после анимации
-        self.assertIn(".app.collapsed .spaces{grid-template-rows:0fr;opacity:0;margin-top:0;padding-top:0;padding-bottom:0}", css)
-        self.assertNotIn("sp.style.maxHeight", js)
-        self.assertIn("classList.add('collapsed', 'docked');", js)
-        self.assertIn("app.classList.add('docked'), 500", js)
+        self.assertIn(".app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden;margin:-10px 0}", css)
+        self.assertIn("sp0.style.maxHeight = '0px'", js)
+        # BM21: дирижёра side-folding больше нет — бренд не гасится классом
+        self.assertNotIn("side-folding", js)
 
     def test_bm18_sidebar_one_motion(self) -> None:
         """Морф меню — одна траектория: диалоги/футер/бренд/пункты едут
@@ -8329,10 +8340,9 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn(".app.collapsed .chats-block{flex-grow:0;", css)
         self.assertIn(".app.collapsed .side-foot{max-height:0;", css)
         self.assertNotIn(".app.collapsed .chats-block,\n.app.collapsed .side-foot{display:none}", css)
-        # BM20: бренд не гаснет и не меняет раскладку; кнопка — absolute
-        self.assertNotIn(".app.collapsed .brand{flex-direction:column", css)
-        self.assertIn(".brand .collapse-btn{position:absolute;", css)
-        self.assertNotIn("side-folding", js)
+        # BM21: бренд не гасится — ядро и стрелка доезжают FLIP-перелётом
+        self.assertNotIn(".side-folding .brand{opacity:0}", css)
+        self.assertIn("const flipEls = [document.querySelector('#brandReactor'), document.querySelector('#collapseBtn')]", js)
         # флайаут: одна кривая БЕЗ овершота — и в CSS, и в FLIP-иконке
         self.assertIn("transition:transform .32s cubic-bezier(.22,.61,.25,1),opacity .22s ease}", css)
         self.assertNotIn("cubic-bezier(.3,1.12,.4,1)", css)

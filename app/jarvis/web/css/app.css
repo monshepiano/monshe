@@ -11,15 +11,13 @@
 
 /* ========= JARVIS HUD ========= */
 :root{
-  /* BM20: МОРФ С НУЛЯ. Одни часы на всех: длительность и кривая объявлены
-     в БАЗОВЫХ правилах (не в свёрнутых), поэтому сворачивание и
-     разворачивание — одно и то же движение туда-обратно. Высоты
-     складываются честной grid-анимацией 1fr↔0fr (без JS-замеров),
-     кнопка-стрелка ездит по absolute-координатам, ядро бренда НИКОГДА
-     не меняет раскладку и не гаснет. Ничего не «доезжает»: все
-     участники заканчивают движение одновременно */
-  --fold-t:.48s;
-  --fold-ease:cubic-bezier(.55,.06,.22,1);
+  /* BM21: ОДНИ ЧАСЫ НА ВЕСЬ МОРФ — длительность и кривая объявлены ОДИН
+     раз в базовых правилах каждого участника (не в свёрнутых!): поэтому
+     сворачивание и разворачивание — буквально одно движение туда-обратно.
+     Прежние три разные кривые (.22,.68,.18,1 / .5,.35,.15,1 / ease) и
+     тайминги .34–.66с ликвидированы: все приезжают в одно место */
+  --fold-t:.52s;
+  --fold-ease:cubic-bezier(.45,.05,.2,1);
   --bg:#04070d; --bg2:#070d17; --panel:rgba(10,20,34,.72); --panel2:rgba(12,24,40,.55);
   --line:rgba(0,212,255,.18); --line2:rgba(0,212,255,.34);
   --cy:#00c8f0; --cy2:#5fe6ff; --gold:#d9a441; --red:#dd5566; --green:#3fbf95; --violet:#8f86cf;
@@ -145,7 +143,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    ОТАКРЫВАЕТСЯ за ним до самого края, БЕЗ всякой анимации самой
    панели. Пустоты наверху больше не бывает в принципе: панель там
    была всегда. Контент ниже полосы ездит в такт доку (margin-left). */
-.app.collapsed .main{margin-left:0}
+.app.collapsed .main{margin-left:0;}
 
 /* ---------- сайдбар ---------- */
 .main{grid-column:1;margin-left:262px;
@@ -172,7 +170,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    тот же такт, что панель morph'ится в стекло; разворачивание — тот же
    рисунок, отличается только кривая плавности. */
 .app.collapsed .sidebar{width:68px;padding:10px 0;gap:0;overflow:visible;pointer-events:none;
-  background:rgba(6,12,21,0);border-right-color:transparent;backdrop-filter:blur(0px)}
+  background:rgba(6,12,21,0);border-right-color:transparent;backdrop-filter:blur(0px);
+  /* BM21: переход — только в базовом правиле: сюда и обратно одна кривая */}
 /* сам док: ВЫПУКЛОЕ матовое стекло — без резкой рамки, форму держат
    светлая верхняя кромка, тёмный низ и мягкая тень-парение (AI).
    AJ: чуть прозрачнее, чуть крупнее; отступы симметричны — зазоры между
@@ -189,31 +188,27 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    раньше отступ падал мгновенно и рабочий стол обгонял док */
 .main .view{transition:padding-left var(--fold-t) var(--fold-ease)}
 .app.collapsed .main .view{padding-left:76px}
-/* BM20: БРЕНД НЕ МЕНЯЕТ РАСКЛАДКУ. Прежде при сворачивании
-   flex-direction переключался row→column — содержимое перестраивалось
-   мгновенным скачком, ядро и кнопка «исчезали и появлялись». Теперь
-   бренд ВСЕГДА строка: реактор слева, подпись сжимается по ширине
-   влево до нуля, а кнопка-стрелка живёт absolute-координатами и
-   плавно переезжает из правого края меню под реактор дока */
-.app.collapsed .brand{gap:0;padding:6px 0 32px 9px;
-  border-bottom-color:rgba(0,212,255,.1)}
-.brand-text{flex:1;min-width:0;white-space:nowrap;overflow:hidden;
-  max-width:230px;margin-right:26px;
-  transition:max-width var(--fold-t) var(--fold-ease),
-    opacity calc(var(--fold-t)*.5) ease,margin var(--fold-t) var(--fold-ease)}
-.app.collapsed .brand-text{max-width:0;opacity:0;margin:0}
-.app.collapsed .collapse-btn{top:44px;right:13px;transform:rotate(180deg)}
+/* бренд, кнопка разворачивания и черта — внутри дока, столбиком */
+.app.collapsed .brand{flex-direction:column;align-items:center;gap:8px;padding:2px 0 10px;
+  margin:0;border-bottom:1px solid rgba(0,212,255,.1)}
+/* BM19: подпись бренда СХЛОПЫВАЕТСЯ ПЛАВНО (как подписи вкладок), а не
+   пропадает мгновенно: разворот в миниатюру — одно непрерывное движение */
+.brand-text{max-height:64px;transition:max-height var(--fold-t) var(--fold-ease),
+  padding var(--fold-t) var(--fold-ease),margin var(--fold-t) var(--fold-ease),
+  opacity calc(var(--fold-t)*.55) ease}
+.app.collapsed .brand-text{max-height:0;opacity:0;overflow:hidden;padding:0;margin:0}
+.app.collapsed .collapse-btn{transform:rotate(180deg)}
 /* AL: ГЕОМЕТРИЯ ДОКА — nav занимает ВСЮ ширину стекла (52px), без своих
    отступов (двойной отступ сжимал пункты до 24px — «супер узко» и сбоку);
    пункты width:auto с justify-content:center: ровно 40px, иконка строго
    в центре, подсветка квадратная и целиком внутри стекла */
-/* BM20: зазор над вкладками постоянный (margin-top:9 в базе) — и в меню,
-   и в доке ряды не слипаются и не раздваиваются */
+.app.collapsed .nav{margin:0}
 /* подписи плавно сворачиваются в ноль; иконка (слот 18px) остаётся ровно
-   по центру пункта — подсветка нигде не выпирает из дока
-   (само правило .nav-label — ниже, в базовом блоке навигации) */
+   по центру пункта — подсветка нигде не выпирает из дока */
+.nav-label{transition:max-width var(--fold-t) var(--fold-ease),
+  opacity calc(var(--fold-t)*.55) ease}
 .app.collapsed .nav-label{opacity:0;max-width:0}
-.app.collapsed .nav-item{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none}
+.app.collapsed .nav-item{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none;}
 .app.collapsed .nav-item:hover{transform:none;background:rgba(0,212,255,.09)}
 /* AJ: активная полоска несла СВЕЧЕНИЕ за пределы дока — в доке активность
    показывает сама иконка, полоска не нужна */
@@ -238,27 +233,34 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   color:var(--tx);font-size:12px;white-space:nowrap;opacity:0;pointer-events:none;transform:translateX(-6px);
   transition:.18s;z-index:80;box-shadow:var(--shadow)}
 .app.collapsed .nav-item:hover::after{opacity:1;transform:none}
-/* BM20: класс side-folding и дирижирование таймингами из JS УДАЛЕНЫ:
-   переходы объявлены в базовых правилах — морф всегда один и тот же */
+/* BM21: класс side-folding и дирижёр тайминговами удалены — все
+   переходы морфа объявлены в базовых правилах общими часами */
 }
 
-.dock{display:flex;flex-direction:column;gap:0;border:1px solid transparent;border-radius:0;
+.dock{display:flex;flex-direction:column;gap:12px;border:1px solid transparent;border-radius:0;position:relative;z-index:2;
   background:transparent;backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px);
   transform:translateY(var(--dock-y,0px));
-  transition:transform var(--fold-t) var(--fold-ease),margin var(--fold-t) var(--fold-ease),
-    padding var(--fold-t) var(--fold-ease),border-radius var(--fold-t) var(--fold-ease),
+  /* BM21: transform НАМЕРЕННО без перехода: вертикалью пилюли во время
+     морфа правит JS покадрово (центр по текущей высоте) — transition
+     заставлял бы её догонять цель и «доезжать» после всех */
+  transition:margin var(--fold-t) var(--fold-ease),padding var(--fold-t) var(--fold-ease),
+    border-radius var(--fold-t) var(--fold-ease),
     background-color .4s ease,border-color .4s ease,box-shadow .4s ease}
-.brand{display:flex;align-items:center;gap:10px;position:relative;
-  padding:4px 6px 3px;border-bottom:1px solid transparent;
+.brand{display:flex;align-items:center;gap:10px;padding:8px 6px 8px;border-bottom:1px solid var(--line);
+  /* BM21: геометрия бренда едет общими часами морфа; сама смена раскладки
+     строка↔столбик сглаживается FLIP-перелётом ядра и кнопки (JS) */
   transition:padding var(--fold-t) var(--fold-ease),gap var(--fold-t) var(--fold-ease),
     border-color .4s ease}
+.brand-text{flex:1;min-width:0}
 .brand-name{font-size:17px;font-weight:600;letter-spacing:4px;color:#eaf9ff;text-shadow:0 0 18px rgba(0,212,255,.5)}
 .brand-sub{font-size:10.5px;color:var(--tx3);letter-spacing:.4px;margin-top:1px}
-.brand .collapse-btn{position:absolute;top:8px;right:6px;width:26px;height:26px;
-  font-size:16px;display:grid;place-items:center;
-  padding:0;line-height:1;z-index:5;
-  transition:top var(--fold-t) var(--fold-ease),right var(--fold-t) var(--fold-ease),
-    transform var(--fold-t) var(--fold-ease)}
+/* BM21: поворот стрелки — в БАЗОВОМ правиле (прежде сидел только в
+   свёрнутом: при разворачивании правило исчезало вместе с переходом,
+   и стрелка СКАЧКОМ прыгала на 0°). Специфичность .brand .collapse-btn
+   перебивает .icon-btn{transition:.2s} — едем общими часами морфа */
+.brand .collapse-btn{transition:transform var(--fold-t) var(--fold-ease)}
+.collapse-btn{width:26px;height:26px;font-size:16px;display:grid;place-items:center;
+  padding:0;line-height:1}
 .collapse-btn svg{width:14px;height:14px;display:block}
 
 /* ================= BM12: ПРОСТРАНСТВА (идея из Arc) =================
@@ -267,18 +269,12 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    рамке), выбранное светится, подсветка-глайдер перетекает по иконкам.
    Маленькая кнопка настроек прячет пространства (глазик). Сворачивание
    в док СЖИМАЕТ ряд плавно, зеркально разворачиванию. */
-/* BM20: высота пространств складывается ЧЕСТНОЙ grid-анимацией 1fr↔0fr:
-   реальная высота, без JS-замеров и без «мёртвого» max-height, из-за
-   которого полоса-разделитель сперва стояла выше и «доезжала» вниз */
-.spaces{display:grid;grid-template-rows:1fr;position:relative;
-  margin-top:9px;padding:2px 6px 7px;
-  transition:grid-template-rows var(--fold-t) var(--fold-ease),
-    margin var(--fold-t) var(--fold-ease),
-    padding var(--fold-t) var(--fold-ease),opacity var(--fold-t) var(--fold-ease)}
-.spaces-in{display:flex;flex-direction:column;gap:9px;min-height:0;
-  overflow:hidden;position:relative}
-/* флайауты меню (настройки пространств) оживают после морфа */
-.app.opened .spaces-in{overflow:visible}
+.brand{border-bottom:0}
+.spaces{display:flex;flex-direction:column;gap:9px;padding:10px 6px 12px;
+  border-bottom:0;position:relative;max-height:132px;
+  transition:opacity var(--fold-t) ease,transform var(--fold-t) var(--fold-ease),
+    max-height var(--fold-t) var(--fold-ease),padding var(--fold-t) var(--fold-ease),
+    margin var(--fold-t) var(--fold-ease),border-color .4s ease}
 /* BM13: ГРАНИЦА ВКЛАДОК/ПРОСТРАНСТВ — РАЗМЫТАЯ: не резкая линия, а
    мягкий свет, тающий к краям */
 .spaces::after{content:'';position:absolute;left:10px;right:10px;bottom:0;
@@ -324,8 +320,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    иконок нет, но контейнер держал над LIVE пустые 10px паддинга и
    9px flex-gap от скрытого ряда (под LIVE — ещё 12px). Сжимаем:
    LIVE стоит вплотную под брендом, без мёртвых полос */
-.spaces.no-spaces{padding-bottom:3px}
-.spaces.no-spaces .spaces-in{gap:0}
+.spaces.no-spaces{padding-top:2px;padding-bottom:4px;gap:0}
 /* тот же ритм, что между остальными секциями дока: когда ряда нет,
    бренд не держит запас под несуществующий ряд */
 .dock:has(.spaces.no-spaces) .brand{padding-bottom:2px}
@@ -334,11 +329,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   display:grid;place-items:center;
   transition:color .25s ease,filter .25s ease,box-shadow .3s ease;padding:0}
 .sp-ico svg{width:17px;height:17px}
-/* BM13: чат — основной, но иконка ПОЛАЯ И ТИХАЯ: как остальные,
-   лишь с едва заметной почти прозрачной рамкой. Яркость здесь не
-   нужна: чат читается главным самим фактом постоянства */
-.sp-ico.base{color:var(--tx3);
-  box-shadow:inset 0 0 0 1px rgba(0,212,255,.07)}
+/* BM21: ЧАТ — ОСНОВНОЙ: просто ЯРКИЙ и выделенный на фоне остальных,
+   без рамки и без тусклой краски — как обычная иконка, только жирнее */
+.sp-ico.base{color:var(--tx);font-weight:700}
 .sp-ico:hover{color:var(--tx)}
 /* BM12: скрытое глазиком пространство в меню не живёт */
 .sp-ico.off{display:none}
@@ -351,18 +344,17 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   transition:left .34s cubic-bezier(.3,1.35,.42,1),width .34s cubic-bezier(.3,1.35,.42,1),
     opacity .25s ease;opacity:0}
 .sp-glider.on{opacity:1}
-/* выбранное: ярче; чат при выборе — просто цвет, БЕЗ свечения */
+/* выбранное: ярче — чат на общих правах, свечение ему положено тоже */
 .sp-ico.sel{color:var(--cy2);filter:drop-shadow(0 0 6px rgba(0,212,255,.55))}
-.sp-ico.base.sel{filter:none}
 /* BM12: НАСТРОЙКИ ПРОСТРАНСТВ — маленькая кнопка, абсолютная: обычно
    справа от ряда иконок; когда ВСЕ пространства скрыты — переезжает
    вверх к LIVE (LIVE сужается влево, освобождая место) */
-.sp-ico.sp-set{position:absolute;right:3px;top:56px;width:23px;height:21px;
+.sp-ico.sp-set{position:absolute;right:3px;top:59.5px;width:23px;height:21px;
   color:var(--tx3);transition:color .22s ease,top .35s cubic-bezier(.3,1.2,.4,1)}
 .sp-ico.sp-set svg{width:11px;height:11px}
 .sp-ico.sp-set:hover{color:var(--tx2)}
 .spaces.no-spaces .sp-modes{padding-right:36px}
-.spaces.no-spaces .sp-ico.sp-set{top:14px}
+.spaces.no-spaces .sp-ico.sp-set{top:8.5px}
 /* BM13: панель настроек — ПЛОТНОЕ СТЕКЛО (менее прозрачное, blur
    сильнее); закрытие — ВЫЛЕТ из настроек; заголовка нет — только
    сами пространства */
@@ -381,9 +373,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sp-set-panel.open{max-height:230px;opacity:1;pointer-events:auto;padding:7px 6px 6px;
   transform:scale(1)}
 .spaces.no-spaces .sp-set-panel{top:56px}
-/* чат в настройках — ЖИРНАЯ ВЫДЕЛЕННАЯ строка без глазика: основное */
-.sp-set-row.chat-fixed{cursor:default;background:rgba(0,212,255,.07);
-  border:1px solid rgba(0,212,255,.14)}
+/* BM21: чат в настройках — ПРОСТО ЖИРНАЯ ВЫДЕЛЕННАЯ строка: без рамки,
+   без заливки — жирнее и ярче остальных, в остальном такая же */
+.sp-set-row.chat-fixed{cursor:default}
 .sp-set-row.chat-fixed b{font-weight:700;letter-spacing:.9px;color:#eaf8ff}
 .sp-set-row.chat-fixed .ssr-ico{color:var(--cy2)}
 .sp-set-row{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:9px;
@@ -419,14 +411,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    Док не менялся: только вкладки, иконка LIVE и значок текущего
    пространства с чёрточкой. Наведение — окошко ВЫЛЕТАЕТ из кнопки
    (иконки разлетаются по местам), живёт пока курсор в области */
-.sp-dock{display:grid;grid-template-rows:0fr;opacity:0;pointer-events:none;
-  transition:grid-template-rows var(--fold-t) var(--fold-ease),
-    margin var(--fold-t) var(--fold-ease),
-    opacity var(--fold-t) var(--fold-ease)}
-.spd-in{display:flex;flex-direction:column;align-items:center;gap:5px;
-  min-height:0;overflow:hidden}
-/* флайаут дока оживает в устоявшемся доке */
-.app.docked .spd-in{overflow:visible}
+.sp-dock{display:none}
 .spd-live,.spd-cur{width:40px;height:38px;border:1px solid transparent;border-radius:11px;
   background:transparent;color:var(--tx3);cursor:pointer;display:grid;place-items:center;
   transition:color .22s ease,background .22s ease;padding:0}
@@ -444,6 +429,10 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   background:linear-gradient(90deg,transparent,rgba(0,212,255,.3) 18%,
     rgba(0,212,255,.3) 82%,transparent);
   filter:blur(.6px);margin:4px 0 2px}
+/* BM21: СИММЕТРИЯ ПОЛОС ДОКА — воздух под cur-кнопкой до чёрточки равен
+   воздуху над LIVE от линии бренда (8px); в меню чёрточка не видна,
+   поэтому без перехода */
+.app.collapsed .spd-dash{margin-top:8px}
 .spd-cur-wrap{position:relative}
 /* BM13: МЕНЮ ПРОСТРАНСТВ ВЫРАСТАЕТ ИЗ САМОЙ КНОПКИ: левый край и центр
    панели совпадают с кнопкой, рост — от её области (scale), панель —
@@ -451,11 +440,12 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    внутрь на свой слот (JS FLIP), кнопка в это время гаснет (.ghost) */
 .spd-fly{position:absolute;left:0;top:50%;display:flex;align-items:center;
   gap:5px;padding:6px 8px;border-radius:14px;
-  background:rgba(11,20,34,.72);
-  -webkit-backdrop-filter:blur(20px) saturate(1.4);
-  backdrop-filter:blur(20px) saturate(1.4);
-  border:1px solid rgba(255,255,255,.1);
-  box-shadow:0 12px 34px rgba(0,0,0,.55);
+  /* BM21: СТЕКЛЯННАЯ менышка — прозрачнее и с заметной кромкой */
+  background:rgba(13,24,40,.62);
+  -webkit-backdrop-filter:blur(22px) saturate(1.5);
+  backdrop-filter:blur(22px) saturate(1.5);
+  border:1px solid rgba(255,255,255,.14);
+  box-shadow:0 12px 34px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.08);
   opacity:0;pointer-events:none;z-index:90;
   transform:translateY(-50%) scale(.22);transform-origin:left center;
   /* BM18: кривая БЕЗ овершота — панель раскрывается ровно тем же
@@ -475,15 +465,21 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 /* BM12/BM13: в доке ряд сжат анимацией до нуля; .docked дожимает только
    visibility — display:none в конце анимации давал однокадровый скачок */
 .app.docked .spaces{visibility:hidden}
-/* BM20: сворачивание — пространства гаснут и складываются в ноль,
-   док-миниатюры (LIVE + текущее пространство) вырастают на их месте;
-   одна кривая, один конец — никакого display:none и задержек */
-.app.collapsed .spaces{grid-template-rows:0fr;opacity:0;margin-top:0;padding-top:0;padding-bottom:0}
-.app.collapsed .sp-dock{grid-template-rows:1fr;margin-top:9px;opacity:1;pointer-events:auto}
-/* BM20: прежние рисунки морфа — в install/backup/fold-bm19/ и git-теге
-   fold-backup-bm19; класс legacy-fold удалён за ненадобностью */
-/* BM20: высоту ряда складывает сам grid (1fr↔0fr) — ни класс, ни JS
-   не трогают max-height: никаких «доездов» под конец анимации */
+/* BM18: свёрнутое меню НЕ оставляет места невидимому ряду пространств:
+   высота и паддинги в ноль (анимация — той же кривой, что и меню) */
+.app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden;margin:-10px 0}
+.app.collapsed .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;
+  margin:0;padding:4px 0;position:relative;
+  /* BM21: без задержки — прежде иконки док-миниатюр «появлялись» на
+     120мс позже всего морфа; теперь приезжают в общем такте */
+  animation:spDockIn var(--fold-t) var(--fold-ease) backwards}
+/* BM13: у дока НЕТ рамки-области (светлая плашка убрана); под иконкой
+   текущего пространства — полоса НА ВСЮ горизонталь, как верхняя */
+@keyframes spDockIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+/* BM21: прежние рисунки морфа — в install/backup/fold-bm19/ и git-теге
+   fold-backup-bm19; мёртвый класс legacy-fold удалён */
+/* BM13: высотой ряда управляет JS честным замером (toggleSidebar):
+   класс не трогает max-height — никаких «доездов» под конец анимации */
 /* BM12: в доке вкладки есть ВСЕГДА — и в других пространствах;
    надпись про диалоги пространства в доке не живёт */
 /* BM13: в доке — только вкладки ТЕКУЩЕГО пространства: в чужих
@@ -507,8 +503,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sp-out-l{transform:translateX(-56px);opacity:0}
 .sp-out-r{transform:translateX(56px);opacity:0}
 
-.nav{display:flex;flex-direction:column;gap:3px;margin-top:9px;
-  transition:margin var(--fold-t) var(--fold-ease)}
+.nav{display:flex;flex-direction:column;gap:3px}
 .nav-item{display:flex;align-items:center;gap:11px;padding:10px 12px;border:0;border-radius:11px;
   background:transparent;color:var(--tx2);font-size:13.5px;cursor:pointer;position:relative;
   transition:padding var(--fold-t) var(--fold-ease),gap var(--fold-t) var(--fold-ease),
@@ -521,8 +516,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .nav-ico{width:18px;text-align:center;font-size:14px;color:var(--cy);transition:opacity .25s ease,color .22s ease}
 /* подпись пункта умеет плавно сворачываться в ноль (док) и обратно */
 .nav-label{min-width:0;max-width:170px;overflow:hidden;white-space:nowrap;
-  transition:max-width var(--fold-t) var(--fold-ease),
-    opacity calc(var(--fold-t)*.55) ease}
+  transition:opacity .34s ease,max-width .6s cubic-bezier(.22,.68,.18,1)}
 .nav-ico svg{display:block;width:15px;height:15px;margin:0 auto}
 /* у каждого раздела свой оттенок — так меню читается быстрее */
 .nav-item[data-view="chat"]   .nav-ico{color:var(--cy)}
@@ -624,6 +618,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 @keyframes memoryIconBloom{0%,100%{filter:none}48%{color:#d6b4ff;filter:drop-shadow(0 0 8px rgba(180,119,255,.72))}}
 
 .chats-block{flex:1;min-height:0;display:flex;flex-direction:column;margin-top:6px;
+  /* BM21: один список на всё: прежде дублирующий transition затирал
+     геометрию — flex-grow/margin не анимировались и список диалогов
+     СКАЧКАл высотой, пока остальное ехало плавно */
   transition:flex-grow var(--fold-t) var(--fold-ease),
     flex-basis var(--fold-t) var(--fold-ease),
     margin var(--fold-t) var(--fold-ease),
@@ -681,7 +678,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   /* AR: элементы панели едут за доком на новую площадь и flex сам
      распределяет их равномерно; кривые — те же, что у дока */
   transition:padding-left var(--fold-t) var(--fold-ease)}
-.app.collapsed .topbar{padding-left:18px}
+.app.collapsed .topbar{padding-left:18px;}
 
 /* ---------- центр уведомлений в правом верхнем углу ----------
    Колокольчик с точкой непрочитанного и выпадающий список под ним.
@@ -785,7 +782,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 
 /* ---------- views ---------- */
 .view{display:none;flex:1;min-height:0;flex-direction:column;animation:viewIn .4s cubic-bezier(.2,.8,.3,1);
-  transition:padding-left var(--fold-t) var(--fold-ease)}
+  transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}
 .view.active{display:flex}
 @keyframes viewIn{from{opacity:0;transform:translateY(12px)}}
 .panel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:22px 26px 14px}
@@ -2535,11 +2532,8 @@ body.agent-on .qt-detail{color:rgba(154,202,219,.66)!important}
   /* BM11: узкая полоса — тот же док: пространства сворачиваются в
      LIVE + значок текущего, разворачиваются только вместе с меню */
   .spaces{display:none}
-  .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;margin:0;
-    opacity:1;pointer-events:auto;grid-template-rows:none}
-  .sp-dock .spd-in{display:contents}
-  .app.nav-open .spaces{display:flex;grid-template-rows:none;opacity:1}
-  .app.nav-open .spaces .spaces-in{display:contents}
+  .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;margin:0}
+  .app.nav-open .spaces{display:flex}
   .app.nav-open .sp-dock{display:none}
   .app.nav-open .brand-text,.app.nav-open .nav-label,.app.nav-open .side-foot .stat-row{display:block}
   .app.nav-open .chats-block{display:flex}

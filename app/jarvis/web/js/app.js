@@ -740,30 +740,16 @@ let _gliderWatch = 0;
    каждый кадр, пока меню меняет ширину */
 function gliderWatchRun() {
   cancelAnimationFrame(_gliderWatch);
-  const until = performance.now() + 660;
-  const tick = () => {
-    spaceGlider();
-    if (performance.now() < until) _gliderWatch = requestAnimationFrame(tick);
-  };
-  tick();
-}
-
-/* BM20: во время морфа вертикаль дока пересчитывается КАЖДЫЙ КАДР —
-   прежде dockY() считался один раз по ДО-анимационной высоте, и пилюля
-   прилетала чуть не по центру, «доезжая» после конца анимации.
-   ВАЖНО: на время морфа transition у дока выключается — иначе transform
-   каждый кадр догоняет движущуюся цель и док доезжает после всех */
-let _foldWatch = 0;
-function foldWatchRun(collapsing) {
-  cancelAnimationFrame(_foldWatch);
-  const dock = document.querySelector('.dock');
-  if (dock) dock.style.transition = 'none';
+  /* BM21: вертикаль пилюли — КАЖДЫЙ КАДР морфа по текущей высоте:
+     формула непрерывна в обе стороны (меню во всю высоту даёт 0,
+     короткая пилюля — центр окна), transform у дока выведен из
+     transition, поэтому пилюля едет в такт геометрии и заканчивает
+     движение вовремя — никаких «доездов» после анимации */
   const until = performance.now() + 560;
   const tick = () => {
     spaceGlider();
-    dockY(collapsing);
-    if (performance.now() < until) _foldWatch = requestAnimationFrame(tick);
-    else if (dock) dock.style.transition = '';
+    dockY(true);
+    if (performance.now() < until) _gliderWatch = requestAnimationFrame(tick);
   };
   tick();
 }
@@ -773,25 +759,74 @@ function toggleSidebar() {
   if (isNarrow()) { app.classList.toggle('nav-open'); return; }
   app.classList.remove('nav-open');
   const collapsing = !app.classList.contains('collapsed');
+  const sp = document.querySelector('.spaces');
+  const bt = document.querySelector('.brand-text');
+  /* BM13: ЧЕСТНАЯ АНИМАЦИЯ ВЫСОТЫ РЯДА. Прежде max-height схлопывался
+     классом от выдуманных 132px: пока значение падало от 132 до
+     фактических ~40px, ряд стоял неподвижно, а доезжал резко под конец
+     — отсюда «однокадровый скачок вверх». Теперь фиксируем фактическую
+     высоту инлайном и ведём её к нулю/высоте той же кривой, что меню.
+     BM21: то же — для подписи бренда (прежде падала от выдуманных 64px:
+     мёртвый запас в начале сжатия читался как рывок под конец) */
   clearTimeout(_dockedT);
-  /* BM20: МОРФ С НУЛЯ. Одно состояние (.collapsed) и одни часы: все
-     переходы объявлены в базовых CSS-правилах (--fold-t/--fold-ease),
-     JS не дирижирует таймингами и не меряет высоты — grid сам честно
-     складывает 1fr→0fr. JS ставит состояние и два финализатора ПОСЛЕ
-     анимации: .docked — пространства выпадают из tab-навигации, флайаут
-     дока оживает; .opened — флайауты меню оживают. Сворачивание: всё
-     уезжает и сжимается влево; разворачивание: выжимается и
-     выпрямляется вправо — одно движение, один конец у всех */
+  /* BM21: ЯДРО И КНОПКА-СТРЕЛКА НЕ ТЕЛЕПОРТИРУЮТСЯ. Раскладка бренда
+     переключается строка↔столбик мгновенно — раньше ядро и кнопка
+     прыгали на новые места, будто «исчезают и появляются». Теперь они
+     ДОЕЗЖАЮТ: FLIP-перелёт от старого места к старту нового движения,
+     остаток пути доводят те же переходы; кнопка одновременно
+     доворачивается на 180°. Одна кривая, одна длительность, один
+     финал у всех — «в одно место и в одно время» */
+  const flipEls = [document.querySelector('#brandReactor'), document.querySelector('#collapseBtn')]
+    .filter(Boolean);
+  const flipFrom = flipEls.map((node) => node.getBoundingClientRect());
   if (collapsing) {
-    app.classList.remove('opened');
+    if (sp) { sp.style.maxHeight = sp.offsetHeight + 'px'; void sp.offsetHeight; }
+    if (bt) { bt.style.maxHeight = bt.offsetHeight + 'px'; void bt.offsetHeight; }
     app.classList.add('collapsed');
-    _dockedT = setTimeout(() => app.classList.add('docked'), 500);
+    if (sp) requestAnimationFrame(() => { sp.style.maxHeight = '0px'; });
+    if (bt) requestAnimationFrame(() => { bt.style.maxHeight = '0px'; });
+    _dockedT = setTimeout(() => app.classList.add('docked'), 560);
   } else {
     app.classList.remove('docked');
     app.classList.remove('collapsed');
-    _dockedT = setTimeout(() => app.classList.add('opened'), 500);
+    const grow = (node) => {
+      node.style.maxHeight = 'none';
+      const h = node.offsetHeight;
+      node.style.maxHeight = '0px';
+      void node.offsetHeight;
+      requestAnimationFrame(() => { node.style.maxHeight = h + 'px'; });
+    };
+    if (sp) grow(sp);
+    if (bt) grow(bt);
+    _dockedT = setTimeout(() => {
+      if (!app.classList.contains('collapsed')) {
+        if (sp) sp.style.maxHeight = '';
+        if (bt) bt.style.maxHeight = '';
+      }
+    }, 560);
   }
-  foldWatchRun(collapsing);
+  /* FLIP: раскладка уже новая, а переходы только стартовали — позиция
+     «сейчас» и есть точка старта; остаток пути элементы доедают сами */
+  flipEls.forEach((node, i) => {
+    if (!node.animate) return;
+    const a = flipFrom[i], b = node.getBoundingClientRect();
+    const dx = (a.left + a.width / 2) - (b.left + b.width / 2);
+    const dy = (a.top + a.height / 2) - (b.top + b.height / 2);
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    if (node.id === 'collapseBtn') {
+      const r0 = collapsing ? 0 : 180;
+      const r1 = collapsing ? 180 : 0;
+      node.animate(
+        [{ transform: 'translate(' + dx + 'px,' + dy + 'px) rotate(' + r0 + 'deg)' },
+         { transform: 'rotate(' + r1 + 'deg)' }],
+        { duration: 520, easing: 'cubic-bezier(.45,.05,.2,1)' });
+    } else {
+      node.animate(
+        [{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }],
+        { duration: 520, easing: 'cubic-bezier(.45,.05,.2,1)' });
+    }
+  });
+  gliderWatchRun();
   /* BK: состояние панели больше не хранится: каждый запуск — с доком */
 }
 $('#collapseBtn').addEventListener('click', toggleSidebar);
@@ -808,15 +843,13 @@ try {
        обнуления max-height, невидимый ряд пространств оставлял над
        LIVE пустоту в ~100px */
     $('#app').classList.add('collapsed', 'docked');
-    // BM20: высоты складывает CSS-grid — JS-замеров при запуске нет
+    /* BM21: прежде здесь стояла ссылка на НЕОБЪЯВЛЕННУЮ переменную sp —
+       ReferenceError глотался try/catch, ряд не гасился по высоте, а
+       пилюля оставалась у верхнего края. Теперь честно */
+    const sp0 = document.querySelector('.spaces');
+    if (sp0) sp0.style.maxHeight = '0px';
     // восстановление БЕЗ анимации: пилюля сразу в центре высоты
-    const dock = document.querySelector('.dock');
-    if (dock) {
-      dock.style.transition = 'none';
-      dockY(true);
-      void dock.offsetHeight;
-      dock.style.transition = '';
-    }
+    dockY(true);
   }
 } catch (e) {}
 window.addEventListener('resize', () => {
@@ -1266,11 +1299,15 @@ function spaceGlider() {
   if (!row || !g) return;
   const sel = row.querySelector('.sp-ico.sel:not(.sp-set):not(.off)');
   if (!sel) { g.classList.remove('on'); return; }
-  const rr = row.getBoundingClientRect(), rs = sel.getBoundingClientRect();
+  const rr = row.getBoundingClientRect();
   /* док: ряд скрыт — координаты нулевые, глайдер ждёт разворачивания */
-  if (!rr.width || !rs.width) { g.classList.remove('on'); return; }
-  g.style.left = (rs.left - rr.left) + 'px';
-  g.style.width = rs.width + 'px';
+  if (!rr.width || !sel.offsetWidth) { g.classList.remove('on'); return; }
+  /* BM21: позиция — по СХЕМЕ (offsetLeft), а не по getBoundingClientRect:
+     rect тащит за собой бегущий FLIP-transform иконок — подсветка
+     «уползала» на старое место и вставала только после анимации.
+     Теперь глайдер сразу занимает конечное место выбранной иконки */
+  g.style.left = sel.offsetLeft + 'px';
+  g.style.width = sel.offsetWidth + 'px';
   g.classList.add('on');
 }
 
@@ -1394,7 +1431,10 @@ function syncSpaceSettings() {
   SPACES.forEach((n) => {
     const row = $('#ssr_' + n);
     if (!row) return;
-    const off = S.spacesVisible.indexOf(n) < 0;
+    /* BM21: ЧАТ в панели — всегда живой: он не участвует в
+       spacesVisible, прежняя логика вешала на него .off и строка
+       выглядела тусклой выключенной */
+    const off = n !== 'chat' && S.spacesVisible.indexOf(n) < 0;
     row.classList.toggle('off', off);
     const eye = row.querySelector('.sp-eye');
     if (eye) eye.classList.toggle('off', off);
@@ -1406,12 +1446,18 @@ function syncSpaceSettings() {
 function spacesFlip(mutate) {
   const row = $('#spRow');
   if (!row || typeof row.getBoundingClientRect !== 'function') { mutate(); return; }
+  const gl = $('#spGlider');
   const before = new Map();
   $$('.sp-ico[data-space]', row).forEach((b) => {
     const r = b.getBoundingClientRect();
     if (r.width) before.set(b, r.left);
   });
   mutate();
+  /* BM21: подсветка при появлении/скрытии иконок встаёт НА МЕСТО
+     мгновенно: переход left/width отключаем на время FLIP — иначе
+     глайдер «доезжал» вслед за иконкой. Перетекание при КЛИКЕ по
+     другой иконке (BM11) не затронуто — там spacesFlip не зовётся */
+  if (gl) gl.style.transition = 'opacity .25s ease';
   $$('.sp-ico[data-space]', row).forEach((b) => {
     const was = before.get(b);
     if (was == null) {
@@ -1431,6 +1477,7 @@ function spacesFlip(mutate) {
      анимации — не уезжает влево */
   setTimeout(() => {
     $$('.sp-ico[data-space]', row).forEach((b) => { b.style.transform = ''; });
+    if (gl) gl.style.transition = '';
     spaceGlider();
   }, 380);
   requestAnimationFrame(spaceGlider);
@@ -1460,7 +1507,10 @@ function dockFlyIcons() {
   const fly = $('#spdFly');
   if (!fly) return;
   fly.innerHTML = '';
-  S.spacesVisible.forEach((n) => {
+  /* BM21: ВСЕ пространства ряда — чат всегда первый + видимые: прежде
+     чат не попадал в менышку (S.spacesVisible его не хранит) и вместо
+     трёх показывалось два */
+  ['chat'].concat(S.spacesVisible).forEach((n) => {
     const meta = SPACE_META[n] || {};
     const b = el('button', 'spf-ico' + (n === S.space ? ' sel' : ''));
     b.dataset.space = n;
@@ -1547,6 +1597,12 @@ function initDockFly() {
   const show = (target) => {
     const text = target.getAttribute('data-tip');
     if (!text) return;
+    /* BM21: подпись шестерёнки не живёт при открытой панели настроек —
+       «настройки отображения» гаснут в момент открытия */
+    if (target.id === 'spSettings') {
+      const p = document.getElementById('spSetPanel');
+      if (p && p.classList.contains('open')) return;
+    }
     if (!tipEl) {
       tipEl = el('div', 'g-tip');
       tipEl.style.display = 'none';
@@ -1568,6 +1624,7 @@ function initDockFly() {
   const hide = () => {
     if (tipEl) tipEl.classList.remove('show');
   };
+  window.__gTipHide = hide;
   document.addEventListener('pointerover', (e) => {
     const t = e.target && e.target.closest &&
       e.target.closest('.spaces [data-tip], .sp-dock [data-tip]');
@@ -1621,6 +1678,8 @@ function initSpaces() {
     ev.stopPropagation();
     buildSpaceSettings();
     if (setPanel) setPanel.classList.toggle('open');
+    /* BM21: открыли настройки отображения — подпись шестерёнки пропадает */
+    if (setPanel && setPanel.classList.contains('open') && window.__gTipHide) window.__gTipHide();
   });
   if (setPanel) setPanel.addEventListener('click', (ev) => ev.stopPropagation());
   document.addEventListener('click', () => {
