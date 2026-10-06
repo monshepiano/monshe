@@ -748,52 +748,50 @@ function gliderWatchRun() {
   tick();
 }
 
+/* BM20: во время морфа вертикаль дока пересчитывается КАЖДЫЙ КАДР —
+   прежде dockY() считался один раз по ДО-анимационной высоте, и пилюля
+   прилетала чуть не по центру, «доезжая» после конца анимации.
+   ВАЖНО: на время морфа transition у дока выключается — иначе transform
+   каждый кадр догоняет движущуюся цель и док доезжает после всех */
+let _foldWatch = 0;
+function foldWatchRun(collapsing) {
+  cancelAnimationFrame(_foldWatch);
+  const dock = document.querySelector('.dock');
+  if (dock) dock.style.transition = 'none';
+  const until = performance.now() + 560;
+  const tick = () => {
+    spaceGlider();
+    dockY(collapsing);
+    if (performance.now() < until) _foldWatch = requestAnimationFrame(tick);
+    else if (dock) dock.style.transition = '';
+  };
+  tick();
+}
+
 function toggleSidebar() {
   const app = $('#app');
   if (isNarrow()) { app.classList.toggle('nav-open'); return; }
   app.classList.remove('nav-open');
   const collapsing = !app.classList.contains('collapsed');
-  const sp = document.querySelector('.spaces');
-  /* BM13: ЧЕСТНАЯ АНИМАЦИЯ ВЫСОТЫ РЯДА. Прежде max-height схлопывался
-     классом от выдуманных 132px: пока значение падало от 132 до
-     фактических ~40px, ряд стоял неподвижно, а доезжал резко под конец
-     — отсюда «однокадровый скачок вверх». Теперь фиксируем фактическую
-     высоту инлайном и ведём её к нулю/высоте той же кривой, что меню */
   clearTimeout(_dockedT);
-  /* BM19: АНИМАЦИЯ С НУЛЯ — одна кривая/длительность для всех участников
-     (CSS --fold-t/--fold-ease + блок .side-folding унификации). JS больше
-     не дирижирует разными таймингами: честная высота ряда + один общий
-     финал. Ядро и кнопка-стрелка не гаснут, ряд пространств складывается
-     высотой — полоса под ним едет непрерывно, без «доезда вниз» */
+  /* BM20: МОРФ С НУЛЯ. Одно состояние (.collapsed) и одни часы: все
+     переходы объявлены в базовых CSS-правилах (--fold-t/--fold-ease),
+     JS не дирижирует таймингами и не меряет высоты — grid сам честно
+     складывает 1fr→0fr. JS ставит состояние и два финализатора ПОСЛЕ
+     анимации: .docked — пространства выпадают из tab-навигации, флайаут
+     дока оживает; .opened — флайауты меню оживают. Сворачивание: всё
+     уезжает и сжимается влево; разворачивание: выжимается и
+     выпрямляется вправо — одно движение, один конец у всех */
   if (collapsing) {
-    if (sp) {
-      sp.style.maxHeight = sp.offsetHeight + 'px';
-      void sp.offsetHeight;
-    }
-    app.classList.add('collapsed', 'side-folding');
-    if (sp) requestAnimationFrame(() => { sp.style.maxHeight = '0px'; });
-    _dockedT = setTimeout(() => {
-      app.classList.add('docked');
-      app.classList.remove('side-folding');
-    }, 560);
+    app.classList.remove('opened');
+    app.classList.add('collapsed');
+    _dockedT = setTimeout(() => app.classList.add('docked'), 500);
   } else {
     app.classList.remove('docked');
-    app.classList.add('side-folding');
     app.classList.remove('collapsed');
-    if (sp) {
-      sp.style.maxHeight = 'none';
-      const h = sp.offsetHeight;
-      sp.style.maxHeight = '0px';
-      void sp.offsetHeight;
-      requestAnimationFrame(() => { sp.style.maxHeight = h + 'px'; });
-      setTimeout(() => {
-        if (!app.classList.contains('collapsed')) sp.style.maxHeight = '';
-      }, 620);
-    }
-    _dockedT = setTimeout(() => app.classList.remove('side-folding'), 620);
+    _dockedT = setTimeout(() => app.classList.add('opened'), 500);
   }
-  dockY(collapsing);
-  gliderWatchRun();
+  foldWatchRun(collapsing);
   /* BK: состояние панели больше не хранится: каждый запуск — с доком */
 }
 $('#collapseBtn').addEventListener('click', toggleSidebar);
@@ -810,7 +808,7 @@ try {
        обнуления max-height, невидимый ряд пространств оставлял над
        LIVE пустоту в ~100px */
     $('#app').classList.add('collapsed', 'docked');
-    if (sp) sp.style.maxHeight = '0px';
+    // BM20: высоты складывает CSS-grid — JS-замеров при запуске нет
     // восстановление БЕЗ анимации: пилюля сразу в центре высоты
     const dock = document.querySelector('.dock');
     if (dock) {

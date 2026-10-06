@@ -3121,20 +3121,31 @@ function testIterationBM18Contracts() {
       .includes('"bg_note": True') &&
     pyAgent.replace(/\s+/g, ' ').includes('НЕ вставляй карточку AUTO сам'),
     'BM19 auto: the background route shows the GREEN IN-CHAT BANNER live (SSE) AND saves the same banner note (AUTO tab card + bg_note tint) into the dialog history; the prompt never asks the model to embed an auto card itself');
-  // ДОК: пустоты над LIVE нет; морф — одна траектория
-  assert(css.includes('.app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden}') &&
-    js.includes("if (sp) sp.style.maxHeight = '0px';") &&
-    js.includes("app.classList.remove('side-folding');") &&
+  // ДОК BM20: морф С НУЛЯ — один часы, честный grid, ничего не доезжает
+  assert(css.includes('--fold-t:.48s') &&
+    css.includes('--fold-ease:cubic-bezier(.55,.06,.22,1)') &&
+    css.includes('.spaces{display:grid;grid-template-rows:1fr;position:relative;') &&
+    css.includes('.spaces-in{display:flex;flex-direction:column;gap:9px;min-height:0;') &&
+    css.includes('.app.collapsed .spaces{grid-template-rows:0fr;opacity:0;margin-top:0;padding-top:0;padding-bottom:0}') &&
+    css.includes('.sp-dock{display:grid;grid-template-rows:0fr;opacity:0;pointer-events:none;') &&
+    css.includes('.spd-in{display:flex;flex-direction:column;align-items:center;gap:5px;') &&
+    css.includes('.app.collapsed .sp-dock{grid-template-rows:1fr;margin-top:9px;opacity:1;pointer-events:auto}') &&
+    css.includes('.spaces.no-spaces{padding-bottom:3px}') &&
+    css.includes('.spaces.no-spaces .spaces-in{gap:0}') &&
     css.includes('.app.collapsed .chats-block{flex-grow:0;') &&
     css.includes('.app.collapsed .side-foot{max-height:0;') &&
-    css.includes('--fold-t:.52s') &&
-    css.includes('.side-folding .spaces,.side-folding .chats-block') &&
-    !css.includes('\n.side-folding .brand{opacity:0}') &&
-    css.includes('.app.legacy-fold .side-folding .brand{opacity:0}') &&
-    css.includes('.spaces.no-spaces{padding-top:2px;padding-bottom:4px;gap:0}') &&
+    css.includes('.brand .collapse-btn{position:absolute;top:8px;right:6px;width:26px;height:26px;') &&
+    css.includes('.app.collapsed .collapse-btn{top:44px;right:13px;transform:rotate(180deg)}') &&
+    css.includes('.app.collapsed .brand{gap:0;padding:6px 0 32px 9px;') &&
+    !css.includes('.app.collapsed .brand{flex-direction:column') &&
+    !/\.side-folding /.test(css) && !/\.legacy-fold /.test(css) &&
+    !css.includes('side-folding .sidebar') &&
+    !css.includes('@keyframes spDockIn') &&
+    !js.includes('side-folding') && !js.includes('sp.style.maxHeight') &&
+    !css.includes('.app.collapsed .spaces{max-height:0') &&
     !css.includes('cubic-bezier(.3,1.12,.4,1)') &&
     !js.includes('cubic-bezier(.3,1.1,.4,1)'),
-    'BM19 dock: the morph is rebuilt from scratch — ONE duration and ONE curve for every participant (nothing arrives late), the core and the arrow NEVER fade out (old drawing kept behind .legacy-fold); with all spaces hidden LIVE sits tight under the brand (no phantom strip)');
+    'BM20 dock: the morph is REBUILT FROM SCRATCH — one clock in BASE rules (declared once, same move both ways), honest grid 1fr<->0fr rows (no JS height juggling, no display:none pop-ins, no delayed keyframes), the brand NEVER switches layout and the arrow rides absolute coordinates; with all spaces hidden LIVE sits tight under the brand (no phantom strip)');
   // МЕДИА: стоки скипаются, прямые файлы — первыми
   const pyMedia = fs.readFileSync(path.join(root, 'app/jarvis/tools/media.py'), 'utf8');
   assert(!pyMedia.includes('_STOCK_RE') && !pyMedia.includes('dreamstime') &&
@@ -3150,13 +3161,14 @@ function testIterationAOContracts() {
   // AO: РАБОЧАЯ ОБЛАСТЬ ЖИВЁТ В ТАКТ ДОКУ — та же кривая дока в каждую
   // сторону, отступ вида скользит, а не прыгает
   assert(css.includes('.main{grid-column:1;margin-left:262px;') &&
-    css.includes('transition:margin-left .6s cubic-bezier(.22,.68,.18,1)}') &&
-    css.includes('.app.collapsed .main{margin-left:0;') &&
-    css.includes('transition:margin-left .6s cubic-bezier(.5,.35,.15,1)}') &&
-    css.includes('.main .view{transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}') &&
-    css.includes('transition:width .6s cubic-bezier(.22,.68,.18,1)') &&
-    css.includes('transition:width .6s cubic-bezier(.5,.35,.15,1)'),
-    'AO/AP: work area slides with the DOCK curve in both directions (margin, Safari-proof)');
+    css.includes('transition:margin-left var(--fold-t) var(--fold-ease)}') &&
+    /\.app\.collapsed \.main\{margin-left:0;?\}/.test(css) &&
+    css.includes('.main .view{transition:padding-left var(--fold-t) var(--fold-ease)}') &&
+    css.includes('transition:width var(--fold-t) var(--fold-ease)') &&
+    css.includes('transition:grid-template-rows var(--fold-t) var(--fold-ease)') &&
+    !css.includes('cubic-bezier(.5,.35,.15,1)') &&
+    !css.includes('cubic-bezier(.22,.68,.18,1)'),
+    'AO/AP: work area slides with the DOCK curve in both directions (margin, Safari-proof); BM20: ONE curve for everything — the old three different beziers are gone');
   // AO: ВОЛНА СИГИЛА — печать развязывает фигуру в линию волн (жёлтая,
   // яркий пульс), конец печати медленно замеряет её в последней позе
   assert(css.includes('transition:opacity .18s ease}') &&
@@ -3299,9 +3311,9 @@ function testIterationBM9Contracts() {
   // BM10: папки анимирует JS-вальс (Web Animations + rAF высота);
   // CSS-переход(grid) конкурировал с ним и давал резкий кадр в конце
   assert(css.includes('.qt-folder .qt-kids{display:none}') &&
-    !css.includes('grid-template-rows:0fr') &&
+    !css.split('.qt-folder')[1].slice(0, 500).includes('grid-template-rows') &&
     js.includes("kids.style.height = (wasOpen ? H : 0) + 'px';"),
-    'BM10: folders animate via the JS waltz alone — no CSS transition fighting it at the end');
+    'BM10: folders animate via the JS waltz alone — no CSS transition fighting it at the end (BM20 grid rows for the dock morph are fine — they live in .spaces/.sp-dock)');
   // BM10: степень корня — ниже и левее: не залезает за черту корня;
   // корень в ЗНАМЕНАТЕЛЕ дроби опущен (не наезжает на знак дроби)
   /* BM16: степень над нижним загибом — em от корня */
@@ -3389,8 +3401,9 @@ function testIterationBM11Contracts() {
     /* BM14: .docked гасит только visibility (display:none в конце
        анимации давал однокадровый скачок кнопок вверх) */
     css.includes('.app.docked .spaces{visibility:hidden}') &&
-    css.includes('.app.collapsed .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;'),
-    'BM11/BM12: the dock stays as it was — tabs plus a LIVE icon and the current-space icon with a flyout');
+    css.includes('.app.collapsed .sp-dock{grid-template-rows:1fr;margin-top:9px;opacity:1;pointer-events:auto}') &&
+    html.includes('class="spd-in"') && html.includes('class="spaces-in"'),
+    'BM11/BM12: the dock stays as it was — tabs plus a LIVE icon and the current-space icon with a flyout (BM20: the mini-row grows via an honest grid row, no display:none pop)');
   /* BM14: меню вырастает ИЗ САМОЙ КНОПКИ — левый край панели на кнопке,
      рост scale(.22)->1 от её области; мостик не нужен: панель примыкает
      вплотную, иконка текущего пространства плывёт на свой слот (FLIP),
@@ -3504,12 +3517,8 @@ function testIterationBM12Contracts() {
   // СЖАТИЕ ДОКА: плавное, зеркально разворачиванию; вкладки в доке всегда
   /* BM14: честная анимация высоты (JS замер), .docked гасит только
      visibility, у дока НЕТ рамки-области, полоса — на весь док */
-  assert(js.includes("app.classList.add('docked');") &&
-    js.includes("sp.style.maxHeight = sp.offsetHeight + 'px'") &&
+  assert(js.includes("app.classList.add('docked')") &&
     js.includes("classList.add('collapsed', 'docked');") &&
-    js.includes("if (sp) sp.style.maxHeight = '0px';") &&
-    css.includes('.app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden}') &&
-    css.includes('.side-folding .spaces{opacity:0;transform:scale(.42);') &&
     css.includes('.app.collapsed .space-future{display:none!important}') &&
     !css.includes('.app.collapsed .nav.space-off{display:flex!important}') &&
     !css.includes('.app.collapsed .sp-dock::before{') &&
@@ -3868,7 +3877,7 @@ function testIterationATContracts() {
   // рвал кадры в Safari); геометрия по-прежнему едет кривыми дока
   assert(!css.includes('backdrop-filter .5s') &&
     !css.includes('gap .6s ease') &&
-    css.includes('transition:width .6s cubic-bezier(.22,.68,.18,1),padding'),
+    css.includes('transition:width var(--fold-t) var(--fold-ease),padding'),
     'AT: dock FPS — no blur/gap transitions, geometry only');
   // AT: перелёт v2 — места пусты до прилёта, призраки по своим классам
   assert(js.includes("core.classList.add('pre-flight')") &&
@@ -3932,10 +3941,9 @@ function testIterationAQContracts() {
   assert(css.includes('padding-top:56px}') &&
     css.includes('.topbar{padding-left:80px}'),
     'AQ: content starts below the band; mobile band clears the icon strip');
-  // AR: элементы панели едут на новую площадь кривыми дока
-  assert(css.includes('transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}') &&
-    css.includes('.app.collapsed .topbar{padding-left:18px;') &&
-    css.includes('transition:padding-left .6s cubic-bezier(.5,.35,.15,1)}'),
+  // AR: элементы панели едут на новую площадь кривыми дока (BM20: одни часы)
+  assert(css.includes('transition:padding-left var(--fold-t) var(--fold-ease)}') &&
+    css.includes('.app.collapsed .topbar{padding-left:18px}'),
     'AR: band content slides with the dock and redistributes');
   // AQ: ХОД МЫСЛЕЙ — целые предложения, дубли и огрызки умирают в буфере
   assert(pyAgent.includes('class _ThinkFilter:') &&
@@ -3970,7 +3978,7 @@ function testIterationAPContracts() {
   assert(pyAgent.includes('cyr >= 4 and cyr >= lat'),
     'AP: backend reasoning filter demands real Cyrillic — garbage never shown');
   // AP: ВЕРХНЯЯ ПАНЕЛЬ — margin вместо grid-колонок (Safari их не анимирует)
-  assert(css.includes('.app.collapsed .main{margin-left:0;') &&
+  assert(/\.app\.collapsed \.main\{margin-left:0;?\}/.test(css) &&
     !css.includes('grid-template-columns .6s'),
     'AP: no more left-edge snapping — margin slides everywhere');
 }
@@ -4048,7 +4056,7 @@ function testIterationAHContracts() {
     /setKeyframes\(flyKeys\(aim\)\)/.test(foldFn),
     'AG3: dimming keys travel inside the flight, homing keeps them');
   // AH: свёрнутое меню — плавающий док, контент на всю ширину
-  assert(/\.app\.collapsed \.main\{margin-left:0;/.test(css) &&
+  assert(/\.app\.collapsed \.main\{margin-left:0;?\}/.test(css) &&
     /\.main\{grid-column:1;margin-left:262px;/.test(css),
     'AH: content spans full width when collapsed; topbar reaches the left edge');
   const dock = css.split('/* ---- свёрнутый режим: панель превращается в плавающий DOCK')[1].split('/* подпись иконки')[0];
@@ -4057,30 +4065,29 @@ function testIterationAHContracts() {
     /backdrop-filter:blur\(18px\) saturate\(1\.2\)/.test(dock) &&
     /border-radius:20px/.test(dock) &&
     /background:rgba\(15,27,44,\.38\)/.test(dock) &&
-    /\.app\.collapsed \.nav\{margin:0\}/.test(dock) &&
-    /\.app\.collapsed \.nav-item\{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none;/.test(dock) &&
+    /\.nav\{display:flex;flex-direction:column;gap:3px;margin-top:9px;/.test(css) &&
+    /\.app\.collapsed \.nav-item\{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none;?\}/.test(dock) &&
     /\.app\.collapsed \.nav-item\.active::before\{display:none\}/.test(dock) &&
     /padding-left:76px/.test(dock) &&
     !/transform:scale/.test(dock),
     'AH: dock is matte glass, nothing protrudes beyond the pill');
   assert(/--dock-y/.test(js) && /function dockY\(on\)/.test(js) &&
-    /side-folding/.test(js) && /side-folding/.test(css) &&
-    /* BM12: хореография сворачивания/разворачивания — явные шаги:
-       сворачивание сжимает пространства и ПОСЛЕ анимации гасит их (.docked);
-       разворачивание снимает .docked и разжимает в следующий кадр */
-    js.includes("app.classList.add('collapsed', 'side-folding');") &&
-    /* BM14: честная анимация высоты — JS замеряет и ведёт max-height,
-       .docked ставится позже (700мс) и гасит только visibility;
-       BM18: старт — УЖЕ схлопнутым (без пустоты над LIVE), side-folding
-       снимается по завершению морфа */
-    js.includes("app.classList.add('docked');") &&
-    js.includes("if (sp) sp.style.maxHeight = '0px';") &&
-    js.includes("app.classList.remove('side-folding');") &&
+    /* BM20: хореография — ОДНО состояние (.collapsed) и два финализатора;
+       никаких side-folding/maxHeight: высоты складывает сам grid,
+       финализаторы встают ПОСЛЕ анимации (.48s) */
+    js.includes('function foldWatchRun(collapsing)') &&
+    js.includes("dock.style.transition = 'none';") &&
+    js.includes("app.classList.add('collapsed');") &&
+    js.includes("app.classList.add('docked'), 500") &&
+    js.includes("app.classList.add('opened'), 500") &&
+    js.includes("app.classList.remove('opened');") &&
     js.includes("app.classList.remove('docked');") &&
+    js.includes("app.classList.remove('collapsed');") &&
     !/SIDE_FADE/.test(js) && !/SIDE_MORPH/.test(js) &&
-    /cubic-bezier\(\.5,\.35,\.15,1\)/.test(dock) &&
+    !/side-folding/.test(js) &&
+    /var\(--fold-ease\)/.test(dock) &&
     /localStorage\.removeItem\('jarvis\.sidebar2'\)/.test(js),
-    'AJ: simultaneous mirrored choreography, default opens with dock');
+    'AJ: one-state choreography with post-animation finalizers, per-frame dockY during the morph (transform rides without transition), default opens with dock');
 }
 
 function testIterationAFContracts() {
