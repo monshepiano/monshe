@@ -3924,7 +3924,7 @@ class IterationAGTests(unittest.TestCase):
         self.assertIn(".app.collapsed .nav{margin:0}", dock)
         self.assertIn(".app.collapsed .nav-item{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none;", dock)
         # анимация медленнее и плавнее: общие часы морфа (BM21)
-        self.assertIn("--fold-ease:cubic-bezier(.45,.05,.2,1)", css)
+        self.assertIn("--fold-ease:cubic-bezier(.42,0,.18,1)", css)
         self.assertIn("var(--fold-t) var(--fold-ease)", dock)
         self.assertIn(".app.collapsed .nav-item.active::before{display:none}", dock)
         self.assertIn(".app.collapsed .nav-item:hover{transform:none;background:rgba(0,212,255,.09)}", dock)
@@ -3949,7 +3949,7 @@ class IterationAGTests(unittest.TestCase):
         self.assertNotIn("SIDE_FADE", js)
         self.assertNotIn("SIDE_MORPH", js)
         # направления различаются ТОЛЬКО кривой (BM21: одна кривая морфа)
-        self.assertIn("--fold-ease:cubic-bezier(.45,.05,.2,1)", css)
+        self.assertIn("--fold-ease:cubic-bezier(.42,0,.18,1)", css)
         self.assertIn("cubic-bezier(.22,.68,.18,1)", css)
         # AJ: по умолчанию Джарвис открывается с доком
         self.assertIn("localStorage.removeItem('jarvis.sidebar2');", js)
@@ -7722,6 +7722,10 @@ class IterationBM13Tests(unittest.TestCase):
         self.assertIn(".sp-mode::after{", css)
         self.assertIn("background:radial-gradient(circle at 50% 50%,rgba(0,212,255,.22)", css)
         self.assertIn("opacity:.55;transform:scale(.38)", css)
+        # BM23: у самой кнопки фона нет вовсе — иначе проступает
+        # системный белый <button>; всё свечение в ::after
+        self.assertIn("background:transparent",
+                      css.split(".sp-mode{")[1].split("}")[0])
         self.assertNotIn("opacity:0;transform:scale(.24)", css)
         self.assertIn("transition:transform .6s cubic-bezier(.3,.75,.25,1),opacity .45s ease", css)
         self.assertIn(".sp-mode:hover::after{opacity:1;transform:scale(1)}", css)
@@ -7879,6 +7883,10 @@ class IterationBM14Tests(unittest.TestCase):
         self.assertIn("sp.style.maxHeight = '0px'", fold)
         self.assertIn("const h = node.offsetHeight", fold)
         self.assertIn("node.style.maxHeight = h + 'px'", fold)
+        # BM23: замер КОНЕЧНОЙ геометрии (переходы на миг выключены) и
+        # снятие inline cap ПО КОНЦУ перехода — иначе рывок после анимации
+        self.assertIn("node.style.transition = 'none'", fold)
+        self.assertIn("const onGrowEnd = (e) =>", fold)
         # класс больше не рулит высотой ряда
         self.assertNotIn("max-height:0;padding-top:0;padding-bottom:0", css)
 
@@ -7889,7 +7897,7 @@ class IterationBM14Tests(unittest.TestCase):
         dash = css.split(".spd-dash{")[1].split("}")[0]
         self.assertIn("width:100%", dash)
         self.assertIn(".spaces::after{", css)
-        self.assertIn("filter:blur(2px)", css)
+        self.assertIn("filter:blur(1.2px)", css)
         self.assertNotIn(".app.collapsed .sp-dock::before{", css)
 
     def test_bm14_flyout_grows_from_button(self) -> None:

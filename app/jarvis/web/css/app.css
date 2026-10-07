@@ -17,7 +17,8 @@
      Прежние три разные кривые (.22,.68,.18,1 / .5,.35,.15,1 / ease) и
      тайминги .34–.66с ликвидированы: все приезжают в одно место */
   --fold-t:.52s;
-  --fold-ease:cubic-bezier(.45,.05,.2,1);
+  /* BM23: плавнее — мягкий старт и длинное затухание */
+  --fold-ease:cubic-bezier(.42,0,.18,1);
   --bg:#04070d; --bg2:#070d17; --panel:rgba(10,20,34,.72); --panel2:rgba(12,24,40,.55);
   --line:rgba(0,212,255,.18); --line2:rgba(0,212,255,.34);
   --cy:#00c8f0; --cy2:#5fe6ff; --gold:#d9a441; --red:#dd5566; --green:#3fbf95; --violet:#8f86cf;
@@ -238,7 +239,11 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 }
 
 .dock{display:flex;flex-direction:column;gap:12px;border:1px solid transparent;border-radius:0;position:relative;z-index:2;
-  background:transparent;backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px);
+  background:transparent;
+  /* BM23: в МЕНЮ у дока НЕТ backdrop-filter вовсе: вложенный в
+     .sidebar(тоже с blur) фильтр ломал композит фона — область дока
+     рендерилась другим цветом, граница видна по периметру. Стекло
+     задаёт только свёрнутое правило ниже */
   transform:translateY(var(--dock-y,0px));
   /* BM21: transform НАМЕРЕННО без перехода: вертикалью пилюли во время
      морфа правит JS покадрово (центр по текущей высоте) — transition
@@ -286,10 +291,10 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    мягкий свет, тающий к краям */
 .spaces::after{content:'';position:absolute;left:10px;right:10px;bottom:0;
   height:1px;pointer-events:none;
-  /* BM22: переход вкладки↔пространства — мягкое свечение, а не линия */
+  /* BM23: размытие мягкое, но заметно слабее прежнего (2px -> 1.2px) */
   background:linear-gradient(90deg,transparent,rgba(0,212,255,.24) 20%,
     rgba(0,212,255,.24) 80%,transparent);
-  filter:blur(2px)}
+  filter:blur(1.2px)}
 .sp-modes{display:flex;gap:8px;transition:padding .35s cubic-bezier(.3,1.2,.4,1)}
 /* BM13: LIVE — СВЕЧЕНИЕ, КОТОРОЕ УЖЕ ЕСТЬ В ДИЗАЙНЕ, при наведении
    ПЛАВНО РАСХОДИТСЯ по всей кнопке: тот же центральный градиент
@@ -297,6 +302,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    плавности (не вспышка и не заливка чужим цветом) */
 .sp-mode{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;
   height:34px;border:1px solid rgba(0,212,255,.34);border-radius:12px;
+  /* BM23: кнопка БЕЗ фона — иначе проступает системный белый <button>;
+  всё свечение живёт в ::after (в покое пятно, при наведении — вся кнопка) */
+  background:transparent;
   color:#bfe6f8;font:600 10.5px/1 var(--ff);letter-spacing:2.2px;cursor:pointer;
   transition:all .22s ease;padding:0;position:relative;overflow:hidden;
   box-shadow:inset 0 0 12px rgba(0,212,255,.09);
@@ -435,11 +443,10 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   flex-direction:column;align-items:center}
 .spd-dash{display:block;height:1px;border-radius:1px;position:relative;
   width:100%;
-  /* BM22: граница вкладки↔пространства в доке — мягкое свечение,
-     в такт верхней черте (.spaces::after) */
+  /* BM23: в такт верхней черте — мягко, но слабее */
   background:linear-gradient(90deg,transparent,rgba(0,212,255,.26) 22%,
     rgba(0,212,255,.26) 78%,transparent);
-  filter:blur(1.4px);margin:4px 0 2px}
+  filter:blur(.9px);margin:4px 0 2px}
 /* BM21: СИММЕТРИЯ ПОЛОС ДОКА — воздух под cur-кнопкой до чёрточки равен
    воздуху над LIVE от линии бренда (8px); в меню чёрточка не видна,
    поэтому без перехода */
@@ -451,15 +458,14 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    внутрь на свой слот (JS FLIP), кнопка в это время гаснет (.ghost) */
 .spd-fly{position:absolute;left:0;top:50%;display:flex;align-items:center;
   gap:5px;padding:7px 9px;border-radius:18px;
-  /* BM22: СТЕКЛО ГЛУБЖЕ И КРУГЛЕЕ — прозрачнее, blur сильнее, кромка
-     светлее и с внутренним отблеском: менышка читается как толстое
-     стекло, а не тёмная плашка */
-  background:rgba(10,19,33,.5);
-  -webkit-backdrop-filter:blur(26px) saturate(1.7);
-  backdrop-filter:blur(26px) saturate(1.7);
-  border:1px solid rgba(255,255,255,.2);
-  box-shadow:0 14px 38px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.14),
-    inset 0 -1px 0 rgba(0,0,0,.22);
+  /* BM23: стекло В ДУХЕ ДОКА — тот же рецепт, что у свёрнутой пилюли:
+    rgba(15,27,44,.38) + blur(18px) saturate(1.2); менышка выглядит
+    кусочком того же стекла, что и док */
+  background:rgba(15,27,44,.38);
+  -webkit-backdrop-filter:blur(18px) saturate(1.2);
+  backdrop-filter:blur(18px) saturate(1.2);
+  border:1px solid rgba(255,255,255,.14);
+  box-shadow:0 16px 38px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.08);
   opacity:0;pointer-events:none;z-index:90;
   transform:translateY(-50%) scale(.22);transform-origin:left center;
   /* BM18: кривая БЕЗ овершота — панель раскрывается ровно тем же
@@ -469,6 +475,10 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   transform:translateY(-50%) scale(1)}
 /* иконка кнопки «уехала» в меню — на кнопке её не видно */
 .spd-cur.ghost{color:transparent}
+/* BM23: КИНОШНОЕ РАЗМЫТИЕ В ДВИЖЕНИИ — плашка, пока едет, чуть
+   размыта (как объект в кадре при панораме), к концу движения
+   «останавливается» в фокусе. Класс ставит/снимает JS (motionBlur) */
+.mb{filter:blur(1.3px)}
 .spf-ico{position:relative;width:34px;height:32px;border:1px solid transparent;border-radius:9px;
   background:transparent;color:var(--tx3);cursor:pointer;display:grid;place-items:center;
   transition:color .22s ease,background .22s ease;padding:0}

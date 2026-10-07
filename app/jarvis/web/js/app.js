@@ -14,6 +14,15 @@ const el = (tag, cls, html) => {
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+/* BM23: КИНОШНОЕ РАЗМЫТИЕ В ДВИЖЕНИИ — пока плашка едет/раскрывается,
+   она чуть размыта, к концу движения останавливается в фокусе.
+   Без inline-transition: он затёр бы переходы самого элемента */
+function motionBlur(node, ms) {
+  if (!node || !node.classList) return;
+  node.classList.add('mb');
+  setTimeout(() => node.classList.remove('mb'), ms || 480);
+}
+
 const S = {
   chatId: null,
   chats: [],
@@ -554,6 +563,7 @@ function modal(html, onMount, opts) {
   m.classList.toggle('jarvis-win', !!(opts && opts.soft));
   $('#modalBack').classList.toggle('soft', !!(opts && opts.soft));
   $('#modalBack').classList.add('open');
+  motionBlur(m, 420);
   if (onMount) onMount(m);
 }
 function closeModal() {
@@ -779,6 +789,8 @@ function toggleSidebar() {
      BM21: то же — для подписи бренда (прежде падала от выдуманных 64px:
      мёртвый запас в начале сжатия читался как рывок под конец) */
   clearTimeout(_dockedT);
+  /* BM23: пилюля в полёте — чуть размыта, в фокусе к концу морфа */
+  motionBlur(document.querySelector('.dock'), 520);
   /* BM21: ЯДРО И КНОПКА-СТРЕЛКА НЕ ТЕЛЕПОРТИРУЮТСЯ. Раскладка бренда
      переключается строка↔столбик мгновенно — раньше ядро и кнопка
      прыгали на новые места, будто «исчезают и появляются». Теперь они
@@ -799,7 +811,18 @@ function toggleSidebar() {
     app.classList.add('collapsed');
     if (sp) requestAnimationFrame(() => { sp.style.maxHeight = '0px'; });
     if (bt) requestAnimationFrame(() => { bt.style.maxHeight = '0px'; });
-    _dockedT = setTimeout(() => app.classList.add('docked'), 560);
+    /* BM23: .docked — ПО КОНЦУ перехода сжатия: при просадке кадров
+       переход заканчивается позже таймера, и ряд гасился на лету */
+    const onDockEnd = (e) => {
+      if (e.propertyName !== 'max-height') return;
+      app.classList.add('docked');
+      if (sp) sp.removeEventListener('transitionend', onDockEnd);
+    };
+    if (sp) sp.addEventListener('transitionend', onDockEnd);
+    _dockedT = setTimeout(() => {
+      app.classList.add('docked');
+      if (sp) sp.removeEventListener('transitionend', onDockEnd);
+    }, 1100);
   } else {
     /* BM22: разворачиваемся — возврат пилюли из центрированного
        положения едет ПЕРЕХОДОМ на общих часах морфа (без телепорта):
@@ -809,20 +832,36 @@ function toggleSidebar() {
     app.classList.remove('docked');
     app.classList.remove('collapsed');
     const grow = (node) => {
+      /* BM23: замеряем КОНЕЧНУЮ геометрию: на миг выключаем переходы,
+         иначе высота снималась в момент старта — паддинги ещё стояли
+         в свёрнутых нулях, цель была на ~20px меньше реальной, и
+         финализатор (снятие inline max-height) ронял весь низ рывком */
+      const prevTr = node.style.transition;
+      node.style.transition = 'none';
       node.style.maxHeight = 'none';
       const h = node.offsetHeight;
       node.style.maxHeight = '0px';
       void node.offsetHeight;
+      node.style.transition = prevTr;
       requestAnimationFrame(() => { node.style.maxHeight = h + 'px'; });
     };
     if (sp) grow(sp);
     if (bt) grow(bt);
-    _dockedT = setTimeout(() => {
-      if (!app.classList.contains('collapsed')) {
-        if (sp) sp.style.maxHeight = '';
-        if (bt) bt.style.maxHeight = '';
-      }
-    }, 560);
+    /* BM23: снятие inline cap — ПО КОНЦУ перехода, не по таймеру:
+       таймер на 560мс при паре просаженных кадров срабатывал на
+       середине полёта, cap отпускал разом — и весь низ меню от
+       полосы пространств до футера РЫВКОМ доопускался */
+    const finishGrow = () => {
+      if (app.classList.contains('collapsed')) return;
+      if (sp) sp.style.maxHeight = '';
+      if (bt) bt.style.maxHeight = '';
+      if (sp) sp.removeEventListener('transitionend', onGrowEnd);
+      if (bt) bt.removeEventListener('transitionend', onGrowEnd);
+    };
+    const onGrowEnd = (e) => { if (e.propertyName === 'max-height') finishGrow(); };
+    if (sp) sp.addEventListener('transitionend', onGrowEnd);
+    if (bt) bt.addEventListener('transitionend', onGrowEnd);
+    _dockedT = setTimeout(finishGrow, 1100);
   }
   /* FLIP: раскладка уже новая, а переходы только стартовали — позиция
      «сейчас» и есть точка старта; остаток пути элементы доедают сами */
@@ -1592,6 +1631,7 @@ function initDockFly() {
     if (!S.spacesVisible.length) return;
     dockFlyIcons();
     wrap.classList.add('open');
+    motionBlur($('#spdFly'), 330);
     const sel = flySel();
     const shift = selShift(sel);
     if (shift && (shift.dx || shift.dy)) {
@@ -1604,6 +1644,7 @@ function initDockFly() {
   };
   const close = () => {
     wrap.classList.remove('open');
+    motionBlur($('#spdFly'), 300);
     const cur = $('#spdCur');
     const sel = flySel();
     if (cur) cur.classList.remove('ghost');
@@ -1709,13 +1750,16 @@ function initSpaces() {
   if (set) set.addEventListener('click', (ev) => {
     ev.stopPropagation();
     buildSpaceSettings();
-    if (setPanel) setPanel.classList.toggle('open');
+    if (setPanel) { setPanel.classList.toggle('open'); motionBlur(setPanel, 380); }
     /* BM21: открыли настройки отображения — подпись шестерёнки пропадает */
     if (setPanel && setPanel.classList.contains('open') && window.__gTipHide) window.__gTipHide();
   });
   if (setPanel) setPanel.addEventListener('click', (ev) => ev.stopPropagation());
   document.addEventListener('click', () => {
-    if (setPanel) setPanel.classList.remove('open');
+    if (setPanel && setPanel.classList.contains('open')) {
+      setPanel.classList.remove('open');
+      motionBlur(setPanel, 320);
+    }
   });
   const liveToast = () => toast('Лайф-режим — финальный этап плана, готовим позже', 'info', 'LIVE');
   $('#spModeLive').addEventListener('click', liveToast);
@@ -12324,6 +12368,7 @@ function toggleNotePanel(force) {
   if (open) {
     panel.classList.remove('np-closing');
     panel.hidden = false;
+    motionBlur(panel, 420);
     renderNotePanel();
     // открыл — значит увидел: гасим счётчик непрочитанного
     api('/api/notifications/read', {}).then(() => { S.unread = 0; renderNotePanel(); });

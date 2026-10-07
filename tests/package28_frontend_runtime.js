@@ -3131,7 +3131,7 @@ function testIterationBM18Contracts() {
     css.includes('.app.collapsed .chats-block{flex-grow:0;') &&
     css.includes('.app.collapsed .side-foot{max-height:0;') &&
     css.includes('--fold-t:.52s') &&
-    css.includes('--fold-ease:cubic-bezier(.45,.05,.2,1)') &&
+    css.includes('--fold-ease:cubic-bezier(.42,0,.18,1)') &&
     css.includes('margin var(--fold-t) var(--fold-ease)') &&
     dockRule && !/transition:[^}]*transform/.test(dockRule) &&
     css.includes('.spaces.no-spaces{padding-top:2px;padding-bottom:4px;gap:0}') &&
@@ -3422,8 +3422,8 @@ function testIterationBM11Contracts() {
     js.includes("const off = n !== 'chat' && S.spacesVisible.indexOf(n) < 0;") &&
     js.includes('window.__gTipHide') &&
     js.includes("['chat'].concat(S.spacesVisible)") &&
-    css.includes('background:rgba(10,19,33,.5)') && css.includes('border-radius:18px') &&
-    css.includes('.dock.dock-glide{'),
+    css.includes('background:rgba(15,27,44,.38)') && css.includes('border-radius:18px') &&
+    css.includes('.dock.dock-glide{') &&
     'BM21: fold morph keeps the beta.91 feel but arrives in one place (FLIP core+arrow, honest max-height for spaces AND brand caption, per-frame pill verticality); dock stripes are symmetric (brand-line→LIVE == cur→dash), the gear is centered against the row/LIVE, CHAT is bold and bright in row and panel (never .off), the glider jumps to the final spot during eye-FLIP (its left/width transition is suspended), the settings caption dies while the panel is open, and the dock flyout carries THREE glass slots');
   // BM22: док не доезжает и не смешивается; стекло менышки; маска диалогов;
   // LIVE-свечение растёт из живого; свайп-курок; размытые границы
@@ -3437,8 +3437,8 @@ function testIterationBM11Contracts() {
     js.includes("side.addEventListener('transitionend'") &&
     js.includes('requestAnimationFrame(() => dockY(true));') &&
     js.includes('setTimeout(() => dockY(true), 700)') &&
-    css.includes('background:rgba(10,19,33,.5)') &&
-    css.includes('-webkit-backdrop-filter:blur(26px) saturate(1.7)') &&
+    css.includes('background:rgba(15,27,44,.38)') &&
+    css.includes('-webkit-backdrop-filter:blur(18px) saturate(1.2)') &&
     css.includes('border-radius:18px') &&
     css.split('.chat-list{')[1].split('}')[0].includes('#000 4px') &&
     !css.includes('.chat-list.over{') &&
@@ -3447,7 +3447,15 @@ function testIterationBM11Contracts() {
     css.includes('opacity:.55;transform:scale(.38)') &&
     js.includes('if (dx < 4) { swipeArmed = true; return; }') &&
     js.includes('if (dx < 12 || dx < Math.abs(e.deltaY) * 0.85) return;') &&
-    css.split('.spd-dash{')[1].split('}')[0].includes('blur(1.4px)'),
+    css.split('.spd-dash{')[1].split('}')[0].includes('blur(.9px)') &&
+    /* BM23: рывок, белая LIVE, тёмный прямоугольник, киношное размытие */
+    !css.split('\n.dock{')[1].split('}')[0].includes('blur(0px)') &&
+    css.split('.sp-mode{')[1].split('}')[0].includes('background:transparent') &&
+    css.includes('.mb{filter:blur(1.3px)}') &&
+    js.includes('function motionBlur(node, ms)') &&
+    js.includes("node.style.transition = 'none'") &&
+    js.includes('const onGrowEnd = (e) =>') &&
+    js.includes('const onDockEnd = (e) =>') &&
     'BM22: pill centering is COLLAPSED-ONLY (the menu dock never rides down onto the chat list; the return ride is a transition on the shared clock via .dock-glide, plus a final-geometry catch-up), the flyout is deeper glass with an 18px radius, the chat-list edge fade is permanent and razor-thin (4px) with a 1.5px scrollbar, the LIVE glow already lives on the button at rest (.55/.38) and floods it on hover, the two-finger swipe is a hair trigger (4/12/0.85), and the tabs/spaces boundary is softly blurred (2px / 1.4px)');
   // ГЛАЙДЕР: подсветка морфом перетекает на выбранную иконку
   assert(html.includes('id="spGlider"') &&
@@ -3556,7 +3564,7 @@ function testIterationBM12Contracts() {
     css.includes('.app.collapsed .space-future{display:none!important}') &&
     !css.includes('.app.collapsed .nav.space-off{display:flex!important}') &&
     !css.includes('.app.collapsed .sp-dock::before{') &&
-    css.includes('.spaces::after{') && css.includes('filter:blur(2px)') &&
+    css.includes('.spaces::after{') && css.includes('filter:blur(1.2px)') &&
     css.includes('.app.collapsed .spd-cur-wrap{align-self:stretch') &&
     css.includes('.app.docked .spaces{visibility:hidden}'),
     'BM12/BM13/BM21: collapsing SQUEEZES the spaces row smoothly with an honest JS-measured max-height (the brand caption rides the same mechanism), .docked only mutes visibility after the animation; in the dock only the CURRENT space tabs show (no chat tabs abroad) and a full-width blurred strip backs the buttons');
