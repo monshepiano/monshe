@@ -760,6 +760,7 @@ function testRepeatedPlanEventReplacesOwnership() {
   };
   const ctx = loadFunctions(['handleEvent'], {
     S: {},
+    LIVE: { on: false },   // BM28: звонок закрыт — сцена не участвует
     flushQt() {}, flushTools() {}, flushAgentGroup() {}, finishToolWait() {},
     beginPlanGate(ui) { ui.planGate = true; },
     clearPlanTimers() { clears += 1; },
@@ -903,7 +904,7 @@ async function testCameraLifecycleOwnershipAndLateResults() {
   // user message ids are assigned to the exact node owned by the request.
   const userNode = new MiniNode('div'); userNode.dataset.msgId = '';
   S.camNode = newCard; S.camChatId = 'new-session'; S.chatId = 'main';
-  const eventCtx = loadFunctions(['handleEvent'], { S, flushQt() {}, flushTools() {},
+  const eventCtx = loadFunctions(['handleEvent'], { S, LIVE: { on: false }, flushQt() {}, flushTools() {},
     flushAgentGroup() {}, finishToolWait() {}, ensureStatus: () => null });
   eventCtx.handleEvent({ type: 'chat', chat_id: 'stale-id' }, {
     node: {}, isolatedCamera: true, cameraNode: oldCard, userMsgNode: userNode,
@@ -1146,13 +1147,13 @@ function testRussianImageAndHudFollowupContract() {
 
   const togglesAt = html.indexOf('<div class="toggles">');
   const togglesEnd = html.indexOf('<!-- ---------- VIEW: AUTO', togglesAt);
-  const cameraAt = html.indexOf('id="tgCamera"', togglesAt);
-  const computerAt = html.indexOf('id="tgComputer"', togglesAt);
   const spacerAt = html.indexOf('class="spacer"', togglesAt);
   const agentAt = html.indexOf('id="tgAgent"', togglesAt);
-  assert(togglesAt >= 0 && cameraAt < computerAt && computerAt < spacerAt &&
-    spacerAt < agentAt && agentAt < togglesEnd,
-  'AGENT must occupy the right edge of the footer directly below Send');
+  // BM28: тумблеры камеры/компьютера уехали внутрь LIVE-звонка
+  assert(togglesAt >= 0 && !html.includes('id="tgCamera"') &&
+    !html.includes('id="tgComputer"') &&
+    spacerAt > 0 && spacerAt < agentAt && agentAt < togglesEnd,
+  'BM28: camera/computer toggles live INSIDE the LIVE call bar; AGENT still occupies the right edge of the footer');
   // AGENT: буква «A» стоит НА САМОМ круглешке тумблера (внутри <i>), рядом нет подписей
   assert(/<label class="agent-switch-track">\s*<input id="tgAgent" type="checkbox" role="switch"[^>]*>\s*<i aria-hidden="true">A<\/i>\s*<\/label>/.test(html),
     'the A letter must live ON the switch knob itself');
@@ -2183,17 +2184,17 @@ function testProactiveModesBudgetAndAbortContracts() {
   assert(/\.mc-row\{display:flex;flex-direction:column/.test(css) &&
     !/transform:scale\(1\.55\)/.test(css),
   'mode card: text on top, toggle below at natural size');
-  // КАМЕРА и КОМПЬЮТЕР — прежние кнопки-тумблеры со СВОИМИ цветами и звуком
-  assert(/<button class="toggle" id="tgCamera"/.test(html) &&
-    /<button class="toggle" id="tgComputer"/.test(html) &&
+  // КАМЕРА и КОМПЬЮТЕР (BM28) — кнопки панели LIVE-звонка; цвета прежние
+  assert(js.includes('id="lbCam"') && js.includes('id="lbMic"') &&
+    js.includes('id="lbComp"') && js.includes('id="lbExit"') &&
     /#tgCamera\.on\{[^}]*rgba\(47,156,146/s.test(css) &&
     /\.toggle#tgComputer\.on\{[^}]*rgba\(143,134,207/s.test(css),
-  'camera keeps teal, the computer toggle is violet now');
-  assert(/\$\('#tgCamera'\)\.addEventListener\('click'/.test(js) &&
-    /\$\('#tgComputer'\)\.addEventListener\('click'/.test(js) &&
+  'camera keeps teal, the computer toggle is violet now (CSS kept for the LIVE bar heritage)');
+  assert(/const _tgCam = \$\('#tgCamera'\);/.test(js) &&
+    /const _tgComp = \$\('#tgComputer'\);/.test(js) &&
     /beep\(S\.cameraOn \? 760 : 420, 0\.1\)/.test(js) &&
     /beep\(S\.computerUse \? 760 : 420, 0\.1\)/.test(js),
-  'camera/computer buttons beep exactly like the agent switch');
+  'BM28: legacy toggle listeners tolerate the removed buttons; camera/computer still beep like the agent switch');
   // РЕЖИМЫ ЖИВУТ ПО-РАЗНОМУ: обычный — серая qt-кухня, AGENT — свои
   // карточки с группами. X: дизайн решает ЖИВОЙ режим, а не снимок на
   // момент отправки; ход мыслей показывается в ЛЮБОМ режиме (тихому тоже,
@@ -2209,7 +2210,7 @@ function testProactiveModesBudgetAndAbortContracts() {
     /@keyframes tipIn/.test(css) && /max-width:180px/.test(css) &&
     /white-space:normal/.test(css) &&
     /id="attachBtn" data-tip="Вложить файл"/.test(html) &&
-    /id="micBtn" data-tip="Диктовка"/.test(html) &&
+    /data-tip="LIVE — созвон с Джарвисом"/.test(html) &&
     /data-tip="AGENT — план и самостоятельная работа"/.test(html) &&
     /data-tip="Лимит ₽ на ответ"/.test(html),
   'tooltips wait ~1.5s, stay compact, mic and attach included');
@@ -2847,18 +2848,15 @@ function testIterationBM14Contracts() {
     pyAgent.includes('name == "schedule_task" and state_question(user_text)') &&
     pyAuto.includes('agent.state_question(t)'),
     'BM14.1: state questions get their tab card GUARANTEED server-side, and a schedule_task call on a state question is intercepted');
-  // МИКРОФОН: обычная диктовка, разговор уехал в LIVE
-  assert(html.includes('id="micBtn" data-tip="Диктовка"') &&
+  // МИКРОФОН (BM28): кнопки в композере нет — вход в разговор через LIVE
+  assert(!html.includes('id="micBtn"') &&
     js.includes('function blobToWav16k(') &&
     js.includes("api('/api/transcribe'") &&
-    js.includes("mb.classList.add('rec')") &&
+    js.includes("if (mb) mb.classList.add('rec')") &&
     js.includes('box.value = (base + String(text)') &&
     js.includes('const DICT_SEG_MS = 3000;') &&
-    !js.split("$('#micBtn').addEventListener('click'")[1].split('\n')[0]
-      .includes('openVoiceMode') &&
-    !js.split("$('#micBtn').addEventListener('click'")[1].split('\n')[0]
-      .includes('SpeechRecognition'),
-    'BM15: the mic button records via MediaRecorder, sends the wav to the SERVER /api/transcribe (browser ASR is dead in RU) and lands the text in the input; red .rec + wave stays');
+    js.includes("$('#liveBtn').addEventListener('click', () => { liveOpen(); });"),
+    'BM28: the composer mic is gone — LIVE button opens the call; dictation machinery (MediaRecorder -> server ASR) stays in the code for the call bar');
   // ЖИВЫЕ КАРТОЧКИ: файл/факт — в момент события; фон — ЗЕЛЁНАЯ БЛАШКА
   // с вкладкой АВТО внутри (BM18: карточки AUTO в чате больше нет)
   assert(js.includes("function embedLiveCard(ui, view, title)") &&
@@ -2958,10 +2956,9 @@ function testIterationBM16Contracts() {
     fix.includes("ind.style.left = (LEFT * fs) + 'px';") &&
     fix.includes('const shift = Math.max(0, w - LEFT + 0.09 - pocket - 0.02);'),
     'BM16/BM17 roots: the degree sits clearly above the bend (47%, honest .09em clearance) and is shifted LEFT out of the box in root px; the shift comes from the viewBox geometry itself, so ANY size (nested roots, denominators) works without per-case fixes');
-  // МИКРОФОН: родной значок, ховер как у прикрепления, data-url напрямую
-  assert(html.includes('<rect x="9" y="2.6" width="6" height="11.2" rx="3"/>') &&
-    html.includes('d="M8.8 21h6.4"') &&
-    css.includes('#micBtn:hover{color:var(--sky);border-color:rgba(79,150,201,.5)}') &&
+  // МИКРОФОН: родной значок теперь в JS-разметке панели LIVE, data-url напрямую
+  assert(js.includes('<rect x="9" y="2.6" width="6" height="11.2" rx="3"/>') &&
+    js.includes('d="M8.8 21h6.4"') &&
     js.includes("const r = await api('/api/transcribe', { audio: wav, language: 'ru' });") &&
     js.includes('async function dictTranscribeSegment') &&
     !js.includes('readAsDataURL(wav)'),
@@ -4239,8 +4236,8 @@ function testIterationABContracts() {
     /voice: requestVoice,/.test(sendFn) &&
     /node\.root\.classList\.add\('voice-run'\);/.test(sendFn) &&
     /if \(VOICE\.open\) closeVoiceMode\(\);/.test(extractFunction(js, 'newChat')) &&
-    /if \(VOICE\.open\) voiceMount\(true\);/.test(extractFunction(js, 'stopCam')) &&
-    /if \(VOICE\.open\) voiceMount\(\);/.test(extractFunction(js, 'startCam')) &&
+    /if \(VOICE\.open && !LIVE\.on\) voiceMount\(true\);/.test(extractFunction(js, 'stopCam')) &&
+    /if \(VOICE\.open && !LIVE\.on\) voiceMount\(\);/.test(extractFunction(js, 'startCam')) &&
     /Контекст диалога/.test(js) && /voiceLoadTranscript/.test(js),
     'AB3: voice is an inline area like the camera — orb-only status, context toggle, hidden text, unified cam UI');
   // AB5: пара вариантов = та же сноска
@@ -4384,6 +4381,105 @@ function testIterationBHContracts() {
     'BH: an empty 3D surface aims at its domain instead of giving up');
 }
 
+function testIterationBM28Contracts() {
+  // ===== LIVE-ЗВОНОК: интерфейс с нуля, поверх всего, из воды =====
+  assert(html.includes('id="liveBtn"') && html.includes('class="live-go"') &&
+    html.includes('LIVE — созвон с Джарвисом') &&
+    !html.includes('id="micBtn"') && !html.includes('id="tgCamera"') &&
+    !html.includes('id="tgComputer"'),
+    'BM28: the composer launches the LIVE call; mic/camera/computer toggles are gone from the chat footer');
+  // сцена: вход из воды (вуаль+blur), орб<->строка одним морфом, камера
+  // из центра, панель звонка, агент краснит воду
+  assert(css.includes('#liveRoot{') && css.includes('.live-veil{') &&
+    /#liveRoot\.open \.live-veil\{opacity:0\}/.test(css) &&
+    /#liveRoot\.open \.live-bg\{filter:blur\(0\) brightness\(1\)\}/.test(css) &&
+    /#liveRoot\.text-on \.live-core\{width:min\(600px,76vw\);height:60px;border-radius:32px\}/.test(css) &&
+    /#liveRoot\.mic-on\.cam-on \.live-core-wrap\{transform:translate\(-50%,calc\(-50% - 37vh\)\) scale\(\.6\)\}/.test(css) &&
+    css.includes('@keyframes loMorph') && css.includes('@keyframes loFlash') &&
+    /#liveRoot\.ag \.live-redwave\{opacity:1\}/.test(css) &&
+    css.includes('.live-bar{') && css.includes('.lb-exit:hover{') &&
+    css.includes('.live-go{') && css.includes('.live-dream{') &&
+    css.includes('.live-camwrap{') && css.includes('.live-side{') &&
+    css.includes('.live-tool{') && css.includes('.live-ask{'),
+    'BM28 scene: the call emerges from water (veil + defocusing blur), the orb and the input line are ONE morphing body, the camera panel pours from the center, AGENT turns the water faintly red');
+  // z-порядок: LIVE над приложением, но под модалками/тостами
+  assert(/#liveRoot\{position:fixed;inset:0;z-index:460;/.test(css) &&
+    /body\.live-on \.modal-back\{z-index:480\}/.test(css) &&
+    /body\.live-on \.toast\{z-index:495\}/.test(css),
+    'BM28 z-map: LIVE sits above the app yet below modals/toasts — the exit confirm renders on top of the call');
+  // движок: фазы/уровень/вопрос/ответ заведены в сцену; голос — мужской
+  const setPhase = extractFunction(js, 'voiceSetPhase');
+  assert(setPhase.includes('if (LIVE.on) livePhase(p);') &&
+    js.includes('if (LIVE.on) liveLevel(') &&
+    js.includes('if (LIVE.on) liveShowQuestion(text);') &&
+    js.includes('if (LIVE.on) liveDelta(chunk);') &&
+    /yuri\|pavel\|dmitri\|artem/.test(js) &&
+    js.includes('u.pitch = 0.92;'),
+    'BM28 engine wiring: the scene listens to the battle-tested voice engine (phases, live level, Q/A dream); Jarvis speaks with a male voice an octave lower');
+  // вход/выход: аккорды в стиле Джарвиса, вода, подтверждение выхода
+  const openFn = extractFunction(js, 'liveOpen');
+  const closeFn = extractFunction(js, 'liveClose');
+  assert(openFn.includes('liveChord(true);') && closeFn.includes('liveChord(false);') &&
+    extractFunction(js, 'liveChord').includes('chord([') &&
+    openFn.includes("VOICE.chatId = '';") && openFn.includes('killWelcome();') &&
+    closeFn.includes('closeVoiceMode();') &&
+    extractFunction(js, 'liveConfirmExit').includes('confirmBox(') &&
+    js.includes('if (LIVE.on) liveConfirmExit();'),
+    'BM28 call flow: entry and exit play a Jarvis-style arpeggio, each call is a fresh chat, ESC asks for confirmation before hanging up');
+  // handleEvent кормит сцену в try/catch — визуал не рвёт поток
+  assert(/if \(LIVE\.on\) \{ try \{ liveEvent\(ev\); \} catch \(e0\)/.test(extractFunction(js, 'handleEvent')) &&
+    /else if \(LIVE\.on && !S\.computerUse\) liveSetComp\(true\);/.test(js) &&
+    /else if \(LIVE\.on && !S\.cameraOn\) liveSetCam\(true\);/.test(js),
+    'BM28 stream: LIVE visualizes tools/plans/asks in an armored hook; a mode_request raises the call-bar toggles when the footer ones are gone');
+
+  // ===== runtime: карточки инструментов мимолётом, фазы красят сцену =====
+  const classes = [];
+  const root = {
+    classList: {
+      add: (...c) => classes.push(...c.map((x) => '+' + x)),
+      remove: (...c) => classes.push(...c.map((x) => '-' + x)),
+      contains: () => false,
+    },
+    style: { setProperty() {} },
+    querySelector: () => null,
+  };
+  const tools = new MiniNode('div');
+  const pops = [];
+  const timers = [];
+  const ctx = loadFunctions(['liveToolShow', 'liveToolOut', 'livePhase', 'liveSideShow', 'liveSideStep'], {
+    LIVE: { on: true, root, toolsEl: tools, sideEl: new MiniNode('div') },
+    SILENT_TOOLS: {},
+    el: miniEl,
+    esc: (x) => String(x == null ? '' : x),
+    sfx: (n) => pops.push(n),
+    setTimeout: (fn, ms) => { timers.push([fn, ms]); return timers.length; },
+  });
+  ctx.livePhase('thinking');
+  assert(classes.includes('+ph-thinking') && classes.includes('-ph-listening'),
+    'BM28 phases: the engine state paints the scene (listening -> thinking)');
+  ctx.liveToolShow({ name: 'web_search', args: { q: 'погода' } });
+  ctx.liveToolShow({ name: 'python_run', args: { code: 'x=1' } });
+  assert(tools.children.length === 2 && pops[0] === 'pop' && classes.includes('+tools-up'),
+    'BM28 tools: each tool surfaces as a fleeting card and pushes the scene up');
+  ctx.liveToolShow({ name: 'web_search', args: {} });
+  ctx.liveToolShow({ name: 'files_read', args: {} });
+  const alive = tools.children.filter((c) => !c.classList.contains('out'));
+  assert(tools.children[0].classList.contains('out') && alive.length === 3,
+    'BM28 tools: the 4th tool gracefully sinks the oldest card — never more than 3 fleeting cards on stage');
+  ctx.liveToolOut(tools.children[tools.children.length - 1]);
+  assert(tools.children[0].classList.contains('out'),
+    'BM28 tools: a finished card leaves with an out-animation, not a snap');
+  const side = ctx.LIVE.sideEl;
+  side.innerHTML = '';
+  ctx.liveSideShow({ steps: ['раз', 'два'] });
+  const steps = side.querySelectorAll('.ls-step');
+  assert(steps.length === 2 && classes.includes('+side-on'),
+    'BM28 plan: the agent plan docks to the right and the core yields left');
+  ctx.liveSideStep({});
+  assert(steps[0].classList.contains('done'),
+    'BM28 plan: steps complete one by one');
+}
+
 (async () => {
   testLiveStatusHasNoSpinner();
   testTelegramDateHudAndTimeOnlyMeta();
@@ -4447,8 +4543,9 @@ function testIterationBHContracts() {
   testIterationBM16Contracts();
   testIterationBM17Contracts();
   testIterationBM18Contracts();
+  testIterationBM28Contracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 62 regression groups passed');
+  console.log('package28_frontend_runtime: 63 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
