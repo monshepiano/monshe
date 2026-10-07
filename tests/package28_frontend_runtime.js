@@ -2798,9 +2798,9 @@ function testIterationBM13Contracts() {
     !css.includes('.sp-set-title{') &&
     css.includes('.sp-mode:hover::after{opacity:1;transform:scale(1)}') &&
     !css.includes('.sp-mode:hover::after{transform:scale(2.6)}') &&
-    css.includes('.chat-list.scr::-webkit-scrollbar-thumb{background:rgba(0,190,255,.2)}') &&
-    css.includes('.chat-list::-webkit-scrollbar{width:2px}') &&
-    css.includes('.chat-list.over{') &&
+    css.includes('.chat-list.scr::-webkit-scrollbar-thumb{background:rgba(0,190,255,.16)}') &&
+    css.includes('.chat-list::-webkit-scrollbar{width:1.5px}') &&
+    !css.includes('.chat-list.over{') &&
     js.includes("cl.classList.add('scr')"),
     'BM13/BM14: denser glass settings panel without a badge title, LIVE glow spreads across the button, the chat-list scrollbar is thinner and wakes only while scrolling');
   assert(html.includes('data-space="chat" data-tip="CHAT"') &&
@@ -3346,7 +3346,7 @@ function testIterationBM10Contracts() {
     js.includes('function initSpaces()') &&
     js.includes("window.addEventListener('wheel'") &&
     js.includes('const dx = Math.abs(e.deltaX);') &&
-    js.includes('if (dx < 10) { swipeArmed = true; return; }') &&
+    js.includes('if (dx < 4) { swipeArmed = true; return; }') &&
     js.includes("spaceApply('chat');"),
     'BM12/BM13: spaces switch by tap or a fast two-finger swipe — ONE transition per gesture (arm/disarm); the app always boots into CHAT');
   // под чертой — вкладки пространства; чат — базовое: заполнен и синий
@@ -3422,8 +3422,33 @@ function testIterationBM11Contracts() {
     js.includes("const off = n !== 'chat' && S.spacesVisible.indexOf(n) < 0;") &&
     js.includes('window.__gTipHide') &&
     js.includes("['chat'].concat(S.spacesVisible)") &&
-    css.includes('background:rgba(13,24,40,.62)'),
+    css.includes('background:rgba(10,19,33,.5)') && css.includes('border-radius:18px') &&
+    css.includes('.dock.dock-glide{'),
     'BM21: fold morph keeps the beta.91 feel but arrives in one place (FLIP core+arrow, honest max-height for spaces AND brand caption, per-frame pill verticality); dock stripes are symmetric (brand-line→LIVE == cur→dash), the gear is centered against the row/LIVE, CHAT is bold and bright in row and panel (never .off), the glider jumps to the final spot during eye-FLIP (its left/width transition is suspended), the settings caption dies while the panel is open, and the dock flyout carries THREE glass slots');
+  // BM22: док не доезжает и не смешивается; стекло менышки; маска диалогов;
+  // LIVE-свечение растёт из живого; свайп-курок; размытые границы
+  assert(
+    js.includes("if (on && app && app.classList.contains('collapsed') && !isNarrow())") &&
+    js.includes("dck.classList.add('dock-glide')") &&
+    js.includes("dck.classList.remove('dock-glide')") &&
+    css.includes('.dock.dock-glide{transition:margin var(--fold-t) var(--fold-ease),padding var(--fold-t) var(--fold-ease),') &&
+    css.includes('transform var(--fold-t) var(--fold-ease),') &&
+    js.includes('setTimeout(() => { spaceGlider(); dockY(true); }, 620)') &&
+    js.includes("side.addEventListener('transitionend'") &&
+    js.includes('requestAnimationFrame(() => dockY(true));') &&
+    js.includes('setTimeout(() => dockY(true), 700)') &&
+    css.includes('background:rgba(10,19,33,.5)') &&
+    css.includes('-webkit-backdrop-filter:blur(26px) saturate(1.7)') &&
+    css.includes('border-radius:18px') &&
+    css.split('.chat-list{')[1].split('}')[0].includes('#000 4px') &&
+    !css.includes('.chat-list.over{') &&
+    !js.includes("cl.classList.toggle('over'") &&
+    css.includes('.chat-list::-webkit-scrollbar{width:1.5px}') &&
+    css.includes('opacity:.55;transform:scale(.38)') &&
+    js.includes('if (dx < 4) { swipeArmed = true; return; }') &&
+    js.includes('if (dx < 12 || dx < Math.abs(e.deltaY) * 0.85) return;') &&
+    css.split('.spd-dash{')[1].split('}')[0].includes('blur(1.4px)'),
+    'BM22: pill centering is COLLAPSED-ONLY (the menu dock never rides down onto the chat list; the return ride is a transition on the shared clock via .dock-glide, plus a final-geometry catch-up), the flyout is deeper glass with an 18px radius, the chat-list edge fade is permanent and razor-thin (4px) with a 1.5px scrollbar, the LIVE glow already lives on the button at rest (.55/.38) and floods it on hover, the two-finger swipe is a hair trigger (4/12/0.85), and the tabs/spaces boundary is softly blurred (2px / 1.4px)');
   // ГЛАЙДЕР: подсветка морфом перетекает на выбранную иконку
   assert(html.includes('id="spGlider"') &&
     js.includes('function spaceGlider()') &&
@@ -3434,11 +3459,11 @@ function testIterationBM11Contracts() {
   assert(js.includes("translateX(' + (-56 * way) + 'px)'") &&
     js.includes("translateX(' + (56 * way) + 'px)'"),
     'BM11: old space exits toward the swipe direction, the new one enters from the opposite side');
-  // свайп быстрее: BM12 — порог 24, пауза 280
-  assert(js.includes('if (dx < 24 || dx < Math.abs(e.deltaY) * 1.15) return;') &&
-    js.includes('if (now - lastSwipe < 280) return;') &&
+  // свайп быстрее: BM22 — ходовой курок (4/12/0.85), пауза 240
+  assert(js.includes('if (dx < 12 || dx < Math.abs(e.deltaY) * 0.85) return;') &&
+    js.includes('if (now - lastSwipe < 240) return;') &&
     js.includes('swipeArmed = false;'),
-    'BM12/BM13: the swipe reacts fast and fires ONCE per gesture — a super-long swipe is still a single transition');
+    'BM12/BM13/BM22: the swipe is a hair trigger and fires ONCE per gesture — a super-long swipe is still a single transition');
   // ЧИПЫ: универсальный запас вместо шаблона; ожидание покрывает бюджет
   assert(pyAgent.includes('Уточни главное') &&
     pyAgent.includes('Предложи варианты развития') &&
@@ -3497,10 +3522,10 @@ function testIterationBM12Contracts() {
     css.includes('.msqrt.msqrt-i .msq-svg{left:var(--msq-x,0em)}') &&
     !css.includes('msq-box'),
     'BM12/BM13/BM16: the root degree lies above the lower bend — down and left, never onto the bracket or the stroke');
-  // СВАЙП: распознание быстрее; кнопки реагируют мгновенно
-  assert(js.includes('if (dx < 24 || dx < Math.abs(e.deltaY) * 1.15) return;') &&
-    js.includes('if (now - lastSwipe < 280) return;'),
-    'BM12/BM13: swipe recognition is fast, and one gesture fires exactly one transition');
+  // СВАЙП: распознание быстрее; кнопки реагируют мгновенно (BM22: курок)
+  assert(js.includes('if (dx < 12 || dx < Math.abs(e.deltaY) * 0.85) return;') &&
+    js.includes('if (now - lastSwipe < 240) return;'),
+    'BM12/BM13/BM22: swipe recognition is a hair trigger, and one gesture fires exactly one transition');
   assert(js.includes('function updateSpaceChrome(name)') &&
     js.split('function setSpace(name, dir)')[1].split('\nfunction ')[0].includes('updateSpaceChrome(name);'),
     'BM12: tapping a space updates icons and the glider INSTANTLY, not after the slide animation');
@@ -3531,14 +3556,16 @@ function testIterationBM12Contracts() {
     css.includes('.app.collapsed .space-future{display:none!important}') &&
     !css.includes('.app.collapsed .nav.space-off{display:flex!important}') &&
     !css.includes('.app.collapsed .sp-dock::before{') &&
-    css.includes('.spaces::after{') && css.includes('filter:blur(1.1px)') &&
+    css.includes('.spaces::after{') && css.includes('filter:blur(2px)') &&
     css.includes('.app.collapsed .spd-cur-wrap{align-self:stretch') &&
     css.includes('.app.docked .spaces{visibility:hidden}'),
     'BM12/BM13/BM21: collapsing SQUEEZES the spaces row smoothly with an honest JS-measured max-height (the brand caption rides the same mechanism), .docked only mutes visibility after the animation; in the dock only the CURRENT space tabs show (no chat tabs abroad) and a full-width blurred strip backs the buttons');
-  // LIVE ярче + чат — базовое в тихой рамке
+  // LIVE ярче + чат — базовое в тихой рамке (BM22: покоящееся свечение
+  // переехало в ::after — базовой заливки у кнопки больше нет)
   assert(css.includes('text-shadow:0 0 9px rgba(0,212,255,.35)') &&
-    css.includes('radial-gradient(circle at 50% 50%,rgba(0,212,255,.11)'),
-    'BM12: LIVE glows from its center, brighter text and border');
+    css.includes('radial-gradient(circle at 50% 50%,rgba(0,212,255,.22)') &&
+    !css.includes('radial-gradient(circle at 50% 50%,rgba(0,212,255,.11)'),
+    'BM12/BM22: LIVE glows from its center, brighter text and border');
   assert(css.includes('.sp-ico.base{color:var(--tx);font-weight:700}') &&
     !css.includes('.sp-ico.base.sel{filter:none}') &&
     !css.includes('.spf-ico.base'),

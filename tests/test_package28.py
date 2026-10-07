@@ -7195,8 +7195,10 @@ class IterationBM8Tests(unittest.TestCase):
         # свайп двумя пальцами: колесо с deltaX, быстрый порог;
         # BM13: ОДИН переход за жест — arm/disarm
         self.assertIn("const dx = Math.abs(e.deltaX);", js)
-        self.assertIn("if (dx < 10) { swipeArmed = true; return; }", js)
-        self.assertIn("if (now - lastSwipe < 280) return;", js)
+        self.assertIn("if (dx < 4) { swipeArmed = true; return; }", js)
+        # BM22: ходовой курок — жест редкий, пороги снижены
+        self.assertIn("if (dx < 12 || dx < Math.abs(e.deltaY) * 0.85) return;", js)
+        self.assertIn("if (now - lastSwipe < 240) return;", js)
         # старт всегда в CHAT
         self.assertIn("spaceApply('chat');", js)
         # BM11: подчёркивания у выбранного нет — светится; глайдер перетекает
@@ -7714,11 +7716,13 @@ class IterationBM13Tests(unittest.TestCase):
     def test_bm13_live_fill_from_center(self) -> None:
         """LIVE hover — заливка светом из центра, однородно."""
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        # BM14: НЕ новая заливка — существующее свечение плавно РАСХОДИТСЯ
-        # по всей кнопке с кривой плавности
+        # BM22: свечение НЕ рождается из нуля — в покое оно УЖЕ живёт
+        # маленьким пятном (op .55, scale .38) и при наведении заполняет
+        # всю кнопку; базовой заливки у кнопки больше нет — вся в ::after
         self.assertIn(".sp-mode::after{", css)
         self.assertIn("background:radial-gradient(circle at 50% 50%,rgba(0,212,255,.22)", css)
-        self.assertIn("opacity:0;transform:scale(.24)", css)
+        self.assertIn("opacity:.55;transform:scale(.38)", css)
+        self.assertNotIn("opacity:0;transform:scale(.24)", css)
         self.assertIn("transition:transform .6s cubic-bezier(.3,.75,.25,1),opacity .45s ease", css)
         self.assertIn(".sp-mode:hover::after{opacity:1;transform:scale(1)}", css)
         self.assertNotIn(".sp-mode:hover::after{transform:scale(2.6)}", css)
@@ -7729,13 +7733,16 @@ class IterationBM13Tests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         self.assertIn("scrollbar-color:transparent transparent", css)
         self.assertIn(".chat-list.scr{", css)
-        # BM14: маска — только у переполненного списка (.over ставит JS)
-        self.assertIn(".chat-list.over{", css)
-        self.assertIn("#000 16px", css)
-        # BM14: палка ещё тоньше
-        self.assertIn(".chat-list::-webkit-scrollbar{width:2px}", css)
+        # BM22: маска ПОСТОЯННАЯ и прижата к верху (4px) — не появляется
+        # при листании и не тускнит выбранный верхний диалог
+        self.assertNotIn(".chat-list.over{", css)
+        self.assertIn("#000 4px", css)
+        self.assertIn("rgba(0,190,255,.16) transparent", css)
+        # BM22: палка — ещё тоньше и тише
+        self.assertIn(".chat-list::-webkit-scrollbar{width:1.5px}", css)
+        self.assertIn(".chat-list.scr::-webkit-scrollbar-thumb{background:rgba(0,190,255,.16)}", css)
         self.assertIn("cl.classList.add('scr')", js)
-        self.assertIn("cl.classList.toggle('over'", js)
+        self.assertNotIn("cl.classList.toggle('over'", js)
 
     def test_bm13_embed_head_dense(self) -> None:
         """Шапка мини-вкладок плотнее — как вкладки инструментов агента."""
@@ -7882,7 +7889,7 @@ class IterationBM14Tests(unittest.TestCase):
         dash = css.split(".spd-dash{")[1].split("}")[0]
         self.assertIn("width:100%", dash)
         self.assertIn(".spaces::after{", css)
-        self.assertIn("filter:blur(1.1px)", css)
+        self.assertIn("filter:blur(2px)", css)
         self.assertNotIn(".app.collapsed .sp-dock::before{", css)
 
     def test_bm14_flyout_grows_from_button(self) -> None:
@@ -7899,15 +7906,19 @@ class IterationBM14Tests(unittest.TestCase):
         self.assertIn("classList.add('ghost')", init)
         self.assertIn("icons.indexOf(sel) <= 0", init)
 
-    def test_bm14_chat_list_mask_only_when_overflow(self) -> None:
-        """Маска чат-листа включается только у переполненного списка."""
+    def test_bm22_chat_list_mask_permanent(self) -> None:
+        """BM22: мягкий край списка диалогов — ПОСТОЯННЫЙ, тонкий (4px),
+        не появляется при листании; следить за переполнением больше нечем."""
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        self.assertIn(".chat-list.over{", css)
-        self.assertIn("width:2px", css)
+        base = css.split(".chat-list{")[1].split("}")[0]
+        self.assertIn("mask-image:linear-gradient(180deg,transparent 0,#000 4px", base)
+        self.assertIn("calc(100% - 5px),transparent 100%)", base)
+        self.assertNotIn(".chat-list.over{", css)
         hook = js.split("СКРОЛЛБАР ЧАТ-ЛИСТА")[1].split("})();")[0]
-        self.assertIn("cl.scrollHeight > cl.clientHeight + 4", hook)
-        self.assertIn("MutationObserver", hook)
+        self.assertIn("cl.classList.add('scr')", hook)
+        self.assertNotIn("scrollHeight > cl.clientHeight", hook)
+        self.assertNotIn("MutationObserver", hook)
 
     def test_bm14_mic_button_is_dictation(self) -> None:
         """Микрофон — диктовка в поле; разговор остался для LIVE."""

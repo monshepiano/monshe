@@ -725,7 +725,12 @@ function isNarrow() { return window.matchMedia('(max-width:900px)').matches; }
 function dockY(on) {
   const dock = document.querySelector('.dock');
   if (!dock) return;
-  if (on) {
+  /* BM22: центрирование — ТОЛЬКО для свёрнутого дока. Прежде формула
+     считалась и для развёрнутого меню: после разворачивания док
+     «доезжал» вниз на сотни пикселей и наваливался вкладками на список
+     диалогов. В меню вертикаль всегда ноль */
+  const app = document.querySelector('#app');
+  if (on && app && app.classList.contains('collapsed') && !isNarrow()) {
     const dy = Math.max(0, (window.innerHeight - dock.offsetHeight) / 2 - dock.offsetTop);
     dock.style.setProperty('--dock-y', dy + 'px');
   } else {
@@ -752,6 +757,11 @@ function gliderWatchRun() {
     if (performance.now() < until) _gliderWatch = requestAnimationFrame(tick);
   };
   tick();
+  /* BM22: страховочный финальный кадр — в приторможенном окружении
+     (вкладка без фокуса) rAF-тики редеют и последний расчёт застывает
+     на СЕРЕДИНЕ геометрии: пилюля не доезжала до центра окна. Один
+     пересчёт по финальной геометрии закрывает хвост */
+  setTimeout(() => { spaceGlider(); dockY(true); }, 620);
 }
 
 function toggleSidebar() {
@@ -780,6 +790,10 @@ function toggleSidebar() {
     .filter(Boolean);
   const flipFrom = flipEls.map((node) => node.getBoundingClientRect());
   if (collapsing) {
+    /* BM22: сворачиваемся — transform дока ведёт JS покадрово
+       (глиссадка выключена, иначе переход догонял бы каждый кадр) */
+    const dck = document.querySelector('.dock');
+    if (dck) dck.classList.remove('dock-glide');
     if (sp) { sp.style.maxHeight = sp.offsetHeight + 'px'; void sp.offsetHeight; }
     if (bt) { bt.style.maxHeight = bt.offsetHeight + 'px'; void bt.offsetHeight; }
     app.classList.add('collapsed');
@@ -787,6 +801,11 @@ function toggleSidebar() {
     if (bt) requestAnimationFrame(() => { bt.style.maxHeight = '0px'; });
     _dockedT = setTimeout(() => app.classList.add('docked'), 560);
   } else {
+    /* BM22: разворачиваемся — возврат пилюли из центрированного
+       положения едет ПЕРЕХОДОМ на общих часах морфа (без телепорта):
+       класс включает transform в transition-списке дока */
+    const dck = document.querySelector('.dock');
+    if (dck) dck.classList.add('dock-glide');
     app.classList.remove('docked');
     app.classList.remove('collapsed');
     const grow = (node) => {
@@ -848,13 +867,33 @@ try {
        пилюля оставалась у верхнего края. Теперь честно */
     const sp0 = document.querySelector('.spaces');
     if (sp0) sp0.style.maxHeight = '0px';
-    // восстановление БЕЗ анимации: пилюля сразу в центре высоты
+    // восстановление БЕЗ анимации: пилюля сразу в центре высоты.
+    // BM22: один замер на старте успевал сняться ДО устаканивания
+    // раскладки (шрифты/состояние) и застывал неверным — пилюля висела
+    // не по центру. Пересчитываем по факту устаканившейся геометрии
     dockY(true);
+    requestAnimationFrame(() => dockY(true));
+    setTimeout(() => dockY(true), 700);
   }
 } catch (e) {}
 window.addEventListener('resize', () => {
   if ($('#app').classList.contains('collapsed') && !isNarrow()) dockY(true);
 });
+/* BM22: геометрия дока ДОЗРЕЛА (transition закончился) — пересчёт
+   центрирования по финальным размерам. В приторможенном окружении
+   (свёрнутая вкладка, экономия энергии) rAF-тики редеют: честный
+   max-height стартует с опозданием, окно пересчётов закрывается
+   раньше конца геометрии — пилюля застывала не по центру.
+   transitionend приходит в любом темпе */
+(function () {
+  const side = document.querySelector('.sidebar');
+  if (!side) return;
+  side.addEventListener('transitionend', (e) => {
+    if (['max-height', 'height', 'padding', 'margin', 'gap',
+         'flex-grow', 'flex-basis'].indexOf(e.propertyName) < 0) return;
+    dockY(true);
+  });
+})();
 
 /* Правой панели больше нет: уведомления, санкции и камера живут прямо в чате
    (см. разделы «камера в диалоге» и «санкции / уведомления в диалоге» ниже). */
@@ -1651,21 +1690,14 @@ function initDockFly() {
   const cl = document.querySelector('.chat-list');
   if (!cl) return;
   let t = null;
-  const over = () => {
-    cl.classList.toggle('over', cl.scrollHeight > cl.clientHeight + 4);
-  };
+  /* BM22: мягкий край списка — маска ПОСТОЯННАЯ (в CSS), включать/
+     выключать по переполнению больше не нужно: граница не появляется
+     при листании и не тускнит выбранный верхний диалог */
   cl.addEventListener('scroll', () => {
     cl.classList.add('scr');
-    over();
     clearTimeout(t);
     t = setTimeout(() => cl.classList.remove('scr'), 500);
   }, { passive: true });
-  /* список диалогов меняется — следим за детьми */
-  if (window.MutationObserver) {
-    new MutationObserver(over).observe(cl, { childList: true });
-  }
-  window.addEventListener('resize', over);
-  over();
 })();
 
 function initSpaces() {
@@ -1694,17 +1726,20 @@ function initSpaces() {
   // BM13: ОДИН ПЕРЕХОД ЗА ЖЕСТ — даже супердлинный свайп перелистывает
   // одну область: после срабатывания свайпы глушатся, пока жест не
   // кончится (первое тихое событие колеса взводит обратно)
+  // BM22: ХОДОВОЙ КУРОК — жест редкий, случайно его почти не сделать:
+  // мёртвая зона 4 (было 10), порог срабатывания 12 (было 24),
+  // вертикаль почти не мешает (0.85 вместо 1.15), кулдаун короче
   let lastSwipe = 0;
   let swipeArmed = true;
   window.addEventListener('wheel', (e) => {
     const dx = Math.abs(e.deltaX);
-    if (dx < 10) { swipeArmed = true; return; }
+    if (dx < 4) { swipeArmed = true; return; }
     if (!swipeArmed) return;
-    if (dx < 24 || dx < Math.abs(e.deltaY) * 1.15) return;
+    if (dx < 12 || dx < Math.abs(e.deltaY) * 0.85) return;
     if (e.target && e.target.closest && e.target.closest(
       '.qt-detail, .fprev-body, .plan-dock, .plot-bar, pre, .modal, .sbx-files')) return;
     const now = Date.now();
-    if (now - lastSwipe < 280) return;
+    if (now - lastSwipe < 240) return;
     lastSwipe = now;
     swipeArmed = false;
     /* навигация: чат ↔ видимые пространства (чат — базовое, слева) */
