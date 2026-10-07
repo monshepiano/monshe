@@ -2793,10 +2793,10 @@ function testIterationBM13Contracts() {
   /* BM14: панель плотнее и БЕЗ заголовка; LIVE — существующее свечение
      расходится по кнопке (не radial-заливка scale(2.6)); палка тоньше
      (rgba .2, width:2px), маска — только у переполненного списка */
-  assert(css.includes('backdrop-filter:blur(22px) saturate(1.4)') &&
-    css.includes('background:rgba(11,20,34,.84)') &&
+  assert(css.includes('backdrop-filter:blur(24px) saturate(1.1)') &&
+    css.includes('background:rgba(15,27,44,.56)') &&
     !css.includes('.sp-set-title{') &&
-    css.includes('.sp-mode:hover::after{opacity:1;transform:scale(1)}') &&
+    css.includes('.sp-mode:hover::after{opacity:1;box-shadow:0 0 26px rgba(0,212,255,.1)}') &&
     !css.includes('.sp-mode:hover::after{transform:scale(2.6)}') &&
     css.includes('.chat-list.scr::-webkit-scrollbar-thumb{background:rgba(0,190,255,.16)}') &&
     css.includes('.chat-list::-webkit-scrollbar{width:1.5px}') &&
@@ -3130,11 +3130,11 @@ function testIterationBM18Contracts() {
     !css.includes('.legacy-fold') &&
     css.includes('.app.collapsed .chats-block{flex-grow:0;') &&
     css.includes('.app.collapsed .side-foot{max-height:0;') &&
-    css.includes('--fold-t:.52s') &&
+    css.includes('--fold-t:.47s') &&
     css.includes('--fold-ease:cubic-bezier(.42,0,.18,1)') &&
     css.includes('margin var(--fold-t) var(--fold-ease)') &&
     dockRule && !/transition:[^}]*transform/.test(dockRule) &&
-    css.includes('.spaces.no-spaces{padding-top:2px;padding-bottom:12px;gap:0}') &&
+    css.includes('.spaces.no-spaces{padding-top:2px;padding-bottom:13px;gap:0}') &&
     !css.includes('cubic-bezier(.3,1.12,.4,1)') &&
     !js.includes('cubic-bezier(.3,1.1,.4,1)'),
     'BM21 dock: the morph runs on ONE shared clock (--fold-t/--fold-ease live in the BASE rules; the side-folding choreographer and legacy layers are gone), the pill vertical is driven per-frame by JS (no transform in the .dock transition), and the brand-line→LIVE gap equals the cur→dash gap (margin compensation keeps both at 8px)');
@@ -3433,7 +3433,7 @@ function testIterationBM11Contracts() {
     js.includes("dck.classList.remove('dock-glide')") &&
     css.includes('.dock.dock-glide{transition:margin var(--fold-t) var(--fold-ease),padding var(--fold-t) var(--fold-ease),') &&
     css.includes('transform var(--fold-t) var(--fold-ease),') &&
-    js.includes('setTimeout(() => { spaceGlider(); dockY(true); }, 620)') &&
+    js.includes('setTimeout(() => { spaceGlider(); dockY(true); }, 570)') &&
     js.includes("side.addEventListener('transitionend'") &&
     js.includes('requestAnimationFrame(() => dockY(true));') &&
     js.includes('setTimeout(() => dockY(true), 700)') &&
@@ -3444,7 +3444,7 @@ function testIterationBM11Contracts() {
     !css.includes('.chat-list.over{') &&
     !js.includes("cl.classList.toggle('over'") &&
     css.includes('.chat-list::-webkit-scrollbar{width:1.5px}') &&
-    css.includes('opacity:.55;transform:scale(.38)') &&
+    css.includes('opacity:.4;') &&
     js.includes('if (dx < 4) { swipeArmed = true; return; }') &&
     js.includes('if (dx < 12 || dx < Math.abs(e.deltaY) * 0.85) return;') &&
     css.split('.spd-dash{')[1].split('}')[0].includes('blur(.9px)') &&
@@ -3460,7 +3460,7 @@ function testIterationBM11Contracts() {
     js.includes('function foldEaseAt(p)') &&
     js.includes("gliderWatchRun(collapsing ? 'collapse' : 'expand')") &&
     js.includes('dockY(true, foldEaseAt(p))') &&
-    css.includes('rgba(0,212,255,.06) 52%,transparent 96%)') &&
+    css.includes('rgba(0,212,255,.05) 55%,transparent 97%)') &&
     /* BM23: рывок, белая LIVE, тёмный прямоугольник, киношное размытие */
     !css.split('\n.dock{')[1].split('}')[0].includes('blur(0px)') &&
     css.split('.sp-mode{')[1].split('}')[0].includes('background:transparent') &&
@@ -3559,7 +3559,7 @@ function testIterationBM12Contracts() {
     js.includes("'jarvis.spaces.visible'") &&
     js.includes('S.spacesVisible.indexOf(name) < 0) return;'),
     'BM12: the eye toggle hides a space from the menu (others FLIP symmetrically); hidden spaces cannot be swiped into');
-  assert(css.includes('.sp-ico.off{display:none}') &&
+  assert(css.includes('.sp-ico.off{width:0;min-width:0;opacity:0;margin:0 -3px;border-width:0;pointer-events:none}') &&
     css.includes('.sp-eye.off::after') &&
     css.includes('.sp-set-row.off{opacity:.4;filter:saturate(.3)}') &&
     css.includes('.spaces.no-spaces .sp-row{opacity:0;transform:scale(.42);') &&
@@ -3585,8 +3585,8 @@ function testIterationBM12Contracts() {
     'BM12/BM13/BM21: collapsing SQUEEZES the spaces row smoothly with an honest JS-measured max-height (the brand caption rides the same mechanism), .docked only mutes visibility after the animation; in the dock only the CURRENT space tabs show (no chat tabs abroad) and a full-width blurred strip backs the buttons');
   // LIVE ярче + чат — базовое в тихой рамке (BM22: покоящееся свечение
   // переехало в ::after — базовой заливки у кнопки больше нет)
-  assert(css.includes('text-shadow:0 0 9px rgba(0,212,255,.35)') &&
-    css.includes('radial-gradient(circle at 50% 50%,rgba(0,212,255,.22)') &&
+  assert(css.includes('text-shadow:0 0 6px rgba(0,212,255,.22)') &&
+    css.includes('radial-gradient(circle at 50% 50%,rgba(0,212,255,.13)') &&
     !css.includes('radial-gradient(circle at 50% 50%,rgba(0,212,255,.11)'),
     'BM12/BM22: LIVE glows from its center, brighter text and border');
   assert(css.includes('.sp-ico.base{color:var(--tx);font-weight:700;') && css.includes('box-shadow:inset 0 0 0 1px rgba(0,212,255,.12)}') &&

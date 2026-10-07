@@ -39,8 +39,8 @@ function motionBlur(node, ms) {
   const filt = document.createElementNS(svgNS, 'filter');
   filt.id = 'mb' + (++_mbSeq);
   /* фильтр-регион шире бокса: смазу есть куда растекаться за края */
-  filt.setAttribute('x', '-30%'); filt.setAttribute('y', '-30%');
-  filt.setAttribute('width', '160%'); filt.setAttribute('height', '160%');
+  filt.setAttribute('x', '-10%'); filt.setAttribute('y', '-10%');
+  filt.setAttribute('width', '120%'); filt.setAttribute('height', '120%');
   const gb = document.createElementNS(svgNS, 'feGaussianBlur');
   gb.setAttribute('stdDeviation', '0 0');
   filt.appendChild(gb);
@@ -58,7 +58,7 @@ function motionBlur(node, ms) {
   node._mbStop = stop;
   let px = null, py = null, pw = null, ph = null;
   const t0 = performance.now();
-  const CAP = 3.2, K = 0.16;
+  const CAP = 2.6, K = 0.13;
   const tick = () => {
     if (done) return;
     const r = node.getBoundingClientRect();
@@ -67,7 +67,7 @@ function motionBlur(node, ms) {
          панели тоже движение) */
       const vx = Math.min(CAP, Math.max(Math.abs(r.x - px), Math.abs(r.width - pw) * .5) * K);
       const vy = Math.min(CAP, Math.max(Math.abs(r.y - py), Math.abs(r.height - ph) * .5) * K);
-      const moving = vx > 0.12 || vy > 0.12;
+      const moving = vx > 0.55 || vy > 0.55;
       const cur = vx.toFixed(2) + ' ' + vy.toFixed(2);
       if (gb.getAttribute('stdDeviation') !== cur) gb.setAttribute('stdDeviation', cur);
       /* движение закончилось И время вышло — в фокусе, убираем фильтр */
@@ -849,11 +849,11 @@ function gliderWatchRun(foldDir) {
      кривой, что и геометрия — прежде цель ставилась первым кадром и
      пилюля телепортировалась вниз, лишь потом догоняя высоту */
   const t0 = performance.now();
-  const until = t0 + 560;
+  const until = t0 + 510;
   const tick = () => {
     spaceGlider();
     if (foldDir === 'collapse') {
-      const p = Math.min(1, (performance.now() - t0) / 520);
+      const p = Math.min(1, (performance.now() - t0) / 470);
       dockY(true, foldEaseAt(p));
     } else {
       dockY(true);
@@ -865,7 +865,7 @@ function gliderWatchRun(foldDir) {
      (вкладка без фокуса) rAF-тики редеют и последний расчёт застывает
      на СЕРЕДИНЕ геометрии: пилюля не доезжала до центра окна. Один
      пересчёт по финальной геометрии закрывает хвост */
-  setTimeout(() => { spaceGlider(); dockY(true); }, 620);
+  setTimeout(() => { spaceGlider(); dockY(true); }, 570);
 }
 
 function toggleSidebar() {
@@ -884,7 +884,7 @@ function toggleSidebar() {
      мёртвый запас в начале сжатия читался как рывок под конец) */
   clearTimeout(_dockedT);
   /* BM23: пилюля в полёте — чуть размыта, в фокусе к концу морфа */
-  motionBlur(document.querySelector('.dock'), 520);
+  motionBlur(document.querySelector('.dock'), 470);
   /* BM21: ЯДРО И КНОПКА-СТРЕЛКА НЕ ТЕЛЕПОРТИРУЮТСЯ. Раскладка бренда
      переключается строка↔столбик мгновенно — раньше ядро и кнопка
      прыгали на новые места, будто «исчезают и появляются». Теперь они
@@ -916,7 +916,7 @@ function toggleSidebar() {
     _dockedT = setTimeout(() => {
       app.classList.add('docked');
       if (sp) sp.removeEventListener('transitionend', onDockEnd);
-    }, 1100);
+    }, 1000);
   } else {
     /* BM22: разворачиваемся — возврат пилюли из центрированного
        положения едет ПЕРЕХОДОМ на общих часах морфа (без телепорта):
@@ -955,7 +955,7 @@ function toggleSidebar() {
     const onGrowEnd = (e) => { if (e.propertyName === 'max-height') finishGrow(); };
     if (sp) sp.addEventListener('transitionend', onGrowEnd);
     if (bt) bt.addEventListener('transitionend', onGrowEnd);
-    _dockedT = setTimeout(finishGrow, 1100);
+    _dockedT = setTimeout(finishGrow, 1000);
   }
   /* FLIP: раскладка уже новая, а переходы только стартовали — позиция
      «сейчас» и есть точка старта; остаток пути элементы доедают сами */
@@ -971,11 +971,11 @@ function toggleSidebar() {
       node.animate(
         [{ transform: 'translate(' + dx + 'px,' + dy + 'px) rotate(' + r0 + 'deg)' },
          { transform: 'rotate(' + r1 + 'deg)' }],
-        { duration: 520, easing: 'cubic-bezier(.45,.05,.2,1)' });
+        { duration: 470, easing: 'cubic-bezier(.45,.05,.2,1)' });
     } else {
       node.animate(
         [{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }],
-        { duration: 520, easing: 'cubic-bezier(.45,.05,.2,1)' });
+        { duration: 470, easing: 'cubic-bezier(.45,.05,.2,1)' });
     }
   });
   gliderWatchRun(collapsing ? 'collapse' : 'expand');

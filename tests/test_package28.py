@@ -7389,7 +7389,7 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn("function spacesFlip(mutate)", js)
         self.assertIn("'jarvis.spaces.visible'", js)
         self.assertIn("S.spacesVisible.indexOf(name) < 0) return;", js)
-        self.assertIn(".sp-ico.off{display:none}", css)
+        self.assertIn(".sp-ico.off{width:0;min-width:0;opacity:0;margin:0 -3px;border-width:0;pointer-events:none}", css)
         self.assertIn(".sp-eye.off::after", css)
         self.assertIn(".sp-set-row.off{opacity:.4;filter:saturate(.3)}", css)
         # все НЕ-чатовые скрыты: ряд с чатом исчезает С АНИМАЦИЕЙ (BM13),
@@ -7685,8 +7685,8 @@ class IterationBM13Tests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         # BM14: стекло МЕНЕЕ прозрачное (плотнее + сильнее blur), без
         # заголовка; CHAT — жирная выделенная строка
-        self.assertIn("backdrop-filter:blur(22px) saturate(1.4)", css)
-        self.assertIn("background:rgba(11,20,34,.84)", css)
+        self.assertIn("backdrop-filter:blur(24px) saturate(1.1)", css)
+        self.assertIn("background:rgba(15,27,44,.56)", css)
         self.assertNotIn(".sp-set-title{", css)
         self.assertIn("transform:scale(.55);transform-origin:100% 0", css)
         self.assertIn(".sp-set-row.chat-fixed{", css)
@@ -7720,15 +7720,15 @@ class IterationBM13Tests(unittest.TestCase):
         # маленьким пятном (op .55, scale .38) и при наведении заполняет
         # всю кнопку; базовой заливки у кнопки больше нет — вся в ::after
         self.assertIn(".sp-mode::after{", css)
-        self.assertIn("background:radial-gradient(circle at 50% 50%,rgba(0,212,255,.22)", css)
-        self.assertIn("opacity:.55;transform:scale(.38)", css)
+        self.assertIn("background:radial-gradient(circle at 50% 50%,rgba(0,212,255,.13)", css)
+        self.assertIn("opacity:.4;", css)
         # BM23: у самой кнопки фона нет вовсе — иначе проступает
         # системный белый <button>; всё свечение в ::after
         self.assertIn("background:transparent",
                       css.split(".sp-mode{")[1].split("}")[0])
         self.assertNotIn("opacity:0;transform:scale(.24)", css)
-        self.assertIn("transition:transform .6s cubic-bezier(.3,.75,.25,1),opacity .45s ease", css)
-        self.assertIn(".sp-mode:hover::after{opacity:1;transform:scale(1)}", css)
+        self.assertIn("transition:opacity .55s ease,box-shadow .55s ease", css)
+        self.assertIn(".sp-mode:hover::after{opacity:1;box-shadow:0 0 26px rgba(0,212,255,.1)}", css)
         self.assertNotIn(".sp-mode:hover::after{transform:scale(2.6)}", css)
 
     def test_bm13_chat_list_scrollbar_only_while_scrolling(self) -> None:
@@ -8375,7 +8375,7 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("max-height:130px;overflow:visible;", css)
         self.assertIn("function foldEaseAt(p)", js)
         self.assertIn("dockY(true, foldEaseAt(p))", js)
-        self.assertIn("rgba(0,212,255,.06) 52%,transparent 96%)", css)
+        self.assertIn("rgba(0,212,255,.05) 55%,transparent 97%)", css)
         self.assertIn("createElementNS(svgNS, 'feGaussianBlur')", js)
         self.assertNotIn(".mb{filter", css)
 
@@ -8384,11 +8384,11 @@ class IterationBM18Tests(unittest.TestCase):
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         # 1) все пространства скрыты — полоса не прилипает к LIVE
-        self.assertIn(".spaces.no-spaces{padding-top:2px;padding-bottom:12px;gap:0}", css)
+        self.assertIn(".spaces.no-spaces{padding-top:2px;padding-bottom:13px;gap:0}", css)
         # 2) исчезновение/появление иконок — медленнее и с высотой переходом
         self.assertIn("max-height:38px;", css.split(".sp-row{")[1].split("}")[0])
-        self.assertIn("transition:opacity .5s cubic-bezier(.4,0,.2,1)", css.split(".sp-row{")[1].split("}")[0])
-        self.assertIn("gap .5s cubic-bezier(.4,0,.2,1)", css.split(".spaces{")[1].split("}")[0])
+        self.assertIn("transition:opacity .42s cubic-bezier(.4,0,.2,1)", css.split(".sp-row{")[1].split("}")[0])
+        self.assertIn("gap .42s cubic-bezier(.4,0,.2,1)", css.split(".spaces{")[1].split("}")[0])
         # 3) рамка вокруг чата (иконка базового пространства) — еле заметная синяя
         self.assertIn(".sp-ico.base{color:var(--tx);font-weight:700;", css)
         self.assertIn("box-shadow:inset 0 0 0 1px rgba(0,212,255,.12)}", css)
@@ -8420,9 +8420,9 @@ class IterationBM18Tests(unittest.TestCase):
         # 9) подписи вкладок — единые часы морфа (дублирующий переход снят)
         self.assertNotIn("transition:opacity .34s ease,max-width .6s", css)
         # 10) смаз в морфе — гораздо слабее
-        self.assertIn("const CAP = 3.2, K = 0.16;", js)
+        self.assertIn("const CAP = 2.6, K = 0.13;", js)
         # флайаут: одна кривая БЕЗ овершота — и в CSS, и в FLIP-иконке
-        self.assertIn("transition:transform .32s cubic-bezier(.22,.61,.25,1),opacity .22s ease}", css)
+        self.assertIn("transition:transform .32s cubic-bezier(.22,.61,.25,1),opacity .22s ease,\n    filter .3s ease}", css)
         self.assertNotIn("cubic-bezier(.3,1.12,.4,1)", css)
         self.assertNotIn("cubic-bezier(.3,1.1,.4,1)", js)
         self.assertIn("easing: 'cubic-bezier(.22,.61,.25,1)'", js)

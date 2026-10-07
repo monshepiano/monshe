@@ -16,7 +16,7 @@
      сворачивание и разворачивание — буквально одно движение туда-обратно.
      Прежние три разные кривые (.22,.68,.18,1 / .5,.35,.15,1 / ease) и
      тайминги .34–.66с ликвидированы: все приезжают в одно место */
-  --fold-t:.52s;
+  --fold-t:.47s;
   /* BM23: плавнее — мягкий старт и длинное затухание */
   --fold-ease:cubic-bezier(.42,0,.18,1);
   --bg:#04070d; --bg2:#070d17; --panel:rgba(10,20,34,.72); --panel2:rgba(12,24,40,.55);
@@ -293,12 +293,12 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    Маленькая кнопка настроек прячет пространства (глазик). Сворачивание
    в док СЖИМАЕТ ряд плавно, зеркально разворачиванию. */
 .brand{border-bottom:1px solid transparent}
-.spaces{display:flex;flex-direction:column;gap:9px;padding:10px 6px 12px;
+.spaces{display:flex;flex-direction:column;gap:9px;padding:10px 6px 13px;
   border-bottom:0;position:relative;max-height:132px;
   transition:opacity var(--fold-t) ease,transform var(--fold-t) var(--fold-ease),
     max-height var(--fold-t) var(--fold-ease),padding var(--fold-t) var(--fold-ease),
     margin var(--fold-t) var(--fold-ease),border-color .4s ease,
-    gap .5s cubic-bezier(.4,0,.2,1)}
+    gap .42s cubic-bezier(.4,0,.2,1)}
 /* BM13: ГРАНИЦА ВКЛАДОК/ПРОСТРАНСТВ — РАЗМЫТАЯ: не резкая линия, а
    мягкий свет, тающий к краям */
 .spaces::after{content:'';position:absolute;left:10px;right:10px;bottom:0;
@@ -318,21 +318,22 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   всё свечение живёт в ::after (в покое пятно, при наведении — вся кнопка) */
   background:transparent;
   color:#bfe6f8;font:600 10.5px/1 var(--ff);letter-spacing:2.2px;cursor:pointer;
-  transition:all .22s ease;padding:0;position:relative;overflow:hidden;
-  box-shadow:inset 0 0 12px rgba(0,212,255,.09);
-  text-shadow:0 0 9px rgba(0,212,255,.35)}
+  transition:color .3s ease;padding:0;position:relative;overflow:hidden;
+  /* BM26: ЛЕГКАЯ И ПРОЗРАЧНАЯ: ни внутренней тени (она читалась
+     прямоугольной рамкой в статике), ни жирного свечения на буквах */
+  text-shadow:0 0 6px rgba(0,212,255,.22)}
 /* BM22: свечение НЕ рождается из нуля — оно УЖЕ живёт на кнопке маленьким
    пятном (как прежний покой) и при наведении ПОСТЕПЕННО заполоняет всю
    кнопку; opacity в покое .55, а не 0 — нет вспышки «из неоткуда» */
 .sp-mode::after{content:'';position:absolute;inset:0;pointer-events:none;
-  /* BM24: последний стоп — ПРОЗРАЧНЫЙ: прежде альфа обрывалась на .02 у
-     самого края бокса — при росте свечения кромка читалась жёсткой
-     границей. Теперь свечение гаснет в ноль ДО края */
-  background:radial-gradient(circle at 50% 50%,rgba(0,212,255,.22),
-    rgba(0,212,255,.06) 52%,transparent 96%);
-  opacity:.55;transform:scale(.38);
-  transition:transform .6s cubic-bezier(.3,.75,.25,1),opacity .45s ease}
-.sp-mode:hover::after{opacity:1;transform:scale(1)}
+  /* BM26: свечение — ПЛОСКИЙ мягкий свет из центра, без «пузыря»
+     (масштаб с .38 выглядел объёмным винтажом): в покое едва тёплится,
+     при наведении просто ПРОЯВЛЯЕТСЯ — прозрачность, не объём */
+  background:radial-gradient(circle at 50% 50%,rgba(0,212,255,.13),
+    rgba(0,212,255,.05) 55%,transparent 97%);
+  opacity:.4;
+  transition:opacity .55s ease,box-shadow .55s ease}
+.sp-mode:hover::after{opacity:1;box-shadow:0 0 26px rgba(0,212,255,.1)}
 .sp-mode svg,.sp-mode span{position:relative;z-index:1}
 .sp-mode svg{width:14px;height:14px;color:var(--cy2);
   filter:drop-shadow(0 0 4px rgba(0,212,255,.5))}
@@ -346,9 +347,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   /* BM25: исчезновение/появление иконок — МЕДЛЕННЕЕ и плавнее: высота
      ряда едет переходом (прежде snaps в 0 кадром), и fade, и сжатие —
      одной кривой, одним темпом */
-  transition:opacity .5s cubic-bezier(.4,0,.2,1),
-    transform .5s cubic-bezier(.4,0,.2,1),
-    max-height .5s cubic-bezier(.4,0,.2,1)}
+  transition:opacity .42s cubic-bezier(.4,0,.2,1),
+    transform .42s cubic-bezier(.4,0,.2,1),
+    max-height .42s cubic-bezier(.4,0,.2,1)}
 /* BM13: все НЕ-чатовые скрыты — чат исчезает ВМЕСТЕ с рядом, плавно
    (сжатие влево + высота в ноль через родителя), а не мгновенно;
    обратный выбор — обратная анимация */
@@ -358,14 +359,19 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    иконок нет, но контейнер держал над LIVE пустые 10px паддинга и
    9px flex-gap от скрытого ряда (под LIVE — ещё 12px). Сжимаем:
    LIVE стоит вплотную под брендом, без мёртвых полос */
-.spaces.no-spaces{padding-top:2px;padding-bottom:12px;gap:0}
+.spaces.no-spaces{padding-top:2px;padding-bottom:13px;gap:0}
 /* тот же ритм, что между остальными секциями дока: когда ряда нет,
    бренд не держит запас под несуществующий ряд */
 .dock:has(.spaces.no-spaces) .brand{padding-bottom:2px}
 .sp-ico{position:relative;width:36px;height:34px;border:1px solid transparent;
   border-radius:10px;background:transparent;color:var(--tx3);cursor:pointer;
-  display:grid;place-items:center;
-  transition:color .25s ease,filter .25s ease,box-shadow .3s ease;padding:0}
+  display:grid;place-items:center;overflow:hidden;
+  /* BM26: сокрытие/показ иконки глазиком — та же скорость и кривая,
+     что у ряда и кнопки настроек: иконка СЖИМАЕТСЯ по ширине с fade,
+     соседние доезжают плавно, без рывка ряда */
+  transition:color .25s ease,filter .25s ease,box-shadow .3s ease,
+    width .42s cubic-bezier(.4,0,.2,1),opacity .42s cubic-bezier(.4,0,.2,1),
+    margin .42s cubic-bezier(.4,0,.2,1),border-width .42s;padding:0}
 .sp-ico svg{width:17px;height:17px}
 /* BM21: ЧАТ — ОСНОВНОЙ: просто ЯРКИЙ и выделенный на фоне остальных,
    без рамки и без тусклой краски — как обычная иконка, только жирнее */
@@ -373,7 +379,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   box-shadow:inset 0 0 0 1px rgba(0,212,255,.12)}
 .sp-ico:hover{color:var(--tx)}
 /* BM12: скрытое глазиком пространство в меню не живёт */
-.sp-ico.off{display:none}
+.sp-ico.off{width:0;min-width:0;opacity:0;margin:0 -3px;border-width:0;pointer-events:none}
 /* ГЛАЙДЕР: подсвеченная область выбранного пространства. Живёт
    отдельно от иконок и при переключении морфом перетекает
    на новую иконку (позицию ставит JS, кривая — с лёгким перелётом) */
@@ -389,7 +395,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    справа от ряда иконок; когда ВСЕ пространства скрыты — переезжает
    вверх к LIVE (LIVE сужается влево, освобождая место) */
 .sp-ico.sp-set{position:absolute;right:3px;top:59.5px;width:23px;height:21px;
-  color:var(--tx3);transition:color .22s ease,top .35s cubic-bezier(.3,1.2,.4,1)}
+  color:var(--tx3);transition:color .22s ease,top .42s cubic-bezier(.4,0,.2,1)}
 .sp-ico.sp-set svg{width:11px;height:11px}
 .sp-ico.sp-set:hover{color:var(--tx2)}
 .spaces.no-spaces .sp-modes{padding-right:36px}
@@ -400,17 +406,22 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sp-set-panel{position:absolute;right:3px;top:96px;z-index:95;width:200px;
   display:flex;flex-direction:column;overflow:visible;
   max-height:0;opacity:0;pointer-events:none;padding:0;
-  background:rgba(11,20,34,.84);
-  -webkit-backdrop-filter:blur(22px) saturate(1.4);
-  backdrop-filter:blur(22px) saturate(1.4);
-  border:1px solid rgba(255,255,255,.1);border-radius:13px;
-  box-shadow:0 12px 34px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.06);
+  /* BM26: МАТОВОЕ стекло — тот же рецепт, что менышка и док:
+     молочная подложка, сильный blur, почти нейтральная сатурация */
+  background:rgba(15,27,44,.56);
+  -webkit-backdrop-filter:blur(24px) saturate(1.1);
+  backdrop-filter:blur(24px) saturate(1.1);
+  border:1px solid rgba(255,255,255,.13);border-radius:13px;
+  box-shadow:0 16px 38px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.07);
   transform:scale(.55);transform-origin:100% 0;
-  transition:max-height .32s cubic-bezier(.25,1.1,.4,1),opacity .22s ease,
-    padding .3s ease,top .35s cubic-bezier(.3,1.2,.4,1),
-    transform .3s cubic-bezier(.3,1.15,.4,1)}
+  /* BM26: панель ВЫПЛЫВАЕТ ИЗ ГЛУБИНЫ: рождается сильно размытой и
+     проявляется в фокус к концу роста (закрытие — обратно в муть) */
+  filter:blur(10px);
+  transition:max-height .32s cubic-bezier(.25,1.1,.4,1),opacity .26s ease,
+    padding .3s ease,top .42s cubic-bezier(.4,0,.2,1),
+    transform .3s cubic-bezier(.3,1.15,.4,1),filter .32s ease}
 .sp-set-panel.open{max-height:230px;opacity:1;pointer-events:auto;padding:7px 6px 6px;
-  transform:scale(1)}
+  transform:scale(1);filter:blur(0)}
 .spaces.no-spaces .sp-set-panel{top:56px}
 /* BM21: чат в настройках — ПРОСТО ЖИРНАЯ ВЫДЕЛЕННАЯ строка: без рамки,
    без заливки — жирнее и ярче остальных, в остальном такая же */
@@ -450,11 +461,17 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    Док не менялся: только вкладки, иконка LIVE и значок текущего
    пространства с чёрточкой. Наведение — окошко ВЫЛЕТАЕТ из кнопки
    (иконки разлетаются по местам), живёт пока курсор в области */
-.sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;margin:0;
+.sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;
+  /* BM26: в меню блок пуст (высота 0) и НЕ должен держать два flex-gap
+     по бокам — иначе под полосой пространств зазор вдвое больше, чем над
+     ней. Лишние 12px съедаются отрицательными margin'ами (по 6 с боков);
+     в доке правило .app.collapsed возвращает margin:0 */
+  margin:-6px 0;
   position:relative;max-height:0;padding:0;overflow:hidden;
   /* BM24: иконки пилюли НЕ исчезают кадром: блок всегда в потоке,
      высота ведётся переходом (0 <-> 130px), overflow прячет содержимое */
-  transition:max-height var(--fold-t) var(--fold-ease),padding var(--fold-t) var(--fold-ease)}
+  transition:max-height var(--fold-t) var(--fold-ease),padding var(--fold-t) var(--fold-ease),
+    margin var(--fold-t) var(--fold-ease)}
 .spd-live,.spd-cur{width:40px;height:38px;border:1px solid transparent;border-radius:11px;
   background:transparent;color:var(--tx3);cursor:pointer;display:grid;place-items:center;
   transition:color .22s ease,background .22s ease;padding:0}
@@ -494,10 +511,14 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   box-shadow:0 16px 38px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.07);
   opacity:0;pointer-events:none;z-index:90;
   transform:translateY(-50%) scale(.22);transform-origin:left center;
+  /* BM26: окошко ВЫПЛЫВАЕТ ИЗ ВОДЫ: рождается размытым и проявляется
+     в фокус вместе с ростом */
+  filter:blur(7px);
   /* BM18: кривая БЕЗ овершота — панель раскрывается ровно тем же
      движением, что и иконка-FLIP: синхронно, без «подпрыгивания» */
-  transition:transform .32s cubic-bezier(.22,.61,.25,1),opacity .22s ease}
-.spd-cur-wrap.open .spd-fly{opacity:1;pointer-events:auto;
+  transition:transform .32s cubic-bezier(.22,.61,.25,1),opacity .22s ease,
+    filter .3s ease}
+.spd-cur-wrap.open .spd-fly{opacity:1;pointer-events:auto;filter:blur(0);
   transform:translateY(-50%) scale(1)}
 /* иконка кнопки «уехала» в меню — на кнопке её не видно */
 .spd-cur.ghost{color:transparent}
@@ -748,11 +769,11 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   box-shadow:0 22px 60px rgba(0,0,0,.75),0 0 0 1px rgba(0,0,0,.4);
   animation:npIn .24s cubic-bezier(.2,.9,.3,1) both}
 .note-panel[hidden]{display:none}
-@keyframes npIn{from{opacity:0;transform:translateY(-10px) scale(.97)}}
+@keyframes npIn{from{opacity:0;transform:translateY(-10px) scale(.97);filter:blur(8px)}}
 /* Закрытие — ровно то же движение назад, к колокольчику, а не мгновенное
    исчезновение: панель уходит туда же, откуда выехала. */
 .note-panel.np-closing{animation:npOut .2s cubic-bezier(.4,0,1,1) both}
-@keyframes npOut{to{opacity:0;transform:translateY(-10px) scale(.97)}}
+@keyframes npOut{to{opacity:0;transform:translateY(-10px) scale(.97);filter:blur(8px)}}
 .np-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:11px 14px;border-bottom:1px solid var(--line);font-size:12px;color:var(--tx2);
   background:#0c1826}
@@ -835,7 +856,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .view{display:none;flex:1;min-height:0;flex-direction:column;animation:viewIn .4s cubic-bezier(.2,.8,.3,1);
   transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}
 .view.active{display:flex}
-@keyframes viewIn{from{opacity:0;transform:translateY(12px)}}
+@keyframes viewIn{from{opacity:0;transform:translateY(12px);filter:blur(6px)}}
 .panel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:22px 26px 14px}
 .panel-head h2{margin:0;font-size:20px;font-weight:600;letter-spacing:.4px}
 .view-auto .panel-head h2{color:#a9f5ea}
@@ -898,7 +919,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sugg:nth-child(4n) b{color:var(--amber)}
 .sugg:nth-child(4n):hover{background:rgba(207,154,60,.1);border-color:rgba(207,154,60,.4);
   box-shadow:0 10px 26px rgba(207,154,60,.15)}
-@keyframes popIn{from{opacity:0;transform:translateY(14px) scale(.97)}}
+@keyframes popIn{from{opacity:0;transform:translateY(14px) scale(.97);filter:blur(5px)}}
 
 /* Дата как в Telegram: постоянный разделитель начинает каждый день, а
    transient badge закрепляется у верхней точки только на время прокрутки. */
