@@ -1255,14 +1255,12 @@ $$('.agent-switch').forEach((sw) => {
     sw.classList.remove('ag-play');
   });
 });
-const _tgCam = $('#tgCamera');  // BM28: тумблер уехал в LIVE
-if (_tgCam) _tgCam.addEventListener('click', function () {
+$('#tgCamera').addEventListener('click', function () {
   S.cameraOn = !S.cameraOn; this.classList.toggle('on', S.cameraOn);
   beep(S.cameraOn ? 760 : 420, 0.1);
   if (S.cameraOn) startCam(); else stopCam();
 });
-const _tgComp = $('#tgComputer');  // BM28: тумблер уехал в LIVE
-if (_tgComp) _tgComp.addEventListener('click', function () {
+$('#tgComputer').addEventListener('click', function () {
   S.computerUse = !S.computerUse; this.classList.toggle('on', S.computerUse);
   beep(S.computerUse ? 760 : 420, 0.1);
   /* BE: отключение — сразу строка в чате (включение — после самопроверки) */
@@ -7241,15 +7239,24 @@ async function send(opts) {
   // «Контекст диалога» теперь ТОЛЬКО показывает модели историю текущего
   // диалога (voice_context), не меняя место хранения.
   const requestVoice = !!opts.voice;
-  const voiceIsolated = requestVoice;
-  const requestCamNode = (!requestVoice && camLive()) ? S.camNode : null;
-  const requestHost = requestVoice
+  /* BM29: LIVE-звонок — СВОБОДНЫЙ РЕЖИМ: инструменты работают (голосовой
+     каскад резал их на сервере), ответ живёт в сцена звонка, а не в ленте.
+     Запись ведётся в служебный чат kind='live' (вне списка диалогов),
+     который удаляется при выходе из звонка */
+  const requestLive = !!(opts.live && LIVE.on);
+  const voiceIsolated = requestVoice || requestLive;
+  const requestCamNode = (!requestVoice && !requestLive && camLive()) ? S.camNode : null;
+  const requestHost = requestLive
+    ? (LIVE.host || (LIVE.host = el('div', '')))      // вне DOM: лента не участвует
+    : requestVoice
     ? ((S.voiceBox && S.voiceBox.querySelector('.voice-transcript')) || stream())
     : ((requestCamNode && requestCamNode.querySelector('.cam-chat')) || stream());
   const requestIsolatedCam = !!(requestCamNode && !S.camLink);
-  const requestChatId = requestVoice ? (VOICE.chatId || '')
+  const requestChatId = requestLive ? (VOICE.chatId || '')
+    : requestVoice ? (VOICE.chatId || '')
     : requestIsolatedCam ? (S.camChatId || '') : (S.chatId || '');
-  const requestKind = requestVoice ? 'voice' : (requestIsolatedCam ? 'cam' : '');
+  const requestKind = requestLive ? 'live'
+    : requestVoice ? 'voice' : (requestIsolatedCam ? 'cam' : '');
   // Режимы принадлежат запросу: смена switch во время загрузки кадра не
   // меняет уже начатую задачу задним числом.
   const requestAgentMode = !!S.agentMode;
@@ -7383,7 +7390,7 @@ async function send(opts) {
   }
   // AB: ГОЛОСОВОЙ ОТВЕТ НЕВИДИМ ВСЮ БЕСЕДУ — мы слышим друг друга, текста
   // на экране нет. Проявится, когда разговор будет завершён вручную.
-  if (requestVoice && node && node.root) {
+  if ((requestVoice || requestLive) && node && node.root) {
     node.root.classList.add('voice-run');
     VOICE.nodes.push(node.root);
   }
@@ -7527,7 +7534,7 @@ async function send(opts) {
         edit_of: editing ? editing.id : '',
         continue_of: opts.continueOf || '',
         voice: requestVoice,
-        voice_context: (requestVoice && VOICE.ctxOn && S.chatId) || '',
+        voice_context: ((requestVoice || requestLive) && VOICE.ctxOn && S.chatId) || '',
         camera_on: camLive(),
         agent_mode: requestAgentMode,
         computer_use: requestComputerUse,
@@ -11332,16 +11339,18 @@ async function dictStart() {
     D.rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
     D.rec.onstop = async () => {
       const closedAll = D.closing;
+      if (closedAll) {
+        /* BM29: СТОП — МГНОВЕННЫЙ. Хвост сегмента не ждёт облачной
+           транскрипции (до 25с): кнопка обязана погаснуть в момент клика */
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       try {
         const text = await dictTranscribeSegment(chunks, D.rec.mimeType);
         if (text && DICT === D) dictPutText(text);
       } catch (e) { /* сегмент не расслышал — просто дальше */ }
-      if (closedAll) {
-        stream.getTracks().forEach((t) => t.stop());
-        if (DICT === D) { DICT = null; if (mb) mb.classList.remove('rec'); }
-      } else {
-        armSegment();                                  // следующий сегмент
-      }
+      if (!DICT || DICT !== D) return;                 // пока грузили — стоп
+      armSegment();                                    // следующий сегмент
     };
     try { D.rec.start(250); } catch (e) { dictFinish(D); return; }
     D.timer = setTimeout(() => dictSegment(D), DICT_SEG_MS);
@@ -11353,11 +11362,12 @@ function dictFinish(D) {
   if (DICT !== D) return;
   D.closing = true;
   clearTimeout(D.timer);
-  try { D.rec.stop(); } catch (e) {
-    D.stream.getTracks().forEach((t) => t.stop());
-    DICT = null;
-    const mbx = $('#micBtn'); if (mbx) mbx.classList.remove('rec');
-  }
+  /* BM29: кнопку гасим СРАЗУ — сигнал «стоп услышан» не ждёт ни сети,
+     ни кодека. Хвост записи выбрасывается: честный стоп */
+  DICT = null;
+  const mbx = $('#micBtn'); if (mbx) mbx.classList.remove('rec');
+  D.stream.getTracks().forEach((t) => t.stop());
+  try { D.rec.stop(); } catch (e) { /* уже мёртв */ }
 }
 
 $('#micBtn').addEventListener('click', () => { dictStart(); });
@@ -11580,9 +11590,17 @@ function voiceListen() {
   VOICE.rec.ondataavailable = (e) => { if (e.data && e.data.size) VOICE.chunks.push(e.data); };
   VOICE.rec.onstop = voiceTranscribe;
   VOICE.rec.start(250);
+  /* BM29: КОРЕНЬ «микрофон в LIVE не работает»: контекст создавался уже
+     ПОСЛЕ await getUserMedia — вне жеста клика Chrome держал его
+     suspended, анализатор читал нули, VAD не слышал ничего. Теперь:
+     контекст будится в момент клика (liveWakeAudio), а здесь — только
+     подключение анализатора (и он переживает любую смену контекста) */
   if (!VOICE.ctx) {
     const AC = window.AudioContext || window.webkitAudioContext;
     VOICE.ctx = new AC();
+  }
+  if (VOICE.ctx.state === 'suspended') { try { VOICE.ctx.resume(); } catch (e) { /* жест был */ } }
+  if (!VOICE.an) {
     const src = VOICE.ctx.createMediaStreamSource(VOICE.stream);
     VOICE.an = VOICE.ctx.createAnalyser();
     VOICE.an.fftSize = 1024;
@@ -11660,8 +11678,10 @@ async function voiceAsk(text) {
   VOICE.pending = '';
   try {
     await send({
-      text, voice: true, silent: true,
-      onDelta: (chunk) => { if (chunk) { voiceFeed(chunk); if (LIVE.on) liveDelta(chunk); } },
+      /* BM29: LIVE-звонок — свободный режим: инструменты работают, но
+         голосовой поток (фразы в речь) остаётся */
+      text, live: LIVE.on, voice: !LIVE.on, silent: true,
+      onDelta: (chunk) => { if (chunk) voiceFeed(chunk); },   // только голос: текста на экране нет
       onDone: (content) => {
         if (!content) voiceAfterSpeak();
       },
@@ -11774,13 +11794,48 @@ document.addEventListener('keydown', (e) => {
 /* ============================================================ */
 const LIVE = { on: false, mic: false, cam: false, root: null, video: null,
   dreamIn: null, qEl: null, aEl: null, toolsEl: null, sideEl: null,
-  askEl: null, run: 0 };
+  askEl: null, run: 0, camStream: null, host: null, planOpen: false, askOn: false };
+
+/* BM29: единый закон «элементы уступают друг другу»: как только справа
+   живёт большой элемент (интерактив, план, медиа) — главный элемент
+   уменьшается, уезжает влево и притемняется */
+function liveSyncSide() {
+  if (!LIVE.root) return;
+  LIVE.root.classList.toggle('side-on', LIVE.planOpen || LIVE.askOn);
+}
+
+/* BM29: СЕРДЦЕБИЕНИЕ ЗВОНКА. Сцена вечно анимирована (аврора, звёзды,
+   переливы шара) — но на тихой странице браузер может не генерировать
+   кадры, и переходы (вход из глубины, морф орба) не стартуют, пока
+   кто-нибудь не спросит стиль. Пока звонок жив — кадры текут всегда */
+function liveBeat() {
+  if (!LIVE.on) return;
+  LIVE.beat = requestAnimationFrame(liveBeat);
+}
+
+/* BM29: аудио просыпается В ЖЕСТЕ КЛИКА — до любых await. Иначе Chrome
+   держит контекст suspended и микрофон «не работает» */
+function liveWakeAudio() {
+  try {
+    if (!VOICE.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      VOICE.ctx = new AC();
+    }
+    if (VOICE.ctx.state === 'suspended') { try { VOICE.ctx.resume(); } catch (e) {} }
+  } catch (e) { /* без контекста LIVE проживёт текстом */ }
+  audioCtx();   // аккорд входа звучит из того же жеста
+}
 
 /* Аккорд входа/выхода — фирменный: восходящий арпеджио на вход,
    нисходящий на выход. Тот же синтезатор, что у всех звуков */
 function liveChord(inn) {
-  if (inn) chord([329.63, 493.88, 659.25, 987.77], { dur: .95, gain: .09, gap: .08, glide: 1.02 });
-  else chord([987.77, 659.25, 493.88, 329.63], { dur: .8, gain: .075, gap: .07, glide: .98 });
+  /* BM29: аккорд БОССА. Вход — из глубины: низкое до расползается,
+     обертоны поднимаются медленно, как свет сквозь толщу воды.
+     Выход — тот же аккорд уходит вниз и гаснет в темноте */
+  if (inn) chord([130.81, 164.81, 196.0, 261.63, 329.63],
+    { dur: 2.1, gain: .11, gap: .16, glide: 1.008 });
+  else chord([329.63, 261.63, 196.0, 164.81, 130.81],
+    { dur: 1.7, gain: .085, gap: .14, glide: .985 });
 }
 
 /* --- СЦЕНА --- */
@@ -11790,6 +11845,11 @@ function liveBuild() {
   root.innerHTML =
     '<div class="live-bg">' +
       '<i class="la a1"></i><i class="la a2"></i><i class="la a3"></i>' +
+      '<i class="la a4"></i><i class="la a5"></i><i class="la a6"></i>' +
+      '<div class="live-deep">' +
+        '<i class="ring p1"></i><i class="ring p2"></i><i class="ring p3"></i>' +
+      '</div>' +
+      '<div class="live-waves"></div>' +
       '<div class="live-stars"></div>' +
       '<div class="live-sheen"></div>' +
       '<div class="live-redwave"></div>' +
@@ -11804,7 +11864,7 @@ function liveBuild() {
         '<div class="live-tools"></div>' +
         '<div class="live-camwrap"><video class="live-video" autoplay playsinline muted></video></div>' +
         '<div class="live-core-wrap"><div class="live-core">' +
-          '<div class="live-orb"><i class="lo-ring r1"></i><i class="lo-ring r2"></i>' +
+          '<div class="live-orb">' +
             '<div class="lo-core"></div></div>' +
           '<div class="live-line">' +
             '<input id="liveInput" placeholder="Спроси Джарвиса…" autocomplete="off">' +
@@ -11827,6 +11887,9 @@ function liveBuild() {
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4.5H8a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h7"/><path d="M14 8.5l4 3.5-4 3.5"/><path d="M18 12H9.5"/></svg></button>' +
     '</div>';
   document.body.appendChild(root);
+  /* принудительный reflow: переход входа стартует В ЭТОМ ЖЕ кадре,
+     а не когда rAF соизволит проснуться (на тихой странице это сотни мс) */
+  void root.offsetWidth;
   LIVE.root = root;
   LIVE.video = root.querySelector('.live-video');
   LIVE.dreamIn = root.querySelector('.live-dream-in');
@@ -11875,6 +11938,7 @@ function liveBuild() {
 /* --- ВХОД: звонок начинается --- */
 async function liveOpen() {
   if (LIVE.on || VOICE.open) return;
+  liveWakeAudio();                    // СИНХРОННО в жесте клика — до всех await
   LIVE.on = true;
   LIVE.run += 1;
   VOICE.open = true;
@@ -11885,7 +11949,9 @@ async function liveOpen() {
   showView('chat');
   liveBuild();
   document.body.classList.add('live-on');
-  requestAnimationFrame(() => { if (LIVE.root) LIVE.root.classList.add('open'); });
+  if (LIVE.root) LIVE.root.classList.add('open');   // reflow уже был — переход виден с первого кадра
+  cancelAnimationFrame(LIVE.beat || 0);
+  liveBeat();                                       // сердце сцены: кадры не прерываются
   if (S.agentMode && LIVE.root) LIVE.root.classList.add('ag');
   liveChord(true);
   /* микрофон по умолчанию ВКЛЮЧЁН — это звонок. Нет доступа — тихо
@@ -11917,11 +11983,15 @@ function liveConfirmExit() {
 function liveClose() {
   if (!LIVE.on) return;
   LIVE.on = false;
+  cancelAnimationFrame(LIVE.beat || 0);             // сердце остановлено вместе со сценой
   liveChord(false);
   const root = LIVE.root;
   if (root) root.classList.remove('open');
   document.body.classList.remove('live-on');
-  if (LIVE.cam && S.camStream) stopCam();   // камера, поднятая звонком, гаснет вместе с ним
+  if (LIVE.camStream) {                 // камера звонка — свой поток, свой уход
+    LIVE.camStream.getTracks().forEach((t) => t.stop());
+    LIVE.camStream = null;
+  }
   LIVE.cam = false;
   /* BM23: финализатор на transitionend — таймер лишь страховка. Раньше
      удаление через 520мс могло подрезать fade 450мс на загруженной машине */
@@ -11940,8 +12010,12 @@ function liveClose() {
     });
   }
   setTimeout(settle, 1150);
-  /* движок закрывается прежним путём: снимет voice-run, покажет
-     транскрипт звонка в ленте как свёрнутую карточку */
+  /* BM29: НИКАКИХ СЛЕДОВ. Служебный чат звонка (kind='live', в списке его
+     и так нет) удаляется физически — вместе с сообщениями */
+  const liveChat = VOICE.chatId;
+  if (liveChat) api('/api/chats/delete', { chat_id: liveChat });
+  LIVE.host = null;
+  /* движок закрывается прежним путём: снимет voice-run, погасит синтез */
   closeVoiceMode();
 }
 
@@ -11960,6 +12034,7 @@ function liveLevel(v) {
 async function liveSetMic(on) {
   if (!LIVE.on || on === LIVE.mic) return;
   if (on) {
+    liveWakeAudio();                  // контекст живёт с клика, не после await
     if (!VOICE.stream || !VOICE.stream.active) {
       try {
         VOICE.stream = await navigator.mediaDevices.getUserMedia({
@@ -11993,12 +12068,21 @@ async function liveSetMic(on) {
 }
 
 async function liveSetCam(on) {
+  /* BM29: СВОЙ поток. Прежний путь поднимал карточку трансляции в ленте
+     диалога — LIVE не оставляет следов в чатах: видео живёт только в
+     сцене звонка и гаснет вместе с ним */
   if (!LIVE.on || on === LIVE.cam) return;
   if (on) {
-    try { await startCam(); } catch (e) { /* карточка не собралась */ }
-    if (!S.camStream) { toast('Камера недоступна', 'error'); return; }
-    if (!LIVE.on) return;
-    if (LIVE.video) { try { LIVE.video.srcObject = S.camStream; } catch (e) {} }
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        audio: false,
+      });
+    } catch (e) { toast('Нет доступа к камере', 'error'); return; }
+    if (!LIVE.on) { stream.getTracks().forEach((t) => t.stop()); return; }
+    LIVE.camStream = stream;
+    if (LIVE.video) { try { LIVE.video.srcObject = stream; } catch (e) {} }
     LIVE.cam = true;
     LIVE.root.classList.add('cam-on');
     sfx('start');
@@ -12006,7 +12090,10 @@ async function liveSetCam(on) {
     LIVE.cam = false;
     LIVE.root.classList.remove('cam-on');
     if (LIVE.video) { try { LIVE.video.srcObject = null; } catch (e) {} }
-    if (S.camStream) stopCam();
+    if (LIVE.camStream) {
+      LIVE.camStream.getTracks().forEach((t) => t.stop());
+      LIVE.camStream = null;
+    }
     sfx('stop');
   }
   const b = LIVE.root.querySelector('#lbCam');
@@ -12045,7 +12132,7 @@ async function liveAskText(text) {
   voiceSetPhase('thinking');
   try {
     await send({
-      text, voice: true, silent: true,
+      text, live: true, silent: true,     // BM29: live — инструменты работают
       onDelta: (chunk) => { if (chunk) liveDelta(chunk); },
       onDone: () => {},
     });
@@ -12070,7 +12157,12 @@ function liveShowQuestion(text) {
 }
 
 function liveDelta(chunk) {
-  if (LIVE.aEl) LIVE.aEl.textContent += chunk;
+  /* BM29: каждый кусок ответа выплывает из глубины сам — мягкое появление
+     из размытия и темноты, текст никогда не «впечатывается» кадром */
+  if (!LIVE.aEl) return;
+  const sp = el('span', 'live-chunk');
+  sp.textContent = chunk;
+  LIVE.aEl.appendChild(sp);
 }
 
 /* --- СОБЫТИЯ ПОТОКА -> СЦЕНА --- */
@@ -12142,6 +12234,7 @@ function liveToolOut(card) {
 /* большая работа: план агента — справа, элементы уступают влево */
 function liveSideShow(ev) {
   if (!LIVE.sideEl || !(ev.steps || []).length) return;
+  LIVE.planOpen = true;
   LIVE.sideEl.innerHTML = '';
   (ev.steps || []).forEach((st, i) => {
     const row = el('div', 'ls-step');
@@ -12163,7 +12256,8 @@ function liveWorkDone() {
   /* пауза — и все элементы возвращаются на места */
   setTimeout(() => {
     if (!LIVE.on || !LIVE.root) return;
-    LIVE.root.classList.remove('side-on');
+    LIVE.planOpen = false;
+    liveSyncSide();                     // план закрыт — элементы вернулись
     if (LIVE.toolsEl) Array.from(LIVE.toolsEl.children).forEach(liveToolOut);
     liveAskHide();
   }, 1200);
@@ -12174,6 +12268,8 @@ function liveWorkDone() {
    источник решения один */
 function liveAskShow(ev) {
   if (!LIVE.root || LIVE.askEl) return;
+  LIVE.askOn = true;
+  liveSyncSide();                       // сцена уступает место интерактиву
   const panel = el('div', 'live-ask');
   const isApproval = ev.type === 'approval_wait';
   let title = 'Джарвис спрашивает';
@@ -12204,7 +12300,8 @@ function liveAskShow(ev) {
   const decide = (choice) => {
     liveAskHide(500);
     /* нажимаем настоящую кнопку скрытой карточки — один источник решения */
-    const cards = $$('.panel-card.approve-card, .panel-card.ask-card', stream());
+    const cards = $$('.panel-card.approve-card, .panel-card.ask-card',
+      (LIVE.host || stream()));
     const last = cards[cards.length - 1];
     if (last) {
       if (isApproval) {
@@ -12250,6 +12347,8 @@ function liveAskHide(delay) {
   const panel = LIVE.askEl;
   if (!panel) return;
   LIVE.askEl = null;
+  LIVE.askOn = false;
+  liveSyncSide();                       // интерактив ушёл — сцена возвращается
   setTimeout(() => {
     panel.classList.add('out');
     let gone = false;

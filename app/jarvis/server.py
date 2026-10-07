@@ -775,6 +775,11 @@ class Handler(BaseHTTPRequestHandler):
             elif body.get("kind") == "voice":
                 # изолированная беседа разговора: контекст есть, списка нет
                 chat_id = db.create_chat("Разговор", kind="voice")["id"]
+            elif body.get("kind") == "live":
+                # BM29: LIVE-звонок — СВОБОДНЫЙ РЕЖИМ: инструменты работают
+                # (голосовой каскад их резал), но следов в списке диалогов
+                # нет: чат создаётся служебным и удаляется по завершении
+                chat_id = db.create_chat("LIVE", kind="live")["id"]
             else:
                 chat_id = db.create_chat("Новый диалог")["id"]
 

@@ -3567,8 +3567,10 @@ class IterationABTests(unittest.TestCase):
         self.assertNotIn("voiceStatus", js)
         # изолированная беседа — служебный диалог вне списка
         send = js.split("async function send(opts)")[1].split("\nasync function ")[0]
-        self.assertIn("const voiceIsolated = requestVoice;", send)
+        self.assertIn("const voiceIsolated = requestVoice || requestLive;", send)
         self.assertIn("voice: requestVoice,", send)
+        # BM29: LIVE-звонок тоже изолирован, но инструменты работают
+        self.assertIn("const requestKind = requestLive ? 'live'", send)
         self.assertIn("node.root.classList.add('voice-run');", send)
         self.assertIn('VOICE.chatId = ev.chat_id;', js)
         self.assertIn('db.create_chat("Разговор", kind="voice")', srv)
@@ -3671,8 +3673,8 @@ class IterationACTests(unittest.TestCase):
         self.assertIn("voiceRenderTranscript(tb);", close)
         # разговор ВСЕГДА в своём диалоге; контекст — отдельным полем
         send = js.split("async function send(opts)")[1].split("\nasync function ")[0]
-        self.assertIn("const voiceIsolated = requestVoice;", send)
-        self.assertIn("voice_context: (requestVoice && VOICE.ctxOn && S.chatId) || '',", send)
+        self.assertIn("const voiceIsolated = requestVoice || requestLive;", send)
+        self.assertIn("voice_context: ((requestVoice || requestLive) && VOICE.ctxOn && S.chatId) || '',", send)
         self.assertIn('body.get("voice_context") or ""', srv)
         self.assertIn("db.get_recent_messages(ctx_chat, limit=16)", srv)
 
@@ -7936,10 +7938,13 @@ class IterationBM14Tests(unittest.TestCase):
         """Микрофон — диктовка в поле; разговор остался для LIVE."""
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # BM28: диктовка на месте; тумблеры камеры/компьютера уехали в LIVE
+        # BM29: диктовка и тумблеры камеры/компьютера — на месте, как прежде
         self.assertIn('id="micBtn" data-tip="Диктовка"', html)
-        self.assertNotIn('id="tgCamera"', html)
-        self.assertNotIn('id="tgComputer"', html)
+        self.assertIn('id="tgCamera"', html)
+        self.assertIn('id="tgComputer"', html)
+        # прямые слушатели тумблеров (как до LIVE)
+        self.assertIn("$('#tgCamera').addEventListener('click'", js)
+        self.assertIn("$('#tgComputer').addEventListener('click'", js)
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         self.assertIn("#liveRoot{", css)
         # звонок открывают существующие кнопки LIVE (над иконками и в доке)
@@ -8486,36 +8491,55 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("([a-zа-яё]+)", eps)   # lenient-достаём view регуляркой
 
     def test_bm28_live_call_from_scratch(self) -> None:
-        """BM28: LIVE — созвон с Джарвисом, интерфейс с нуля."""
+        """BM28/BM29: LIVE — созвон с Джарвисом, интерфейс с нуля."""
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        py_server = Path("app/jarvis/server.py").read_text(encoding="utf-8")
 
         # вход в звонок — существующая кнопка LIVE над иконками пространств;
-        # диктовка осталась при вводе; тумблеры уехали внутрь звонка
+        # диктовка и тумблеры композера работают как прежде
         self.assertIn('id="spModeLive"', html)
         self.assertIn("$('#spModeLive').addEventListener('click', () => { liveOpen(); });", js)
         self.assertIn('id="micBtn" data-tip="Диктовка"', html)
         self.assertNotIn('id="liveBtn"', html)
-        self.assertNotIn('id="tgCamera"', html)
-        self.assertNotIn('id="tgComputer"', html)
+        self.assertIn('id="tgCamera"', html)
+        self.assertIn('id="tgComputer"', html)
 
         # сцена: фиксированный оверлей над приложением, под модалками
         self.assertIn("#liveRoot{position:fixed;inset:0;z-index:460;", css)
         self.assertIn("body.live-on .modal-back{z-index:480}", css)
         self.assertIn("body.live-on .toast{z-index:495}", css)
 
-        # вход/выход из воды: вуаль темноты спадает, фон из размытия
+        # вход/выход из глубины: вуаль темноты спадает медленно, фон из размытия
         self.assertIn(".live-veil{", css)
         self.assertIn("#liveRoot.open .live-veil{opacity:0}", css)
-        self.assertIn("filter:blur(26px) brightness(.72)", css)
-        self.assertIn("#liveRoot.open .live-bg{filter:blur(0) brightness(1)}", css)
+        self.assertIn("transition:opacity 1.5s ease}", css)
+        self.assertIn("filter:blur(30px) brightness(.55) saturate(.7)", css)
+        self.assertIn("#liveRoot.open .live-bg{filter:blur(0) brightness(1) saturate(1);transform:scale(1)}", css)
 
-        # ядро — одно тело: орб <-> строка (spotlight-морф)
-        self.assertIn("#liveRoot.text-on .live-core{width:min(600px,76vw);height:60px;border-radius:32px}", css)
+        # ядро — одно тело: орб <-> строка (spotlight-морф), большой босс-орб
+        self.assertIn("#liveRoot.text-on .live-core{width:min(780px,84vw);height:84px;border-radius:46px", css)
+        self.assertIn(".live-core{position:relative;width:300px;height:300px;border-radius:50%", css)
         self.assertIn("@keyframes loMorph", css)
         self.assertIn("@keyframes loFlash", css)
-        self.assertIn("#liveRoot.ph-speaking .lo-ring{animation:loRipple", css)
+        # БЕЗ колец: шар большой, дышит, по нему переливается свет
+        self.assertNotIn("lo-ring", js.split('function liveBuild')[1].split('function ')[0])
+        self.assertIn("@keyframes loSheen", css)
+        self.assertIn("@keyframes loBreathe", css)
+        self.assertIn("#liveRoot.ph-speaking .lo-core{animation:loSpeak", css)
+        # ГЛУБИНА: единый закон появления
+        self.assertIn("@keyframes deepIn", css)
+        self.assertIn("animation:deepIn .95s var(--live-ease) both}", css)
+        self.assertIn(".live-chunk{animation:deepIn", css)
+        # микрофон включён — текста НЕТ, только голос
+        self.assertIn("#liveRoot.mic-on .live-dream{opacity:0}", css)
+        # элементы уступают: сдвиг влево с затемнением
+        self.assertIn("#liveRoot.side-on .live-flow{transform:translateX(-15vw) scale(.84)", css)
+        self.assertIn("filter:brightness(.6) saturate(.85)", css)
+        # круглые кнопки на стекле
+        self.assertIn(".lb{width:74px;height:74px;border-radius:50%", css)
+        self.assertIn(".live-bar{position:absolute;bottom:6vh", css)
 
         # камера из центра; панель звонка; агент краснит воду
         self.assertIn("#liveRoot.cam-on .live-camwrap{", css)
@@ -8539,7 +8563,7 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("if (LIVE.on) livePhase(p);", js)
         self.assertIn("if (LIVE.on) liveLevel(", js)
         self.assertIn("if (LIVE.on) liveShowQuestion(text);", js)
-        self.assertIn("if (LIVE.on) liveDelta(chunk);", js)
+        self.assertIn("onDelta: (chunk) => { if (chunk) voiceFeed(chunk); },   // только голос: текста на экране нет", js)
         # LIVE-крючок в handleEvent бронирован: визуал не рвёт поток
         self.assertIn("if (LIVE.on) { try { liveEvent(ev); } catch (e0)", js)
         # аккорды входа/выхода — на том же синтезаторе
@@ -8563,7 +8587,28 @@ class IterationBM18Tests(unittest.TestCase):
         # инструменты: не больше трёх мимолётных карточек
         self.assertIn("while (cards.length > 3) liveToolOut(cards.shift());", js)
         # интерактив решает нажатием настоящей кнопки скрытой карточки
-        self.assertIn("$$('.panel-card.approve-card, .panel-card.ask-card', stream())", js)
+        self.assertIn("$$('.panel-card.approve-card, .panel-card.ask-card',", js)
+        self.assertIn("(LIVE.host || stream()));", js)
+        # BM29: инструменты работают (голосовой каскад больше не режет их)
+        self.assertIn("text, live: LIVE.on, voice: !LIVE.on, silent: true,", js)
+        self.assertIn("text, live: true, silent: true,", js)
+        self.assertIn('chat_id = db.create_chat("LIVE", kind="live")["id"]', py_server)
+        # никаких следов: служебный чат звонка удаляется при выходе
+        self.assertIn("api('/api/chats/delete', { chat_id: liveChat });", js)
+        # камера звонка — свой поток, БЕЗ карточки в диалоге
+        self.assertIn("LIVE.camStream = stream;", js)
+        self.assertNotIn("startCam(); } catch", js)
+        # аудио просыпается в жесте клика — микрофон работает сразу
+        self.assertIn("function liveWakeAudio()", js)
+        self.assertIn("liveWakeAudio();                    // СИНХРОННО в жесте клика", js)
+        self.assertIn("if (VOICE.ctx.state === 'suspended') { try { VOICE.ctx.resume(); }", js)
+        # диктовка: СТОП мгновенный, не ждёт транскрипции хвоста
+        df = js.split("function dictFinish(D) {")[1].split("\n}\n")[0]
+        self.assertIn("DICT = null;", df)
+        self.assertIn("if (mbx) mbx.classList.remove('rec');", df)
+        onstop = js.split("D.rec.onstop = async () => {")[1].split("armSegment();")[0]
+        self.assertIn("if (closedAll) {", onstop)
+        self.assertNotIn("dictTranscribeSegment(chunks", onstop.split("closedAll")[1])
 
 
 if __name__ == "__main__":

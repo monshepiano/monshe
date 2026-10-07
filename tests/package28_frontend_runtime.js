@@ -920,7 +920,7 @@ async function testCameraLifecycleOwnershipAndLateResults() {
   assert.strictEqual(userNode.dataset.msgId, 'message-28');
 
   const sendSource = extractFunction(js, 'send');
-  assert(/const requestCamNode\s*=\s*\(!requestVoice && camLive\(\)\)\s*\?\s*S\.camNode/.test(sendSource));
+  assert(/const requestCamNode\s*=\s*\(!requestVoice && !requestLive && camLive\(\)\)\s*\?\s*S\.camNode/.test(sendSource));
   assert(/const atts\s*=\s*S\.attachments\.slice\(\)/.test(sendSource));
   assert(sendSource.indexOf('const atts = S.attachments.slice()') < sendSource.indexOf('await camAttachFrame'),
     'request attachments must be captured before the camera upload yields');
@@ -1147,13 +1147,14 @@ function testRussianImageAndHudFollowupContract() {
 
   const togglesAt = html.indexOf('<div class="toggles">');
   const togglesEnd = html.indexOf('<!-- ---------- VIEW: AUTO', togglesAt);
+  const cameraAt = html.indexOf('id="tgCamera"', togglesAt);
+  const computerAt = html.indexOf('id="tgComputer"', togglesAt);
   const spacerAt = html.indexOf('class="spacer"', togglesAt);
   const agentAt = html.indexOf('id="tgAgent"', togglesAt);
-  // BM28: тумблеры камеры/компьютера уехали внутрь LIVE-звонка
-  assert(togglesAt >= 0 && !html.includes('id="tgCamera"') &&
-    !html.includes('id="tgComputer"') &&
-    spacerAt > 0 && spacerAt < agentAt && agentAt < togglesEnd,
-  'BM28: camera/computer toggles live INSIDE the LIVE call bar; AGENT still occupies the right edge of the footer');
+  // BM29: тумблеры камеры/компьютера ВОЗВРАЩЕНЫ в футер — как до LIVE
+  assert(togglesAt >= 0 && cameraAt > 0 && cameraAt < computerAt &&
+    computerAt < spacerAt && spacerAt < agentAt && agentAt < togglesEnd,
+  'BM29: camera/computer toggles are back in the footer; AGENT still occupies the right edge directly below Send');
   // AGENT: буква «A» стоит НА САМОМ круглешке тумблера (внутри <i>), рядом нет подписей
   assert(/<label class="agent-switch-track">\s*<input id="tgAgent" type="checkbox" role="switch"[^>]*>\s*<i aria-hidden="true">A<\/i>\s*<\/label>/.test(html),
     'the A letter must live ON the switch knob itself');
@@ -2184,17 +2185,20 @@ function testProactiveModesBudgetAndAbortContracts() {
   assert(/\.mc-row\{display:flex;flex-direction:column/.test(css) &&
     !/transform:scale\(1\.55\)/.test(css),
   'mode card: text on top, toggle below at natural size');
-  // КАМЕРА и КОМПЬЮТЕР (BM28) — кнопки панели LIVE-звонка; цвета прежние
-  assert(js.includes('id="lbCam"') && js.includes('id="lbMic"') &&
-    js.includes('id="lbComp"') && js.includes('id="lbExit"') &&
+  // КАМЕРА и КОМПЬЮТЕР — прежние кнопки-тумблеры композера (BM29: возвращены),
+  // в LIVE-звонке — свои круглые кнопки; цвета прежние
+  assert(/<button class="toggle" id="tgCamera"/.test(html) &&
+    /<button class="toggle" id="tgComputer"/.test(html) &&
     /#tgCamera\.on\{[^}]*rgba\(47,156,146/s.test(css) &&
-    /\.toggle#tgComputer\.on\{[^}]*rgba\(143,134,207/s.test(css),
-  'camera keeps teal, the computer toggle is violet now (CSS kept for the LIVE bar heritage)');
-  assert(/const _tgCam = \$\('#tgCamera'\);/.test(js) &&
-    /const _tgComp = \$\('#tgComputer'\);/.test(js) &&
+    /\.toggle#tgComputer\.on\{[^}]*rgba\(143,134,207/s.test(css) &&
+    js.includes('id="lbCam"') && js.includes('id="lbMic"') &&
+    js.includes('id="lbComp"') && js.includes('id="lbExit"'),
+  'camera keeps teal, the computer toggle is violet; the LIVE call bar has its own round controls');
+  assert(/\$\('#tgCamera'\)\.addEventListener\('click'/.test(js) &&
+    /\$\('#tgComputer'\)\.addEventListener\('click'/.test(js) &&
     /beep\(S\.cameraOn \? 760 : 420, 0\.1\)/.test(js) &&
     /beep\(S\.computerUse \? 760 : 420, 0\.1\)/.test(js),
-  'BM28: legacy toggle listeners tolerate the removed buttons; camera/computer still beep like the agent switch');
+  'BM29: the footer toggles are wired directly again and beep exactly like the agent switch');
   // РЕЖИМЫ ЖИВУТ ПО-РАЗНОМУ: обычный — серая qt-кухня, AGENT — свои
   // карточки с группами. X: дизайн решает ЖИВОЙ режим, а не снимок на
   // момент отправки; ход мыслей показывается в ЛЮБОМ режиме (тихому тоже,
@@ -4204,7 +4208,7 @@ function testIterationACContracts() {
     /level > 0\.16/.test(barge) && /VOICE\.barge >= 7/.test(barge) &&
     /localStorage\.getItem\('jarvisVoiceCtx'\) === '1'/.test(js) &&
     /S\.voiceBox\.remove\(\); S\.voiceBox = null;/.test(closeVoice) &&
-    /voice_context: \(requestVoice && VOICE\.ctxOn && S\.chatId\) \|\| '',/.test(extractFunction(js, 'send')) &&
+    /voice_context: \(\(requestVoice \|\| requestLive\) && VOICE\.ctxOn && S\.chatId\) \|\| '',/.test(extractFunction(js, 'send')) &&
     /voiceRenderTranscript\(tb\);/.test(closeVoice) &&
     /flex-direction:column/.test(css),
     'AC4: echo cancellation + sturdier barge; ctx off by default; voice always isolated; the field really leaves');
@@ -4234,7 +4238,7 @@ function testIterationABContracts() {
     !/voice-veil/.test(css) &&
     /\.voice-run\{display:none!important\}/.test(css) &&
     /\.voice-box\.thinking \.v-orb b\{/.test(css) &&
-    /voiceIsolated = requestVoice;/.test(sendFn) &&
+    /voiceIsolated = requestVoice \|\| requestLive;/.test(sendFn) &&
     /voice: requestVoice,/.test(sendFn) &&
     /node\.root\.classList\.add\('voice-run'\);/.test(sendFn) &&
     /if \(VOICE\.open\) closeVoiceMode\(\);/.test(extractFunction(js, 'newChat')) &&
@@ -4386,18 +4390,18 @@ function testIterationBHContracts() {
 function testIterationBM28Contracts() {
   // ===== LIVE-ЗВОНОК: интерфейс с нуля, поверх всего, из воды =====
   assert(html.includes('id="micBtn" data-tip="Диктовка"') &&
-    !html.includes('id="liveBtn"') && !html.includes('id="tgCamera"') &&
-    !html.includes('id="tgComputer"') &&
+    !html.includes('id="liveBtn"') &&
+    html.includes('id="tgCamera"') && html.includes('id="tgComputer"') &&
     js.includes("$('#spModeLive').addEventListener('click', () => { liveOpen(); });") &&
     js.includes("if (spdLive) spdLive.addEventListener('click', () => { liveOpen(); });"),
-    'BM28: dictation stays in the composer; the call opens via the LIVE button above the space icons (and its dock twin); camera/computer toggles are gone from the chat footer');
+    'BM29: dictation and footer toggles stay in the composer; the call opens via the LIVE button above the space icons (and its dock twin)');
   // сцена: вход из воды (вуаль+blur), орб<->строка одним морфом, камера
   // из центра, панель звонка, агент краснит воду
   assert(css.includes('#liveRoot{') && css.includes('.live-veil{') &&
     /#liveRoot\.open \.live-veil\{opacity:0\}/.test(css) &&
-    /#liveRoot\.open \.live-bg\{filter:blur\(0\) brightness\(1\)\}/.test(css) &&
-    /#liveRoot\.text-on \.live-core\{width:min\(600px,76vw\);height:60px;border-radius:32px\}/.test(css) &&
-    /#liveRoot\.mic-on\.cam-on \.live-core-wrap\{transform:translate\(-50%,calc\(-50% - 37vh\)\) scale\(\.6\)\}/.test(css) &&
+    /#liveRoot\.open \.live-bg\{filter:blur\(0\) brightness\(1\) saturate\(1\);transform:scale\(1\)\}/.test(css) &&
+    /#liveRoot\.text-on \.live-core\{width:min\(780px,84vw\);height:84px;border-radius:46px/.test(css) &&
+    /#liveRoot\.mic-on\.cam-on \.live-core-wrap\{transform:translate\(-50%,calc\(-50% - 38vh\)\) scale\(\.55\)\}/.test(css) &&
     css.includes('@keyframes loMorph') && css.includes('@keyframes loFlash') &&
     /#liveRoot\.ag \.live-redwave\{opacity:1\}/.test(css) &&
     css.includes('.live-bar{') && css.includes('.lb-exit:hover{') &&
@@ -4410,12 +4414,16 @@ function testIterationBM28Contracts() {
     /body\.live-on \.modal-back\{z-index:480\}/.test(css) &&
     /body\.live-on \.toast\{z-index:495\}/.test(css),
     'BM28 z-map: LIVE sits above the app yet below modals/toasts — the exit confirm renders on top of the call');
-  // движок: фазы/уровень/вопрос/ответ заведены в сцену; голос — мужской
+  // движок: фазы/уровень/вопрос заведены в сцену; при микрофоне текста НЕТ;
+  // голос — мужской; аудио просыпается в жесте клика (иначе VAD глух)
   const setPhase = extractFunction(js, 'voiceSetPhase');
   assert(setPhase.includes('if (LIVE.on) livePhase(p);') &&
     js.includes('if (LIVE.on) liveLevel(') &&
     js.includes('if (LIVE.on) liveShowQuestion(text);') &&
-    js.includes('if (LIVE.on) liveDelta(chunk);') &&
+    js.includes('onDelta: (chunk) => { if (chunk) voiceFeed(chunk); },   // только голос: текста на экране нет') &&
+    js.includes('function liveWakeAudio()') &&
+    js.includes('liveWakeAudio();                    // СИНХРОННО в жесте клика') &&
+    js.includes("text, live: LIVE.on, voice: !LIVE.on, silent: true,") &&
     /yuri\|pavel\|dmitri\|artem/.test(js) &&
     js.includes('u.pitch = 0.92;'),
     'BM28 engine wiring: the scene listens to the battle-tested voice engine (phases, live level, Q/A dream); Jarvis speaks with a male voice an octave lower');
