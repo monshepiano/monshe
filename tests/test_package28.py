@@ -3922,7 +3922,7 @@ class IterationAGTests(unittest.TestCase):
         # AK: КОРЕНЬ ВЫПИРАНИЯ вылечен — .nav сужается до стекла,
         # пункты width:auto (были шире дока на width:100% сайдбара)
         self.assertIn(".app.collapsed .nav{margin:0}", dock)
-        self.assertIn(".app.collapsed .nav-item{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none;", dock)
+        self.assertIn(".app.collapsed .nav-item{gap:0;width:auto;padding:10px 11px;margin:0 6px;transform:none;}", dock)
         # анимация медленнее и плавнее: общие часы морфа (BM21)
         self.assertIn("--fold-ease:cubic-bezier(.42,0,.18,1)", css)
         self.assertIn("var(--fold-t) var(--fold-ease)", dock)
@@ -7709,7 +7709,7 @@ class IterationBM13Tests(unittest.TestCase):
         chat_block = js.split("chat: { name: 'CHAT'")[1].split("},")[0]
         self.assertIn('fill="none" stroke="currentColor"', chat_block)
         # BM21: ЖИРНАЯ и яркая (юзер отверг тусклую), свечение положено
-        self.assertIn(".sp-ico.base{color:var(--tx);font-weight:700}", css)
+        self.assertIn(".sp-ico.base{color:var(--tx);font-weight:700;\n  box-shadow:inset 0 0 0 1px rgba(0,212,255,.12)}", css)
         self.assertNotIn(".sp-ico.base.sel{filter:none}", css)
         self.assertIn(".spd-cur{color:var(--tx3)}", css)
 
@@ -7920,7 +7920,7 @@ class IterationBM14Tests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         base = css.split(".chat-list{")[1].split("}")[0]
-        self.assertIn("mask-image:linear-gradient(180deg,transparent 0,#000 4px", base)
+        self.assertIn("mask-image:linear-gradient(180deg,rgba(0,0,0,var(--chatFade,1)) 0,#000 4px", base)
         self.assertIn("calc(100% - 5px),transparent 100%)", base)
         self.assertNotIn(".chat-list.over{", css)
         hook = js.split("СКРОЛЛБАР ЧАТ-ЛИСТА")[1].split("})();")[0]
@@ -8378,6 +8378,49 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("rgba(0,212,255,.06) 52%,transparent 96%)", css)
         self.assertIn("createElementNS(svgNS, 'feGaussianBlur')", js)
         self.assertNotIn(".mb{filter", css)
+
+    def test_bm25_review_fixes(self) -> None:
+        """BM25: ревью beta.96 — полоса/LIVE, рамка чата, чистый старт, мягкий LIVE, маска по скроллу."""
+        js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
+        css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
+        # 1) все пространства скрыты — полоса не прилипает к LIVE
+        self.assertIn(".spaces.no-spaces{padding-top:2px;padding-bottom:12px;gap:0}", css)
+        # 2) исчезновение/появление иконок — медленнее и с высотой переходом
+        self.assertIn("max-height:38px;", css.split(".sp-row{")[1].split("}")[0])
+        self.assertIn("transition:opacity .5s cubic-bezier(.4,0,.2,1)", css.split(".sp-row{")[1].split("}")[0])
+        self.assertIn("gap .5s cubic-bezier(.4,0,.2,1)", css.split(".spaces{")[1].split("}")[0])
+        # 3) рамка вокруг чата (иконка базового пространства) — еле заметная синяя
+        self.assertIn(".sp-ico.base{color:var(--tx);font-weight:700;", css)
+        self.assertIn("box-shadow:inset 0 0 0 1px rgba(0,212,255,.12)}", css)
+        # 4) LIVE без жёсткой прямоугольной кромки: только радиальный свет
+        self.assertIn("height:34px;border:1px solid transparent;border-radius:12px;", css)
+        self.assertNotIn("border:1px solid rgba(0,212,255,.34);border-radius:12px;", css)
+        self.assertNotIn(".sp-mode:hover{border-color:", css)
+        self.assertIn("background:radial-gradient(ellipse at 50% 50%,rgba(0,212,255,.15),", css)
+        # 5) стартовая страница чистая: метки режимов не печатаются до первого ответа
+        tl = js.split("function toolLine(")[1].split("\nfunction ")[0]
+        self.assertIn("function toolLine(kind, on, force)", js)
+        self.assertIn("!force && !box.querySelector('.msg-ai')", tl)
+        self.assertIn("S.pendingModeMark = { kind, on };", tl)
+        self.assertIn("if (pm.on) toolLine(pm.kind, true, true);", js)
+        self.assertIn("S.pendingModeMark = null;   // BM25: отложенная метка умерла вместе с диалогом", js)
+        self.assertIn("S.pendingModeMark = null;   // BM25: чужой диалог — чужие метки", js)
+        # 6) верхнее затухание списка — только при скролле, въезжает мягко
+        self.assertIn("@property --chatFade{syntax:'<number>';inherits:false;initial-value:1}", css)
+        self.assertIn(".chat-list.topfade{--chatFade:0}", css)
+        self.assertIn("cl.classList.toggle('topfade', cl.scrollTop > 2);", js)
+        self.assertIn("list.classList.toggle('topfade', list.scrollTop > 2);", js)
+        # 7) белая полоса при сворачивании: граница бренда постоянной ширины,
+        #    подпись выведена из потока и не вылезает под бренд
+        self.assertIn(".brand{border-bottom:1px solid transparent}", css)
+        self.assertIn(".app.collapsed .brand-text{position:absolute;left:50px;top:50%;", css)
+        # 8) иконка вкладки не телепортируется в центр первым кадром
+        self.assertIn(".app.collapsed .nav-item{gap:0;width:auto;padding:10px 11px;margin:0 6px;transform:none;}", css)
+        self.assertNotIn("justify-content:center;padding:10px 0;", css)
+        # 9) подписи вкладок — единые часы морфа (дублирующий переход снят)
+        self.assertNotIn("transition:opacity .34s ease,max-width .6s", css)
+        # 10) смаз в морфе — гораздо слабее
+        self.assertIn("const CAP = 3.2, K = 0.16;", js)
         # флайаут: одна кривая БЕЗ овершота — и в CSS, и в FLIP-иконке
         self.assertIn("transition:transform .32s cubic-bezier(.22,.61,.25,1),opacity .22s ease}", css)
         self.assertNotIn("cubic-bezier(.3,1.12,.4,1)", css)

@@ -3134,7 +3134,7 @@ function testIterationBM18Contracts() {
     css.includes('--fold-ease:cubic-bezier(.42,0,.18,1)') &&
     css.includes('margin var(--fold-t) var(--fold-ease)') &&
     dockRule && !/transition:[^}]*transform/.test(dockRule) &&
-    css.includes('.spaces.no-spaces{padding-top:2px;padding-bottom:4px;gap:0}') &&
+    css.includes('.spaces.no-spaces{padding-top:2px;padding-bottom:12px;gap:0}') &&
     !css.includes('cubic-bezier(.3,1.12,.4,1)') &&
     !js.includes('cubic-bezier(.3,1.1,.4,1)'),
     'BM21 dock: the morph runs on ONE shared clock (--fold-t/--fold-ease live in the BASE rules; the side-folding choreographer and legacy layers are gone), the pill vertical is driven per-frame by JS (no transform in the .dock transition), and the brand-line→LIVE gap equals the cur→dash gap (margin compensation keeps both at 8px)');
@@ -3351,7 +3351,7 @@ function testIterationBM10Contracts() {
     'BM12/BM13: spaces switch by tap or a fast two-finger swipe — ONE transition per gesture (arm/disarm); the app always boots into CHAT');
   // под чертой — вкладки пространства; чат — базовое: заполнен и синий
   assert(js.includes("$$('.nav, .chats-block').forEach((n) => n.classList.toggle('space-off', !isChat));") &&
-    css.includes('.sp-ico.base{color:var(--tx);font-weight:700}') &&
+    css.includes('.sp-ico.base{color:var(--tx);font-weight:700;') && css.includes('box-shadow:inset 0 0 0 1px rgba(0,212,255,.12)}') &&
     !css.includes('.sp-ico.base.sel{filter:none}') &&
     !css.includes('.sp-ico.sel::after') &&
     css.includes('.sp-mode.active{'),
@@ -3589,7 +3589,7 @@ function testIterationBM12Contracts() {
     css.includes('radial-gradient(circle at 50% 50%,rgba(0,212,255,.22)') &&
     !css.includes('radial-gradient(circle at 50% 50%,rgba(0,212,255,.11)'),
     'BM12/BM22: LIVE glows from its center, brighter text and border');
-  assert(css.includes('.sp-ico.base{color:var(--tx);font-weight:700}') &&
+  assert(css.includes('.sp-ico.base{color:var(--tx);font-weight:700;') && css.includes('box-shadow:inset 0 0 0 1px rgba(0,212,255,.12)}') &&
     !css.includes('.sp-ico.base.sel{filter:none}') &&
     !css.includes('.spf-ico.base'),
     'BM21: the chat icon is BOLD and bright like a selected one (never muted, never boxed); not singled out in the flyout');
@@ -4127,7 +4127,7 @@ function testIterationAHContracts() {
     /border-radius:20px/.test(dock) &&
     /background:rgba\(15,27,44,\.38\)/.test(dock) &&
     /\.app\.collapsed \.nav\{margin:0\}/.test(dock) &&
-    /\.app\.collapsed \.nav-item\{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none;/.test(dock) &&
+    /\.app\.collapsed \.nav-item\{gap:0;width:auto;padding:10px 11px;margin:0 6px;transform:none;\}/.test(dock) &&
     /\.app\.collapsed \.nav-item\.active::before\{display:none\}/.test(dock) &&
     /padding-left:76px/.test(dock) &&
     !/transform:scale/.test(dock),

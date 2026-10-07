@@ -58,7 +58,7 @@ function motionBlur(node, ms) {
   node._mbStop = stop;
   let px = null, py = null, pw = null, ph = null;
   const t0 = performance.now();
-  const CAP = 6.5, K = 0.34;
+  const CAP = 3.2, K = 0.16;
   const tick = () => {
     if (done) return;
     const r = node.getBoundingClientRect();
@@ -118,6 +118,7 @@ const S = {
   editing: null,   // {id, node} — какое сообщение правим (новая версия, не новая реплика)
   detached: null,
   detachTimer: null,
+  pendingModeMark: null,  // BM25: отложенная метка режима: диалог ещё не начат
   sandbox: {},
   // выделение в файлах: набор путей + якорь для Shift-диапазона (как в Finder)
   fsel: new Set(),
@@ -397,9 +398,20 @@ function endsInOpenTable(text) {
   return line.indexOf('|') >= 0;
 }
 
-function toolLine(kind, on) {
+function toolLine(kind, on, force) {
   const box = stream();
   if (!box) return;
+  /* BM25: СТАРТОВАЯ СТРАНИЦА ЧИСТАЯ. Пока в ленте нет ни одного ответа
+     (приветствие и плитки), метки переключения режимов не печатаются
+     вовсе — в рабочей области не должно возникать ничего лишнего.
+     Событие запоминается: если запрос уйдёт, перед самым ответом
+     всплывёт ТОЛЬКО ПОСЛЕДНЕЕ переключение, и только если это было
+     ВКЛЮЧЕНИЕ режима (отключение в чистом диалоге — тишина). В живом
+     диалоге (ответ уже был) — как всегда, сразу в ленту */
+  if (!force && !box.querySelector('.msg-ai')) {
+    S.pendingModeMark = { kind, on };
+    return;
+  }
   const agent = kind === 'agent';
   /* BH: метка режима, включённого ПОСЕРЕДИНЕ ответа, остаётся ПОСЕРЕДИНЕ
      ответа — в месте включения, а не уезжает в конец ленты. Текст,
@@ -1818,6 +1830,9 @@ function initDockFly() {
      при листании и не тускнит выбранный верхний диалог */
   cl.addEventListener('scroll', () => {
     cl.classList.add('scr');
+    /* BM25: верхнее затухание — только когда список РЕАЛЬНО уехал вниз:
+     * у верхнего края выбранный первый диалог не затемняется вовсе */
+    cl.classList.toggle('topfade', cl.scrollTop > 2);
     clearTimeout(t);
     t = setTimeout(() => cl.classList.remove('scr'), 500);
   }, { passive: true });
@@ -2012,6 +2027,9 @@ async function loadChats() {
     item.addEventListener('click', () => openChat(c.id));
     list.appendChild(item);
   });
+  /* BM25: список пересобран — состояние верхнего затухания по факту
+     (пересборка могла сжать прокрутку в ноль) */
+  list.classList.toggle('topfade', list.scrollTop > 2);
 }
 /* переименование диалога прямо в списке: поле вместо названия */
 function startRenameChat(item, c) {
@@ -2052,6 +2070,7 @@ function newChat() {
     setStreaming(false);
   }
   S.sanctionNodes = {};
+  S.pendingModeMark = null;   // BM25: отложенная метка умерла вместе с диалогом
   S.chatId = null;
   S.fdir = '';
   /* AZ: подсказки принадлежат диалогу — новый диалог начинается без чужих */
@@ -2082,6 +2101,7 @@ async function openChat(id) {
     setStreaming(false);
   }
   S.sanctionNodes = {};
+  S.pendingModeMark = null;   // BM25: чужой диалог — чужие метки
   S.chatId = id;
   S.fdir = '';
   /* AZ: уйдя в другой диалог, чужие подсказки гасим сразу — свои придут
@@ -7338,6 +7358,14 @@ async function send(opts) {
     }
   }
   if (!node) {
+    /* BM25: запрос ушёл — диалог начался. Вспоминаем ПОСЛЕДНЕЕ
+       переключение режима, случившееся до ответа: печатаем его ровно
+       ПЕРЕД ответом (только включение — см. toolLine) */
+    if (!requestVoice && requestHost === stream() && S.pendingModeMark) {
+      const pm = S.pendingModeMark;
+      S.pendingModeMark = null;
+      if (pm.on) toolLine(pm.kind, true, true);
+    }
     node = addAiMsg(null, requestHost);
   }
   // AB: ГОЛОСОВОЙ ОТВЕТ НЕВИДИМ ВСЮ БЕСЕДУ — мы слышим друг друга, текста

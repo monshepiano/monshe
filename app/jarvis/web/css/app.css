@@ -197,7 +197,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .brand-text{max-height:64px;transition:max-height var(--fold-t) var(--fold-ease),
   padding var(--fold-t) var(--fold-ease),margin var(--fold-t) var(--fold-ease),
   opacity calc(var(--fold-t)*.55) ease}
-.app.collapsed .brand-text{max-height:0;opacity:0;overflow:hidden;padding:0;margin:0;flex:none}
+.app.collapsed .brand-text{position:absolute;left:50px;top:50%;
+  transform:translateY(-50%);max-height:0;opacity:0;overflow:hidden;
+  padding:0;margin:0;pointer-events:none}
 .app.collapsed .collapse-btn{transform:rotate(180deg)}
 /* AL: ГЕОМЕТРИЯ ДОКА — nav занимает ВСЮ ширину стекла (52px), без своих
    отступов (двойной отступ сжимал пункты до 24px — «супер узко» и сбоку);
@@ -209,7 +211,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .nav-label{transition:max-width var(--fold-t) var(--fold-ease),
   opacity calc(var(--fold-t)*.55) ease}
 .app.collapsed .nav-label{opacity:0;max-width:0}
-.app.collapsed .nav-item{gap:0;width:auto;justify-content:center;padding:10px 0;margin:0 6px;transform:none;}
+.app.collapsed .nav-item{gap:0;width:auto;padding:10px 11px;margin:0 6px;transform:none;}
 .app.collapsed .nav-item:hover{transform:none;background:rgba(0,212,255,.09)}
 /* AJ: активная полоска несла СВЕЧЕНИЕ за пределы дока — в доке активность
    показывает сама иконка, полоска не нужна */
@@ -259,7 +261,11 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   border-radius var(--fold-t) var(--fold-ease),transform var(--fold-t) var(--fold-ease),
   background-color .4s ease,border-color .4s ease,box-shadow .4s ease}
 .brand{display:flex;align-items:center;gap:10px;padding:8px 6px 8px;border-bottom:1px solid var(--line);
-  height:54px;
+  height:54px;position:relative;
+  /* position:relative — якорь для абсолютной подписи в свёрнутом
+     состоянии: без него top:50% считался бы от .dock и подпись
+     улетала на середину пилюли */
+  
   /* BM24: ВЫСОТА бренда ЕДЕТ ПЕРЕХОДОМ. Раскладка строка↔столбик меняется
      мгновенно (FLIP прикрывает перелёт ядра и кнопки), но прежде ВЫСОТА
      блока прыгала кадром (97↔54) — и весь низ меню рывком взлетал.
@@ -286,12 +292,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    рамке), выбранное светится, подсветка-глайдер перетекает по иконкам.
    Маленькая кнопка настроек прячет пространства (глазик). Сворачивание
    в док СЖИМАЕТ ряд плавно, зеркально разворачиванию. */
-.brand{border-bottom:0}
+.brand{border-bottom:1px solid transparent}
 .spaces{display:flex;flex-direction:column;gap:9px;padding:10px 6px 12px;
   border-bottom:0;position:relative;max-height:132px;
   transition:opacity var(--fold-t) ease,transform var(--fold-t) var(--fold-ease),
     max-height var(--fold-t) var(--fold-ease),padding var(--fold-t) var(--fold-ease),
-    margin var(--fold-t) var(--fold-ease),border-color .4s ease}
+    margin var(--fold-t) var(--fold-ease),border-color .4s ease,
+    gap .5s cubic-bezier(.4,0,.2,1)}
 /* BM13: ГРАНИЦА ВКЛАДОК/ПРОСТРАНСТВ — РАЗМЫТАЯ: не резкая линия, а
    мягкий свет, тающий к краям */
 .spaces::after{content:'';position:absolute;left:10px;right:10px;bottom:0;
@@ -306,7 +313,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    вырастает из маленького пятна до полного заполнения, с кривой
    плавности (не вспышка и не заливка чужим цветом) */
 .sp-mode{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;
-  height:34px;border:1px solid rgba(0,212,255,.34);border-radius:12px;
+  height:34px;border:1px solid transparent;border-radius:12px;
   /* BM23: кнопка БЕЗ фона — иначе проступает системный белый <button>;
   всё свечение живёт в ::after (в покое пятно, при наведении — вся кнопка) */
   background:transparent;
@@ -329,13 +336,19 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sp-mode svg,.sp-mode span{position:relative;z-index:1}
 .sp-mode svg{width:14px;height:14px;color:var(--cy2);
   filter:drop-shadow(0 0 4px rgba(0,212,255,.5))}
-.sp-mode:hover{border-color:rgba(0,212,255,.55);color:#e2f5ff}
-.sp-mode.active{border-color:rgba(0,212,255,.45);color:var(--tx);
-  background:linear-gradient(180deg,rgba(0,212,255,.14),rgba(0,212,255,.04));
+.sp-mode:hover{color:#e2f5ff}
+.sp-mode.active{color:var(--tx);
+  background:radial-gradient(ellipse at 50% 50%,rgba(0,212,255,.15),
+    rgba(0,212,255,.04) 58%,transparent 96%);
   box-shadow:0 0 14px rgba(0,212,255,.12),inset 0 0 10px rgba(0,212,255,.05)}
 .sp-row{display:flex;gap:6px;justify-content:center;position:relative;
-  overflow:hidden;
-  transition:opacity .32s ease,transform .32s ease}
+  overflow:hidden;max-height:38px;
+  /* BM25: исчезновение/появление иконок — МЕДЛЕННЕЕ и плавнее: высота
+     ряда едет переходом (прежде snaps в 0 кадром), и fade, и сжатие —
+     одной кривой, одним темпом */
+  transition:opacity .5s cubic-bezier(.4,0,.2,1),
+    transform .5s cubic-bezier(.4,0,.2,1),
+    max-height .5s cubic-bezier(.4,0,.2,1)}
 /* BM13: все НЕ-чатовые скрыты — чат исчезает ВМЕСТЕ с рядом, плавно
    (сжатие влево + высота в ноль через родителя), а не мгновенно;
    обратный выбор — обратная анимация */
@@ -345,7 +358,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    иконок нет, но контейнер держал над LIVE пустые 10px паддинга и
    9px flex-gap от скрытого ряда (под LIVE — ещё 12px). Сжимаем:
    LIVE стоит вплотную под брендом, без мёртвых полос */
-.spaces.no-spaces{padding-top:2px;padding-bottom:4px;gap:0}
+.spaces.no-spaces{padding-top:2px;padding-bottom:12px;gap:0}
 /* тот же ритм, что между остальными секциями дока: когда ряда нет,
    бренд не держит запас под несуществующий ряд */
 .dock:has(.spaces.no-spaces) .brand{padding-bottom:2px}
@@ -356,7 +369,8 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sp-ico svg{width:17px;height:17px}
 /* BM21: ЧАТ — ОСНОВНОЙ: просто ЯРКИЙ и выделенный на фоне остальных,
    без рамки и без тусклой краски — как обычная иконка, только жирнее */
-.sp-ico.base{color:var(--tx);font-weight:700}
+.sp-ico.base{color:var(--tx);font-weight:700;
+  box-shadow:inset 0 0 0 1px rgba(0,212,255,.12)}
 .sp-ico:hover{color:var(--tx)}
 /* BM12: скрытое глазиком пространство в меню не живёт */
 .sp-ico.off{display:none}
@@ -547,8 +561,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   background:var(--cy);box-shadow:0 0 12px var(--cy)}
 .nav-ico{width:18px;text-align:center;font-size:14px;color:var(--cy);transition:opacity .25s ease,color .22s ease}
 /* подпись пункта умеет плавно сворачываться в ноль (док) и обратно */
-.nav-label{min-width:0;max-width:170px;overflow:hidden;white-space:nowrap;
-  transition:opacity .34s ease,max-width .6s cubic-bezier(.22,.68,.18,1)}
+.nav-label{min-width:0;max-width:170px;overflow:hidden;white-space:nowrap}
 .nav-ico svg{display:block;width:15px;height:15px;margin:0 auto}
 /* у каждого раздела свой оттенок — так меню читается быстрее */
 .nav-item[data-view="chat"]   .nav-ico{color:var(--cy)}
@@ -665,15 +678,20 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
      прежде маска включалась по переполнению и съедала 16px первого
      диалога — выбранный верхний пункт тускнел на глазах. Теперь граница
      всегда на месте, тонкая, и не задевает строки */
-  -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 4px,
+  -webkit-mask-image:linear-gradient(180deg,rgba(0,0,0,var(--chatFade,1)) 0,#000 4px,
     #000 calc(100% - 5px),transparent 100%);
-  mask-image:linear-gradient(180deg,transparent 0,#000 4px,
+  mask-image:linear-gradient(180deg,rgba(0,0,0,var(--chatFade,1)) 0,#000 4px,
     #000 calc(100% - 5px),transparent 100%);
   /* BM13: тонкий незаметный скроллбар — ПРОСЫПАЕТСЯ только пока
      список крутят (класс .scr ставит JS), потом гаснет */
   scrollbar-width:thin;scrollbar-color:transparent transparent;
-  transition:scrollbar-color .35s ease}
+  transition:scrollbar-color .35s ease,--chatFade .35s ease}
 .chat-list.scr{scrollbar-color:rgba(0,190,255,.16) transparent}
+/* BM25: верхнее затухание живёт ТОЛЬКО когда список ЛИСТАЮТ: первый
+   (выбранный) диалог у самого верха не затемняется вовсе; маска
+   въезжает/уходит мягко — альфа первого стопа анимируется */
+@property --chatFade{syntax:'<number>';inherits:false;initial-value:1}
+.chat-list.topfade{--chatFade:0}
 /* BM22: палка — ещё тоньше и тише */
 .chat-list::-webkit-scrollbar{width:1.5px}
 .chat-list::-webkit-scrollbar-track{background:transparent}
