@@ -2876,7 +2876,7 @@ function testIterationBM14Contracts() {
     !css.includes('.sp-ico[data-tip]::before'),
     'BM14: space tooltips are a global fixed overlay — never clipped by rows or sidebar borders again');
   // ГЛАЙДЕР: сразу и чисто
-  assert(js.includes('function gliderWatchRun()') &&
+  assert(js.includes('function gliderWatchRun(foldDir)') &&
     js.includes("b.style.transform = ''"),
     'BM14: the glider renders immediately and tracks the sidebar animation; FLIP leaves no stray transform behind (icon stays centered)');
   // ПАРОЛЬ... нет: payload-guard честный (py)
@@ -3411,7 +3411,7 @@ function testIterationBM11Contracts() {
   // BM21: анимация «как было» + доводка «в одно место»; док-симметрия; CHAT; глайдер; менышка
   assert(
     js.includes('const flipEls = [document.querySelector(\'#brandReactor\'), document.querySelector(\'#collapseBtn\')]') &&
-    js.includes('gliderWatchRun();') &&
+    js.includes("gliderWatchRun(collapsing ? 'collapse' : 'expand')") &&
     css.includes('.app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden;margin:-10px 0}') &&
     css.includes('.app.collapsed .spd-dash{margin-top:8px}') &&
     css.includes('.brand{display:flex;align-items:center;gap:10px;padding:8px 6px 8px;') &&
@@ -3422,7 +3422,7 @@ function testIterationBM11Contracts() {
     js.includes("const off = n !== 'chat' && S.spacesVisible.indexOf(n) < 0;") &&
     js.includes('window.__gTipHide') &&
     js.includes("['chat'].concat(S.spacesVisible)") &&
-    css.includes('background:rgba(15,27,44,.38)') && css.includes('border-radius:18px') &&
+    css.includes('background:rgba(15,27,44,.56)') && css.includes('border-radius:18px') &&
     css.includes('.dock.dock-glide{') &&
     'BM21: fold morph keeps the beta.91 feel but arrives in one place (FLIP core+arrow, honest max-height for spaces AND brand caption, per-frame pill verticality); dock stripes are symmetric (brand-line→LIVE == cur→dash), the gear is centered against the row/LIVE, CHAT is bold and bright in row and panel (never .off), the glider jumps to the final spot during eye-FLIP (its left/width transition is suspended), the settings caption dies while the panel is open, and the dock flyout carries THREE glass slots');
   // BM22: док не доезжает и не смешивается; стекло менышки; маска диалогов;
@@ -3437,8 +3437,8 @@ function testIterationBM11Contracts() {
     js.includes("side.addEventListener('transitionend'") &&
     js.includes('requestAnimationFrame(() => dockY(true));') &&
     js.includes('setTimeout(() => dockY(true), 700)') &&
-    css.includes('background:rgba(15,27,44,.38)') &&
-    css.includes('-webkit-backdrop-filter:blur(18px) saturate(1.2)') &&
+    css.includes('background:rgba(15,27,44,.56)') &&
+    css.includes('-webkit-backdrop-filter:blur(24px) saturate(1.1)') &&
     css.includes('border-radius:18px') &&
     css.split('.chat-list{')[1].split('}')[0].includes('#000 4px') &&
     !css.includes('.chat-list.over{') &&
@@ -3448,10 +3448,25 @@ function testIterationBM11Contracts() {
     js.includes('if (dx < 4) { swipeArmed = true; return; }') &&
     js.includes('if (dx < 12 || dx < Math.abs(e.deltaY) * 0.85) return;') &&
     css.split('.spd-dash{')[1].split('}')[0].includes('blur(.9px)') &&
+    /* BM24: ни одного мгновенного скачка: высота бренда едет переходом,
+       иконки пилюли не исчезают кадром (max-height вместо display),
+       пилюля едет вниз интерполяцией той же кривой, LIVE-градиент гаснет
+       в ноль до края, менышка — матовый фрост */
+    css.includes('height:54px;') &&
+    css.includes('height:97px}') &&
+    css.split('\n.sp-dock{')[1].split('}')[0].includes('max-height:0;') &&
+    css.includes('.app.collapsed .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;') &&
+    css.includes('max-height:130px;overflow:visible;') &&
+    js.includes('function foldEaseAt(p)') &&
+    js.includes("gliderWatchRun(collapsing ? 'collapse' : 'expand')") &&
+    js.includes('dockY(true, foldEaseAt(p))') &&
+    css.includes('rgba(0,212,255,.06) 52%,transparent 96%)') &&
     /* BM23: рывок, белая LIVE, тёмный прямоугольник, киношное размытие */
     !css.split('\n.dock{')[1].split('}')[0].includes('blur(0px)') &&
     css.split('.sp-mode{')[1].split('}')[0].includes('background:transparent') &&
-    css.includes('.mb{filter:blur(1.3px)}') &&
+    js.includes("createElementNS(svgNS, 'feGaussianBlur')") &&
+    js.includes("gb.setAttribute('stdDeviation'") &&
+    !css.includes('.mb{filter') &&
     js.includes('function motionBlur(node, ms)') &&
     js.includes("node.style.transition = 'none'") &&
     js.includes('const onGrowEnd = (e) =>') &&
@@ -4117,7 +4132,7 @@ function testIterationAHContracts() {
     /padding-left:76px/.test(dock) &&
     !/transform:scale/.test(dock),
     'AH: dock is matte glass, nothing protrudes beyond the pill');
-  assert(/--dock-y/.test(js) && /function dockY\(on\)/.test(js) &&
+  assert(/--dock-y/.test(js) && /function dockY\(on, scale\)/.test(js) &&
     !/side-folding/.test(js) && !css.includes('.side-folding') &&
     /* BM21: хореография без дирижёра — collapsed ставится сразу,
        .docked дозревает к концу морфа (560мс) и гасит только

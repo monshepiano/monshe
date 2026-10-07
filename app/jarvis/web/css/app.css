@@ -191,13 +191,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .app.collapsed .main .view{padding-left:76px}
 /* бренд, кнопка разворачивания и черта — внутри дока, столбиком */
 .app.collapsed .brand{flex-direction:column;align-items:center;gap:8px;padding:2px 0 10px;
-  margin:0;border-bottom:1px solid rgba(0,212,255,.1)}
+  margin:0;border-bottom:1px solid rgba(0,212,255,.1);height:97px}
 /* BM19: подпись бренда СХЛОПЫВАЕТСЯ ПЛАВНО (как подписи вкладок), а не
    пропадает мгновенно: разворот в миниатюру — одно непрерывное движение */
 .brand-text{max-height:64px;transition:max-height var(--fold-t) var(--fold-ease),
   padding var(--fold-t) var(--fold-ease),margin var(--fold-t) var(--fold-ease),
   opacity calc(var(--fold-t)*.55) ease}
-.app.collapsed .brand-text{max-height:0;opacity:0;overflow:hidden;padding:0;margin:0}
+.app.collapsed .brand-text{max-height:0;opacity:0;overflow:hidden;padding:0;margin:0;flex:none}
 .app.collapsed .collapse-btn{transform:rotate(180deg)}
 /* AL: ГЕОМЕТРИЯ ДОКА — nav занимает ВСЮ ширину стекла (52px), без своих
    отступов (двойной отступ сжимал пункты до 24px — «супер узко» и сбоку);
@@ -259,9 +259,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   border-radius var(--fold-t) var(--fold-ease),transform var(--fold-t) var(--fold-ease),
   background-color .4s ease,border-color .4s ease,box-shadow .4s ease}
 .brand{display:flex;align-items:center;gap:10px;padding:8px 6px 8px;border-bottom:1px solid var(--line);
-  /* BM21: геометрия бренда едет общими часами морфа; сама смена раскладки
-     строка↔столбик сглаживается FLIP-перелётом ядра и кнопки (JS) */
+  height:54px;
+  /* BM24: ВЫСОТА бренда ЕДЕТ ПЕРЕХОДОМ. Раскладка строка↔столбик меняется
+     мгновенно (FLIP прикрывает перелёт ядра и кнопки), но прежде ВЫСОТА
+     блока прыгала кадром (97↔54) — и весь низ меню рывком взлетал.
+     Теперь высота — часть морфа, низ не дёргается */
   transition:padding var(--fold-t) var(--fold-ease),gap var(--fold-t) var(--fold-ease),
+    height var(--fold-t) var(--fold-ease),
     border-color .4s ease}
 .brand-text{flex:1;min-width:0}
 .brand-name{font-size:17px;font-weight:600;letter-spacing:4px;color:#eaf9ff;text-shadow:0 0 18px rgba(0,212,255,.5)}
@@ -271,6 +275,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    и стрелка СКАЧКОМ прыгала на 0°). Специфичность .brand .collapse-btn
    перебивает .icon-btn{transition:.2s} — едем общими часами морфа */
 .brand .collapse-btn{transition:transform var(--fold-t) var(--fold-ease)}
+.brand .reactor,.brand .collapse-btn{flex-shrink:0}
 .collapse-btn{width:26px;height:26px;font-size:16px;display:grid;place-items:center;
   padding:0;line-height:1}
 .collapse-btn svg{width:14px;height:14px;display:block}
@@ -313,8 +318,11 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    пятном (как прежний покой) и при наведении ПОСТЕПЕННО заполоняет всю
    кнопку; opacity в покое .55, а не 0 — нет вспышки «из неоткуда» */
 .sp-mode::after{content:'';position:absolute;inset:0;pointer-events:none;
+  /* BM24: последний стоп — ПРОЗРАЧНЫЙ: прежде альфа обрывалась на .02 у
+     самого края бокса — при росте свечения кромка читалась жёсткой
+     границей. Теперь свечение гаснет в ноль ДО края */
   background:radial-gradient(circle at 50% 50%,rgba(0,212,255,.22),
-    rgba(0,212,255,.05) 58%,rgba(0,212,255,.02) 100%);
+    rgba(0,212,255,.06) 52%,transparent 96%);
   opacity:.55;transform:scale(.38);
   transition:transform .6s cubic-bezier(.3,.75,.25,1),opacity .45s ease}
 .sp-mode:hover::after{opacity:1;transform:scale(1)}
@@ -428,7 +436,11 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    Док не менялся: только вкладки, иконка LIVE и значок текущего
    пространства с чёрточкой. Наведение — окошко ВЫЛЕТАЕТ из кнопки
    (иконки разлетаются по местам), живёт пока курсор в области */
-.sp-dock{display:none}
+.sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;margin:0;
+  position:relative;max-height:0;padding:0;overflow:hidden;
+  /* BM24: иконки пилюли НЕ исчезают кадром: блок всегда в потоке,
+     высота ведётся переходом (0 <-> 130px), overflow прячет содержимое */
+  transition:max-height var(--fold-t) var(--fold-ease),padding var(--fold-t) var(--fold-ease)}
 .spd-live,.spd-cur{width:40px;height:38px;border:1px solid transparent;border-radius:11px;
   background:transparent;color:var(--tx3);cursor:pointer;display:grid;place-items:center;
   transition:color .22s ease,background .22s ease;padding:0}
@@ -458,14 +470,14 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    внутрь на свой слот (JS FLIP), кнопка в это время гаснет (.ghost) */
 .spd-fly{position:absolute;left:0;top:50%;display:flex;align-items:center;
   gap:5px;padding:7px 9px;border-radius:18px;
-  /* BM23: стекло В ДУХЕ ДОКА — тот же рецепт, что у свёрнутой пилюли:
-    rgba(15,27,44,.38) + blur(18px) saturate(1.2); менышка выглядит
-    кусочком того же стекла, что и док */
-  background:rgba(15,27,44,.38);
-  -webkit-backdrop-filter:blur(18px) saturate(1.2);
-  backdrop-filter:blur(18px) saturate(1.2);
-  border:1px solid rgba(255,255,255,.14);
-  box-shadow:0 16px 38px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.08);
+  /* BM24: МАТОВОЕ стекло, как док на маке — плотная молочная подложка,
+     сильный blur, сатурация почти нейтральная: не «тёмная плашка» и не
+     прозрачное стекло, а рассеянный фрост */
+  background:rgba(15,27,44,.56);
+  -webkit-backdrop-filter:blur(24px) saturate(1.1);
+  backdrop-filter:blur(24px) saturate(1.1);
+  border:1px solid rgba(255,255,255,.13);
+  box-shadow:0 16px 38px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.07);
   opacity:0;pointer-events:none;z-index:90;
   transform:translateY(-50%) scale(.22);transform-origin:left center;
   /* BM18: кривая БЕЗ овершота — панель раскрывается ровно тем же
@@ -475,10 +487,6 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   transform:translateY(-50%) scale(1)}
 /* иконка кнопки «уехала» в меню — на кнопке её не видно */
 .spd-cur.ghost{color:transparent}
-/* BM23: КИНОШНОЕ РАЗМЫТИЕ В ДВИЖЕНИИ — плашка, пока едет, чуть
-   размыта (как объект в кадре при панораме), к концу движения
-   «останавливается» в фокусе. Класс ставит/снимает JS (motionBlur) */
-.mb{filter:blur(1.3px)}
 .spf-ico{position:relative;width:34px;height:32px;border:1px solid transparent;border-radius:9px;
   background:transparent;color:var(--tx3);cursor:pointer;display:grid;place-items:center;
   transition:color .22s ease,background .22s ease;padding:0}
@@ -493,7 +501,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    высота и паддинги в ноль (анимация — той же кривой, что и меню) */
 .app.collapsed .spaces{max-height:0;padding:0 6px;overflow:hidden;margin:-10px 0}
 .app.collapsed .sp-dock{display:flex;flex-direction:column;align-items:center;gap:5px;
-  margin:0;padding:4px 0;position:relative;
+  margin:0;padding:4px 0;position:relative;max-height:130px;overflow:visible;
   /* BM21: без задержки — прежде иконки док-миниатюр «появлялись» на
      120мс позже всего морфа; теперь приезжают в общем такте */
   animation:spDockIn var(--fold-t) var(--fold-ease) backwards}

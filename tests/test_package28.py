@@ -3953,7 +3953,7 @@ class IterationAGTests(unittest.TestCase):
         self.assertIn("cubic-bezier(.22,.68,.18,1)", css)
         # AJ: по умолчанию Джарвис открывается с доком
         self.assertIn("localStorage.removeItem('jarvis.sidebar2');", js)
-        self.assertIn("function dockY(on)", js)
+        self.assertIn("function dockY(on, scale)", js)
         self.assertIn("--dock-y", js)
         self.assertIn('<div class="dock">', html)
         # AK: стрелка — SVG-шеврон, математически по центру в обоих режимах
@@ -7869,8 +7869,8 @@ class IterationBM14Tests(unittest.TestCase):
     def test_bm14_glider_immediate_and_flip_cleanup(self) -> None:
         """Глайдер рисуется сразу и ведёт анимацию; FLIP не оставляет transform."""
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        self.assertIn("function gliderWatchRun()", js)
-        self.assertIn("gliderWatchRun();", js)
+        self.assertIn("function gliderWatchRun(foldDir)", js)
+        self.assertIn("gliderWatchRun(collapsing ? 'collapse' : 'expand');", js)
         self.assertIn("b.style.transform = ''", js)
         self.assertIn("requestAnimationFrame(spaceGlider)", js)
 
@@ -8362,6 +8362,22 @@ class IterationBM18Tests(unittest.TestCase):
         # BM21: бренд не гасится — ядро и стрелка доезжают FLIP-перелётом
         self.assertNotIn(".side-folding .brand{opacity:0}", css)
         self.assertIn("const flipEls = [document.querySelector('#brandReactor'), document.querySelector('#collapseBtn')]", js)
+        # BM24: НИ ОДНОГО мгновенного скачка перед морфом: высота бренда
+        # едет переходом (97<->54), иконки пилюли не телепортируются
+        # (max-height вместо display), пилюля съезжает к центру
+        # интерполяцией той же кривой, LIVE-градиент гаснет до края,
+        # смаз — направленный SVG-блюр по фактической скорости
+        self.assertIn("height var(--fold-t) var(--fold-ease)", css)
+        self.assertIn("height:97px}", css)
+        base_spdock = css.split("\n.sp-dock{")[1].split("}")[0]
+        self.assertIn("max-height:0;", base_spdock)
+        self.assertNotIn("display:none", base_spdock)
+        self.assertIn("max-height:130px;overflow:visible;", css)
+        self.assertIn("function foldEaseAt(p)", js)
+        self.assertIn("dockY(true, foldEaseAt(p))", js)
+        self.assertIn("rgba(0,212,255,.06) 52%,transparent 96%)", css)
+        self.assertIn("createElementNS(svgNS, 'feGaussianBlur')", js)
+        self.assertNotIn(".mb{filter", css)
         # флайаут: одна кривая БЕЗ овершота — и в CSS, и в FLIP-иконке
         self.assertIn("transition:transform .32s cubic-bezier(.22,.61,.25,1),opacity .22s ease}", css)
         self.assertNotIn("cubic-bezier(.3,1.12,.4,1)", css)

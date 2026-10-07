@@ -14,13 +14,69 @@ const el = (tag, cls, html) => {
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-/* BM23: КИНОШНОЕ РАЗМЫТИЕ В ДВИЖЕНИИ — пока плашка едет/раскрывается,
-   она чуть размыта, к концу движения останавливается в фокусе.
-   Без inline-transition: он затёр бы переходы самого элемента */
+/* BM24: КИНОШНОЕ РАЗМЫТИЕ В ДВИЖЕНИИ — как смаз кадров в кино: размытие
+   НАПРАВЛЕНО ПО ДВИЖЕНИЮ (SVG feGaussianBlur с раздельным stdDeviation
+   по осям: горизонтальный полёт смазывает только по X, вертикальный —
+   только по Y) и ПРОПОРЦИОНАЛЬНО СКОРОСТИ: каждый кадр меряем, насколько
+   элемент сместился, и ставим смаз по факту. Поэтому blur появляется
+   плавно (вместе с разгоном) и затухает плавно (вместе с торможением) —
+   он физически не может «вспыхнуть» или «отрезаться» в конце */
+let _mbSeq = 0;
 function motionBlur(node, ms) {
   if (!node || !node.classList) return;
-  node.classList.add('mb');
-  setTimeout(() => node.classList.remove('mb'), ms || 480);
+  const dur = ms || 480;
+  /* повторный вызов на том же элементе — сначала корректно погасить прежний */
+  if (node._mbStop) node._mbStop();
+  const svgNS = 'http://www.w3.org/2000/svg';
+  let host = document.getElementById('mbFilters');
+  if (!host) {
+    host = document.createElementNS(svgNS, 'svg');
+    host.id = 'mbFilters';
+    host.setAttribute('width', '0'); host.setAttribute('height', '0');
+    host.style.position = 'absolute';
+    document.body.appendChild(host);
+  }
+  const filt = document.createElementNS(svgNS, 'filter');
+  filt.id = 'mb' + (++_mbSeq);
+  /* фильтр-регион шире бокса: смазу есть куда растекаться за края */
+  filt.setAttribute('x', '-30%'); filt.setAttribute('y', '-30%');
+  filt.setAttribute('width', '160%'); filt.setAttribute('height', '160%');
+  const gb = document.createElementNS(svgNS, 'feGaussianBlur');
+  gb.setAttribute('stdDeviation', '0 0');
+  filt.appendChild(gb);
+  host.appendChild(filt);
+  const prevFilter = node.style.filter;
+  node.style.filter = 'url(#' + filt.id + ')';
+  let done = false;
+  const stop = () => {
+    if (done) return;
+    done = true;
+    node.style.filter = prevFilter || '';
+    if (filt.parentNode) filt.parentNode.removeChild(filt);
+    node._mbStop = null;
+  };
+  node._mbStop = stop;
+  let px = null, py = null, pw = null, ph = null;
+  const t0 = performance.now();
+  const CAP = 6.5, K = 0.34;
+  const tick = () => {
+    if (done) return;
+    const r = node.getBoundingClientRect();
+    if (px !== null) {
+      /* скорость за кадр по осям (учитываем и рост/сжатие — раскрытие
+         панели тоже движение) */
+      const vx = Math.min(CAP, Math.max(Math.abs(r.x - px), Math.abs(r.width - pw) * .5) * K);
+      const vy = Math.min(CAP, Math.max(Math.abs(r.y - py), Math.abs(r.height - ph) * .5) * K);
+      const moving = vx > 0.12 || vy > 0.12;
+      const cur = vx.toFixed(2) + ' ' + vy.toFixed(2);
+      if (gb.getAttribute('stdDeviation') !== cur) gb.setAttribute('stdDeviation', cur);
+      /* движение закончилось И время вышло — в фокусе, убираем фильтр */
+      if (!moving && performance.now() - t0 > dur) { stop(); return; }
+    }
+    px = r.x; py = r.y; pw = r.width; ph = r.height;
+    if (performance.now() - t0 < dur + 600) requestAnimationFrame(tick); else stop();
+  };
+  requestAnimationFrame(tick);
 }
 
 const S = {
@@ -732,7 +788,7 @@ function isNarrow() { return window.matchMedia('(max-width:900px)').matches; }
 /* док держит своё смещение в --dock-y: transform плавно увозит пилюлю
    в центр высоты и так же плавно возвращает (offsetTop не зависит от
    transform — стрелки-клики не сбивают прицел) */
-function dockY(on) {
+function dockY(on, scale) {
   const dock = document.querySelector('.dock');
   if (!dock) return;
   /* BM22: центрирование — ТОЛЬКО для свёрнутого дока. Прежде формула
@@ -742,10 +798,27 @@ function dockY(on) {
   const app = document.querySelector('#app');
   if (on && app && app.classList.contains('collapsed') && !isNarrow()) {
     const dy = Math.max(0, (window.innerHeight - dock.offsetHeight) / 2 - dock.offsetTop);
-    dock.style.setProperty('--dock-y', dy + 'px');
+    /* BM24: scale — интерполяция при сворачивании: пилюля едет вниз
+       В ТАКТ морфу (той же кривой), а не телепортируется в центр
+       первым кадром */
+    dock.style.setProperty('--dock-y', Math.round(dy * (scale == null ? 1 : scale)) + 'px');
   } else {
     dock.style.setProperty('--dock-y', '0px');
   }
+}
+/* BM24: численная кубическая безья — тот же ритм, что у CSS-переходов
+   (cubic-bezier(.42,0,.18,1)): JS-ведение пилюли не должно обгонять
+   и не отставать от геометрии */
+function foldEaseAt(p) {
+  const x1 = 0.42, y1 = 0, x2 = 0.18, y2 = 1;
+  let lo = 0, hi = 1, t = p;
+  for (let i = 0; i < 24; i++) {
+    const cx = 3 * (1 - t) * (1 - t) * t * x1 + 3 * (1 - t) * t * t * x2 + t * t * t;
+    if (Math.abs(cx - p) < 1e-5) break;
+    if (cx < p) lo = t; else hi = t;
+    t = (lo + hi) / 2;
+  }
+  return 3 * (1 - t) * (1 - t) * t * y1 + 3 * (1 - t) * t * t * y2 + t * t * t;
 }
 let _dockedT = null;
 let _gliderWatch = 0;
@@ -753,17 +826,26 @@ let _gliderWatch = 0;
    только ПОСЛЕ превращения (setTimeout 680) — всё время разворачивания
    выбранное пространство оставалось без подсветки. Теперь перерисовываем
    каждый кадр, пока меню меняет ширину */
-function gliderWatchRun() {
+function gliderWatchRun(foldDir) {
   cancelAnimationFrame(_gliderWatch);
   /* BM21: вертикаль пилюли — КАЖДЫЙ КАДР морфа по текущей высоте:
      формула непрерывна в обе стороны (меню во всю высоту даёт 0,
      короткая пилюля — центр окна), transform у дока выведен из
      transition, поэтому пилюля едет в такт геометрии и заканчивает
-     движение вовремя — никаких «доездов» после анимации */
-  const until = performance.now() + 560;
+     движение вовремя — никаких «доездов» после анимации.
+     BM24: при СВОРАЧИВАНИИ центрирование нарастает ИНТЕРПОЛЯЦИЕЙ той же
+     кривой, что и геометрия — прежде цель ставилась первым кадром и
+     пилюля телепортировалась вниз, лишь потом догоняя высоту */
+  const t0 = performance.now();
+  const until = t0 + 560;
   const tick = () => {
     spaceGlider();
-    dockY(true);
+    if (foldDir === 'collapse') {
+      const p = Math.min(1, (performance.now() - t0) / 520);
+      dockY(true, foldEaseAt(p));
+    } else {
+      dockY(true);
+    }
     if (performance.now() < until) _gliderWatch = requestAnimationFrame(tick);
   };
   tick();
@@ -884,7 +966,7 @@ function toggleSidebar() {
         { duration: 520, easing: 'cubic-bezier(.45,.05,.2,1)' });
     }
   });
-  gliderWatchRun();
+  gliderWatchRun(collapsing ? 'collapse' : 'expand');
   /* BK: состояние панели больше не хранится: каждый запуск — с доком */
 }
 $('#collapseBtn').addEventListener('click', toggleSidebar);
