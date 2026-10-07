@@ -2806,7 +2806,7 @@ function testIterationBM13Contracts() {
   assert(html.includes('data-space="chat" data-tip="CHAT"') &&
     html.includes('data-space="math" data-tip="MATH"') &&
     html.includes('data-space="music" data-tip="MUSIC"') &&
-    html.includes('data-tip="настройки отображения"'),
+    html.includes('data-tip="Настройки отображения"'),
     'BM13: CAPS names CHAT/MATH/MUSIC in tooltips, the gear reads «настройки отображения»');
   const setsp = js.split('function setSpace(name, dir)')[1].split('\nfunction ')[0];
   assert(setsp.includes("name !== 'chat' && S.spacesVisible.indexOf(name) < 0") &&
@@ -3463,7 +3463,7 @@ function testIterationBM11Contracts() {
     css.includes('rgba(0,212,255,.05) 55%,transparent 97%)') &&
     /* BM23: рывок, белая LIVE, тёмный прямоугольник, киношное размытие */
     !css.split('\n.dock{')[1].split('}')[0].includes('blur(0px)') &&
-    css.split('.sp-mode{')[1].split('}')[0].includes('background:transparent') &&
+    css.split('.sp-mode{')[1].split('}')[0].includes('radial-gradient(ellipse at 50% 50%,rgba(0,212,255,.09)') &&
     js.includes("createElementNS(svgNS, 'feGaussianBlur')") &&
     js.includes("gb.setAttribute('stdDeviation'") &&
     !css.includes('.mb{filter') &&

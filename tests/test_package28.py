@@ -7704,7 +7704,7 @@ class IterationBM13Tests(unittest.TestCase):
         self.assertIn('data-space="chat" data-tip="CHAT"', html)
         self.assertIn('data-space="math" data-tip="MATH"', html)
         self.assertIn('data-space="music" data-tip="MUSIC"', html)
-        self.assertIn('data-tip="настройки отображения"', html)
+        self.assertIn('data-tip="Настройки отображения"', html)
         # полая иконка: stroke вместо fill в SPACE_META и в html
         chat_block = js.split("chat: { name: 'CHAT'")[1].split("},")[0]
         self.assertIn('fill="none" stroke="currentColor"', chat_block)
@@ -7724,7 +7724,7 @@ class IterationBM13Tests(unittest.TestCase):
         self.assertIn("opacity:.4;", css)
         # BM23: у самой кнопки фона нет вовсе — иначе проступает
         # системный белый <button>; всё свечение в ::after
-        self.assertIn("background:transparent",
+        self.assertIn("background:radial-gradient(ellipse at 50% 50%,rgba(0,212,255,.09)",
                       css.split(".sp-mode{")[1].split("}")[0])
         self.assertNotIn("opacity:0;transform:scale(.24)", css)
         self.assertIn("transition:opacity .55s ease,box-shadow .55s ease", css)
@@ -7872,7 +7872,7 @@ class IterationBM14Tests(unittest.TestCase):
         self.assertIn("function gliderWatchRun(foldDir)", js)
         self.assertIn("gliderWatchRun(collapsing ? 'collapse' : 'expand');", js)
         self.assertIn("b.style.transform = ''", js)
-        self.assertIn("requestAnimationFrame(spaceGlider)", js)
+        self.assertIn("requestAnimationFrame(follow)", js)   # BM27: глайдер ведёт ряд покадрово
 
     def test_bm14_honest_height_animation(self) -> None:
         """Высота ряда — честный замер JS, без доездов и прыжков."""

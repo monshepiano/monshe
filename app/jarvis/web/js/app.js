@@ -834,6 +834,7 @@ function foldEaseAt(p) {
 }
 let _dockedT = null;
 let _gliderWatch = 0;
+let _spFollow = 0;   // BM27: покадровое слежение глайдера за рядом иконок
 /* BM13: ГЛАЙДЕР РИСУЕТСЯ СРАЗУ И ЕДЕТ ЗА АНИМАЦИЕЙ. Прежде он ставился
    только ПОСЛЕ превращения (setTimeout 680) — всё время разворачивания
    выбранное пространство оставалось без подсветки. Теперь перерисовываем
@@ -1645,14 +1646,24 @@ function spacesFlip(mutate) {
       { duration: 330, easing: 'cubic-bezier(.25,1.1,.4,1)' });
   });
   /* BM13: после FLIP у иконок не остаётся чужого transform (иконка
-     «не по центру»), а глайдер встаёт на выбранную иконку ПОВЕРХ
-     анимации — не уезжает влево */
+     «не по центру») */
   setTimeout(() => {
     $$('.sp-ico[data-space]', row).forEach((b) => { b.style.transform = ''; });
-    if (gl) gl.style.transition = '';
-    spaceGlider();
   }, 380);
-  requestAnimationFrame(spaceGlider);
+  /* BM27: ОБЛАСТЬ ВЫДЕЛЕНИЯ ЕДЕТ ВМЕСТЕ С РЯДОМ. Прежний код ставил
+     глайдер ОДИН раз — по раскладке ДО анимации ширины иконок — и
+     «допрыгивал» на новое место уже ПОСЛЕ анимации, с задержкой.
+     Теперь ведём его КАЖДЫЙ КАДР за фактической раскладкой (переход
+     left/width снят — слежение один в один), а к концу возвращаем
+     переход: клики по иконкам перетекают, как раньше */
+  cancelAnimationFrame(_spFollow);
+  const t0 = performance.now();
+  const follow = () => {
+    spaceGlider();
+    if (performance.now() - t0 < 520) _spFollow = requestAnimationFrame(follow);
+    else if (gl) gl.style.transition = '';
+  };
+  requestAnimationFrame(follow);
 }
 
 function spaceToggleVisible(name) {

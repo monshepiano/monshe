@@ -318,7 +318,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   всё свечение живёт в ::after (в покое пятно, при наведении — вся кнопка) */
   background:transparent;
   color:#bfe6f8;font:600 10.5px/1 var(--ff);letter-spacing:2.2px;cursor:pointer;
-  transition:color .3s ease;padding:0;position:relative;overflow:hidden;
+  transition:color .3s ease,background .3s ease,box-shadow .3s ease;
+  padding:0;position:relative;overflow:hidden;
+  /* BM27: ФОН БЕЗ ОЧЕРЧЕННЫХ ГРАНИЦ — мягкое пятно как у области
+     выделенной иконки пространства, чуть тише, с лёгким свечением */
+  background:radial-gradient(ellipse at 50% 50%,rgba(0,212,255,.09),
+    rgba(0,212,255,.035) 60%,rgba(0,212,255,0) 96%);
+  box-shadow:0 0 14px rgba(0,212,255,.07);
   /* BM26: ЛЕГКАЯ И ПРОЗРАЧНАЯ: ни внутренней тени (она читалась
      прямоугольной рамкой в статике), ни жирного свечения на буквах */
   text-shadow:0 0 6px rgba(0,212,255,.22)}
@@ -366,10 +372,13 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sp-ico{position:relative;width:36px;height:34px;border:1px solid transparent;
   border-radius:10px;background:transparent;color:var(--tx3);cursor:pointer;
   display:grid;place-items:center;overflow:hidden;
+  background:radial-gradient(ellipse at 50% 50%,rgba(0,212,255,0),
+    rgba(0,212,255,0) 62%,rgba(0,212,255,0));
   /* BM26: сокрытие/показ иконки глазиком — та же скорость и кривая,
      что у ряда и кнопки настроек: иконка СЖИМАЕТСЯ по ширине с fade,
      соседние доезжают плавно, без рывка ряда */
   transition:color .25s ease,filter .25s ease,box-shadow .3s ease,
+    background .25s ease,
     width .42s cubic-bezier(.4,0,.2,1),opacity .42s cubic-bezier(.4,0,.2,1),
     margin .42s cubic-bezier(.4,0,.2,1),border-width .42s;padding:0}
 .sp-ico svg{width:17px;height:17px}
@@ -377,7 +386,12 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    без рамки и без тусклой краски — как обычная иконка, только жирнее */
 .sp-ico.base{color:var(--tx);font-weight:700;
   box-shadow:inset 0 0 0 1px rgba(0,212,255,.12)}
-.sp-ico:hover{color:var(--tx)}
+.sp-ico:hover{color:var(--tx);
+  /* BM27: при наведении ЧУТЬ подсвечивается и ОБЛАСТЬ — тем же мягким
+     пятном, что у глайдера, только тише: структура градиента совпадает
+     с базовой, поэтому подсветка нарастает плавно, не кадром */
+  background:radial-gradient(ellipse at 50% 50%,rgba(0,212,255,.11),
+    rgba(0,212,255,.04) 62%,rgba(0,212,255,0))}
 /* BM12: скрытое глазиком пространство в меню не живёт */
 .sp-ico.off{width:0;min-width:0;opacity:0;margin:0 -3px;border-width:0;pointer-events:none}
 /* ГЛАЙДЕР: подсвеченная область выбранного пространства. Живёт
@@ -395,9 +409,11 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
    справа от ряда иконок; когда ВСЕ пространства скрыты — переезжает
    вверх к LIVE (LIVE сужается влево, освобождая место) */
 .sp-ico.sp-set{position:absolute;right:3px;top:59.5px;width:23px;height:21px;
-  color:var(--tx3);transition:color .22s ease,top .42s cubic-bezier(.4,0,.2,1)}
+  /* BM27: шестерёнка ЧУТЬ темнее — не перетягивает взгляд */
+  color:var(--tx3);opacity:.68;transition:color .22s ease,opacity .22s ease,
+    top .42s cubic-bezier(.4,0,.2,1)}
 .sp-ico.sp-set svg{width:11px;height:11px}
-.sp-ico.sp-set:hover{color:var(--tx2)}
+.sp-ico.sp-set:hover{color:var(--tx2);opacity:1}
 .spaces.no-spaces .sp-modes{padding-right:36px}
 .spaces.no-spaces .sp-ico.sp-set{top:8.5px}
 /* BM13: панель настроек — ПЛОТНОЕ СТЕКЛО (менее прозрачное, blur
@@ -406,9 +422,9 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sp-set-panel{position:absolute;right:3px;top:96px;z-index:95;width:200px;
   display:flex;flex-direction:column;overflow:visible;
   max-height:0;opacity:0;pointer-events:none;padding:0;
-  /* BM26: МАТОВОЕ стекло — тот же рецепт, что менышка и док:
-     молочная подложка, сильный blur, почти нейтральная сатурация */
-  background:rgba(15,27,44,.56);
+  /* BM26: МАТОВОЕ стекло — тот же рецепт, что менышка и док;
+     BM27: подложка чуть ТЕМНЕЕ — панель читается плотнее фона */
+  background:rgba(15,27,44,.64);
   -webkit-backdrop-filter:blur(24px) saturate(1.1);
   backdrop-filter:blur(24px) saturate(1.1);
   border:1px solid rgba(255,255,255,.13);border-radius:13px;
@@ -417,9 +433,10 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
   /* BM26: панель ВЫПЛЫВАЕТ ИЗ ГЛУБИНЫ: рождается сильно размытой и
      проявляется в фокус к концу роста (закрытие — обратно в муть) */
   filter:blur(10px);
-  transition:max-height .32s cubic-bezier(.25,1.1,.4,1),opacity .26s ease,
-    padding .3s ease,top .42s cubic-bezier(.4,0,.2,1),
-    transform .3s cubic-bezier(.3,1.15,.4,1),filter .32s ease}
+  /* BM27: появление — ЧУТЬ медленнее и плавнее */
+  transition:max-height .38s cubic-bezier(.25,1.1,.4,1),opacity .3s ease,
+    padding .34s ease,top .42s cubic-bezier(.4,0,.2,1),
+    transform .36s cubic-bezier(.3,1.15,.4,1),filter .38s ease}
 .sp-set-panel.open{max-height:230px;opacity:1;pointer-events:auto;padding:7px 6px 6px;
   transform:scale(1);filter:blur(0)}
 .spaces.no-spaces .sp-set-panel{top:56px}
@@ -856,7 +873,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .view{display:none;flex:1;min-height:0;flex-direction:column;animation:viewIn .4s cubic-bezier(.2,.8,.3,1);
   transition:padding-left .6s cubic-bezier(.22,.68,.18,1)}
 .view.active{display:flex}
-@keyframes viewIn{from{opacity:0;transform:translateY(12px);filter:blur(6px)}}
+@keyframes viewIn{from{opacity:0;transform:translateY(12px);filter:blur(3.5px)}}
 .panel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:22px 26px 14px}
 .panel-head h2{margin:0;font-size:20px;font-weight:600;letter-spacing:.4px}
 .view-auto .panel-head h2{color:#a9f5ea}
@@ -919,7 +936,7 @@ body.jv-wait #brandReactor .ring{border-color:rgba(217,164,65,.45)}
 .sugg:nth-child(4n) b{color:var(--amber)}
 .sugg:nth-child(4n):hover{background:rgba(207,154,60,.1);border-color:rgba(207,154,60,.4);
   box-shadow:0 10px 26px rgba(207,154,60,.15)}
-@keyframes popIn{from{opacity:0;transform:translateY(14px) scale(.97);filter:blur(5px)}}
+@keyframes popIn{from{opacity:0;transform:translateY(14px) scale(.97);filter:blur(3px)}}
 
 /* Дата как в Telegram: постоянный разделитель начинает каждый день, а
    transient badge закрепляется у верхней точки только на время прокрутки. */
