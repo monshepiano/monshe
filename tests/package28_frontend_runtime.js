@@ -2210,7 +2210,7 @@ function testProactiveModesBudgetAndAbortContracts() {
     /@keyframes tipIn/.test(css) && /max-width:180px/.test(css) &&
     /white-space:normal/.test(css) &&
     /id="attachBtn" data-tip="Вложить файл"/.test(html) &&
-    /data-tip="LIVE — созвон с Джарвисом"/.test(html) &&
+    /id="micBtn" data-tip="Диктовка"/.test(html) &&
     /data-tip="AGENT — план и самостоятельная работа"/.test(html) &&
     /data-tip="Лимит ₽ на ответ"/.test(html),
   'tooltips wait ~1.5s, stay compact, mic and attach included');
@@ -2848,15 +2848,17 @@ function testIterationBM14Contracts() {
     pyAgent.includes('name == "schedule_task" and state_question(user_text)') &&
     pyAuto.includes('agent.state_question(t)'),
     'BM14.1: state questions get their tab card GUARANTEED server-side, and a schedule_task call on a state question is intercepted');
-  // МИКРОФОН (BM28): кнопки в композере нет — вход в разговор через LIVE
-  assert(!html.includes('id="micBtn"') &&
+  // МИКРОФОН (BM28): диктовка осталась при вводе; звонок открывает
+  // СУЩЕСТВУЮЩАЯ кнопка LIVE над иконками пространств
+  assert(html.includes('id="micBtn" data-tip="Диктовка"') &&
     js.includes('function blobToWav16k(') &&
     js.includes("api('/api/transcribe'") &&
     js.includes("if (mb) mb.classList.add('rec')") &&
     js.includes('box.value = (base + String(text)') &&
     js.includes('const DICT_SEG_MS = 3000;') &&
-    js.includes("$('#liveBtn').addEventListener('click', () => { liveOpen(); });"),
-    'BM28: the composer mic is gone — LIVE button opens the call; dictation machinery (MediaRecorder -> server ASR) stays in the code for the call bar');
+    js.includes("$('#spModeLive').addEventListener('click', () => { liveOpen(); });") &&
+    !html.includes('id="liveBtn"'),
+    'BM28: the composer keeps the dictation mic; the call is opened by the LIVE button that always lived above the space icons');
   // ЖИВЫЕ КАРТОЧКИ: файл/факт — в момент события; фон — ЗЕЛЁНАЯ БЛАШКА
   // с вкладкой АВТО внутри (BM18: карточки AUTO в чате больше нет)
   assert(js.includes("function embedLiveCard(ui, view, title)") &&
@@ -2956,9 +2958,9 @@ function testIterationBM16Contracts() {
     fix.includes("ind.style.left = (LEFT * fs) + 'px';") &&
     fix.includes('const shift = Math.max(0, w - LEFT + 0.09 - pocket - 0.02);'),
     'BM16/BM17 roots: the degree sits clearly above the bend (47%, honest .09em clearance) and is shifted LEFT out of the box in root px; the shift comes from the viewBox geometry itself, so ANY size (nested roots, denominators) works without per-case fixes');
-  // МИКРОФОН: родной значок теперь в JS-разметке панели LIVE, data-url напрямую
-  assert(js.includes('<rect x="9" y="2.6" width="6" height="11.2" rx="3"/>') &&
-    js.includes('d="M8.8 21h6.4"') &&
+  // МИКРОФОН: родной значок снова в композере, data-url напрямую
+  assert(html.includes('<rect x="9" y="2.6" width="6" height="11.2" rx="3"/>') &&
+    html.includes('d="M8.8 21h6.4"') &&
     js.includes("const r = await api('/api/transcribe', { audio: wav, language: 'ru' });") &&
     js.includes('async function dictTranscribeSegment') &&
     !js.includes('readAsDataURL(wav)'),
@@ -4383,11 +4385,12 @@ function testIterationBHContracts() {
 
 function testIterationBM28Contracts() {
   // ===== LIVE-ЗВОНОК: интерфейс с нуля, поверх всего, из воды =====
-  assert(html.includes('id="liveBtn"') && html.includes('class="live-go"') &&
-    html.includes('LIVE — созвон с Джарвисом') &&
-    !html.includes('id="micBtn"') && !html.includes('id="tgCamera"') &&
-    !html.includes('id="tgComputer"'),
-    'BM28: the composer launches the LIVE call; mic/camera/computer toggles are gone from the chat footer');
+  assert(html.includes('id="micBtn" data-tip="Диктовка"') &&
+    !html.includes('id="liveBtn"') && !html.includes('id="tgCamera"') &&
+    !html.includes('id="tgComputer"') &&
+    js.includes("$('#spModeLive').addEventListener('click', () => { liveOpen(); });") &&
+    js.includes("if (spdLive) spdLive.addEventListener('click', () => { liveOpen(); });"),
+    'BM28: dictation stays in the composer; the call opens via the LIVE button above the space icons (and its dock twin); camera/computer toggles are gone from the chat footer');
   // сцена: вход из воды (вуаль+blur), орб<->строка одним морфом, камера
   // из центра, панель звонка, агент краснит воду
   assert(css.includes('#liveRoot{') && css.includes('.live-veil{') &&
@@ -4398,7 +4401,7 @@ function testIterationBM28Contracts() {
     css.includes('@keyframes loMorph') && css.includes('@keyframes loFlash') &&
     /#liveRoot\.ag \.live-redwave\{opacity:1\}/.test(css) &&
     css.includes('.live-bar{') && css.includes('.lb-exit:hover{') &&
-    css.includes('.live-go{') && css.includes('.live-dream{') &&
+    css.includes('.live-dream{') &&
     css.includes('.live-camwrap{') && css.includes('.live-side{') &&
     css.includes('.live-tool{') && css.includes('.live-ask{'),
     'BM28 scene: the call emerges from water (veil + defocusing blur), the orb and the input line are ONE morphing body, the camera panel pours from the center, AGENT turns the water faintly red');

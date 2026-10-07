@@ -1871,10 +1871,10 @@ function initSpaces() {
       motionBlur(setPanel, 320);
     }
   });
-  const liveToast = () => toast('Лайф-режим — финальный этап плана, готовим позже', 'info', 'LIVE');
-  $('#spModeLive').addEventListener('click', liveToast);
+  /* BM28: кнопка LIVE над иконками пространств — вход в созвон */
+  $('#spModeLive').addEventListener('click', () => { liveOpen(); });
   const spdLive = $('#spdLive');
-  if (spdLive) spdLive.addEventListener('click', liveToast);
+  if (spdLive) spdLive.addEventListener('click', () => { liveOpen(); });   // BM28
   initDockFly();
   // СВАЙП ДВУМЯ ПАЛЬЦАМИ по горизонтали (как в Arc): колёсико с deltaX.
   // BM13: ОДИН ПЕРЕХОД ЗА ЖЕСТ — даже супердлинный свайп перелистывает
@@ -11360,8 +11360,7 @@ function dictFinish(D) {
   }
 }
 
-const _micBtn = $('#micBtn');   // BM28: микрофон уехал в LIVE — кнопки может не быть
-if (_micBtn) _micBtn.addEventListener('click', () => { dictStart(); });
+$('#micBtn').addEventListener('click', () => { dictStart(); });
 
 /* ============================ ГОЛОСОВОЙ РЕЖИМ ============================
    AB: РАЗГОВОР — ОБЛАСТЬ, КАК КАМЕРА, а не окно на весь экран. Кнопка
@@ -12259,9 +12258,6 @@ function liveAskHide(delay) {
     setTimeout(drop, 950);
   }, delay || 0);
 }
-
-/* кнопка активации в композере */
-$('#liveBtn').addEventListener('click', () => { liveOpen(); });
 
 /* ============================ камера в диалоге ============================ */
 /* Камера открывается прямо в чате. Кнопок нет: JARVIS сам смотрит трансляцию —

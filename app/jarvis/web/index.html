@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#04070d">
 <title>JARVIS</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='42' fill='none' stroke='%2300d4ff' stroke-width='6'/><circle cx='50' cy='50' r='18' fill='%2300d4ff'/></svg>">
-<link rel="stylesheet" href="/static/css/app.css?v=1.2.0-beta.100">
+<link rel="stylesheet" href="/static/css/app.css?v=1.2.0-beta.101">
 </head>
 <body>
 
@@ -249,11 +249,17 @@
                   <path d="M21 11.5l-8.8 8.8a5 5 0 0 1-7.1-7.1l9-9a3.4 3.4 0 0 1 4.8 4.8l-9 9a1.8 1.8 0 0 1-2.5-2.5l8.3-8.3"/>
                 </svg>
               </button>
-              <!-- BM28: LIVE — созвон с Джарвисом. Камера, микрофон и
-                   компьютер теперь живут ВНУТРИ звонка; кнопка активации —
-                   в стиле трансляции: дышащая точка + LIVE -->
-              <button class="live-go" id="liveBtn" data-tip="LIVE — созвон с Джарвисом" aria-label="LIVE">
-                <i class="lg-dot"></i><span>LIVE</span>
+              <!-- BM28: диктовка (голос -> текст в поле) остаётся при
+                   вводе. Сам ЗВОНОК открывает кнопка LIVE над иконками
+                   пространств — она и всегда была входом в режим -->
+              <button class="comp-btn mic" id="micBtn" data-tip="Диктовка" aria-label="Диктовка">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="2.6" width="6" height="11.2" rx="3"/>
+                  <path d="M5.5 11.2a6.5 6.5 0 0 0 13 0"/>
+                  <path d="M12 17.7V21"/><path d="M8.8 21h6.4"/>
+                </svg>
+                <span class="mic-wave"><i></i><i></i><i></i></span>
               </button>
             </div>
             <textarea id="input" rows="1" placeholder="Сообщение для JARVIS…"></textarea>
@@ -446,7 +452,7 @@
   <div class="modal" id="modal"></div>
 </div>
 
-<script src="/static/js/markdown.js?v=1.2.0-beta.100"></script>
-<script src="/static/js/app.js?v=1.2.0-beta.100"></script>
+<script src="/static/js/markdown.js?v=1.2.0-beta.101"></script>
+<script src="/static/js/app.js?v=1.2.0-beta.101"></script>
 </body>
 </html>

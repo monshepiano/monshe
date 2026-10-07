@@ -3411,15 +3411,17 @@ class IterationAATests(unittest.TestCase):
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         # id="voiceBtn" ровно один — тумблер озвучки в шапке; дубль убивал клик
         self.assertEqual(html.count('id="voiceBtn"'), 1)
-        # BM28: кнопки диктовки в композере больше нет — её место занял LIVE;
-        # микрофон/камера/компьютер живут ВНУТРИ звонка
-        self.assertNotIn('id="micBtn"', html)
-        self.assertIn('id="liveBtn"', html)
-        self.assertIn('LIVE — созвон с Джарвисом', html)
+        # BM28: диктовка осталась в композере; звонок открывает кнопка LIVE
+        # над иконками пространств (в доке — spdLive)
+        self.assertIn('id="micBtn" data-tip="Диктовка"', html)
+        self.assertNotIn('id="liveBtn"', html)
+        self.assertIn("$('#spModeLive').addEventListener('click', () => { liveOpen(); });", js)
         self.assertIn('async function liveOpen', js)
-        # старый обработчик диктовки остался, но терпит отсутствие кнопки
-        guard = js.split("const _micBtn = $('#micBtn');")[1].split("\n")[1]
-        self.assertIn("dictStart()", guard)
+        # BM17: обработчик тонкий, вся механика — в живой диктовке
+        handler = js.split("$('#micBtn').addEventListener('click'")[1].split("\n")[0]
+        self.assertIn("dictStart()", handler)
+        self.assertNotIn("openVoiceMode()", handler)
+        self.assertNotIn("closeVoiceMode()", handler)
         # BM17: ЖИВОЕ распознавание сегментами по ходу речи (не после
         # отключения) + никаких уведомлений о микрофоне
         self.assertIn("const DICT_SEG_MS = 3000;", js)
@@ -7934,20 +7936,21 @@ class IterationBM14Tests(unittest.TestCase):
         """Микрофон — диктовка в поле; разговор остался для LIVE."""
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # BM28: кнопка диктовки ушла из композера — вход в разговор теперь
-        # кнопка LIVE в стиле трансляции
-        self.assertNotIn('id="micBtn"', html)
+        # BM28: диктовка на месте; тумблеры камеры/компьютера уехали в LIVE
+        self.assertIn('id="micBtn" data-tip="Диктовка"', html)
         self.assertNotIn('id="tgCamera"', html)
         self.assertNotIn('id="tgComputer"', html)
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
-        self.assertIn(".live-go{", css)
         self.assertIn("#liveRoot{", css)
+        # звонок открывают существующие кнопки LIVE (над иконками и в доке)
+        self.assertIn("$('#spModeLive').addEventListener('click', () => { liveOpen(); });", js)
+        self.assertIn("if (spdLive) spdLive.addEventListener('click', () => { liveOpen(); });", js)
         # тумблеры камеры/компьютера — теперь кнопки панели звонка
         self.assertIn("id=\"lbCam\"", js)
         self.assertIn("id=\"lbMic\"", js)
         self.assertIn("id=\"lbComp\"", js)
         self.assertIn("id=\"lbExit\"", js)
-        # диктовка (MediaRecorder -> сервер) осталась в коде — вернётся в LIVE
+        # диктовка (MediaRecorder -> сервер) при вводе
         dstart = js.split("async function dictStart")[1].split("\nfunction ")[0]
         self.assertIn("getUserMedia", dstart)
         self.assertIn("MediaRecorder", dstart)
@@ -8061,11 +8064,12 @@ class IterationBM16Tests(unittest.TestCase):
         html = Path("app/jarvis/web/index.html").read_text(encoding="utf-8")
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
-        # BM28: родной значок микрофона переехал в панель LIVE-звонка (JS)
-        self.assertIn('<rect x="9" y="2.6" width="6" height="11.2" rx="3"/>', js)
-        self.assertIn('d="M8.8 21h6.4"', js)
-        # ховер прикрепления файла не изменился
+        # BM28: родной значок микрофона снова в композере
+        self.assertIn('<rect x="9" y="2.6" width="6" height="11.2" rx="3"/>', html)
+        self.assertIn('d="M8.8 21h6.4"', html)
+        # ховеры диктовки и прикрепления файла не изменились
         self.assertIn("#attachBtn:hover{color:var(--sky);border-color:rgba(79,150,201,.5)}", css)
+        self.assertIn("#micBtn:hover{color:var(--sky);border-color:rgba(79,150,201,.5)}", css)
         # BM17: транскрипция сегмента — отдельной функцией (живая диктовка)
         dtr = js.split("async function dictTranscribeSegment")[1].split("\nfunction ")[0]
         self.assertIn("const r = await api('/api/transcribe', { audio: wav, language: 'ru' });", dtr)
@@ -8487,9 +8491,12 @@ class IterationBM18Tests(unittest.TestCase):
         css = Path("app/jarvis/web/css/app.css").read_text(encoding="utf-8")
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
 
-        # кнопка активации в композере; тумблеры уехали внутрь звонка
-        self.assertIn('data-tip="LIVE — созвон с Джарвисом"', html)
-        self.assertNotIn('id="micBtn"', html)
+        # вход в звонок — существующая кнопка LIVE над иконками пространств;
+        # диктовка осталась при вводе; тумблеры уехали внутрь звонка
+        self.assertIn('id="spModeLive"', html)
+        self.assertIn("$('#spModeLive').addEventListener('click', () => { liveOpen(); });", js)
+        self.assertIn('id="micBtn" data-tip="Диктовка"', html)
+        self.assertNotIn('id="liveBtn"', html)
         self.assertNotIn('id="tgCamera"', html)
         self.assertNotIn('id="tgComputer"', html)
 
