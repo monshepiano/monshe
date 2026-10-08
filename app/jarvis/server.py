@@ -981,6 +981,10 @@ class Handler(BaseHTTPRequestHandler):
             light=light_prompt)}]
         if voice_mode:
             messages.append({"role": "system", "content": agent.VOICE_MODE_NOTE})
+        if body.get("kind") == "live":
+            # BM29.2: LIVE — свободный режим с инструментами, но разговорная
+            # манера: коротко, просто, без системной болтовни в голос
+            messages.append({"role": "system", "content": agent.LIVE_MODE_NOTE})
             # AC: «Контекст диалога» — модель ВИДИТ историю выбранного диалога,
             # но беседа разговора по-прежнему пишется в свой изолированный
             # диалог: основной чат остаётся чистым и после закрытия вкладки.

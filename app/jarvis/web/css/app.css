@@ -4078,11 +4078,11 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
    а не режима; бордо и золото живут на разных органах и не спорят */
 
 /* ============================================================ */
-/* ============ BM29: LIVE — РЕВОЛЮЦИЯ, БОСС ЗДЕСЬ ============= */
-/* Созвон с Джарвисом: бездна воды и света. Всё появляется из      */
-/* глубины — размытие и темнота расступаются медленно и вальяжно.  */
-/* ЛЁГКОСТЬ: всё вечное движение — transform/opacity (compositor), */
-/* ни одного blur-фильтра на живых слоях. Работает на чайнике.     */
+/* ============ BM29.2: LIVE — ЭФИРНЫЙ БОСС ==================== */
+/* Созвон с Джарвисом: бездна мягкого света. Никаких границ и металла — */
+/* только свечение, воздух и вода. Лёгкость: ВСЁ живое движение —      */
+/* transform/opacity (compositor), ни одной анимации box-shadow/       */
+/* background. Пульсация — СВЕТОМ, не вращением. Работает на чайнике.  */
 /* ============================================================ */
 #liveRoot{position:fixed;inset:0;z-index:460;overflow:hidden;
   opacity:0;pointer-events:none;transition:opacity .6s ease;
@@ -4092,8 +4092,7 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
     radial-gradient(90vmax 70vmax at 112% 112%,#0c1834 0%,transparent 50%),
     linear-gradient(180deg,#040a14,#03060d)}
 #liveRoot.open{opacity:1;pointer-events:auto}
-/* ВУАЛЬ БЕЗДНЫ: сцена поднимается из глубины — темнота и муть
-   расступаются медленно: босс не всплывает — восходит */
+/* ВУАЛЬ БЕЗДНЫ: сцена поднимается из глубины */
 .live-veil{position:absolute;inset:0;pointer-events:none;z-index:6;
   background:radial-gradient(85vmax 65vmax at 50% 50%,
     rgba(1,5,10,.62),rgba(1,4,9,.82));
@@ -4104,78 +4103,74 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
   transform:scale(1.05);
   transition:filter 1.5s ease,transform 1.6s var(--live-ease)}
 #liveRoot.open .live-bg{filter:blur(0) brightness(1);transform:scale(1)}
-/* ---- ЖИВОЙ ФОН: пятна света — каждое своего цвета и характера.
-   БЕЗ blur-фильтра (градиенты сами мягкие) — движение почти бесплатно.
-   Каждый дрейфует по СВОЕЙ траектории: вода никогда не стоит ---- */
+/* ---- ЖИВОЙ ФОН: мягкие цветные дыхания света. Каждое — своя траектория
+     и скорость, размах широк, чтобы движение читалось сразу ---- */
 .live-bg .la{position:absolute;border-radius:50%;mix-blend-mode:screen;opacity:.5;
   will-change:transform;
-  animation:loFloat var(--fd,26s) ease-in-out infinite alternate}
+  animation:loFloat var(--fd,22s) ease-in-out infinite alternate}
 .live-bg .a1{width:64vmax;height:46vmax;left:-20vmax;top:-16vmax;
   background:radial-gradient(circle,rgba(0,160,235,.42),rgba(0,120,200,.12) 52%,transparent 72%)}
-.live-bg .a2{width:56vmax;height:42vmax;right:-18vmax;bottom:-14vmax;--fd:32s;
+.live-bg .a2{width:56vmax;height:42vmax;right:-18vmax;bottom:-14vmax;--fd:26s;
   background:radial-gradient(circle,rgba(88,70,230,.36),rgba(70,50,190,.1) 52%,transparent 72%);
   animation-name:loFloat2}
-.live-bg .a3{width:44vmax;height:36vmax;left:28vw;top:30vh;--fd:38s;
+.live-bg .a3{width:44vmax;height:36vmax;left:28vw;top:30vh;--fd:30s;
   background:radial-gradient(circle,rgba(0,235,200,.22),transparent 62%);
   animation-name:loFloat3}
-.live-bg .a4{width:40vmax;height:40vmax;right:14vw;top:-10vmax;--fd:29s;
+.live-bg .a4{width:40vmax;height:40vmax;right:14vw;top:-10vmax;--fd:24s;
   background:radial-gradient(circle,rgba(216,64,180,.24),rgba(180,40,160,.07) 50%,transparent 70%);
   animation-name:loFloat2}
-.live-bg .a5{width:34vmax;height:30vmax;left:6vw;bottom:-8vmax;--fd:34s;
+.live-bg .a5{width:34vmax;height:30vmax;left:6vw;bottom:-8vmax;--fd:28s;
   background:radial-gradient(circle,rgba(255,170,80,.14),transparent 62%);
   animation-name:loFloat3}
-.live-bg .a6{width:50vmax;height:34vmax;left:38vw;bottom:-6vmax;--fd:42s;
+.live-bg .a6{width:50vmax;height:34vmax;left:38vw;bottom:-6vmax;--fd:34s;
   background:radial-gradient(circle,rgba(40,120,255,.26),rgba(30,90,220,.08) 50%,transparent 70%)}
 @keyframes loFloat{
   0%{transform:translate3d(0,0,0) scale(1)}
-  100%{transform:translate3d(9vmax,-6vmax,0) scale(1.22)}}
+  100%{transform:translate3d(14vmax,-9vmax,0) scale(1.3)}}
 @keyframes loFloat2{
-  0%{transform:translate3d(0,0,0) scale(1.12)}
-  100%{transform:translate3d(-8vmax,5vmax,0) scale(.94)}}
+  0%{transform:translate3d(0,0,0) scale(1.15)}
+  100%{transform:translate3d(-12vmax,8vmax,0) scale(.9)}}
 @keyframes loFloat3{
-  0%{transform:translate3d(0,0,0) scale(.95)}
-  100%{transform:translate3d(7vmax,7vmax,0) scale(1.18)}}
-/* УЗОРЫ БЕЗДНЫ: огромные кольца света медленно вращаются друг сквозь
-   друга — только border и transform, никаких теней */
-.live-deep{position:absolute;inset:-30%;pointer-events:none;opacity:.6}
-.live-deep .ring{position:absolute;left:50%;top:50%;border-radius:50%;
-  border:2px solid rgba(120,200,255,.07);will-change:transform}
-.live-deep .ring.p1{width:88vmax;height:88vmax;margin:-44vmax 0 0 -44vmax;
-  border-style:dashed;border-color:rgba(140,220,255,.06);
-  animation:loSpin 90s linear infinite}
-.live-deep .ring.p2{width:120vmax;height:62vmax;margin:-31vmax 0 0 -60vmax;
-  border-color:rgba(180,140,255,.055);
-  animation:loSpinRev 130s linear infinite}
-.live-deep .ring.p3{width:52vmax;height:52vmax;margin:-26vmax 0 0 -26vmax;
-  border-color:rgba(0,230,200,.055);
-  animation:loSpin 70s linear infinite reverse}
-@keyframes loSpin{to{transform:rotate(360deg)}}
-@keyframes loSpinRev{to{transform:rotate(-360deg)}}
-/* звёзды — дрейф заметен: медленно всплывают, как пузырьки в толще */
+  0%{transform:translate3d(0,0,0) scale(.92)}
+  100%{transform:translate3d(10vmax,10vmax,0) scale(1.25)}}
+/* звёзды — мягкие капли света: размыты сами по себе (градиент), дрейфуют */
 .live-stars{position:absolute;inset:0}
-.live-stars i{position:absolute;width:3px;height:3px;border-radius:50%;
-  background:#bfe9ff;opacity:.2;will-change:transform,opacity;
-  animation:loStar var(--d,14s) ease-in-out var(--dl,0s) infinite}
+.live-stars i{position:absolute;border-radius:50%;opacity:.2;
+  background:radial-gradient(circle,rgba(210,240,255,.9),rgba(160,220,255,.28) 45%,transparent 72%);
+  will-change:transform,opacity;
+  animation:loStar var(--d,13s) ease-in-out var(--dl,0s) infinite}
 @keyframes loStar{
-  0%{opacity:.12;transform:translate3d(0,0,0)}
-  50%{opacity:.6;transform:translate3d(3px,-18px,0)}
-  100%{opacity:.12;transform:translate3d(-2px,-34px,0)}}
-/* блик-гладь: широкий мягкий свет сверху, как отблеск на воде */
+  0%{opacity:.14;transform:translate3d(0,0,0) scale(.9)}
+  50%{opacity:.75;transform:translate3d(4px,-26px,0) scale(1.25)}
+  100%{opacity:.14;transform:translate3d(-3px,-52px,0) scale(.9)}}
+/* блик-гладь: широкий мягкий свет сверху */
 .live-sheen{position:absolute;inset:0;
   background:radial-gradient(90vmax 30vmax at 50% -8%,rgba(140,210,255,.07),transparent 60%)}
+/* МЫСЛИ-МОТЫЛЬКИ: световые пылинки тянутся к ядру, пока Джарвис думает.
+   Только transform/opacity — бесплатно для чайника */
+.live-motes{position:absolute;inset:0;pointer-events:none;opacity:0;
+  transition:opacity .9s ease}
+#liveRoot.ph-thinking .live-motes{opacity:1}
+.live-motes .lm{position:absolute;width:14px;height:14px;border-radius:50%;
+  background:radial-gradient(circle,rgba(255,230,180,.75),rgba(255,200,120,.2) 50%,transparent 75%);
+  will-change:transform,opacity;opacity:0;
+  animation:loMote var(--md,7s) ease-in var(--ml,0s) infinite}
+.live-motes .lm1{left:24%;top:60%;--md:6.5s;--ml:0s}
+.live-motes .lm2{left:70%;top:26%;--md:8s;--ml:1.4s}
+.live-motes .lm3{left:16%;top:30%;--md:7s;--ml:2.6s}
+.live-motes .lm4{left:76%;top:64%;--md:9s;--ml:.8s}
+@keyframes loMote{
+  0%{opacity:0;transform:translate3d(0,0,0) scale(.5)}
+  25%{opacity:.85}
+  100%{opacity:0;transform:translate3d(26vw,-16vh,0) scale(1.6)}}
 
-/* --- АГЕНТ: вода становится чуть красноватой, идут красные волны --- */
-#liveRoot .live-redwave{position:absolute;inset:-25%;opacity:0;transition:opacity 1.4s ease;
-  background:repeating-linear-gradient(115deg,transparent 0 36%,
-    rgba(255,64,96,.05) 41%,transparent 46% 76%,rgba(255,64,96,.04) 81%,transparent 86%)}
-#liveRoot.ag .live-redwave{opacity:1;animation:loWave 17s linear infinite}
-@keyframes loWave{to{transform:translateX(-19%)}}
-#liveRoot.ag .live-bg .a1{background:radial-gradient(circle,rgba(224,52,88,.32),transparent 65%)}
-#liveRoot.ag .live-bg .a2{background:radial-gradient(circle,rgba(170,40,90,.26),transparent 65%)}
-#liveRoot.ag .live-bg .a4{background:radial-gradient(circle,rgba(255,90,90,.18),transparent 66%)}
-#liveRoot.ag .live-deep .ring{border-color:rgba(255,110,110,.06)}
+/* --- АГЕНТ: вода чуть краснеет (без полос — только цвет дыханий) --- */
+#liveRoot.ag .live-bg .a1{background:radial-gradient(circle,rgba(224,52,88,.34),transparent 66%)}
+#liveRoot.ag .live-bg .a2{background:radial-gradient(circle,rgba(170,40,90,.28),transparent 66%)}
+#liveRoot.ag .live-bg .a4{background:radial-gradient(circle,rgba(255,90,90,.2),transparent 68%)}
+#liveRoot.ag .live-stars i{background:radial-gradient(circle,rgba(255,190,190,.8),rgba(255,140,140,.22) 45%,transparent 72%)}
 
-/* --- сцена и главный закон: элементы УСТУПАЮТ друг другу --- */
+/* --- сцена: элементы УСТУПАЮТ друг другу --- */
 .live-stage{position:absolute;inset:0}
 .live-flow{position:absolute;inset:0;
   transition:transform .85s var(--live-ease),filter .85s ease;
@@ -4183,8 +4178,7 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 #liveRoot.side-on .live-flow{transform:translateX(-15vw) scale(.84);
   filter:brightness(.6) saturate(.85)}
 
-/* --- СОH: вопрос и ответ выплывают из глубины, как во сне.
-     Микрофон включён — текста НЕТ: только голос Джарвиса --- */
+/* --- СОH: вопрос и ответ. Микрофон/камера — текста нет --- */
 .live-dream{position:absolute;top:9vh;left:50%;width:min(860px,86vw);height:26vh;
   transform:translateX(-50%);overflow:hidden;pointer-events:none;z-index:2;
   transition:transform .8s var(--live-ease),opacity .8s ease}
@@ -4198,9 +4192,8 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 .live-q{font-size:15px;color:var(--tx2);opacity:.85;max-width:94%;text-align:center;
   animation:deepIn .9s var(--live-ease) both}
 .live-a{font-size:23px;line-height:1.62;color:var(--tx);text-align:center;max-width:100%}
-.live-chunk{animation:deepIn .95s var(--live-ease) both}
 
-/* ГЛУБИНА: единый закон появления — размытие и темнота расступаются */
+/* ГЛУБИНА: единый закон появления */
 @keyframes deepIn{
   from{opacity:0;filter:blur(8px) brightness(.35);transform:translateY(14px) scale(.94)}
   to{opacity:1;filter:blur(0) brightness(1);transform:none}}
@@ -4208,77 +4201,90 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
   from{opacity:1;filter:blur(0) brightness(1)}
   to{opacity:0;filter:blur(10px) brightness(.3);transform:translateY(-12px) scale(.96)}}
 
-/* --- ЯДРО: орб <-> строка морфируются одним телом --- */
+/* --- ЯДРО: орб <-> строка одним телом. Орб — ЭФИРНЫЙ: ни границ,
+     ни металла; слои мягкого света дышат и перетекают --- */
 .live-core-wrap{position:absolute;left:50%;top:50%;z-index:3;
   transform:translate(-50%,-50%);
   transition:transform .9s var(--live-ease),opacity .7s ease,filter .7s ease}
 #liveRoot:not(.open) .live-core-wrap{opacity:0;filter:blur(16px)}
-/* камера занимает центр — ядро (и орб, и строка) уезжает НАВЕРХ */
+/* камера занимает центр — ядро уезжает вверх СПОКОЙНО (без глубокого нырка) */
 #liveRoot.mic-on.cam-on .live-core-wrap,
 #liveRoot.text-on.cam-on .live-core-wrap{
-  transform:translate(-50%,calc(-50% - 39vh)) scale(.55)}
+  transform:translate(-50%,calc(-50% - 30vh)) scale(.8)}
 .live-core{position:relative;width:300px;height:300px;border-radius:50%;
-  background:linear-gradient(180deg,rgba(16,34,56,.3),rgba(8,18,32,.2));
-  border:0;
-  box-shadow:0 0 90px rgba(0,160,235,.13),0 0 220px rgba(0,150,235,.07);
   transition:width .95s var(--live-ease),height .95s var(--live-ease),
-    border-radius .95s var(--live-ease),transform .7s var(--live-ease),
-    box-shadow .7s ease;
+    border-radius .95s var(--live-ease),transform .7s var(--live-ease);
   will-change:width,height}
 #liveRoot.side-on .live-core{transform:scale(.94)}
-#liveRoot.text-on .live-core{width:min(780px,84vw);height:84px;border-radius:46px;
-  /* LED-ЛЕНТА: свечение идёт ТОЛЬКО наружу от границ — объект, к обратной
-     стороне которого приклеили световую ленту */
-  background:linear-gradient(180deg,rgba(10,22,38,.5),rgba(6,14,26,.42));
-  box-shadow:0 0 34px rgba(150,220,255,.16),0 0 90px rgba(90,180,255,.1),
-    0 0 190px rgba(70,160,255,.05)}
-/* думание/простой — ядро живёт формой: лёгкий покос и дыхание пропорций */
-#liveRoot.ph-thinking .live-core,#liveRoot.ph-idle.mic-on .live-core{
-  animation:loMorph 5.2s ease-in-out infinite alternate}
-@keyframes loMorph{
-  0%{transform:rotate(0deg) scale(1,1)}
-  33%{transform:rotate(4deg) scale(1.06,.93)}
-  66%{transform:rotate(-3deg) scale(.94,1.07)}
-  100%{transform:rotate(0deg) scale(1.03,.97)}}
-/* лицо орба — большой живой шар (КРУГ, не квадрат), сильное свечение */
+#liveRoot.text-on .live-core{width:min(780px,84vw);height:84px;border-radius:46px}
+/* ЭФИРНОЕ ТЕЛО: три слоя мягкого света дышат в противофазе — живое
+   свечение без единой резкой границы. Все пульсы — transform/opacity */
 .live-orb{position:absolute;inset:0;display:grid;place-items:center;border-radius:50%;
   transition:opacity .65s ease,filter .65s ease,transform .95s var(--live-ease)}
-/* морф в строку: орб не гаснет — РАСТЯГИВАЕТСЯ в строку и тает */
 #liveRoot.text-on .live-orb{opacity:0;filter:blur(12px);
   transform:scale(1.45,.3);pointer-events:none}
-.lo-core{position:relative;width:74%;height:74%;border-radius:50%;
-  background:radial-gradient(circle at 46% 38%,rgba(200,244,255,.96),
-    rgba(0,212,255,.52) 42%,rgba(2,64,96,.16) 80%);
-  box-shadow:0 0 70px rgba(0,212,255,.4),0 0 180px rgba(0,190,255,.18),
-    0 0 340px rgba(0,170,255,.1);
-  transform:scale(calc(1 + var(--vl,0)*.16));
-  transition:transform .13s linear,box-shadow .7s ease;
-  animation:loFlash 8s ease-in-out infinite}
-.lo-core::before{content:'';position:absolute;inset:-14%;border-radius:50%;
-  background:conic-gradient(from 0deg,transparent 0 40%,
-    rgba(160,240,255,.22) 47%,rgba(90,190,255,.1) 53%,transparent 60% 100%);
-  animation:loSheen 14s linear infinite;will-change:transform}
-@keyframes loSheen{to{transform:rotate(360deg)}}
-.lo-core::after{content:'';position:absolute;inset:0;border-radius:50%;
-  background:radial-gradient(circle at 50% 42%,rgba(255,255,255,.14),transparent 55%);
-  animation:loBreathe 5.6s ease-in-out infinite;will-change:transform,opacity}
-@keyframes loBreathe{0%,100%{opacity:.35;transform:scale(.98)}
-  50%{opacity:.85;transform:scale(1.03)}}
-/* круглешок периодически светится изнутри жёлтым — жизнь в покое */
-@keyframes loFlash{0%,88%,100%{background:radial-gradient(circle at 46% 38%,rgba(200,244,255,.96),
-    rgba(0,212,255,.52) 42%,rgba(2,64,96,.16) 80%)}
-  93%{background:radial-gradient(circle at 50% 42%,rgba(255,236,190,.96),
-    rgba(235,190,90,.55) 44%,rgba(90,60,10,.22) 80%)}}
-/* фазы: думает — золото изнутри; говорит — зелёное дыхание света */
-#liveRoot.ph-thinking .lo-core{animation:loThink 1.7s ease-in-out infinite}
-@keyframes loThink{
-  0%,100%{box-shadow:0 0 70px rgba(0,212,255,.38)}
-  50%{box-shadow:0 0 110px rgba(217,164,65,.6),0 0 240px rgba(217,164,65,.22)}}
-#liveRoot.ph-speaking .lo-core{animation:loSpeak 2.2s ease-in-out infinite}
-@keyframes loSpeak{
-  0%,100%{box-shadow:0 0 70px rgba(63,191,149,.42),0 0 190px rgba(63,191,149,.16)}
-  50%{box-shadow:0 0 120px rgba(63,191,149,.62),0 0 300px rgba(63,191,149,.24)}}
-/* лицо строки */
+.lo-core{position:relative;width:88%;height:88%;border-radius:50%;
+  transform:scale(calc(1 + var(--vl,0)*.14));
+  transition:transform .13s linear}
+.lo-core i{position:absolute;border-radius:50%;pointer-events:none}
+/* ядро — воздух: мягкий тёплый свет, ДЫШИТ размером */
+.lo-core .lo-a{inset:0;
+  background:radial-gradient(circle at 46% 40%,rgba(215,245,255,.75),
+    rgba(90,200,250,.34) 42%,rgba(20,90,140,.12) 68%,transparent 82%);
+  animation:loBreathe 5.4s ease-in-out infinite;will-change:transform,opacity}
+/* ореол — расходящиеся волны тепла */
+.lo-core .lo-b{inset:-18%;
+  background:radial-gradient(circle,transparent 46%,rgba(80,190,255,.16) 58%,transparent 74%);
+  animation:loHalo 6.2s ease-in-out infinite;will-change:transform,opacity}
+/* глубина — тёплая сердцевина под воздухом */
+.lo-core .lo-c{inset:26%;
+  background:radial-gradient(circle at 50% 45%,rgba(255,250,235,.5),transparent 70%);
+  animation:loHeart 4.6s ease-in-out infinite;will-change:transform,opacity}
+@keyframes loBreathe{0%,100%{opacity:.8;transform:scale(.97)}
+  50%{opacity:1;transform:scale(1.05)}}
+@keyframes loHalo{0%,100%{opacity:.5;transform:scale(.95)}
+  50%{opacity:.9;transform:scale(1.12)}}
+@keyframes loHeart{0%,100%{opacity:.35;transform:scale(.92)}
+  50%{opacity:.8;transform:scale(1.1)}}
+/* жёлтая вспышка жизни — оверлей, дышит прозрачностью (не background) */
+.lo-flash{position:absolute;inset:-4%;border-radius:50%;opacity:0;
+  background:radial-gradient(circle at 50% 44%,rgba(255,236,190,.8),
+    rgba(235,190,90,.35) 46%,transparent 74%);
+  animation:loFlash 8s ease-in-out infinite;will-change:opacity}
+@keyframes loFlash{0%,86%,100%{opacity:0}93%{opacity:.9}}
+/* ДУМАНЬЕ: слои света ПЕРЕТЕКАЮТ друг в друга — формы плывут,
+     эфир тянется и сжимается. Занимает пользователя, стоит ноль */
+#liveRoot.ph-thinking .lo-core .lo-a,
+#liveRoot.ph-idle.mic-on .lo-core .lo-a{animation:loMorphA 4.8s ease-in-out infinite alternate}
+#liveRoot.ph-thinking .lo-core .lo-b,
+#liveRoot.ph-idle.mic-on .lo-core .lo-b{animation:loMorphB 6.4s ease-in-out infinite alternate}
+#liveRoot.ph-thinking .lo-core .lo-c,
+#liveRoot.ph-idle.mic-on .lo-core .lo-c{animation:loMorphC 3.8s ease-in-out infinite alternate}
+@keyframes loMorphA{
+  0%{transform:scale(1,1) translate(0,0)}
+  50%{transform:scale(1.12,.88) translate(3%,2%)}
+  100%{transform:scale(.9,1.14) translate(-3%,-2%)}}
+@keyframes loMorphB{
+  0%{transform:scale(1) rotate(0deg)}
+  50%{transform:scale(1.22) rotate(8deg)}
+  100%{transform:scale(.88) rotate(-6deg)}}
+@keyframes loMorphC{
+  0%{transform:scale(1) translate(0,0)}
+  50%{transform:scale(1.25) translate(-6%,4%)}
+  100%{transform:scale(.85) translate(5%,-5%)}}
+/* ГОВОРИТ: зелёное дыхание — оверлей прозрачностью */
+.lo-speak{position:absolute;inset:-6%;border-radius:50%;opacity:0;
+  background:radial-gradient(circle,rgba(80,220,180,.34) 40%,rgba(60,190,150,.12) 62%,transparent 80%);
+  animation:loSpeak 2.4s ease-in-out infinite;will-change:opacity;transition:opacity .5s}
+#liveRoot.ph-speaking .lo-speak{opacity:1}
+@keyframes loSpeak{0%,100%{transform:scale(.96)}50%{transform:scale(1.1)}}
+/* ДУМАЕТ: золотое свечение — тоже оверлей */
+.lo-think{position:absolute;inset:-6%;border-radius:50%;opacity:0;
+  background:radial-gradient(circle,rgba(230,190,110,.3) 42%,rgba(220,170,80,.1) 60%,transparent 78%);
+  animation:loThinkGlow 1.9s ease-in-out infinite;will-change:opacity;transition:opacity .5s}
+#liveRoot.ph-thinking .lo-think{opacity:1}
+@keyframes loThinkGlow{0%,100%{transform:scale(.97)}50%{transform:scale(1.08)}}
+/* лицо строки: без рамки; СВЕТО-ПУЛЬС — LED-лента дышит (псевдо-слой) */
 .live-line{position:absolute;inset:0;display:flex;align-items:center;gap:10px;
   padding:0 12px 0 34px;opacity:0;filter:blur(11px);pointer-events:none;
   transition:opacity .6s ease,filter .6s ease}
@@ -4288,38 +4294,43 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 .live-line input::placeholder{color:var(--tx3)}
 .live-send{width:56px;height:56px;border-radius:50%;border:0;
   background:rgba(0,212,255,.1);color:var(--cy2);display:grid;place-items:center;
-  cursor:pointer;transition:all .3s ease;flex-shrink:0}
+  cursor:pointer;transition:transform .3s ease,background .3s ease;flex-shrink:0}
 .live-send svg{width:22px;height:22px}
 .live-send:hover{background:rgba(0,212,255,.2);transform:translateY(-1px)}
-.live-core:focus-within{box-shadow:0 0 44px rgba(150,220,255,.24),
-  0 0 120px rgba(90,180,255,.16),0 0 240px rgba(70,160,255,.08)}
+/* LED-ЛЕНТА: свечение ТОЛЬКО наружу; лента МЕДЛЕННО ПУЛЬСИРУЕТ светом */
+.live-core::before{content:'';position:absolute;inset:0;border-radius:inherit;
+  opacity:0;transition:opacity .8s ease;pointer-events:none;
+  box-shadow:0 0 34px rgba(150,220,255,.17),0 0 90px rgba(90,180,255,.11),
+    0 0 190px rgba(70,160,255,.05)}
+#liveRoot.text-on .live-core::before{opacity:1;animation:loLed 4.8s ease-in-out infinite}
+@keyframes loLed{0%,100%{opacity:.55}50%{opacity:1}}
+#liveRoot.text-on .live-core{background:linear-gradient(180deg,rgba(10,22,38,.5),rgba(6,14,26,.42))}
+.live-core:focus-within::before{opacity:1;animation:none}
 .live-core.flash{animation:loSend 1s ease}
-@keyframes loSend{30%{box-shadow:0 0 60px rgba(150,220,255,.3),
-  0 0 160px rgba(90,180,255,.2),0 0 300px rgba(70,160,255,.1)}}
+@keyframes loSend{30%{transform:scale(1.02)}}
 
-/* --- КАМЕРА: панель вытекает из центра, как видео-звонок --- */
+/* --- КАМЕРА: панель из глубины, тёплая виньетка по краям --- */
 .live-camwrap{position:absolute;left:50%;top:50%;z-index:1;
   width:min(64vh,76vw);aspect-ratio:4/3;border-radius:28px;
   transform:translate(-50%,-50%) scale(.82);opacity:0;filter:blur(16px) brightness(.4);
   transition:transform 1s var(--live-ease),opacity .8s ease,filter .8s ease;
   pointer-events:none;overflow:hidden;
-  border:1px solid rgba(255,255,255,.12);
-  box-shadow:0 40px 120px rgba(0,0,0,.55)}
+  box-shadow:0 40px 120px rgba(0,0,0,.6),0 0 130px rgba(0,150,220,.1)}
 #liveRoot.cam-on .live-camwrap{transform:translate(-50%,-50%) scale(1);
   opacity:1;filter:blur(0) brightness(1)}
 .live-camwrap video{width:100%;height:100%;object-fit:cover;display:block;
   transform:scaleX(-1)}
 .live-camwrap::after{content:'';position:absolute;inset:0;pointer-events:none;
-  background:linear-gradient(180deg,rgba(140,210,255,.08),transparent 22%),
-    radial-gradient(140% 100% at 50% 130%,rgba(2,8,16,.4),transparent 55%)}
+  background:radial-gradient(120% 90% at 50% 50%,transparent 52%,rgba(2,8,16,.36) 78%,rgba(2,8,16,.62) 100%),
+    linear-gradient(180deg,rgba(140,210,255,.06),transparent 20%)}
 
-/* --- ИHСТРУМЕHТЫ: мимолётные карточки из глубины --- */
-.live-tools{position:absolute;left:50%;top:27vh;z-index:4;transform:translateX(-50%);
+/* --- ИHСТРУМЕHТЫ: призрачные строки-шёпоты ВЫШЕ ядра --- */
+.live-tools{position:absolute;left:50%;top:15vh;z-index:4;transform:translateX(-50%);
   display:flex;flex-direction:column;gap:10px;align-items:center;pointer-events:none}
 .live-tool{display:flex;align-items:center;gap:12px;max-width:min(680px,84vw);
-  padding:15px 22px;border-radius:18px;font-size:14px;color:var(--tx2);
-  background:rgba(12,24,40,.5);border:1px solid rgba(0,212,255,.16);
-  box-shadow:0 18px 50px rgba(0,0,0,.38);
+  padding:13px 22px;border-radius:16px;font-size:14px;color:var(--tx2);
+  background:rgba(12,24,40,.4);border:0;
+  box-shadow:0 14px 44px rgba(0,0,0,.32),inset 0 0 0 1px rgba(120,200,255,.09);
   animation:liveToolIn 1.05s var(--live-ease) both}
 @keyframes liveToolIn{
   from{opacity:0;filter:blur(9px) brightness(.35);transform:translateY(20px) scale(.94)}}
@@ -4330,10 +4341,10 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 .live-tool b{color:var(--tx);font-weight:600;white-space:nowrap}
 .live-tool .lt-args{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   font-family:var(--fm);font-size:12px;opacity:.65;max-width:340px}
-.live-tool.done{border-color:rgba(63,191,149,.4)}
+.live-tool.done{box-shadow:0 14px 44px rgba(0,0,0,.32),inset 0 0 0 1px rgba(63,191,149,.22)}
 .live-tool.done .lt-dot{background:var(--green);box-shadow:0 0 12px var(--green);animation:none}
 
-/* --- ИHТЕРАКТИВ: вопрос/подтверждение — БОЛЬШОЙ элемент справа --- */
+/* --- ИHТЕРАКТИВ: БОЛЬШОЙ элемент справа --- */
 .live-ask{position:absolute;right:4vw;top:50%;z-index:5;transform:translateY(-50%);
   width:min(520px,88vw);padding:30px 32px;border-radius:26px;
   background:rgba(12,24,40,.58);border:1px solid rgba(0,212,255,.2);
@@ -4349,14 +4360,22 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 .live-ask .btn{cursor:pointer;font-size:15px;padding:12px 20px}
 .live-ask .btn.sm{font-size:14px}
 
-/* --- ПОДТВЕРЖДЕHИЕ ВЫХОДА — в дизайне звонка, из глубины --- */
-.live-confirm{position:absolute;left:50%;top:50%;z-index:8;
-  transform:translate(-50%,-50%);
-  width:min(430px,86vw);padding:28px 30px;border-radius:24px;
-  background:rgba(10,20,36,.66);border:1px solid rgba(120,220,255,.16);
+/* --- ПОДТВЕРЖДЕHИЕ ВЫХОДА — НА ВЕСЬ ЭКРАH: мир размывается и
+     тонет, в центре — одна карточка. Появление/уход — одной кривой,
+     без дёрганья (никаких параллельных transition) --- */
+.live-confirm{position:absolute;inset:0;z-index:9;
+  display:grid;place-items:center;
+  background:rgba(3,7,13,.45);
+  -webkit-backdrop-filter:blur(18px) brightness(.7);backdrop-filter:blur(18px) brightness(.7);
+  animation:cfIn .7s ease both}
+@keyframes cfIn{from{opacity:0}to{opacity:1}}
+.live-confirm.out{animation:cfOut .6s ease both}
+@keyframes cfOut{from{opacity:1}to{opacity:0}}
+.live-confirm .lc-card{width:min(430px,86vw);padding:30px 32px;border-radius:24px;
+  background:rgba(10,20,36,.72);border:1px solid rgba(120,220,255,.16);
   box-shadow:0 30px 100px rgba(0,0,0,.55),0 0 120px rgba(0,150,220,.1);
-  animation:deepIn .9s var(--live-ease) both}
-.live-confirm.out{animation:deepOut .7s ease both}
+  animation:deepIn .8s var(--live-ease) both}
+.live-confirm.out .lc-card{animation:deepOut .5s ease both}
 .live-confirm .lc-title{font-size:19px;color:var(--tx);margin-bottom:8px}
 .live-confirm .lc-body{font-size:14px;color:var(--tx2);margin-bottom:18px}
 .live-confirm .lc-acts{display:flex;gap:10px;justify-content:flex-end}
@@ -4364,7 +4383,7 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 .live-confirm .lc-stay{background:rgba(0,212,255,.14);color:var(--cy2)}
 .live-confirm .lc-go{background:rgba(221,85,102,.14);color:var(--red)}
 
-/* --- ПРАВОЕ ПОЛЕ: план/медиа/код — Джарвис работает фоном --- */
+/* --- ПРАВОЕ ПОЛЕ: план/медиа/код --- */
 .live-side{position:absolute;right:4vw;top:50%;z-index:2;
   width:min(500px,38vw);max-height:76vh;overflow:hidden auto;
   transform:translateY(-50%) translateX(90px);opacity:0;filter:blur(14px) brightness(.4);
@@ -4384,33 +4403,32 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 .ls-step.done{color:var(--tx3)}
 .ls-step.done .ls-i{background:var(--green);box-shadow:0 0 10px var(--green)}
 
-/* --- ПАHЕЛЬ УПРАВЛЕHИЯ: круглые кнопки, широкий разлёт,
-     едва заметное стекло. Ховер — СВЕЧЕHИЕ-ЛЕНТА (как у строки),
-     без заливок и рамок --- */
+/* --- ПАHЕЛЬ: круглые кнопки с чуть видной областью, широкий
+     разлёт; ховер — как у кнопок композера (та же тень и подсветка) --- */
 .live-bar{position:absolute;bottom:6vh;left:50%;z-index:7;
-  display:flex;gap:64px;padding:16px 38px;border-radius:64px;
+  display:flex;gap:92px;padding:16px 44px;border-radius:70px;
   background:rgba(8,16,28,.3);border:1px solid rgba(255,255,255,.05);
   box-shadow:0 24px 70px rgba(0,0,0,.4);
   transform:translate(-50%,30px);opacity:0;filter:blur(8px);
   transition:transform .9s var(--live-ease),opacity .7s ease,filter .7s ease}
 #liveRoot.open .live-bar{transform:translate(-50%,0);opacity:1;filter:blur(0)}
-.lb{width:74px;height:74px;border-radius:50%;border:0;
-  background:transparent;color:var(--tx2);display:grid;place-items:center;
-  cursor:pointer;position:relative;flex-shrink:0;
-  transition:transform .32s cubic-bezier(.4,0,.2,1),box-shadow .32s ease,color .32s ease}
+.lb{width:74px;height:74px;border-radius:50%;flex-shrink:0;
+  /* чуть видная круглая область у каждой — световая посадочная площадка */
+  background:radial-gradient(circle,rgba(120,200,255,.06) 0%,rgba(120,200,255,.028) 52%,transparent 72%);
+  border:1px solid transparent;color:var(--tx2);display:grid;place-items:center;
+  cursor:pointer;position:relative;
+  transition:background .25s ease,border-color .25s ease,color .25s ease,transform .25s ease}
 .lb svg{width:29px;height:29px}
-.lb:hover{color:#d9f3ff;transform:translateY(-5px);
-  box-shadow:0 0 26px rgba(140,215,255,.14),0 0 70px rgba(90,180,255,.07),
-    0 14px 34px rgba(0,0,0,.3)}
-.lb:active{transform:scale(.93)}
-.lb.on{color:#c8ecff;
-  box-shadow:0 0 30px rgba(140,215,255,.18),0 0 80px rgba(90,180,255,.1)}
+/* ховер — РОДНОЙ стиль приложения: как кнопки в поле ввода */
+.lb:hover{background:rgba(0,200,240,.13);color:var(--cy2);
+  border-color:var(--line2);transform:translateY(-1px)}
+.lb:active{transform:scale(.94)}
+.lb.on{color:var(--cy2);background:rgba(0,200,240,.1);border-color:var(--line2)}
 .lb.mute{color:var(--tx3)}
 .lb.mute::after{content:'';position:absolute;width:38px;height:2.5px;border-radius:3px;
   background:var(--red);box-shadow:0 0 10px rgba(221,85,102,.6);transform:rotate(-45deg)}
-.lb-exit:hover{color:#ffd7dd;
-  box-shadow:0 0 26px rgba(255,120,140,.14),0 0 70px rgba(255,90,110,.07),
-    0 14px 34px rgba(0,0,0,.3)}
+.lb-exit:hover{background:rgba(221,85,102,.13);color:var(--red);
+  border-color:rgba(221,85,102,.32)}
 
 /* LIVE поверх обычных слоёв; модалки/тосты/подсказки — поверх LIVE */
 body.live-on .modal-back{z-index:480}
@@ -4422,7 +4440,7 @@ body.live-on .toast{z-index:495}
   .live-camwrap{width:88vw}
   .lb{width:60px;height:60px}
   .lb svg{width:24px;height:24px}
-  .live-bar{gap:22px;padding:12px 20px;bottom:4vh}
+  .live-bar{gap:26px;padding:12px 20px;bottom:4vh}
   .live-side{width:86vw;right:7vw}
   .live-ask{right:6vw}
   .live-a{font-size:19px}

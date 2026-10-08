@@ -550,6 +550,20 @@ def start_prober() -> None:
     _PROBER.start()
 
 
+def _cheap_first(providers: List[str], tier: str) -> List[str]:
+    """BM29.2: ПРОСТЫЕ РЕПЛИКИ — ДЕШЁВЫМ ПРОВАЙДЕРАМ. Пока Cloud.ru
+    деградирует, «как дела» не должна стоить как умный ответ: nano/base
+    сначала пробуют DeepSeek (≈25₽/1M), затем GigaChat (бесплатный грант),
+    потом обычный порядок. Сложные запросы идут как раньше."""
+    if tier not in ("nano", "base") or len(providers) < 2:
+        return providers
+    cheap = [p for p in ("deepseek", "gigachat") if p in providers]
+    if not cheap:
+        return providers
+    rest = [p for p in providers if p not in cheap]
+    return cheap + rest
+
+
 def provider_order(candidates: List[str]) -> List[str]:
     """Кандидаты, отсортированные по свежему здоровью (стабильно).
 
@@ -1064,6 +1078,7 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
         wait_foreground_free(min(20.0, max(1.0, float(timeout))))
     providers = [provider] if provider else provider_order(
         active_providers() or ["cloudru"])
+    providers = _cheap_first(providers, tier)      # BM29.2: простое — дешёвым
     span = telemetry.Span(operation, tier=tier)
     deadline = time.monotonic() + max(0.25, float(timeout))
     last_error: Optional[Exception] = None
@@ -1182,6 +1197,7 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
     """Внутренняя реализация; публичная обёртка гарантирует закрытие span."""
     providers = [provider] if provider else provider_order(
         active_providers() or ["cloudru"])
+    providers = _cheap_first(providers, tier)      # BM29.2: простое — дешёвым
     span = _span or telemetry.Span(operation, tier=tier)
     last_error: Optional[Exception] = None
     last_provider = ""

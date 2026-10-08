@@ -972,6 +972,8 @@ async function testCameraLifecycleOwnershipAndLateResults() {
     setInterval, clearInterval, clearTimeout,
     $: (selector) => selector === '#input' ? input : (selector === '#replyBar' ? reply : null),
     foldAllNotes() {}, camLive() { return true; }, stream() { return mainHost; },
+    LIVE: { on: false, camStream: null },   // BM29: звонка нет — камера идёт обычным путём
+    liveAttachFrame() { throw new Error('unexpected LIVE frame path'); },
     renderAttachments() { renderedAttachments = requestState.attachments.length; },
     autoGrow() {}, addUserMsg() { return new MiniNode('div'); },
     addAiMsg() { return { root: aiRoot, body: aiBody, modelEl: new MiniNode('span') }; },
@@ -4153,8 +4155,8 @@ function testIterationAHContracts() {
 
 function testIterationAFContracts() {
   // AF5: включённая камера не предлагается повторно
-  assert(/camera_on: camLive\(\),/.test(extractFunction(js, 'send')),
-    'AF5: the client reports camera state so an active mode is never re-offered');
+  assert(/camera_on: camLive\(\) \|\| liveCamOn,/.test(extractFunction(js, 'send')),
+    'AF5: the client reports camera state (chat OR live call) so an active mode is never re-offered');
   // AF6: звук по умолчанию ВКЛЮЧЁН; кнопка пересинхронизируется с конфигом
   assert(/function soundOn\(\) \{ const ui = S\.config && S\.config\.ui; return !\(ui && ui\.sound === false\); \}/.test(js) &&
     /S\.config = st\.config \|\| \{\};\n  syncSoundBtn\(\);/.test(js),
@@ -4205,7 +4207,7 @@ function testIterationACContracts() {
   const closeVoice = extractFunction(js, 'closeVoiceMode');
   const barge = extractFunction(js, 'voiceBargeLoop');
   assert(/echoCancellation: true, noiseSuppression: true, autoGainControl: true/.test(openVoice) &&
-    /level > 0\.16/.test(barge) && /VOICE\.barge >= 7/.test(barge) &&
+    /level > 0\.16/.test(barge) && /VOICE\.barge >= 5/.test(barge) &&
     /localStorage\.getItem\('jarvisVoiceCtx'\) === '1'/.test(js) &&
     /S\.voiceBox\.remove\(\); S\.voiceBox = null;/.test(closeVoice) &&
     /voice_context: \(\(requestVoice \|\| requestLive\) && VOICE\.ctxOn && S\.chatId\) \|\| '',/.test(extractFunction(js, 'send')) &&
@@ -4401,9 +4403,9 @@ function testIterationBM28Contracts() {
     /#liveRoot\.open \.live-veil\{opacity:0\}/.test(css) &&
     /#liveRoot\.open \.live-bg\{filter:blur\(0\) brightness\(1\);transform:scale\(1\)\}/.test(css) &&
     /#liveRoot\.text-on \.live-core\{width:min\(780px,84vw\);height:84px;border-radius:46px/.test(css) &&
-    /#liveRoot\.mic-on\.cam-on \.live-core-wrap,\n#liveRoot\.text-on\.cam-on \.live-core-wrap\{\n  transform:translate\(-50%,calc\(-50% - 39vh\)\) scale\(\.55\)\}/.test(css) &&
+    /#liveRoot\.mic-on\.cam-on \.live-core-wrap,\n#liveRoot\.text-on\.cam-on \.live-core-wrap\{\n  transform:translate\(-50%,calc\(-50% - 30vh\)\) scale\(\.8\)\}/.test(css) &&
     css.includes('@keyframes loMorph') && css.includes('@keyframes loFlash') &&
-    /#liveRoot\.ag \.live-redwave\{opacity:1;animation:loWave 17s linear infinite\}/.test(css) &&
+    /#liveRoot\.ag \.live-bg \.a1\{background:radial-gradient\(circle,rgba\(224,52,88,\.34\),transparent 66%\)\}/.test(css) &&
     css.includes('.live-bar{') && css.includes('.lb-exit:hover{') &&
     css.includes('.live-dream{') &&
     css.includes('.live-camwrap{') && css.includes('.live-side{') &&

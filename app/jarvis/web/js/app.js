@@ -7243,7 +7243,9 @@ async function send(opts) {
      каскад резал их на сервере), ответ живёт в сцена звонка, а не в ленте.
      Запись ведётся в служебный чат kind='live' (вне списка диалогов),
      который удаляется при выходе из звонка */
-  const requestLive = !!(opts.live && LIVE.on);
+  const liveOn = (typeof LIVE !== 'undefined') && LIVE.on;      // безопасно и вне браузера
+  const liveCamOn = liveOn && !!LIVE.camStream;                 // камера ЗВОНКА кормит запросы
+  const requestLive = !!(opts.live && liveOn);
   const voiceIsolated = requestVoice || requestLive;
   const requestCamNode = (!requestVoice && !requestLive && camLive()) ? S.camNode : null;
   const requestHost = requestLive
@@ -7513,8 +7515,11 @@ async function send(opts) {
     // Камера включена — молча прикладываем снимок именно к локальному atts.
     // Upload слушает тот же AbortController, что и SSE: Stop во время медленной
     // загрузки не может через секунду самовольно запустить уже отменённый ответ.
-    if (S.camStream && !atts.some((a) => a.fromCam)) {
-      const frame = await camAttachFrame(requestChatId, controller.signal);
+    if ((S.camStream || liveCamOn) && !atts.some((a) => a.fromCam)) {
+      /* BM29.2: камера ЗВОНКА кормит запросы тем же путём — Джарвис видит */
+      const frame = liveCamOn
+        ? await liveAttachFrame(requestChatId, controller.signal)
+        : await camAttachFrame(requestChatId, controller.signal);
       if (frame) { frame.fromCam = true; atts.push(frame); }
     }
     if (controller.signal.aborted || S.streamRun !== runId) {
@@ -7535,7 +7540,7 @@ async function send(opts) {
         continue_of: opts.continueOf || '',
         voice: requestVoice,
         voice_context: ((requestVoice || requestLive) && VOICE.ctxOn && S.chatId) || '',
-        camera_on: camLive(),
+        camera_on: camLive() || liveCamOn,
         agent_mode: requestAgentMode,
         computer_use: requestComputerUse,
         silent: !!opts.silent,
@@ -11609,11 +11614,17 @@ function voiceListen() {
     VOICE.ctx = new AC();
   }
   if (VOICE.ctx.state === 'suspended') { try { VOICE.ctx.resume(); } catch (e) { /* жест был */ } }
-  if (!VOICE.an) {
-    const src = VOICE.ctx.createMediaStreamSource(VOICE.stream);
-    VOICE.an = VOICE.ctx.createAnalyser();
-    VOICE.an.fftSize = 1024;
-    src.connect(VOICE.an);
+  /* BM29.2: анализатор привязан к КОНКРЕТНОМУ контексту. Прежний код тащил
+     анализатор закрытого контекста прошлого звонка — getByteTimeDomainData
+     отдавал нули: ни конца фразы, ни ПЕРЕБОЯ. Микрофон «слушал» в пустоту */
+  if (!VOICE.an || VOICE.anCtx !== VOICE.ctx) {
+    try {
+      const src = VOICE.ctx.createMediaStreamSource(VOICE.stream);
+      VOICE.an = VOICE.ctx.createAnalyser();
+      VOICE.an.fftSize = 1024;
+      src.connect(VOICE.an);
+      VOICE.anCtx = VOICE.ctx;
+    } catch (e) { VOICE.an = null; }
   }
   voiceSetPhase('listening');
   const buf = new Uint8Array(VOICE.an.fftSize);
@@ -11724,9 +11735,12 @@ function voiceFeed(chunk) {
    Юрий): стартует через полсекунды, без интонаций. Серверный TTS (Yandex
    SpeechKit, мужской ermil) отдаёт WAV со скоростью сети; фолбэк — прежний
    синтез, чтобы звонок не онемел никогда */
-let VOICE_TTS_OK = null;   // null = не пробовали, true/false — вердикт
+let VOICE_TTS_OK = null;      // null = не пробовали; true = живой; число = epoch следующей попытки
+let VOICE_TTS_ERR_SHOWN = false;
 
 function voiceSpeakViaServer(text) {
+  /* отказ не вечный: ключ могли вписать только что — пробуем снова каждые 45с */
+  if (VOICE_TTS_OK !== null && VOICE_TTS_OK !== true && Date.now() < VOICE_TTS_OK) return Promise.resolve(null);
   return api('/api/tts', { text }).then((r) => {
     if (r && r.ok && r.audio) {
       VOICE_TTS_OK = true;
@@ -11739,11 +11753,41 @@ function voiceSpeakViaServer(text) {
         voiceSetPhase('speaking');
         cancelAnimationFrame(VOICE.raf);
         VOICE.raf = requestAnimationFrame(voiceBargeLoop);
+        liveTtsPulse(au);             // орб дышит в такт голосу Джарвиса
       });
     }
-    VOICE_TTS_OK = false;
-    return null;                      // сервер не готов — честный фолбэк
-  }).catch(() => { VOICE_TTS_OK = false; return null; });
+    /* честная причина: человек должен ЗНАТЬ, почему голос системный */
+    if (!VOICE_TTS_ERR_SHOWN && r && r.error) {
+      VOICE_TTS_ERR_SHOWN = true;
+      toast('Голос Джарвиса: ' + r.error, 'warn', 'TTS');
+    }
+    VOICE_TTS_OK = Date.now() + 45000;   // остыть и попробовать снова
+    return null;
+  }).catch(() => { VOICE_TTS_OK = Date.now() + 45000; return null; });
+}
+
+/* ИДЕЯ №1: орб пульсирует РОВНО по громкости голоса Джарвиса — говорящий
+   свет, а не индикатор. Анализируем само аудио через WebAudio */
+function liveTtsPulse(au) {
+  try {
+    const ctx = audioCtx();
+    if (!ctx || !au.captureStream) return;
+    const srcNode = ctx.createMediaElementSource(au);
+    const an = ctx.createAnalyser();
+    an.fftSize = 512;
+    srcNode.connect(an);
+    an.connect(ctx.destination);
+    const buf = new Uint8Array(an.fftSize);
+    const tick = () => {
+      if (VOICE.ttsAudio !== au) return;         // голос закончился/перебит
+      an.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) { const d = (buf[i] - 128) / 128; sum += d * d; }
+      liveLevel(Math.min(1, Math.sqrt(sum / buf.length) * 3.5));
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  } catch (e) { /* без пульса голос всё равно играет */ }
 }
 
 function voiceSpeak(text) {
@@ -11798,7 +11842,7 @@ function voiceBargeLoop() {
   // громкий и продолжительный. Перебий остаётся мгновенным для человека.
   if (level > 0.16) {
     VOICE.barge += 1;
-    if (VOICE.barge >= 7) {
+    if (VOICE.barge >= 5) {
       VOICE.barge = 0;
       try { window.speechSynthesis.cancel(); } catch (e) { /* синтеза нет */ }
       if (VOICE.ttsAudio) {              // BM29: серверный голос тоже замолкает
@@ -11896,12 +11940,14 @@ function liveBuild() {
     '<div class="live-bg">' +
       '<i class="la a1"></i><i class="la a2"></i><i class="la a3"></i>' +
       '<i class="la a4"></i><i class="la a5"></i><i class="la a6"></i>' +
-      '<div class="live-deep">' +
-        '<i class="ring p1"></i><i class="ring p2"></i><i class="ring p3"></i>' +
-      '</div>' +
       '<div class="live-stars"></div>' +
       '<div class="live-sheen"></div>' +
-      '<div class="live-redwave"></div>' +
+      /* ИДЕЯ №2: мотыльки мысли — пока Джарвис думает, световые пылинки
+         тянутся к ядру из глубины. Без единого paint: только transform */
+      '<div class="live-motes">' +
+        '<i class="lm lm1"></i><i class="lm lm2"></i><i class="lm lm3"></i>' +
+        '<i class="lm lm4"></i>' +
+      '</div>' +
     '</div>' +
     '<div class="live-veil"></div>' +
     '<div class="live-stage">' +
@@ -11914,7 +11960,10 @@ function liveBuild() {
         '<div class="live-camwrap"><video class="live-video" autoplay playsinline muted></video></div>' +
         '<div class="live-core-wrap"><div class="live-core">' +
           '<div class="live-orb">' +
-            '<div class="lo-core"></div></div>' +
+            '<div class="lo-core">' +
+              '<i class="lo-a"></i><i class="lo-b"></i><i class="lo-c"></i>' +
+              '<i class="lo-flash"></i><i class="lo-think"></i><i class="lo-speak"></i>' +
+            '</div></div>' +
           '<div class="live-line">' +
             '<input id="liveInput" placeholder="Спроси Джарвиса…" autocomplete="off">' +
             '<button class="live-send" aria-label="Отправить">' +
@@ -11954,7 +12003,7 @@ function liveBuild() {
     st.style.top = (Math.random() * 100).toFixed(1) + '%';
     st.style.setProperty('--d', (10 + Math.random() * 16).toFixed(1) + 's');
     st.style.setProperty('--dl', (-Math.random() * 14).toFixed(1) + 's');
-    const sz = 1.5 + Math.random() * 2.6;
+    const sz = 5 + Math.random() * 9;      // мягкая капля света, не пиксель
     st.style.width = sz + 'px'; st.style.height = sz + 'px';
     stars.appendChild(st);
   }
@@ -12032,11 +12081,12 @@ function liveConfirmExit() {
   if (old) return;
   const panel = el('div', 'live-confirm');
   panel.innerHTML =
+    '<div class="lc-card">' +
     '<div class="lc-title">Завершить звонок?</div>' +
     '<div class="lc-body">Джарвис будет ждать следующего созвона.</div>' +
     '<div class="lc-acts"><button class="btn lc-stay">Остаться</button>' +
-    '<button class="btn danger lc-go">Завершить</button></div>';
-  LIVE.root.querySelector('.live-stage').appendChild(panel);
+    '<button class="btn danger lc-go">Завершить</button></div></div>';
+  LIVE.root.appendChild(panel);
   sfx('warn');
   const close = () => {
     panel.classList.add('out');
@@ -12117,6 +12167,10 @@ async function liveSetMic(on) {
     LIVE.mic = false;
     LIVE.root.classList.remove('mic-on');
     LIVE.root.classList.add('text-on');
+    /* BM29.2: возврат к строке — сон чистый лист: прошлый разговор
+     (голосом) на экране не оживает */
+    if (LIVE.qEl) LIVE.qEl.textContent = '';
+    if (LIVE.aEl) LIVE.aEl.textContent = '';
     /* стоп прослушивания БЕЗ транскрипции недосказанного */
     cancelAnimationFrame(VOICE.raf);
     if (VOICE.rec) {
@@ -12131,6 +12185,26 @@ async function liveSetMic(on) {
   blip(on);
   const b = LIVE.root.querySelector('#lbMic');
   if (b) { b.classList.toggle('on', on); b.classList.toggle('mute', !on); }
+}
+
+/* BM29.2: кадр камеры звонка — transient-файл, как у обычной трансляции */
+async function liveAttachFrame(chatId, signal) {
+  if (!LIVE.camStream || !LIVE.video) return null;
+  const v = LIVE.video;
+  if (!v.videoWidth) return null;
+  const w = Math.min(900, v.videoWidth);
+  const h = Math.round(v.videoHeight * (w / v.videoWidth));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(v, 0, 0, w, h);
+  const data = c.toDataURL('image/jpeg', 0.82);
+  const r = await api('/api/upload', {
+    name: 'live_' + Date.now() + '.jpg', data, chat_id: chatId || '',
+    transient: true,
+  }, signal ? { signal } : null);
+  if (!r.ok || (signal && signal.aborted)) return null;
+  r.data = data;
+  return r;
 }
 
 async function liveSetCam(on) {
@@ -12193,7 +12267,7 @@ async function liveSetComp(on) {
 
 /* --- ТЕКСТОВЫЙ ВОПРОС (микрофон выключен) --- */
 async function liveAskText(text) {
-  if (!LIVE.on || S.streaming) return;
+  if (!LIVE.on || LIVE.mic || S.streaming) return;   // mic-on: строка спрятана
   liveShowQuestion(text);
   voiceSetPhase('thinking');
   try {
@@ -12210,11 +12284,14 @@ async function liveAskText(text) {
 function liveShowQuestion(text) {
   if (!LIVE.dreamIn || !LIVE.qEl) return;
   const d = LIVE.dreamIn;
+  /* BM29.2: прошлый ответ стирается СИНХРОННО, ДО анимации: быстрая ошибка
+     потока (меньше 400мс) раньше успевала записаться — и свайп-таймер
+     затирал её, сцена молчала. Теперь запись после клика всегда жива */
+  LIVE.aEl.textContent = '';
   d.classList.add('swap');
   setTimeout(() => {
     if (!LIVE.on || !LIVE.dreamIn) return;
     LIVE.qEl.textContent = text || '';
-    LIVE.aEl.textContent = '';
     d.classList.remove('swap');
     d.classList.add('fresh');
     void d.offsetWidth;
@@ -12223,12 +12300,10 @@ function liveShowQuestion(text) {
 }
 
 function liveDelta(chunk) {
-  /* BM29: каждый кусок ответа выплывает из глубины сам — мягкое появление
-     из размытия и темноты, текст никогда не «впечатывается» кадром */
+  /* BM29.2: текст дописывается РОВНО (span с анимацией размытия на каждый
+     кусок рвал кадры в клочья). Появление из глубины делает контейнер сна */
   if (!LIVE.aEl) return;
-  const sp = el('span', 'live-chunk');
-  sp.textContent = chunk;
-  LIVE.aEl.appendChild(sp);
+  LIVE.aEl.textContent += chunk;
 }
 
 /* --- СОБЫТИЯ ПОТОКА -> СЦЕНА --- */
@@ -12247,13 +12322,22 @@ function liveEvent(ev) {
       else LIVE.root.classList.remove('ag');
       return;
     }
+    case 'error': {
+      /* BM29.2: ошибка провайдера больше не глушит сцену молча — человек
+         видит честный текст и может спросить иначе */
+      if (LIVE.aEl) LIVE.aEl.textContent = ev.error || 'Не получилось ответить';
+      voiceSetPhase('idle');
+      return;
+    }
     case 'done': case 'end': return liveWorkDone();
   }
 }
 
 /* инструмент — мимолётная карточка из глубины; остальные уступают место */
 function liveToolShow(ev) {
-  if (!LIVE.toolsEl || SILENT_TOOLS[ev.name]) return;
+  /* BM29.2: в LIVE видно ВСЁ — «молчал 2 минуты и написал шахматы» больше
+     не случится: каждый инструмент всплывает и живёт до результата */
+  if (!LIVE.toolsEl) return;
   const card = el('div', 'live-tool');
   let args = '';
   try {
@@ -12269,8 +12353,6 @@ function liveToolShow(ev) {
   while (cards.length > 3) liveToolOut(cards.shift());
   LIVE.root.classList.add('tools-up');
   sfx('pop');
-  /* страховка: зависший инструмент не занимает сцену навсегда */
-  setTimeout(() => { if (card.isConnected) liveToolOut(card); }, 9000);
 }
 
 function liveToolDone(ev) {

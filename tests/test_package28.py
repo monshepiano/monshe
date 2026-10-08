@@ -3661,7 +3661,7 @@ class IterationACTests(unittest.TestCase):
         # эхо-подавление — корень «недоговаривает и прерывается»
         self.assertIn("echoCancellation: true, noiseSuppression: true", js)
         self.assertIn("level > 0.16", js)
-        self.assertIn("VOICE.barge >= 7", js)
+        self.assertIn("VOICE.barge >= 5", js)      # BM29.2: перебой быстрее
         # контекст по умолчанию ВЫКЛЮЧЕН
         self.assertIn("localStorage.getItem('jarvisVoiceCtx') === '1'", js)
         # кружок — вверху, остальное внизу
@@ -3859,7 +3859,7 @@ class IterationAFTests(unittest.TestCase):
     def test_af5_no_mode_offer_when_active(self) -> None:
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         srv = Path("app/jarvis/server.py").read_text(encoding="utf-8")
-        self.assertIn("camera_on: camLive(),", js)
+        self.assertIn("camera_on: camLive() || liveCamOn,", js)
         self.assertIn('mode_hint.get("mode") == "camera" and body.get("camera_on")', srv)
 
     def test_af6_sound_on_by_default(self) -> None:
@@ -8525,13 +8525,13 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("@keyframes loFlash", css)
         # БЕЗ колец: шар большой, дышит, по нему переливается свет
         self.assertNotIn("lo-ring", js.split('function liveBuild')[1].split('function ')[0])
-        self.assertIn("@keyframes loSheen", css)
+        self.assertIn("@keyframes loMorphA", css)   # эфирное думанье: слои перетекают
         self.assertIn("@keyframes loBreathe", css)
-        self.assertIn("#liveRoot.ph-speaking .lo-core{animation:loSpeak", css)
+        self.assertIn("#liveRoot.ph-speaking .lo-speak{opacity:1}", css)
         # ГЛУБИНА: единый закон появления
         self.assertIn("@keyframes deepIn", css)
-        self.assertIn("animation:deepIn .95s var(--live-ease) both}", css)
-        self.assertIn(".live-chunk{animation:deepIn", css)
+        self.assertIn("animation:deepIn .9s var(--live-ease) both}", css)
+        self.assertIn(".live-a{font-size:23px;line-height:1.62;", css)
         # микрофон включён — текста НЕТ, только голос
         self.assertIn("#liveRoot.mic-on .live-dream,#liveRoot.cam-on .live-dream{opacity:0}", css)
         # элементы уступают: сдвиг влево с затемнением
@@ -8545,7 +8545,7 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("#liveRoot.cam-on .live-camwrap{", css)
         self.assertIn(".live-bar{", css)
         self.assertIn(".lb-exit:hover{", css)
-        self.assertIn("#liveRoot.ag .live-redwave{opacity:1;animation:loWave 17s linear infinite}", css)
+        self.assertIn("#liveRoot.ag .live-bg .a1{background:radial-gradient(circle,rgba(224,52,88,.34),transparent 66%)}", css)
         self.assertIn(".live-dream{", css)
         self.assertIn(".live-side{", css)
 
@@ -8609,17 +8609,20 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("will-change:transform", css)   # композитор, не paint
         # строка — LED-лента: свечение только наружу
         self.assertIn("#liveRoot.text-on .live-core{width:min(780px,84vw);height:84px;border-radius:46px", css)
-        self.assertIn("0 0 34px rgba(150,220,255,.16),0 0 90px rgba(90,180,255,.1)", css)
+        self.assertIn(".live-core::before{content:'';position:absolute;inset:0;border-radius:inherit", css)
+        self.assertIn("@keyframes loLed{0%,100%{opacity:.55}50%{opacity:1}}", css)   # лента пульсирует СВЕТОМ
         # ядро — КРУГ (квадратный lo-core больше не накрывает орб)
-        self.assertIn(".lo-core{position:relative;width:74%;height:74%;border-radius:50%", css)
+        self.assertIn(".lo-core{position:relative;width:88%;height:88%;border-radius:50%", css)
+        self.assertIn(".lo-core .lo-a{inset:0;", css)   # эфирные слои света без границ
+        self.assertNotIn("lo-ring", js)
         # камера: и орб, и строка уезжают НАВЕРХ (не в сторону)
         self.assertIn("#liveRoot.mic-on.cam-on .live-core-wrap,", css)
         self.assertIn("#liveRoot.text-on.cam-on .live-core-wrap{", css)
-        self.assertIn("calc(-50% - 39vh)) scale(.55)}", css)
+        self.assertIn("calc(-50% - 30vh)) scale(.8)}", css)
         self.assertNotIn("calc(-50% - 22vw)", css)
         # кнопки шире, ховер — свечение-лента без заливок
-        self.assertIn("display:flex;gap:64px;padding:16px 38px", css)
-        self.assertIn(".lb:hover{color:#d9f3ff;transform:translateY(-5px)", css)
+        self.assertIn("display:flex;gap:92px;padding:16px 44px", css)
+        self.assertIn(".lb:hover{background:rgba(0,200,240,.13);color:var(--cy2);", css)
         # подтверждение выхода — в дизайне LIVE
         self.assertIn(".live-confirm{", css)
         self.assertIn("'<div class=\"lc-title\">Завершить звонок?</div>'", js)
@@ -8630,12 +8633,46 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("now - VOICE.lastVoice > 1000", js)
         # НАСТОЯЩИЙ ГОЛОС: серверный TTS с фолбэком на системный синтез
         self.assertIn("function voiceSpeakViaServer(text)", js)
-        self.assertIn("VOICE_TTS_OK = false; return null;", js)
+        self.assertIn("VOICE_TTS_OK = Date.now() + 45000;", js)
         self.assertIn("api('/api/tts', { text })", js)
         py_server = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        py_agent_src = Path("app/jarvis/agent.py").read_text(encoding="utf-8")
+        py_llm_src = Path("app/jarvis/llm.py").read_text(encoding="utf-8")
         self.assertIn('if path == "/api/tts":', py_server)
+        self.assertIn('if body.get("kind") == "live":', py_server)
         self.assertIn("api.tts.cloud.yandex.net/speech/v1/tts:synthesize", py_server)
         self.assertIn('"voice": "ermil"', py_server)
+        # BM29.2: анализатор привязан к контексту (перебой и VAD живые)
+        self.assertIn("if (!VOICE.an || VOICE.anCtx !== VOICE.ctx) {", js)
+        # перебой быстрее: 5 кадров
+        self.assertIn("if (VOICE.barge >= 5) {", js)
+        # инструменты в LIVE: ВСЕ видны, без капа времени
+        toolshow = js.split("function liveToolShow")[1].split("\nfunction ")[0]
+        self.assertNotIn("SILENT_TOOLS", toolshow)
+        self.assertNotIn("setTimeout", toolshow)
+        # текст: ровная строка без span-анимаций (лаг убит)
+        self.assertIn("LIVE.aEl.textContent += chunk;", js)
+        # возврат к строке: прошлый текст не оживает
+        self.assertIn("if (LIVE.qEl) LIVE.qEl.textContent = '';", js)
+        # ошибка потока видна в сцене
+        self.assertIn("case 'error': {", js)
+        # камера звонка кормит запросы кадрами
+        self.assertIn("async function liveAttachFrame", js)
+        self.assertIn("camera_on: camLive() || liveCamOn,", js)
+        # краткий LIVE-промпт на сервере
+        self.assertIn("LIVE_MODE_NOTE = (", py_agent_src)
+        # DeepSeek первым на простых тирах, GigaChat резерв
+        self.assertIn("def _cheap_first(providers", py_llm_src)
+        self.assertIn('if tier not in ("nano", "base") or len(providers) < 2:', py_llm_src)
+        # TTS: ретраи не вечный отказ + честная причина
+        self.assertIn("VOICE_TTS_OK = Date.now() + 45000;", js)
+        self.assertIn("Голос Джарвиса: ' + r.error", js)
+        # орб пульсирует по громкости голоса (идея №1)
+        self.assertIn("function liveTtsPulse(au) {", js)
+        # мотыльки мысли (идея №2)
+        self.assertIn("live-motes", js)
+        self.assertIn("#liveRoot.ph-thinking .live-motes{opacity:1}", css)
+
         # перебой глушит и серверное аудио
         self.assertIn("if (VOICE.ttsAudio) {              // BM29: серверный голос тоже замолкает", js)
 
