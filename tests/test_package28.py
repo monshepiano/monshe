@@ -8538,8 +8538,8 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("#liveRoot.side-on .live-flow{transform:translateX(-15vw) scale(.84)", css)
         self.assertIn("filter:brightness(.6) saturate(.85)", css)
         # круглые кнопки на стекле
-        self.assertIn(".lb{width:74px;height:74px;border-radius:50%", css)
-        self.assertIn(".live-bar{position:absolute;bottom:6vh", css)
+        self.assertIn(".lb{width:64px;height:64px;border-radius:50%", css)
+        self.assertIn(".live-bar{position:absolute;bottom:5.5vh", css)
 
         # камера из центра; панель звонка; агент краснит воду
         self.assertIn("#liveRoot.cam-on .live-camwrap{", css)
@@ -8618,10 +8618,10 @@ class IterationBM18Tests(unittest.TestCase):
         # камера: и орб, и строка уезжают НАВЕРХ (не в сторону)
         self.assertIn("#liveRoot.mic-on.cam-on .live-core-wrap,", css)
         self.assertIn("#liveRoot.text-on.cam-on .live-core-wrap{", css)
-        self.assertIn("calc(-50% - 30vh)) scale(.8)}", css)
+        self.assertIn("calc(-50% - 36vh)) scale(.6)}", css)
         self.assertNotIn("calc(-50% - 22vw)", css)
         # кнопки шире, ховер — свечение-лента без заливок
-        self.assertIn("display:flex;gap:92px;padding:16px 44px", css)
+        self.assertIn("display:flex;gap:92px;padding:12px 36px", css)
         self.assertIn(".lb:hover{background:rgba(0,200,240,.13);color:var(--cy2);", css)
         # подтверждение выхода — в дизайне LIVE
         self.assertIn(".live-confirm{", css)
@@ -8672,6 +8672,46 @@ class IterationBM18Tests(unittest.TestCase):
         # мотыльки мысли (идея №2)
         self.assertIn("live-motes", js)
         self.assertIn("#liveRoot.ph-thinking .live-motes{opacity:1}", css)
+
+        # ===== BM30: ГЛУБОКАЯ ЧЕСТНОСТЬ ГОЛОСА + ЖИВАЯ СЦЕНА =====
+        # звёзды УБРАНЫ: фон — только расплывчатые оттенки синего
+        self.assertNotIn("live-stars", js)
+        self.assertNotIn(".live-stars", css)
+        self.assertNotIn("@keyframes loStar", css)
+        # изредка — градиентная краска (дыхание почти всегда невидимо)
+        self.assertIn(".live-bg .a7{", css)
+        self.assertIn("@keyframes loRare{", css)
+        self.assertIn("0%,58%,100%{opacity:0}", css)
+        # фон — оттенки синего (розовый/оранжевый дыхания ушли)
+        self.assertNotIn("rgba(216,64,180", css)
+        self.assertNotIn("rgba(255,170,80", css)
+        # TTS: классификация отказов вместо слепых ретраев
+        self.assertIn('return {"ok": False, "class": "config",', py_server)
+        self.assertIn('"class": "net" if is_net else "server"', py_server)
+        self.assertIn("except urllib.error.HTTPError as e:", py_server)
+        self.assertIn("Яндекс не принял API-ключ (HTTP 401)", py_server)
+        self.assertIn("роли ai.speechkit-tts.user", py_server)
+        self.assertIn("def _tts_log(line: str) -> None:", py_server)
+        # клиент: постоянные отказы не ретраятся, временные — 45с
+        self.assertIn("if (cls === 'rate' || cls === 'server') {", js)
+        self.assertIn("VOICE_TTS_OK = false;   // config/net/auth: повтор бессмыслен до нового звонка", js)
+        # новый звонок — новая попытка голоса
+        self.assertIn("VOICE_TTS_OK = null;", js)
+        # диагностика голоса в один клик из Настроек
+        self.assertIn("id=\"testTts\">Проверить голос", js)
+        # LIVE-промпт: НЕ МОЛЧИ во время работы (просьба человека)
+        self.assertIn("ВО ВРЕМЯ РАБОТЫ НЕ МОЛЧИ", py_agent_src)
+        self.assertIn("ОБЪЯВЛЯЙ вслух одной короткой живой фразой", py_agent_src)
+        # кадр камеры = живые глаза: модель не предлагает «сделать фото»
+        self.assertIn("ЖИВОЙ кадр камеры", py_server)
+        self.assertIn("НЕ предлагай сделать фото", py_server)
+        # включение камеры = короткая реплика «вижу тебя»
+        self.assertIn("Одной короткой живой фразой скажи, что ты меня видишь", js)
+        # камера: орб сильнее сжимается и полностью над панелью
+        self.assertIn("calc(-50% - 36vh)) scale(.6)}", css)
+        # кнопки/док чуть меньше, разлёт сохранён
+        self.assertIn(".lb{width:64px;height:64px;border-radius:50%", css)
+        self.assertIn("display:flex;gap:92px;padding:12px 36px", css)
 
         # перебой глушит и серверное аудио
         self.assertIn("if (VOICE.ttsAudio) {              // BM29: серверный голос тоже замолкает", js)

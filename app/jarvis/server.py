@@ -647,19 +647,38 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"ok": False, "error": "not found"}, 404)
 
     # -------------------------------------------------------------- статика
+    @staticmethod
+    def _tts_log(line: str) -> None:
+        """BM30: полный посмертный след TTS — не гадать по тостам."""
+        try:
+            from .config import LOG_DIR
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            import datetime
+            with open(LOG_DIR / "tts.log", "a", encoding="utf-8") as fh:
+                fh.write("%s %s\n" % (datetime.datetime.now().isoformat(timespec="seconds"), line))
+        except Exception:
+            pass
+
     def _tts(self, body: Dict[str, Any]) -> Dict[str, Any]:
         """BM29: НАСТОЯЩИЙ голос Джарвиса. Yandex SpeechKit (мужской ermil),
-        lpcm 48кГц -> WAV. Нет ключа — честный отказ, клиент включает
-        системный синтез: звонок не онемает никогда."""
+        lpcm 48кГц -> WAV. BM30: ОТКАЗ КЛАССИФИЦИРУЕТСЯ — «нет доступа к TTS»
+        больше не чёрный ящик. Клиент получает class: config|net|auth|req|
+        rate|server — слепые ретраи только у временных (rate/server),
+        постоянные (нет ключа, нет сети, неверный ключ) не долбятся вовсе."""
+        import urllib.request
+        import urllib.error
         text = (body.get("text") or "").strip()[:900]
         if not text:
-            return {"ok": False, "error": "пустой текст"}
-        import urllib.request
+            return {"ok": False, "error": "пустой текст", "class": "req"}
         conf = (CONFIG.get("providers") or {}).get("yandex") or {}
         key = str(conf.get("api_key") or "")
         folder = str(conf.get("folder_id") or "")
         if not key or not folder:
-            return {"ok": False, "error": "TTS не настроен: вписать ключ и folder_id Yandex"}
+            self._tts_log("CONFIG: key=%s folder=%s" % ("есть" if key else "НЕТ",
+                                                        "есть" if folder else "НЕТ"))
+            return {"ok": False, "class": "config",
+                    "error": "Голос не настроен: в Настройках вписать API-ключ "
+                             "и folder_id Yandex (вкладка «Модели и ключи»)"}
         data = urllib.parse.urlencode({
             "text": text, "folderId": folder,
             "voice": "ermil",            # мужской, живой
@@ -671,15 +690,57 @@ class Handler(BaseHTTPRequestHandler):
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
                 pcm = r.read()
+        except urllib.error.HTTPError as e:
+            # Настоящий ответ Яндекса: код + тело. Причина — не догадка
+            detail = ""
+            try:
+                detail = e.read()[:400].decode("utf-8", "replace").replace("\n", " ")
+            except Exception:
+                pass
+            self._tts_log("HTTP %s: %s" % (e.code, detail[:200]))
+            if e.code == 401:
+                return {"ok": False, "class": "auth", "status": 401, "detail": detail,
+                        "error": "Яндекс не принял API-ключ (HTTP 401). Ключ "
+                                 "скопируй заново в Настройках — целиком, без пробелов"}
+            if e.code == 403:
+                return {"ok": False, "class": "auth", "status": 403, "detail": detail,
+                        "error": "Ключу не хватает роли ai.speechkit-tts.user "
+                                 "(HTTP 403). Выдай роль каталогу в консоли Яндекса"}
+            if e.code == 404:
+                return {"ok": False, "class": "auth", "status": 404, "detail": detail,
+                        "error": "folder_id не найден (HTTP 404). Проверь "
+                                 "идентификатор каталога — он из того же аккаунта, что и ключ"}
+            if e.code == 429:
+                return {"ok": False, "class": "rate", "status": 429, "detail": detail,
+                        "error": "Лимит запросов к Яндексу (429) — повторю через минуту"}
+            return {"ok": False, "class": "server" if e.code >= 500 else "req",
+                    "status": e.code, "detail": detail,
+                    "error": "Яндекс ответил HTTP %d — %s" % (e.code, detail[:120] or "без пояснений")}
         except Exception as e:
-            return {"ok": False, "error": "TTS: " + str(e)[:200]}
+            # Сеть: DNS, файрвол, таймаут. ГЛАВНЫЙ случай «нет доступа»:
+            # сервер (превью в песочнице) физически не может выйти к Яндексу —
+            # ретраи бессмысленны, честно говорим об этом
+            reason = str(e)
+            low = reason.lower()
+            is_net = ("resolve" in low or "name or service" in low or "network" in low
+                      or "unreachable" in low or "timed out" in low or "timeout" in low
+                      or "connection" in low or "ssl" in low)
+            self._tts_log("NET[%s]: %s" % ("net" if is_net else "?", reason[:200]))
+            return {"ok": False, "class": "net" if is_net else "server", "detail": reason[:200],
+                    "error": "Сервер не может выйти в интернет к Яндексу" +
+                             (" (DNS/сеть закрыты)" if is_net else "") +
+                             ". Если это превью в песочнице — внешнего интернета там "
+                             "нет ВООБЩЕ, голос оживёт только в локальной сборке "
+                             "на компьютере; ключ тут ни при чём"}
         if not pcm:
-            return {"ok": False, "error": "TTS: пустой ответ"}
+            self._tts_log("EMPTY ответ")
+            return {"ok": False, "class": "server", "error": "TTS: пустой ответ"}
         # lpcm (s16le mono) -> WAV
         import struct
         head = b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + \
             struct.pack("<IHHIIHH", 16, 1, 1, 48000, 96000, 2, 16) + b"data" + \
             struct.pack("<I", len(pcm))
+        self._tts_log("OK %d байт" % len(pcm))
         return {"ok": True, "mime": "audio/wav",
                 "audio": base64.b64encode(head + pcm).decode("ascii")}
 
@@ -985,6 +1046,18 @@ class Handler(BaseHTTPRequestHandler):
             # BM29.2: LIVE — свободный режим с инструментами, но разговорная
             # манера: коротко, просто, без системной болтовни в голос
             messages.append({"role": "system", "content": agent.LIVE_MODE_NOTE})
+            # BM30: КАДР КАМЕРЫ — ЖИВЫЕ ГЛАЗА. Прежде модель получала снимок
+            # без объяснений и начинала предлагать «сделать фото» или «нари-
+            # совать портрет». Теперь прямо сказано: это непрерывный видеопоток
+            # звонка — смотри и отвечай, ничего с кадром предлагать не надо.
+            if body.get("camera_on"):
+                messages.append({"role": "system", "content":
+                    "[Система] К сообщению приложен ЖИВОЙ кадр камеры "
+                    "пользователя из звонка — обновляется с каждой репликой. "
+                    "Это твои глаза: пользователь и его окружение видны тебе "
+                    "прямо сейчас. НЕ предлагай сделать фото, нарисовать "
+                    "портрет или сохранить кадр — просто смотри и отвечай по "
+                    "кадру, когда человек спрашивает или это важно."})
             # AC: «Контекст диалога» — модель ВИДИТ историю выбранного диалога,
             # но беседа разговора по-прежнему пишется в свой изолированный
             # диалог: основной чат остаётся чистым и после закрытия вкладки.

@@ -4389,6 +4389,39 @@ function testIterationBHContracts() {
     'BH: an empty 3D surface aims at its domain instead of giving up');
 }
 
+function testIterationBM30Contracts() {
+  // ===== BM30: честный TTS, говорящая камера, тихий фон =====
+  // звёзды убраны: только расплывчатые синие дыхания + изредка градиент
+  assert(!js.includes('live-stars') && !css.includes('.live-stars') &&
+    css.includes('.live-bg .a7{') && css.includes('@keyframes loRare{') &&
+    !css.includes('rgba(216,64,180') && !css.includes('rgba(255,170,80'),
+    'BM30 background: stars removed, only blurred shades of blue, a rare gradient veil');
+  // TTS: слепых ретраев нет — постоянные отказы (config/net/auth) не долбятся
+  assert(js.includes("if (cls === 'rate' || cls === 'server') {") &&
+    js.includes('VOICE_TTS_OK = false;') &&
+    js.includes("VOICE_TTS_OK = null;") &&
+    js.includes('id="testTts">Проверить голос'),
+    'BM30 TTS: retries only for transient classes; Settings gains a one-click voice check');
+  assert(pyServer.includes('except urllib.error.HTTPError as e:') &&
+    pyServer.includes('"class": "net" if is_net else "server"') &&
+    pyServer.includes('def _tts_log(line: str) -> None:'),
+    'BM30 TTS: server classifies failures (config/net/auth/rate/server) and logs them');
+  // LIVE-промпт: во время работы Джарвис ОБЯЗАН говорить
+  assert(pyAgent.includes('ВО ВРЕМЯ РАБОТЫ НЕ МОЛЧИ') &&
+    pyAgent.includes('ОБЪЯВЛЯЙ вслух одной короткой живой фразой'),
+    'BM30 LIVE note: Jarvis narrates every step aloud (user demand)');
+  // камера: кадр = живые глаза, реплика «вижу тебя» при включении
+  assert(pyServer.includes('ЖИВОЙ кадр камеры') &&
+    pyServer.includes('НЕ предлагай сделать фото') &&
+    js.includes('Одной короткой живой фразой скажи, что ты меня видишь'),
+    'BM30 camera: frame is declared as live eyes; enabling the camera triggers a spoken "I see you"');
+  // камера: орб сильнее сжимается; кнопки/док чуть меньше, разлёт прежний
+  assert(css.includes('calc(-50% - 36vh)) scale(.6)}') &&
+    css.includes('.lb{width:64px;height:64px;border-radius:50%') &&
+    css.includes('display:flex;gap:92px;padding:12px 36px'),
+    'BM30 scene: the orb shrinks clear of the camera; buttons and dock slightly smaller, spacing kept');
+}
+
 function testIterationBM28Contracts() {
   // ===== LIVE-ЗВОНОК: интерфейс с нуля, поверх всего, из воды =====
   assert(html.includes('id="micBtn" data-tip="Диктовка"') &&
@@ -4403,7 +4436,7 @@ function testIterationBM28Contracts() {
     /#liveRoot\.open \.live-veil\{opacity:0\}/.test(css) &&
     /#liveRoot\.open \.live-bg\{filter:blur\(0\) brightness\(1\);transform:scale\(1\)\}/.test(css) &&
     /#liveRoot\.text-on \.live-core\{width:min\(780px,84vw\);height:84px;border-radius:46px/.test(css) &&
-    /#liveRoot\.mic-on\.cam-on \.live-core-wrap,\n#liveRoot\.text-on\.cam-on \.live-core-wrap\{\n  transform:translate\(-50%,calc\(-50% - 30vh\)\) scale\(\.8\)\}/.test(css) &&
+    /#liveRoot\.mic-on\.cam-on \.live-core-wrap,\n#liveRoot\.text-on\.cam-on \.live-core-wrap\{\n  transform:translate\(-50%,calc\(-50% - 36vh\)\) scale\(\.6\)\}/.test(css) &&
     css.includes('@keyframes loMorph') && css.includes('@keyframes loFlash') &&
     /#liveRoot\.ag \.live-bg \.a1\{background:radial-gradient\(circle,rgba\(224,52,88,\.34\),transparent 66%\)\}/.test(css) &&
     css.includes('.live-bar{') && css.includes('.lb-exit:hover{') &&
@@ -4557,8 +4590,9 @@ function testIterationBM28Contracts() {
   testIterationBM17Contracts();
   testIterationBM18Contracts();
   testIterationBM28Contracts();
+  testIterationBM30Contracts();
   testIterationAOContracts();
-  console.log('package28_frontend_runtime: 63 regression groups passed');
+  console.log('package28_frontend_runtime: 64 regression groups passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

@@ -11739,8 +11739,13 @@ let VOICE_TTS_OK = null;      // null = не пробовали; true = живо
 let VOICE_TTS_ERR_SHOWN = false;
 
 function voiceSpeakViaServer(text) {
-  /* отказ не вечный: ключ могли вписать только что — пробуем снова каждые 45с */
+  /* BM30: РЕТРАИ — ТОЛЬКО ВРЕМЕННЫМ ОШИБКАМ. Прежний код долбил Яндекс
+     каждые 45с что бы ни случилось: DNS-блок песочницы и неверный ключ
+     ретраями не лечатся. Сервер теперь классифицирует отказ:
+     config/net/auth — постоянные (до конца звонка не трогаем),
+     rate/server — временные (остыть 45с и попробовать) */
   if (VOICE_TTS_OK !== null && VOICE_TTS_OK !== true && Date.now() < VOICE_TTS_OK) return Promise.resolve(null);
+  if (VOICE_TTS_OK === false) return Promise.resolve(null);
   return api('/api/tts', { text }).then((r) => {
     if (r && r.ok && r.audio) {
       VOICE_TTS_OK = true;
@@ -11757,11 +11762,17 @@ function voiceSpeakViaServer(text) {
       });
     }
     /* честная причина: человек должен ЗНАТЬ, почему голос системный */
-    if (!VOICE_TTS_ERR_SHOWN && r && r.error) {
+    if (r && r.error && !VOICE_TTS_ERR_SHOWN) {
       VOICE_TTS_ERR_SHOWN = true;
-      toast('Голос Джарвиса: ' + r.error, 'warn', 'TTS');
+      toast('Голос Джарвиса: ' + r.error +
+        (r.status ? ' (HTTP ' + r.status + ')' : ''), 'warn', 'TTS');
     }
-    VOICE_TTS_OK = Date.now() + 45000;   // остыть и попробовать снова
+    const cls = (r && r.class) || 'server';
+    if (cls === 'rate' || cls === 'server') {
+      VOICE_TTS_OK = Date.now() + 45000;   // временное — остыть и снова
+    } else {
+      VOICE_TTS_OK = false;   // config/net/auth: повтор бессмыслен до нового звонка
+    }
     return null;
   }).catch(() => { VOICE_TTS_OK = Date.now() + 45000; return null; });
 }
@@ -11940,7 +11951,9 @@ function liveBuild() {
     '<div class="live-bg">' +
       '<i class="la a1"></i><i class="la a2"></i><i class="la a3"></i>' +
       '<i class="la a4"></i><i class="la a5"></i><i class="la a6"></i>' +
-      '<div class="live-stars"></div>' +
+      /* BM30: звёзды УБРАНЫ по решению человека — фон только расплывчатые
+         оттенки синего; ИЗРЕДКА сквозь воду проступает градиентная краска */
+      '<i class="la a7"></i>' +
       '<div class="live-sheen"></div>' +
       /* ИДЕЯ №2: мотыльки мысли — пока Джарвис думает, световые пылинки
          тянутся к ядру из глубины. Без единого paint: только transform */
@@ -11995,18 +12008,6 @@ function liveBuild() {
   LIVE.aEl = root.querySelector('.live-a');
   LIVE.toolsEl = root.querySelector('.live-tools');
   LIVE.sideEl = root.querySelector('.live-side-in');
-  /* звёзды — случайные, еле заметные */
-  const stars = root.querySelector('.live-stars');
-  for (let i = 0; i < 16; i++) {
-    const st = el('i', '');
-    st.style.left = (Math.random() * 100).toFixed(1) + '%';
-    st.style.top = (Math.random() * 100).toFixed(1) + '%';
-    st.style.setProperty('--d', (10 + Math.random() * 16).toFixed(1) + 's');
-    st.style.setProperty('--dl', (-Math.random() * 14).toFixed(1) + 's');
-    const sz = 5 + Math.random() * 9;      // мягкая капля света, не пиксель
-    st.style.width = sz + 'px'; st.style.height = sz + 'px';
-    stars.appendChild(st);
-  }
   /* строка ввода: Enter — спросить */
   const inp = root.querySelector('#liveInput');
   inp.addEventListener('keydown', (e) => {
@@ -12043,6 +12044,10 @@ async function liveOpen() {
   VOICE.nodes = [];
   VOICE.chatId = '';          // каждый звонок — новый разговор
   VOICE.ctxOn = true;         // LIVE = прямой провод к единому мозгу
+  /* BM30: новый звонок — новая попытка живого голоса: ключ могли вписать
+     в Настройках между звонками, вечный «false» не должен переживать вызов */
+  VOICE_TTS_OK = null;
+  VOICE_TTS_ERR_SHOWN = false;
   killWelcome();
   showView('chat');
   liveBuild();
@@ -12226,6 +12231,14 @@ async function liveSetCam(on) {
     LIVE.cam = true;
     LIVE.root.classList.add('cam-on');
     sfx('start');
+    /* BM30: «Камера меня не видит» — кадр уходил модели молча, человек не
+       знал, работает ли зрение. Теперь включение камеры = короткая реплика
+       Джарвиса «вижу тебя»: зрение проверяется на живом кадре сразу */
+    setTimeout(() => {
+      if (!LIVE.on || !LIVE.cam || S.streaming) return;
+      if (LIVE.mic) voiceAsk('Камера только что включилась. Одной короткой живой фразой скажи, что ты меня видишь.');
+      else liveAskText('Камера включилась. Одной короткой фразой скажи, что ты меня видишь.');
+    }, 1300);
   } else {
     LIVE.cam = false;
     LIVE.root.classList.remove('cam-on');
@@ -14664,7 +14677,8 @@ function renderSettings() {
       (t ? TIER_LABEL[t] || t : 'авто — выбирает JARVIS') + '</option>').join('') +
     '</select></div>' +
     '<button class="btn primary" id="saveProv">Сохранить</button> ' +
-    '<button class="btn" id="testProv">Проверить провайдеров</button>';
+    '<button class="btn" id="testProv">Проверить провайдеров</button> ' +
+    '<button class="btn" id="testTts">Проверить голос</button>';
   grid.appendChild(prov);
   provs.forEach(([name]) => {
     const row = $('#prow_' + name, prov);
@@ -14690,6 +14704,26 @@ function renderSettings() {
     toast('Настройки сохранены', 'success'); renderSettings(); refreshState();
   });
   $('#testProv', prov).addEventListener('click', () => showProvidersState(true));
+  /* BM30: ДИАГНОСТИКА ГОЛОСА В ОДИН КЛИК. Синтезируем «Проверка связи» и
+     говорим человеку РЕАЛЬНУЮ причину отказа: класс ошибки от сервера
+     (нет ключа / нет сети / ключ не принят / нет роли / лимит) — не догадки */
+  $('#testTts', prov).addEventListener('click', async () => {
+    const btn = $('#testTts', prov);
+    btn.disabled = true; btn.textContent = 'Проверяю…';
+    try {
+      const r = await api('/api/tts', { text: 'Проверка голоса.' });
+      if (r && r.ok && r.audio) {
+        try { const au = new Audio('data:audio/wav;base64,' + r.audio); au.play(); } catch (e0) {}
+        toast('Голос работает: Yandex ermil — сейчас услышишь', 'success', 'TTS');
+      } else {
+        toast('Голос: ' + ((r && r.error) || 'неизвестная ошибка') +
+          (r && r.status ? ' (HTTP ' + r.status + ')' : ''), 'error', 'TTS');
+      }
+    } catch (e) {
+      toast('Голос: сервер не ответил', 'error', 'TTS');
+    }
+    btn.disabled = false; btn.textContent = 'Проверить голос';
+  });
 
   // Изображения идут через российский release gateway. В ZIP лежит только
   // ограниченный revocable token; настоящий provider credential остаётся на

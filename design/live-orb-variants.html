@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>LIVE · 10 вариантов орба и строки</title>
+<style>
+  /* ============ ГАЛЕРЕЯ: 10 ВАРИАНТОВ ОРБА И СТРОКИ ============
+     Все варианты — в дизайн-системе LIVE (beta.104): тёмная вода,
+     никаких границ и металла, только воздух и свет. Каждая плитка
+     1280×720 = страница PDF. Выбери номер — скажи его. */
+  @page{size:1280px 720px;margin:0}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#02050b}
+  body{font-family:-apple-system,'SF Pro Display','Segoe UI',Roboto,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .tile{width:1280px;height:720px;position:relative;overflow:hidden;
+    page-break-after:always;
+    background:
+      radial-gradient(120vmax 80vmax at 50% -22%,#0a1c33 0%,transparent 55%),
+      radial-gradient(90vmax 70vmax at 112% 112%,#0c1834 0%,transparent 50%),
+      linear-gradient(180deg,#040a14,#03060d)}
+  .tile::after{content:'';position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(85vmax 65vmax at 50% 50%,transparent 55%,rgba(1,4,9,.5))}
+  /* мягкие синие дыхания — общий фон всех вариантов (как в LIVE) */
+  .breath{position:absolute;border-radius:50%;mix-blend-mode:screen;pointer-events:none}
+  .b1{width:900px;height:600px;left:-260px;top:-220px;opacity:.5;
+    background:radial-gradient(circle,rgba(0,150,230,.30),rgba(0,110,190,.08) 52%,transparent 72%)}
+  .b2{width:760px;height:560px;right:-240px;bottom:-200px;opacity:.5;
+    background:radial-gradient(circle,rgba(70,120,235,.26),rgba(50,90,200,.06) 52%,transparent 72%)}
+
+  /* подпись варианта */
+  .v-label{position:absolute;top:36px;left:48px;z-index:5}
+  .v-num{font-size:13px;font-weight:700;letter-spacing:4px;color:#5ec8ff;opacity:.9}
+  .v-name{font-size:32px;font-weight:700;color:#eaf6ff;margin-top:10px;letter-spacing:.2px}
+  .v-desc{font-size:15px;line-height:1.5;color:#7f9bb5;margin-top:8px;max-width:560px}
+  .v-hint{position:absolute;bottom:26px;right:44px;z-index:5;font-size:12px;
+    letter-spacing:2.5px;color:#4d6a85}
+
+  /* сцена: орб над строкой */
+  .v-stage{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:96px;z-index:2}
+  .v-orb{position:relative;width:260px;height:260px}
+  .v-line{position:relative;width:600px;height:64px;border-radius:40px;
+    display:flex;align-items:center;padding:0 10px 0 30px}
+  .v-line .ph{flex:1;font-size:18px;color:#6f8aa3;letter-spacing:.2px}
+  .v-line .send{width:46px;height:46px;border-radius:50%;flex-shrink:0;
+    display:grid;place-items:center;color:#55c8f0}
+  .v-line .send svg{width:19px;height:19px}
+
+  /* ==================== ОБЛОЖКА ==================== */
+  .cover{display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .cover .c-kicker{font-size:14px;font-weight:700;letter-spacing:6px;color:#5ec8ff}
+  .cover h1{font-size:56px;font-weight:800;color:#eaf6ff;margin-top:22px;letter-spacing:.4px}
+  .cover .c-sub{font-size:17px;color:#7f9bb5;margin-top:16px;line-height:1.6;text-align:center}
+  .cover .c-orb{position:relative;width:300px;height:150px;margin-bottom:26px}
+  .cover .c-orb .cl{position:absolute;border-radius:50%;
+    background:radial-gradient(circle,rgba(120,205,255,.30),transparent 70%)}
+  .cover .c-orb .cl1{width:150px;height:150px;left:0;top:0}
+  .cover .c-orb .cl2{width:110px;height:110px;left:95px;top:22px;opacity:.7;
+    background:radial-gradient(circle,rgba(160,230,255,.4),transparent 70%)}
+  .cover .c-orb .cl3{width:70px;height:70px;left:180px;top:42px}
+
+  /* ==================== 1 · ТУМАН ==================== */
+  .o1 .l1{position:absolute;inset:0;border-radius:50%;
+    background:radial-gradient(circle at 46% 40%,rgba(215,245,255,.55),
+      rgba(90,200,250,.26) 44%,rgba(20,90,140,.10) 68%,transparent 84%)}
+  .o1 .l2{position:absolute;inset:-16%;border-radius:50%;
+    background:radial-gradient(circle,transparent 48%,rgba(80,190,255,.13) 60%,transparent 76%)}
+  .o1 .l3{position:absolute;inset:24%;border-radius:50%;
+    background:radial-gradient(circle at 50% 45%,rgba(255,250,235,.38),transparent 70%)}
+  .s1{background:linear-gradient(180deg,rgba(10,22,38,.5),rgba(6,14,26,.42));
+    box-shadow:0 0 34px rgba(150,220,255,.17),0 0 90px rgba(90,180,255,.11),
+      0 0 190px rgba(70,160,255,.05)}
+
+  /* ==================== 2 · МЕДУЗА ==================== */
+  .o2 .dome{position:absolute;left:12%;right:12%;top:4%;height:54%;border-radius:50% 50% 46% 46%;
+    background:radial-gradient(circle at 50% 26%,rgba(205,240,255,.5),
+      rgba(80,190,250,.24) 52%,transparent 76%)}
+  .o2 .inner{position:absolute;left:34%;right:34%;top:16%;height:26%;border-radius:50%;
+    background:radial-gradient(ellipse,rgba(255,250,238,.4),transparent 70%)}
+  .o2 .t{position:absolute;bottom:0;width:12px;height:44%;border-radius:10px;
+    filter:blur(3px);
+    background:linear-gradient(180deg,rgba(130,215,255,.38),transparent)}
+  .o2 .t1{left:29%;height:40%;opacity:.9}
+  .o2 .t2{left:43%;height:52%}
+  .o2 .t3{left:50%;height:44%;opacity:.8}
+  .o2 .t4{left:57%;height:50%;opacity:.95}
+  .o2 .t5{left:70%;height:38%;opacity:.75}
+  .s2{background:rgba(8,18,32,.38)}
+  .s2::before{content:'';position:absolute;left:10%;right:10%;bottom:14px;height:2px;
+    border-radius:2px;
+    background:linear-gradient(90deg,transparent,rgba(120,205,255,.55) 30%,
+      rgba(120,205,255,.55) 70%,transparent);
+    box-shadow:0 0 14px rgba(120,205,255,.45)}
+  .s2::after{content:'';position:absolute;left:26%;bottom:9px;width:5px;height:5px;border-radius:50%;
+    background:#bfe6ff;box-shadow:14px 0 0 -1px rgba(190,230,255,.8),
+      210px 0 0 -1px rgba(190,230,255,.9),420px 0 0 -1px rgba(190,230,255,.8);
+    filter:blur(.4px)}
+
+  /* ==================== 3 · ПУЗЫРЬ ==================== */
+  .o3 .irid{position:absolute;inset:4%;border-radius:50%;filter:blur(12px);opacity:.85;
+    background:conic-gradient(from 210deg,rgba(0,225,205,.14),rgba(90,140,255,.13) 28%,
+      rgba(210,130,255,.11) 55%,rgba(0,225,205,.14))}
+  .o3 .body{position:absolute;inset:6%;border-radius:50%;
+    background:radial-gradient(circle at 42% 36%,rgba(230,248,255,.34),
+      rgba(120,205,255,.14) 45%,rgba(60,130,220,.10) 70%,transparent 88%)}
+  .o3 .spec{position:absolute;left:25%;top:17%;width:23%;height:15%;border-radius:50%;
+    transform:rotate(-22deg);filter:blur(3px);
+    background:linear-gradient(180deg,rgba(255,255,255,.55),transparent 85%)}
+  .o3 .low{position:absolute;left:34%;bottom:12%;width:32%;height:12%;border-radius:50%;
+    filter:blur(5px);
+    background:radial-gradient(ellipse,rgba(140,220,255,.28),transparent 70%)}
+  .s3{background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.02));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 0 40px rgba(120,200,255,.14),
+      0 0 120px rgba(90,170,255,.07)}
+
+  /* ==================== 4 · АВРОРА ==================== */
+  .o4{height:190px;top:auto}
+  .o4 .r{position:absolute;left:-10%;right:-10%;height:36%;border-radius:50%;
+    filter:blur(26px)}
+  .o4 .r1{top:4%;background:linear-gradient(90deg,transparent,
+    rgba(0,225,205,.36) 30%,rgba(60,140,255,.32) 60%,transparent)}
+  .o4 .r2{top:34%;background:linear-gradient(90deg,transparent,
+    rgba(80,140,255,.34) 38%,rgba(150,120,255,.24) 70%,transparent)}
+  .o4 .r3{top:64%;background:linear-gradient(90deg,transparent,
+    rgba(0,190,255,.26) 48%,rgba(0,225,205,.16) 72%,transparent)}
+  .s4::before{content:'';position:absolute;left:8%;right:8%;bottom:16px;height:3px;
+    border-radius:3px;filter:blur(.6px);
+    background:linear-gradient(90deg,transparent,rgba(0,225,205,.6) 28%,
+      rgba(90,150,255,.6) 62%,transparent);
+    box-shadow:0 0 16px rgba(80,180,255,.4)}
+  .s4{background:rgba(8,18,32,.34)}
+
+  /* ==================== 5 · ПУЛЬС ==================== */
+  .o5 .core{position:absolute;inset:31%;border-radius:50%;
+    background:radial-gradient(circle at 48% 42%,rgba(255,248,230,.62),
+      rgba(255,210,120,.24) 50%,transparent 72%)}
+  .o5 .ring{position:absolute;border-radius:50%}
+  .o5 .r1{inset:18%;
+    background:radial-gradient(circle,transparent 62%,rgba(255,222,150,.20) 72%,transparent 78%)}
+  .o5 .r2{inset:6%;
+    background:radial-gradient(circle,transparent 70%,rgba(255,222,150,.13) 79%,transparent 85%)}
+  .o5 .r3{inset:-8%;
+    background:radial-gradient(circle,transparent 76%,rgba(120,200,255,.10) 85%,transparent 92%)}
+  .s5{background:linear-gradient(180deg,rgba(14,24,38,.46),rgba(8,16,28,.4))}
+  .s5::after{content:'';position:absolute;left:14%;right:14%;bottom:-16px;height:26px;
+    border-radius:50%;filter:blur(10px);
+    background:radial-gradient(ellipse,rgba(255,214,140,.30),transparent 70%)}
+
+  /* ==================== 6 · КАПЛЯ ==================== */
+  .o6 .body{position:absolute;inset:4%;border-radius:50%;
+    background:radial-gradient(circle at 44% 34%,rgba(160,225,255,.32),
+      rgba(40,120,210,.17) 52%,rgba(10,50,110,.15) 78%,transparent 92%)}
+  .o6 .gloss{position:absolute;left:21%;top:11%;width:35%;height:23%;border-radius:50%;
+    transform:rotate(-20deg);filter:blur(5px);
+    background:linear-gradient(180deg,rgba(255,255,255,.46),transparent 80%)}
+  .o6 .caustic{position:absolute;left:29%;bottom:9%;width:42%;height:17%;border-radius:50%;
+    filter:blur(7px);
+    background:radial-gradient(ellipse,rgba(140,220,255,.30),transparent 70%)}
+  .o6 .rim{position:absolute;inset:2%;border-radius:50%;filter:blur(8px);
+    background:radial-gradient(circle,transparent 68%,rgba(150,215,255,.16) 79%,transparent 88%)}
+  .s6{background:linear-gradient(180deg,rgba(0,190,255,.10),rgba(0,110,255,.05));
+    box-shadow:inset 0 0 24px rgba(120,200,255,.10),0 0 44px rgba(90,180,255,.13)}
+
+  /* ==================== 7 · ГАЛАКТИКА ==================== */
+  .o7 .haze{position:absolute;inset:8%;border-radius:50%;
+    background:radial-gradient(circle,transparent 38%,rgba(80,150,255,.11) 66%,transparent 82%)}
+  .o7 .core{position:absolute;inset:35%;border-radius:50%;
+    background:radial-gradient(circle at 50% 44%,rgba(235,250,255,.66),
+      rgba(120,205,255,.28) 52%,transparent 74%)}
+  .o7 .m{position:absolute;border-radius:50%;filter:blur(1.6px);
+    background:radial-gradient(circle,rgba(195,238,255,.9),transparent 70%)}
+  .o7 .m1{width:8px;height:8px;left:12%;top:30%}
+  .o7 .m2{width:6px;height:6px;left:26%;top:12%;opacity:.8}
+  .o7 .m3{width:9px;height:9px;left:44%;top:2%;opacity:.9}
+  .o7 .m4{width:5px;height:5px;left:64%;top:8%;opacity:.7}
+  .o7 .m5{width:8px;height:8px;left:80%;top:22%;opacity:.85}
+  .o7 .m6{width:6px;height:6px;left:88%;top:46%;opacity:.6}
+  .o7 .m7{width:8px;height:8px;left:78%;top:70%;opacity:.8}
+  .o7 .m8{width:5px;height:5px;left:56%;top:88%;opacity:.65}
+  .o7 .m9{width:7px;height:7px;left:30%;top:84%;opacity:.75}
+  .o7 .m10{width:6px;height:6px;left:10%;top:62%;opacity:.7}
+  .s7{background:rgba(8,18,32,.36)}
+  .s7 .dots{position:absolute;left:12%;right:12%;bottom:15px;display:flex;
+    justify-content:space-between;align-items:center}
+  .s7 .dots i{width:5px;height:5px;border-radius:50%;background:#9fd8ff;
+    box-shadow:0 0 8px rgba(140,210,255,.7)}
+  .s7 .dots i:nth-child(3),.s7 .dots i:nth-child(7){width:7px;height:7px;opacity:1}
+  .s7 .dots i:nth-child(1),.s7 .dots i:nth-child(11){opacity:.4}
+  .s7 .dots i:nth-child(2),.s7 .dots i:nth-child(10){opacity:.6}
+
+  /* ==================== 8 · ДЫХАНИЕ ВОДЫ ==================== */
+  .o8 .drop{position:absolute;inset:42%;border-radius:50%;
+    background:radial-gradient(circle,rgba(220,245,255,.6),rgba(120,200,255,.2) 55%,transparent 75%)}
+  .o8 .w{position:absolute;border-radius:50%;
+    background:radial-gradient(circle,transparent 62%,rgba(120,200,255,.17) 73%,transparent 80%)}
+  .o8 .w1{inset:26%}
+  .o8 .w2{inset:13%;opacity:.75}
+  .o8 .w3{inset:0;opacity:.55}
+  .o8 .w4{inset:-14%;opacity:.35}
+  .s8{background:rgba(8,18,32,.35)}
+  .s8::after{content:'';position:absolute;left:16%;right:16%;bottom:-12px;height:22px;
+    border-radius:50%;border-top:2px solid rgba(130,205,255,.35);
+    box-shadow:0 10px 0 -2px rgba(130,205,255,.16);filter:blur(.4px)}
+
+  /* ==================== 9 · МАТОВОЕ СТЕКЛО ==================== */
+  .o9 .glass{position:absolute;inset:8%;border-radius:50%;
+    background:radial-gradient(circle at 50% 38%,rgba(150,210,255,.10),
+      rgba(22,42,72,.24) 68%,rgba(14,28,50,.28) 100%);
+    box-shadow:inset 0 0 60px rgba(140,200,255,.10),0 0 80px rgba(80,170,255,.12)}
+  .o9 .rim{position:absolute;inset:5%;border-radius:50%;filter:blur(7px);
+    background:radial-gradient(circle,transparent 68%,rgba(160,220,255,.15) 77%,transparent 86%)}
+  .o9 .heart{position:absolute;inset:33%;border-radius:50%;filter:blur(4px);
+    background:radial-gradient(circle,rgba(225,245,255,.42),transparent 68%)}
+  .s9{background:rgba(255,255,255,.05);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.09),inset 0 0 30px rgba(130,200,255,.07),
+      0 0 50px rgba(90,175,255,.12)}
+  .s9 .send{background:rgba(120,200,255,.09)}
+
+  /* ==================== 10 · ПЛАМЯ ЭФИРА ==================== */
+  .o10{height:280px}
+  .o10 .flame{position:absolute;left:24%;right:24%;top:-2%;bottom:6%;
+    border-radius:50% 50% 48% 48% / 62% 62% 38% 38%;filter:blur(2px);
+    background:radial-gradient(circle at 50% 72%,rgba(255,246,225,.5),
+      rgba(120,215,255,.26) 40%,rgba(40,140,230,.10) 66%,transparent 86%)}
+  .o10 .inner{position:absolute;left:39%;right:39%;top:26%;bottom:12%;
+    border-radius:50%;filter:blur(4px);
+    background:radial-gradient(circle at 50% 74%,rgba(255,255,250,.7),transparent 62%)}
+  .o10 .base{position:absolute;left:30%;right:30%;bottom:0;height:16%;
+    border-radius:50%;filter:blur(8px);
+    background:radial-gradient(ellipse,rgba(140,210,255,.22),transparent 70%)}
+  .s10{background:linear-gradient(180deg,rgba(16,24,36,.42),rgba(10,16,26,.36))}
+  .s10::before{content:'';position:absolute;left:10%;right:10%;bottom:15px;height:2px;
+    border-radius:2px;
+    background:linear-gradient(90deg,transparent,rgba(255,224,170,.55) 34%,
+      rgba(255,224,170,.55) 66%,transparent);
+    box-shadow:0 0 14px rgba(255,214,150,.35)}
+</style>
+</head>
+<body>
+
+<!-- ОБЛОЖКА -->
+<section class="tile cover">
+  <div class="breath b1"></div><div class="breath b2"></div>
+  <div class="c-orb"><i class="cl cl1"></i><i class="cl cl2"></i><i class="cl cl3"></i></div>
+  <div class="c-kicker">LIVE · ДИЗАЙН-РЕШЕНИЕ</div>
+  <h1>Орб и строка · 10 вариантов</h1>
+  <div class="c-sub">Всё в дизайн-системе текущего звонка: тёмная вода, свет без границ и металла.<br>
+    Трансформации орба сделаем после того, как выберешь форму.<br><br>
+    <b style="color:#bcd9ef">Скажи номер варианта — например, «четвёртый».</b></div>
+</section>
+
+<!-- 1 -->
+<section class="tile" id="v1">
+  <div class="breath b1"></div><div class="breath b2"></div>
+  <div class="v-label">
+    <div class="v-num">ВАРИАНТ 01</div>
+    <div class="v-name">Туман</div>
+    <div class="v-desc">Три слоя света дышат в противофазе — воздух, ореол и тёплая сердцевина. Самый спокойный. Строка светит только наружу.</div>
+  </div>
+  <div class="v-stage">
+    <div class="v-orb o1"><i class="l1"></i><i class="l2"></i><i class="l3"></i></div>
+    <div class="v-line s1"><span class="ph">Спроси Джарвиса…</span>
+      <span class="send"><svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg></span></div>
+  </div>
+  <div class="v-hint">LIVE · ВЫБЕРИ НОМЕР</div>
+</section>
+
+<!-- 2 -->
+<section class="tile" id="v2">
+  <div class="breath b1"></div><div class="breath b2"></div>
+  <div class="v-label">
+    <div class="v-num">ВАРИАНТ 02</div>
+    <div class="v-name">Медуза</div>
+    <div class="v-desc">Светящийся купол и мягкие нити света тянутся вниз — живое существо из воды. Строка — тонкая световая нить с огоньками.</div>
+  </div>
+  <div class="v-stage">
+    <div class="v-orb o2"><i class="dome"></i><i class="inner"></i>
+      <i class="t t1"></i><i class="t t2"></i><i class="t t3"></i><i class="t t4"></i><i class="t t5"></i></div>
+    <div class="v-line s2"><span class="ph">Спроси Джарвиса…</span>
+      <span class="send"><svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg></span></div>
+  </div>
+  <div class="v-hint">LIVE · ВЫБЕРИ НОМЕР</div>
+</section>
+
+<!-- 3 -->
+<section class="tile" id="v3">
+  <div class="breath b1"></div><div class="breath b2"></div>
+  <div class="v-label">
+    <div class="v-num">ВАРИАНТ 03</div>
+    <div class="v-name">Пузырь</div>
+    <div class="v-desc">Мыльный пузырь: лёгкие переливы радуги, блик слева-сверху, невесомость. Строка — стеклянная пилюля с внутренним светом.</div>
+  </div>
+  <div class="v-stage">
+    <div class="v-orb o3"><i class="irid"></i><i class="body"></i><i class="spec"></i><i class="low"></i></div>
+    <div class="v-line s3"><span class="ph">Спроси Джарвиса…</span>
+      <span class="send"><svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg></span></div>
+  </div>
+  <div class="v-hint">LIVE · ВЫБЕРИ НОМЕР</div>
+</section>
+
+<!-- 4 -->
+<section class="tile" id="v4">
+  <div class="breath b1"></div><div class="breath b2"></div>
+  <div class="v-label">
+    <div class="v-num">ВАРИАНТ 04</div>
+    <div class="v-name">Аврора</div>
+    <div class="v-desc">Три широкие волны света плывут горизонтально — как северное сияние под водой. Орб становится потоком. Строка — градиентная волна.</div>
+  </div>
+  <div class="v-stage">
+    <div class="v-orb o4"><i class="r r1"></i><i class="r r2"></i><i class="r r3"></i></div>
+    <div class="v-line s4"><span class="ph">Спроси Джарвиса…</span>
+      <span class="send"><svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg></span></div>
+  </div>
+  <div class="v-hint">LIVE · ВЫБЕРИ НОМЕР</div>
+</section>
+
+<!-- 5 -->
+<section class="tile" id="v5">
+  <div class="breath b1"></div><div class="breath b2"></div>
+  <div class="v-label">
+    <div class="v-num">ВАРИАНТ 05</div>
+    <div class="v-name">Пульс</div>
+    <div class="v-desc">Тёплое живое ядро, от которого расходятся волны света — как heartbeat звонка. Строка подсвечена тёплым светом снизу.</div>
+  </div>
+  <div class="v-stage">
+    <div class="v-orb o5"><i class="ring r1"></i><i class="ring r2"></i><i class="ring r3"></i><i class="core"></i></div>
+    <div class="v-line s5"><span class="ph">Спроси Джарвиса…</span>
+      <span class="send"><svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg></span></div>
+  </div>
+  <div class="v-hint">LIVE · ВЫБЕРИ НОМЕР</div>
+</section>
+
+<!-- 6 -->
+<section class="tile" id="v6">
+  <div class="breath b1"></div><div class="breath b2"></div>
+  <div class="v-label">
+    <div class="v-num">ВАРИАНТ 06</div>
+    <div class="v-name">Капля</div>
+    <div class="v-desc">Гладкая капля воды: глянцевый блик, преломление света снизу, мягкая кайма. Строка наливается синим светом изнутри.</div>
+  </div>
+  <div class="v-stage">
+    <div class="v-orb o6"><i class="rim"></i><i class="body"></i><i class="gloss"></i><i class="caustic"></i></div>
+    <div class="v-line s6"><span class="ph">Спроси Джарвиса…</span>
+      <span class="send"><svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg></span></div>
+  </div>
+  <div class="v-hint">LIVE · ВЫБЕРИ НОМЕР</div>
+</section>
+
+<!-- 7 -->
+<section class="tile" id="v7">
+  <div class="breath b1"></div><div class="breath b2"></div>
+  <div class="v-label">
+    <div class="v-num">ВАРИАНТ 07</div>
+    <div class="v-name">Галактика</div>
+    <div class="v-desc">Ядро со световой пылью на орбите — мысли Джарвиса как звёздная пыль. Строка — дорога из огоньков света.</div>
+  </div>
+  <div class="v-stage">
+    <div class="v-orb o7"><i class="haze"></i><i class="core"></i>
+      <i class="m m1"></i><i class="m m2"></i><i class="m m3"></i><i class="m m4"></i><i class="m m5"></i>
+      <i class="m m6"></i><i class="m m7"></i><i class="m m8"></i><i class="m m9"></i><i class="m m10"></i></div>
+    <div class="v-line s7">
+      <span class="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      <span class="ph">Спроси Джарвиса…</span>
+      <span class="send"><svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg></span></div>
+  </div>
+  <div class="v-hint">LIVE · ВЫБЕРИ НОМЕР</div>
+</section>
+
+<!-- 8 -->
+<section class="tile" id="v8">
+  <div class="breath b1"></div><div class="breath b2"></div>
+  <div class="v-label">
+    <div class="v-num">ВАРИАНТ 08</div>
+    <div class="v-name">Дыхание воды</div>
+    <div class="v-desc">Рябь расходится кругами от капли света — экран как поверхность воды. Строка оставляет кольца на воде.</div>
+  </div>
+  <div class="v-stage">
+    <div class="v-orb o8"><i class="w w4"></i><i class="w w3"></i><i class="w w2"></i><i class="w w1"></i><i class="drop"></i></div>
+    <div class="v-line s8"><span class="ph">Спроси Джарвиса…</span>
+      <span class="send"><svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg></span></div>
+  </div>
+  <div class="v-hint">LIVE · ВЫБЕРИ НОМЕР</div>
+</section>
+
+<!-- 9 -->
+<section class="tile" id="v9">
+  <div class="breath b1"></div><div class="breath b2"></div>
+  <div class="v-label">
+    <div class="v-num">ВАРИАНТ 09</div>
+    <div class="v-name">Матовое стекло</div>
+    <div class="v-desc">Диск из мутного стекла с мягкой световой каймой и тёплым сердцем внутри — сдержанно и дорого. Строка — такое же стекло.</div>
+  </div>
+  <div class="v-stage">
+    <div class="v-orb o9"><i class="glass"></i><i class="rim"></i><i class="heart"></i></div>
+    <div class="v-line s9"><span class="ph">Спроси Джарвиса…</span>
+      <span class="send"><svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg></span></div>
+  </div>
+  <div class="v-hint">LIVE · ВЫБЕРИ НОМЕР</div>
+</section>
+
+<!-- 10 -->
+<section class="tile" id="v10">
+  <div class="breath b1"></div><div class="breath b2"></div>
+  <div class="v-label">
+    <div class="v-num">ВАРИАНТ 10</div>
+    <div class="v-name">Пламя эфира</div>
+    <div class="v-desc">Мягкое пламя тёплого света колышется вверх — живой огонёк в воде. Строка — тёплая световая линия.</div>
+  </div>
+  <div class="v-stage">
+    <div class="v-orb o10"><i class="flame"></i><i class="inner"></i><i class="base"></i></div>
+    <div class="v-line s10"><span class="ph">Спроси Джарвиса…</span>
+      <span class="send"><svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg></span></div>
+  </div>
+  <div class="v-hint">LIVE · ВЫБЕРИ НОМЕР</div>
+</section>
+
+</body>
+</html>
