@@ -28,6 +28,15 @@ VERSION = __version__
 MAX_BODY_BYTES = 48 * 1024 * 1024
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
+# BM30.3: ХОСТЫ YANDEX TTS — правильный порядок поддоменов ПЕРВЫМ
+# (у Яндекса сервис идёт впереди: llm.api, ai.api, operation.api).
+# Прежний api.tts.cloud.yandex.net НЕ СУЩЕСТВУЕТ — macOS отвечала Errno 8.
+# Первый рабочий хост всплывает в начало и запоминается до перезапуска.
+_TTS_URLS = [
+    "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize",
+    "https://api.tts.cloud.yandex.net/speech/v1/tts:synthesize",
+]
+
 # Активные foreground-прогоны. Раньше Stop рвал только SSE-соединение, а сам
 # агент продолжал жить до конца: спрашивал санкции, двигал мышью, доводил
 # «молчальную» генерацию. Теперь каждый прогон регистрирует здесь свой
@@ -679,17 +688,34 @@ class Handler(BaseHTTPRequestHandler):
             return {"ok": False, "class": "config",
                     "error": "Голос не настроен: в Настройках вписать API-ключ "
                              "и folder_id Yandex (вкладка «Модели и ключи»)"}
+        # BM30.3: КОРЕНЬ «НЕТ ДОСТУПА К TTS» НАЙДЕН — домен был написан в
+        # неправильном порядке (api.tts… вместо tts.api… — у Яндекса сервис
+        # идёт ПЕРВЫМ поддоменом: llm.api, ai.api, operation.api). Домена
+        # api.tts.cloud.yandex.net не существует — macOS честно отвечала
+        # Errno 8 nodename. Перебираем оба порядка, рабочий запоминаем
         data = urllib.parse.urlencode({
             "text": text, "folderId": folder,
             "voice": "ermil",            # мужской, живой
             "format": "lpcm", "sampleRateHertz": "48000",
         }).encode("utf-8")
-        req = urllib.request.Request(
-            "https://api.tts.cloud.yandex.net/speech/v1/tts:synthesize",
-            data=data, headers={"Authorization": "Api-Key " + key})
+        last_err: Exception = RuntimeError("не пробовали")
         try:
-            with urllib.request.urlopen(req, timeout=20) as r:
-                pcm = r.read()
+            for url in _TTS_URLS:
+                req = urllib.request.Request(url, data=data,
+                                             headers={"Authorization": "Api-Key " + key})
+                try:
+                    with urllib.request.urlopen(req, timeout=20) as r:
+                        pcm = r.read()
+                    _TTS_URLS[:] = [url] + [u for u in _TTS_URLS if u != url]
+                    break
+                except urllib.error.HTTPError:
+                    raise               # дошли до API — ошибка API честнее сетевой
+                except Exception as e:
+                    last_err = e
+                    self._tts_log("HOST FAIL %s: %s" % (url.split("//")[1].split("/")[0],
+                                                        str(e)[:120]))
+            else:
+                raise last_err
         except urllib.error.HTTPError as e:
             # Настоящий ответ Яндекса: код + тело. Причина — не догадка
             detail = ""

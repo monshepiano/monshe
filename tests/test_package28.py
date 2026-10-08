@@ -8643,7 +8643,12 @@ class IterationBM18Tests(unittest.TestCase):
         py_llm_src = Path("app/jarvis/llm.py").read_text(encoding="utf-8")
         self.assertIn('if path == "/api/tts":', py_server)
         self.assertIn('if body.get("kind") == "live":', py_server)
-        self.assertIn("api.tts.cloud.yandex.net/speech/v1/tts:synthesize", py_server)
+        self.assertIn("tts.api.cloud.yandex.net/speech/v1/tts:synthesize", py_server)
+        # BM30.3: правильный порядок поддомена ПЕРВЫМ + перебор хостов
+        # (прошлый api.tts... НЕ существует — Errno 8 nodename на macOS)
+        self.assertIn("_TTS_URLS = [", py_server)
+        self.assertIn('"https://api.tts.cloud.yandex.net/speech/v1/tts:synthesize",', py_server)
+        self.assertIn("for url in _TTS_URLS:", py_server)
         self.assertIn('"voice": "ermil"', py_server)
         # BM29.2: анализатор привязан к контексту (перебой и VAD живые)
         self.assertIn("if (!VOICE.an || VOICE.anCtx !== VOICE.ctx) {", js)
