@@ -1926,37 +1926,51 @@ async function fetchProvidersSnapshot() {
   } catch (e) { return S.providers || {}; }
 }
 
+/* BM30.1: КТО ОТВЕТИТ СЛЕДУЮЩИМ — первый ДОСТУПНЫЙ по приоритету:
+   живой основной, иначе первый живой запасной, иначе первый с ключом.
+   Прежний чип показывал последнего использованного — человек видел
+   «yandex», хотя следующим ответит cloud */
+function provPriority() {
+  const snap = S.providers || {};
+  const act = Object.entries(snap)
+    .filter(([, v]) => v && v.order >= 0 && v.has_key)
+    .sort((a, b) => a[1].order - b[1].order);
+  if (!act.length) return { name: '', dead: false, order: -1 };
+  const dead = (v) => v.probe && v.probe.probed && v.probe.dead;
+  const alive = act.find(([, v]) => !dead(v));
+  if (alive) return { name: alive[0], dead: false, order: alive[1].order };
+  return { name: act[0][0], dead: true, order: act[0][1].order };
+}
+
 function setProvChip(name) {
   /* BM8: чип показывает РОЛЬ огоньком, а не имя: зелёный — отвечает
      основной, жёлтый — первый запасной, красный — второй/дальний,
-     красный мигающий — не работает никто. Имя — в подсказке. */
-  S.lastProvider = name || '';
+     красный мигающий — не работает никто. Имя — в подсказке.
+     BM30.1: имя = приоритетно доступный провайдер (см. provPriority) */
+  S.lastProvider = name || S.lastProvider || '';
   const snap = S.providers || {};
   const act = Object.entries(snap)
     .filter(([, v]) => v && v.order >= 0).sort((a, b) => a[1].order - b[1].order);
   const chip = $('#chipProv');
   if (!chip) return;
+  const pr = provPriority();
   let cls = 'ok';
   let title = 'провайдер';
   if (!act.length) {
     cls = 'err live'; title = 'ни один провайдер не подключён — вставь ключ в настройках';
-  } else if (act.every(([, v]) => v.probe && v.probe.probed && v.probe.dead)) {
+  } else if (pr.dead) {
     cls = 'err live'; title = 'все провайдеры не отвечают';
   } else {
-    const cur = (name && snap[name] && snap[name].order >= 0)
-      ? snap[name] : act[0][1];
-    const curName = (name && snap[name] && snap[name].order >= 0)
-      ? name : act[0][0];
-    cls = cur.order === 0 ? 'ok' : (cur.order === 1 ? 'warn' : 'err');
-    title = 'отвечает: ' + (PROV_SHORT[curName] || curName)
-      + (cur.order > 0 ? ' (запасной ' + cur.order + ')' : ' (основной)')
-      + (cur.penalty > 0 ? ' — медленно, штраф ' + cur.penalty : '');
+    cls = pr.order === 0 ? 'ok' : (pr.order === 1 ? 'warn' : 'err');
+    title = 'будет отвечать: ' + (PROV_SHORT[pr.name] || pr.name)
+      + (pr.order > 0 ? ' (основной недоступен, запасной ' + pr.order + ')' : ' (основной)')
+      + ((snap[pr.name] || {}).penalty > 0 ? ' — медленно, штраф ' + snap[pr.name].penalty : '');
   }
   chip.title = title;
   chip.querySelector('.dot').className = 'dot ' + cls;
   // BM11: слово «провайдер» убрано — только имя. Роль несёт огонёк.
-  chip.querySelector('span').textContent = S.lastProvider
-    ? (PROV_SHORT[S.lastProvider] || S.lastProvider) : '—';
+  chip.querySelector('span').textContent = pr.name
+    ? (PROV_SHORT[pr.name] || pr.name) : '—';
 }
 
 /* Живые индикаторы в свёрнутых строках настроек: зонд, генерация, штраф */
@@ -11738,6 +11752,29 @@ function voiceFeed(chunk) {
 let VOICE_TTS_OK = null;      // null = не пробовали; true = живой; число = epoch следующей попытки
 let VOICE_TTS_ERR_SHOWN = false;
 
+/* BM30.1: статус голоса — ВСЕГДА на экране звонка, мелко над панелью.
+   Не тост, не догадка: человек видит, какой голос говорит и почему */
+function liveVoiceSet(kind, reason) {
+  if (!LIVE.on || !LIVE.voiceEl) return;
+  const SHORT = {
+    config: 'ключ Яндекс не вписан',
+    net: 'сервер без интернета (превью?)',
+    auth: 'ключ/роль не приняты Яндексом',
+    rate: 'лимит Яндекс, повторю',
+    server: 'Яндекс временно недоступен',
+  };
+  if (kind === 'ok') {
+    LIVE.voiceEl.className = 'live-voice on ok';
+    LIVE.voiceEl.textContent = 'ГОЛОС · ЯНДЕКС (НАСТОЯЩИЙ)';
+  } else if (kind === 'sys') {
+    LIVE.voiceEl.className = 'live-voice on sys';
+    LIVE.voiceEl.textContent = 'ГОЛОС · СИСТЕМНЫЙ — ' + (SHORT[reason] || 'нет доступа к Яндексу');
+  } else {
+    LIVE.voiceEl.className = 'live-voice';
+    LIVE.voiceEl.textContent = '';
+  }
+}
+
 function voiceSpeakViaServer(text) {
   /* BM30: РЕТРАИ — ТОЛЬКО ВРЕМЕННЫМ ОШИБКАМ. Прежний код долбил Яндекс
      каждые 45с что бы ни случилось: DNS-блок песочницы и неверный ключ
@@ -11749,6 +11786,7 @@ function voiceSpeakViaServer(text) {
   return api('/api/tts', { text }).then((r) => {
     if (r && r.ok && r.audio) {
       VOICE_TTS_OK = true;
+      liveVoiceSet('ok');                       // настоящий голос — видно сразу
       return new Promise((resolve) => {
         const au = new Audio('data:audio/wav;base64,' + r.audio);
         VOICE.ttsAudio = au;
@@ -11762,6 +11800,7 @@ function voiceSpeakViaServer(text) {
       });
     }
     /* честная причина: человек должен ЗНАТЬ, почему голос системный */
+    liveVoiceSet('sys', (r && r.class) || 'server');
     if (r && r.error && !VOICE_TTS_ERR_SHOWN) {
       VOICE_TTS_ERR_SHOWN = true;
       toast('Голос Джарвиса: ' + r.error +
@@ -11899,7 +11938,8 @@ document.addEventListener('keydown', (e) => {
 /* ============================================================ */
 const LIVE = { on: false, mic: false, cam: false, root: null, video: null,
   dreamIn: null, qEl: null, aEl: null, toolsEl: null, sideEl: null,
-  askEl: null, run: 0, camStream: null, host: null, planOpen: false, askOn: false };
+  askEl: null, run: 0, camStream: null, host: null, planOpen: false, askOn: false,
+  voiceEl: null };
 
 /* BM29: единый закон «элементы уступают друг другу»: как только справа
    живёт большой элемент (интерактив, план, медиа) — главный элемент
@@ -11961,6 +12001,13 @@ function liveBuild() {
         '<i class="lm lm1"></i><i class="lm lm2"></i><i class="lm lm3"></i>' +
         '<i class="lm lm4"></i>' +
       '</div>' +
+      /* BM30.1: ГЛУБИННЫЕ ПУЗЫРИ — долгое думанье перестаёт быть скукой:
+         мягкие пузыри воздуха рвутся сквозь воду к ядру и тают. Только
+         transform/opacity — чайник не заметит нагрузки */
+      '<div class="live-bubbles">' +
+        '<i class="bu bu1"></i><i class="bu bu2"></i><i class="bu bu3"></i>' +
+        '<i class="bu bu4"></i><i class="bu bu5"></i><i class="bu bu6"></i>' +
+      '</div>' +
     '</div>' +
     '<div class="live-veil"></div>' +
     '<div class="live-stage">' +
@@ -11987,6 +12034,10 @@ function liveBuild() {
       '</div>' +
       '<div class="live-side"><div class="ls-title">ПЛАН АГЕНТА</div><div class="live-side-in"></div></div>' +
     '</div>' +
+    /* BM30.1: ГОЛОС ВСЕГДА ВИДЕН — без тостов-однодневок. Какой голос
+       сейчас говорит (Яндекс/системный) и почему — мелкой строкой над
+       панелью. Человек больше не гадает, работает настоящий или нет */
+    '<div class="live-voice"></div>' +
     '<div class="live-bar">' +
       '<button class="lb" id="lbCam" title="Камера" aria-label="Камера">' +
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 8.4v7.2a2 2 0 0 1-2 2H4.8a2 2 0 0 1-2-2V8.4a2 2 0 0 1 2-2H13a2 2 0 0 1 2 2z"/><path d="M15 11.2l5-2.8v7.2l-5-2.8"/></svg></button>' +
@@ -12008,6 +12059,7 @@ function liveBuild() {
   LIVE.aEl = root.querySelector('.live-a');
   LIVE.toolsEl = root.querySelector('.live-tools');
   LIVE.sideEl = root.querySelector('.live-side-in');
+  LIVE.voiceEl = root.querySelector('.live-voice');
   /* строка ввода: Enter — спросить */
   const inp = root.querySelector('#liveInput');
   inp.addEventListener('keydown', (e) => {
@@ -12048,6 +12100,7 @@ async function liveOpen() {
      в Настройках между звонками, вечный «false» не должен переживать вызов */
   VOICE_TTS_OK = null;
   VOICE_TTS_ERR_SHOWN = false;
+  liveVoiceSet('off');          // индикатор голоса чистый лист
   killWelcome();
   showView('chat');
   liveBuild();
@@ -12231,14 +12284,6 @@ async function liveSetCam(on) {
     LIVE.cam = true;
     LIVE.root.classList.add('cam-on');
     sfx('start');
-    /* BM30: «Камера меня не видит» — кадр уходил модели молча, человек не
-       знал, работает ли зрение. Теперь включение камеры = короткая реплика
-       Джарвиса «вижу тебя»: зрение проверяется на живом кадре сразу */
-    setTimeout(() => {
-      if (!LIVE.on || !LIVE.cam || S.streaming) return;
-      if (LIVE.mic) voiceAsk('Камера только что включилась. Одной короткой живой фразой скажи, что ты меня видишь.');
-      else liveAskText('Камера включилась. Одной короткой фразой скажи, что ты меня видишь.');
-    }, 1300);
   } else {
     LIVE.cam = false;
     LIVE.root.classList.remove('cam-on');

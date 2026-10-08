@@ -7089,12 +7089,15 @@ class IterationBM8Tests(unittest.TestCase):
         self.assertIn("flow.classList.contains('full') && inner.scrollHeight", feed)
 
     def test_chip_shows_role_light_not_name(self) -> None:
-        """Чип — только имя провайдера и огонёк роли; слово «провайдер» убрано."""
+        """Чип — только имя провайдера и огонёк роли; слово «провайдер» убрано.
+        BM30.1: имя = приоритетно ДОСТУПНЫЙ провайдер (первый живой по
+        приоритету), а не последний использованный — просьба человека."""
         js = Path("app/jarvis/web/js/app.js").read_text(encoding="utf-8")
         spc = js.split("function setProvChip(name)")[1].split("\nfunction ")[0]
-        self.assertIn("? (PROV_SHORT[S.lastProvider] || S.lastProvider) : '—';", spc)
+        self.assertIn("? (PROV_SHORT[pr.name] || pr.name) : '—';", spc)
+        self.assertIn("function provPriority() {", js)
         self.assertNotIn("'провайдер: '", js)
-        self.assertIn("cur.order === 0 ? 'ok'", spc)
+        self.assertIn("pr.order === 0 ? 'ok'", spc)
         self.assertIn("'err live'", spc)
         self.assertIn("PROV_SHORT", spc)
         self.assertIn("cloud.ru", js.split("const PROV_SHORT")[1][:200])
@@ -8705,13 +8708,27 @@ class IterationBM18Tests(unittest.TestCase):
         # кадр камеры = живые глаза: модель не предлагает «сделать фото»
         self.assertIn("ЖИВОЙ кадр камеры", py_server)
         self.assertIn("НЕ предлагай сделать фото", py_server)
-        # включение камеры = короткая реплика «вижу тебя»
-        self.assertIn("Одной короткой живой фразой скажи, что ты меня видишь", js)
+        # BM30.1: авто-реплики «вижу тебя» НЕТ — semантика кадра живёт
+        # в системной ноте, а не в навязанных фразах (просьба человека)
+        self.assertNotIn("что ты меня видишь", js)
+        # статус голоса всегда виден в сцене (не тост-однодневка)
+        self.assertIn("function liveVoiceSet(kind, reason) {", js)
+        self.assertIn("ГОЛОС · ЯНДЕКС (НАСТОЯЩИЙ)", js)
+        self.assertIn("ГОЛОС · СИСТЕМНЫЙ — ", js)
+        self.assertIn(".live-voice{", css)
+        self.assertIn(".live-voice.on{opacity:.62}", css)
+        # чип провайдера: приоритетно ДОСТУПНЫЙ, а не последний использованный
+        self.assertIn("function provPriority() {", js)
+        self.assertIn("будет отвечать: ", js)
         # камера: орб сильнее сжимается и полностью над панелью
         self.assertIn("calc(-50% - 36vh)) scale(.6)}", css)
         # кнопки/док чуть меньше, разлёт сохранён
         self.assertIn(".lb{width:64px;height:64px;border-radius:50%", css)
         self.assertIn("display:flex;gap:92px;padding:12px 36px", css)
+        # BM30.1: долгое думанье — глубинные пузыри (только transform/opacity)
+        self.assertIn("live-bubbles", js)
+        self.assertIn("#liveRoot.ph-thinking .live-bubbles{opacity:1}", css)
+        self.assertIn("@keyframes loBubble{", css)
 
         # перебой глушит и серверное аудио
         self.assertIn("if (VOICE.ttsAudio) {              // BM29: серверный голос тоже замолкает", js)

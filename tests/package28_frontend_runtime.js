@@ -3245,10 +3245,11 @@ function testIterationBM6Contracts() {
 function testIterationBM8Contracts() {
   // BM8: ЧИП-ОГОНЁК — роль ответившего, имя в подсказке, «никто» мигает
   const spc = extractFunction(js, 'setProvChip');
-  assert(spc.includes("? (PROV_SHORT[S.lastProvider] || S.lastProvider) : '—';"),
-    'BM8/BM11: the chip carries the provider NAME alone («cloud.ru») — the light carries the role');
-  assert(spc.includes("cur.order === 0 ? 'ok'") &&
-    spc.includes("cur.order === 1 ? 'warn'") &&
+  assert(spc.includes("? (PROV_SHORT[pr.name] || pr.name) : '—';") &&
+    js.includes('function provPriority() {'),
+    'BM8/BM11/BM30.1: the chip carries the NAME of the first AVAILABLE provider («cloud.ru» when alive) — the light carries the role');
+  assert(spc.includes("pr.order === 0 ? 'ok'") &&
+    spc.includes("pr.order === 1 ? 'warn'") &&
     spc.includes("'err live'"),
     'BM8: green = primary, yellow = first backup, red = far backup, blinking red = nobody alive');
   assert(spc.includes('title = ') && spc.includes('PROV_SHORT'),
@@ -3290,8 +3291,9 @@ function testIterationBM9Contracts() {
   assert(urm.includes('PROV_SHORT[provRaw] || provRaw'),
     'BM9: the answer passport maps the provider id to its domain label');
   // BM11: чип — только имя провайдера (слово «провайдер» убрано)
+  // BM30.1: имя = приоритетно доступный (provPriority), не последний
   assert(!html.includes('id="chipModel"') &&
-    js.includes("? (PROV_SHORT[S.lastProvider] || S.lastProvider) : '—';") &&
+    js.includes("? (PROV_SHORT[pr.name] || pr.name) : '—';") &&
     !js.includes("'провайдер: '"),
     'BM11: the top bar chip carries the provider name alone — the word «провайдер» is gone');
   // BM9: агент не перекрашивает огоньки панели
@@ -4410,11 +4412,23 @@ function testIterationBM30Contracts() {
   assert(pyAgent.includes('ВО ВРЕМЯ РАБОТЫ НЕ МОЛЧИ') &&
     pyAgent.includes('ОБЪЯВЛЯЙ вслух одной короткой живой фразой'),
     'BM30 LIVE note: Jarvis narrates every step aloud (user demand)');
-  // камера: кадр = живые глаза, реплика «вижу тебя» при включении
+  // камера: кадр = живые глаза (система-нота), БЕЗ навязанной авто-реплики
   assert(pyServer.includes('ЖИВОЙ кадр камеры') &&
     pyServer.includes('НЕ предлагай сделать фото') &&
-    js.includes('Одной короткой живой фразой скажи, что ты меня видишь'),
-    'BM30 camera: frame is declared as live eyes; enabling the camera triggers a spoken "I see you"');
+    !js.includes('что ты меня видишь'),
+    'BM30 camera: the frame is declared as live eyes; no forced "I see you" line (user demand)');
+  // статус голоса всегда на экране звонка + приоритетный провайдер в чипе
+  assert(js.includes('function liveVoiceSet(kind, reason) {') &&
+    js.includes('ГОЛОС · ЯНДЕКС (НАСТОЯЩИЙ)') &&
+    css.includes('.live-voice{') &&
+    js.includes('function provPriority() {') &&
+    js.includes('будет отвечать: '),
+    'BM30.1: voice status lives in the scene (not a one-off toast); the header chip shows the first AVAILABLE provider, not the last used');
+  // долгое думанье: глубинные пузыри
+  assert(js.includes('live-bubbles') &&
+    css.includes('#liveRoot.ph-thinking .live-bubbles{opacity:1}') &&
+    css.includes('@keyframes loBubble{'),
+    'BM30.1: deep-water bubbles keep long thinking alive (transform/opacity only)');
   // камера: орб сильнее сжимается; кнопки/док чуть меньше, разлёт прежний
   assert(css.includes('calc(-50% - 36vh)) scale(.6)}') &&
     css.includes('.lb{width:64px;height:64px;border-radius:50%') &&

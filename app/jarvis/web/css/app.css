@@ -4167,6 +4167,27 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
   0%{opacity:0;transform:translate3d(0,0,0) scale(.5)}
   25%{opacity:.85}
   100%{opacity:0;transform:translate3d(26vw,-16vh,0) scale(1.6)}}
+/* BM30.1: ГЛУБИННЫЕ ПУЗЫРИ — долгое думанье оживает: мягкие пузыри
+   воздуха рвутся сквозь воду к ядру и тают у поверхности. Только
+   transform/opacity — работает на самом слабом ПК */
+.live-bubbles{position:absolute;inset:0;pointer-events:none;opacity:0;
+  transition:opacity .9s ease}
+#liveRoot.ph-thinking .live-bubbles{opacity:1}
+.live-bubbles .bu{position:absolute;border-radius:50%;
+  background:radial-gradient(circle at 38% 32%,rgba(190,235,255,.34),
+    rgba(120,200,255,.10) 58%,transparent 78%);
+  will-change:transform,opacity;opacity:0;
+  animation:loBubble var(--bd,9s) ease-in var(--bl,0s) infinite}
+.live-bubbles .bu1{left:30%;bottom:6vh;width:16px;height:16px;--bd:7.5s;--bl:0s}
+.live-bubbles .bu2{left:58%;bottom:4vh;width:24px;height:24px;--bd:10s;--bl:1.8s}
+.live-bubbles .bu3{left:44%;bottom:8vh;width:12px;height:12px;--bd:8.2s;--bl:3.4s}
+.live-bubbles .bu4{left:68%;bottom:10vh;width:18px;height:18px;--bd:9.4s;--bl:.9s}
+.live-bubbles .bu5{left:36%;bottom:2vh;width:28px;height:28px;--bd:11.5s;--bl:4.6s}
+.live-bubbles .bu6{left:52%;bottom:1vh;width:14px;height:14px;--bd:8.8s;--bl:2.5s}
+@keyframes loBubble{
+  0%{opacity:0;transform:translate3d(0,0,0) scale(.55)}
+  14%{opacity:.7}
+  100%{opacity:0;transform:translate3d(var(--bx,3vw),-34vh,0) scale(1.25)}}
 
 /* --- АГЕНТ: вода чуть краснеет (без полос — только цвет дыханий) --- */
 #liveRoot.ag .live-bg .a1{background:radial-gradient(circle,rgba(224,52,88,.34),transparent 66%)}
@@ -4440,6 +4461,20 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 body.live-on .modal-back{z-index:480}
 body.live-on .g-tip{z-index:490}
 body.live-on .toast{z-index:495}
+/* BM30.1: СТАТУС ГОЛОСА — мелкая строка над панелью звонка. Не тост:
+   живёт, пока звонок, чтобы человек всегда знал, какой голос говорит */
+.live-voice{position:absolute;bottom:12.5vh;left:50%;transform:translateX(-50%);
+  z-index:7;display:flex;align-items:center;gap:8px;pointer-events:none;
+  font-size:11px;font-weight:600;letter-spacing:1.8px;color:var(--tx3);
+  text-transform:uppercase;white-space:nowrap;
+  opacity:0;transition:opacity .7s ease}
+.live-voice.on{opacity:.62}
+.live-voice::before{content:'';width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.live-voice.ok::before{background:var(--green);box-shadow:0 0 9px var(--green)}
+.live-voice.sys::before{background:#e0b45c;box-shadow:0 0 9px rgba(224,180,92,.6)}
+@media (max-width:720px){
+  .live-voice{bottom:9.5vh;font-size:10px;letter-spacing:1.2px}
+}
 @media (max-width:720px){
   .live-core{width:220px;height:220px}
   #liveRoot.text-on .live-core{width:88vw;height:72px;border-radius:40px}
