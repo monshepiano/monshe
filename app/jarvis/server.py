@@ -717,21 +717,29 @@ class Handler(BaseHTTPRequestHandler):
                     "status": e.code, "detail": detail,
                     "error": "Яндекс ответил HTTP %d — %s" % (e.code, detail[:120] or "без пояснений")}
         except Exception as e:
-            # Сеть: DNS, файрвол, таймаут. ГЛАВНЫЙ случай «нет доступа»:
-            # сервер (превью в песочнице) физически не может выйти к Яндексу —
-            # ретраи бессмысленны, честно говорим об этом
+            # Сеть: DNS, файрвол, таймаут, сертификат. ГЛАВНЫЙ случай «нет
+            # доступа»: сервер физически не может выйти к Яндексу. Причина
+            # ошибки ОС прикладывается к ответу ЦЕЛИКОМ — человек видит
+            # настоящий текст (Errno 8 / SSL / timeout), а не мою догадку
             reason = str(e)
             low = reason.lower()
             is_net = ("resolve" in low or "name or service" in low or "network" in low
                       or "unreachable" in low or "timed out" in low or "timeout" in low
-                      or "connection" in low or "ssl" in low)
+                      or "connection" in low or "ssl" in low
+                      # macOS-формулировки DNS-отказов
+                      or "nodename" in low or "servname" in low or "getaddrinfo" in low
+                      or "name resolution" in low or "no route" in low or "try again" in low)
             self._tts_log("NET[%s]: %s" % ("net" if is_net else "?", reason[:200]))
-            return {"ok": False, "class": "net" if is_net else "server", "detail": reason[:200],
-                    "error": "Сервер не может выйти в интернет к Яндексу" +
-                             (" (DNS/сеть закрыты)" if is_net else "") +
-                             ". Если это превью в песочнице — внешнего интернета там "
-                             "нет ВООБЩЕ, голос оживёт только в локальной сборке "
-                             "на компьютере; ключ тут ни при чём"}
+            tail = " · причина: " + reason[:140]
+            if is_net:
+                return {"ok": False, "class": "net", "detail": reason[:200],
+                        "error": "Сервер не может выйти в интернет к Яндексу"
+                                 " (DNS/сеть/сертификат)" + tail +
+                                 ". Если это превью в песочнице — внешнего интернета там "
+                                 "нет ВООБЩЕ, голос оживёт только в локальной сборке "
+                                 "на компьютере; ключ тут ни при чём"}
+            return {"ok": False, "class": "server", "detail": reason[:200],
+                    "error": "Яндекс не ответил" + tail}
         if not pcm:
             self._tts_log("EMPTY ответ")
             return {"ok": False, "class": "server", "error": "TTS: пустой ответ"}
@@ -1193,6 +1201,16 @@ class Handler(BaseHTTPRequestHandler):
                 elif mode_hint["mode"] == "computer":
                     agent_mode = True
                     computer_use = True
+                if mode_hint["mode"] == "camera" and body.get("kind") == "live":
+                    # BM30.2: камеру разрешили ПОСЛЕ старта прогона — кадра в
+                    # этом ходе ещё нет (вложения собираются до модели).
+                    # Прежде модель честно отвечала «не могу видеть», и человек
+                    # считал камеру сломанной. Теперь она знает, что происходит
+                    messages.append({"role": "system", "content":
+                        "[Система] Пользователь только что разрешил камеру: "
+                        "живой кадр начнёт приходить со следующей реплики. "
+                        "Скажи об этом одной короткой живой фразой и попроси "
+                        "спросить ещё раз — не заявляй, что не видишь."})
                 # промпт уже собран с прошлыми режимами — пересобираем честно
                 messages[0] = {"role": "system", "content": agent.build_system_prompt(
                     agent_mode, computer_use, vision_direct=runner._vision_direct)}

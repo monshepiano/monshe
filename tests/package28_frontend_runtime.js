@@ -4405,7 +4405,8 @@ function testIterationBM30Contracts() {
     js.includes('id="testTts">Проверить голос'),
     'BM30 TTS: retries only for transient classes; Settings gains a one-click voice check');
   assert(pyServer.includes('except urllib.error.HTTPError as e:') &&
-    pyServer.includes('"class": "net" if is_net else "server"') &&
+    pyServer.includes('return {"ok": False, "class": "net", "detail": reason[:200],') &&
+    pyServer.includes('return {"ok": False, "class": "server", "detail": reason[:200],') &&
     pyServer.includes('def _tts_log(line: str) -> None:'),
     'BM30 TTS: server classifies failures (config/net/auth/rate/server) and logs them');
   // LIVE-промпт: во время работы Джарвис ОБЯЗАН говорить
@@ -4418,12 +4419,24 @@ function testIterationBM30Contracts() {
     !js.includes('что ты меня видишь'),
     'BM30 camera: the frame is declared as live eyes; no forced "I see you" line (user demand)');
   // статус голоса всегда на экране звонка + приоритетный провайдер в чипе
-  assert(js.includes('function liveVoiceSet(kind, reason) {') &&
+  assert(js.includes('function liveVoiceSet(kind, reason, detail) {') &&
     js.includes('ГОЛОС · ЯНДЕКС (НАСТОЯЩИЙ)') &&
     css.includes('.live-voice{') &&
     js.includes('function provPriority() {') &&
     js.includes('будет отвечать: '),
     'BM30.1: voice status lives in the scene (not a one-off toast); the header chip shows the first AVAILABLE provider, not the last used');
+  // BM30.2: просьба режима видна в LIVE (сервер ждал до 300с!), выход
+  // возвращает последний диалог, кадр-фейл озвучивается модели честно
+  assert(js.includes("case 'mode_request': return liveModeAsk(ev);") &&
+    js.includes('function liveModeAsk(ev) {') &&
+    js.includes('if (LIVE.on) { if (!LIVE.cam) liveSetCam(true); }') &&
+    js.includes('LIVE.prevChatId = (S.chatId') &&
+    js.includes('if (backId) openChat(backId);') &&
+    js.includes('кадр не удалось получить — скажи об этом одной короткой фразой') &&
+    js.includes('text: askText,') &&
+    pyServer.includes('Пользователь только что разрешил камеру') &&
+    pyServer.includes('tail = " · причина: " + reason[:140]'),
+    'BM30.2: mode requests surface in LIVE, the call restores the last dialog, camera-frame failures are honest, TTS shows the raw OS reason');
   // долгое думанье: глубинные пузыри
   assert(js.includes('live-bubbles') &&
     css.includes('#liveRoot.ph-thinking .live-bubbles{opacity:1}') &&
@@ -4489,7 +4502,8 @@ function testIterationBM28Contracts() {
   // handleEvent кормит сцену в try/catch — визуал не рвёт поток
   assert(/if \(LIVE\.on\) \{ try \{ liveEvent\(ev\); \} catch \(e0\)/.test(extractFunction(js, 'handleEvent')) &&
     /else if \(LIVE\.on && !S\.computerUse\) liveSetComp\(true\);/.test(js) &&
-    /else if \(LIVE\.on && !S\.cameraOn\) liveSetCam\(true\);/.test(js),
+    /if \(LIVE\.on\) \{ if \(!LIVE\.cam\) liveSetCam\(true\); \}/.test(js) &&
+    js.includes("case 'mode_request': return liveModeAsk(ev);"),
     'BM28 stream: LIVE visualizes tools/plans/asks in an armored hook; a mode_request raises the call-bar toggles when the footer ones are gone');
 
   // ===== runtime: карточки инструментов мимолётом, фазы красят сцену =====

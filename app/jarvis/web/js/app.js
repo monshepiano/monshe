@@ -7235,6 +7235,9 @@ async function send(opts) {
   if (S.streaming) return;
   const text = overrideText || input.value.trim();
   if (!text && !S.attachments.length) return;
+  /* BM30.2: askText — текст запроса с возможной служебной нотой (кадр
+     камеры не получился); само поле пользователя не трогаем */
+  let askText = text;
   S.lastPrompt = text;
   // старые варианты ответа относились к прошлой реплике — убираем сразу
   const rb = $('#replyBar');
@@ -7531,10 +7534,20 @@ async function send(opts) {
     // загрузки не может через секунду самовольно запустить уже отменённый ответ.
     if ((S.camStream || liveCamOn) && !atts.some((a) => a.fromCam)) {
       /* BM29.2: камера ЗВОНКА кормит запросы тем же путём — Джарвис видит */
-      const frame = liveCamOn
+      let frame = liveCamOn
         ? await liveAttachFrame(requestChatId, controller.signal)
         : await camAttachFrame(requestChatId, controller.signal);
+      if (!frame && !controller.signal.aborted) {
+        /* BM30.2: видео могло ещё не разогнаться — один ретрай, и только
+           тогда честная нота: модель ЗНАЕТ, что кадра нет, вместо
+           «у меня нет доступа к камере» */
+        await new Promise((rr) => setTimeout(rr, 350));
+        frame = liveCamOn
+          ? await liveAttachFrame(requestChatId, controller.signal)
+          : await camAttachFrame(requestChatId, controller.signal);
+      }
       if (frame) { frame.fromCam = true; atts.push(frame); }
+      else askText += '\n[Система: камера включена, но кадр не удалось получить — скажи об этом одной короткой фразой]';
     }
     if (controller.signal.aborted || S.streamRun !== runId) {
       const aborted = new Error('Запрос остановлен');
@@ -7547,7 +7560,7 @@ async function send(opts) {
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
       body: JSON.stringify({
-        chat_id: requestChatId, kind: requestKind, text,
+        chat_id: requestChatId, kind: requestKind, text: askText,
         run_token: runToken,
         budget_rub: S.budgetRub || 0,
         edit_of: editing ? editing.id : '',
@@ -10860,9 +10873,11 @@ function handleEvent(ev, ui) {
         if (tc) { if (!S.computerUse) tc.click(); }
         else if (LIVE.on && !S.computerUse) liveSetComp(true);   // BM28
       } else if (ev.mode === 'camera') {
-        const tk = $('#tgCamera');
-        if (tk) { if (!S.cameraOn) tk.click(); }
-        else if (LIVE.on && !S.cameraOn) liveSetCam(true);       // BM28
+        /* BM30.2: в LIVE живёт СВОЯ камера звонка — прежний код жал тумблер
+           композера: поднималась трансляция в скрытый чат, а орб оставался
+           слепым. Сначала камера звонка, композер — только вне LIVE */
+        if (LIVE.on) { if (!LIVE.cam) liveSetCam(true); }
+        else { const tk = $('#tgCamera'); if (tk && !S.cameraOn) tk.click(); }
       } else if (ev.mode === 'budget') {
         if (budgetPop) openBudgetPop();
       }
@@ -11753,22 +11768,26 @@ let VOICE_TTS_OK = null;      // null = не пробовали; true = живо
 let VOICE_TTS_ERR_SHOWN = false;
 
 /* BM30.1: статус голоса — ВСЕГДА на экране звонка, мелко над панелью.
-   Не тост, не догадка: человек видит, какой голос говорит и почему */
-function liveVoiceSet(kind, reason) {
+   Не тост, не догадка: человек видит, какой голос говорит и почему.
+   BM30.2: к причине прикладывается СЫРОЙ текст ошибки ОС — следующий
+   диагноз ставится по факту, а не по догадке */
+function liveVoiceSet(kind, reason, detail) {
   if (!LIVE.on || !LIVE.voiceEl) return;
   const SHORT = {
     config: 'ключ Яндекс не вписан',
-    net: 'сервер без интернета (превью?)',
+    net: 'нет связи с Яндексом',
     auth: 'ключ/роль не приняты Яндексом',
     rate: 'лимит Яндекс, повторю',
-    server: 'Яндекс временно недоступен',
+    server: 'Яндекс не ответил',
   };
   if (kind === 'ok') {
     LIVE.voiceEl.className = 'live-voice on ok';
     LIVE.voiceEl.textContent = 'ГОЛОС · ЯНДЕКС (НАСТОЯЩИЙ)';
   } else if (kind === 'sys') {
+    let txt = 'ГОЛОС · СИСТЕМНЫЙ — ' + (SHORT[reason] || 'нет доступа к Яндексу');
+    if (detail) txt += ' · ' + String(detail).slice(0, 70);
     LIVE.voiceEl.className = 'live-voice on sys';
-    LIVE.voiceEl.textContent = 'ГОЛОС · СИСТЕМНЫЙ — ' + (SHORT[reason] || 'нет доступа к Яндексу');
+    LIVE.voiceEl.textContent = txt;
   } else {
     LIVE.voiceEl.className = 'live-voice';
     LIVE.voiceEl.textContent = '';
@@ -11800,7 +11819,7 @@ function voiceSpeakViaServer(text) {
       });
     }
     /* честная причина: человек должен ЗНАТЬ, почему голос системный */
-    liveVoiceSet('sys', (r && r.class) || 'server');
+    liveVoiceSet('sys', (r && r.class) || 'server', (r && r.detail) || '');
     if (r && r.error && !VOICE_TTS_ERR_SHOWN) {
       VOICE_TTS_ERR_SHOWN = true;
       toast('Голос Джарвиса: ' + r.error +
@@ -12092,6 +12111,9 @@ async function liveOpen() {
   liveWakeAudio();                    // СИНХРОННО в жесте клика — до всех await
   LIVE.on = true;
   LIVE.run += 1;
+  /* BM30.2: после звонка возвращаемся к ТОМУ, что было открыто — прежний
+     диалог или страница нового. Прежде выход оставлял пустой экран */
+  LIVE.prevChatId = (S.chatId && !String(S.chatId).startsWith('live-')) ? S.chatId : '';
   VOICE.open = true;
   VOICE.nodes = [];
   VOICE.chatId = '';          // каждый звонок — новый разговор
@@ -12191,6 +12213,13 @@ function liveClose() {
   LIVE.host = null;
   /* движок закрывается прежним путём: снимет voice-run, погасит синтез */
   closeVoiceMode();
+  /* BM30.2: выход возвращает последнее открытое — диалог до звонка или
+     страницу нового диалога. Раньше человек оставался на пустом экране */
+  const backId = LIVE.prevChatId || '';
+  LIVE.prevChatId = '';
+  showView('chat');
+  if (backId) openChat(backId);
+  else newChat();
 }
 
 /* --- ФАЗЫ и УРОВЕНЬ (выстреливает движок разговора) --- */
@@ -12374,6 +12403,7 @@ function liveEvent(ev) {
     case 'plan_step': return liveSideStep(ev);
     case 'approval_wait': return liveAskShow(ev);
     case 'question': return liveAskShow(ev);
+    case 'mode_request': return liveModeAsk(ev);
     case 'approval_done': return liveAskHide();
     case 'mode_changed': {
       if (S.agentMode) LIVE.root.classList.add('ag');
@@ -12435,6 +12465,39 @@ function liveToolOut(card) {
   };
   card.addEventListener('animationend', drop);
   setTimeout(drop, 950);
+}
+
+/* BM30.2: ПРОСЬБА ВКЛЮЧИТЬ РЕЖИМ — раньше в LIVE она была НЕВИДИМА:
+   сервер ждёт ответа до 300 секунд, человек смотрит на «зависший» орб.
+   Теперь панель звонка показывает разрешение, кнопки решают честно */
+function liveModeAsk(ev) {
+  if (!LIVE.root || LIVE.askEl) return;
+  LIVE.askOn = true;
+  liveSyncSide();
+  const panel = el('div', 'live-ask');
+  const META = {
+    agent: 'автономная работа по плану', computer: 'управление мышью и клавиатурой',
+    camera: 'живое зрение звонка', budget: 'потолок расходов на ответ',
+  };
+  panel.innerHTML = '<div class="la-title">◇ Включить «' + esc(ev.label || 'режим') + '»?</div>' +
+    '<div class="la-body"><b>' + esc(ev.reason || META[ev.mode] || '') + '</b></div>' +
+    '<div class="la-acts">' +
+      '<button class="btn primary sm la-yes">Включить</button>' +
+      '<button class="btn sm la-no">Не нужно</button>' +
+    '</div>';
+  LIVE.root.querySelector('.live-stage').appendChild(panel);
+  LIVE.askEl = panel;
+  sfx('warn');
+  const decide = (answer) => {
+    liveAskHide(400);
+    api('/api/questions/answer', { id: ev.id, answer });
+    if (answer !== 'Включить') return;
+    /* камера звонка поднимается сразу: кадры пойдут со следующей реплики;
+       остальные режимы поднимет mode_changed из потока */
+    if (ev.mode === 'camera' && !LIVE.cam) liveSetCam(true);
+  };
+  panel.querySelector('.la-yes').addEventListener('click', () => decide('Включить'));
+  panel.querySelector('.la-no').addEventListener('click', () => decide('Не нужно'));
 }
 
 /* большая работа: план агента — справа, элементы уступают влево */

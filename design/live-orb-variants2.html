@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>LIVE · варианты орба и строки — в реальной сцене</title>
+<!-- НАСТОЯЩИЙ CSS ПРИЛОЖЕНИЯ: галерея живёт в той же воде, что и звонок -->
+<link rel="stylesheet" href="../app/jarvis/web/css/app.css">
+<style>
+  html,body{background:#02050b;margin:0}
+  body{font-family:-apple-system,'SF Pro Display','Segoe UI',Roboto,Arial,sans-serif}
+  .scene{width:1440px;height:900px;position:relative;overflow:hidden;margin:0 auto 26px}
+  /* liveRoot в приложении position:fixed — в галерее запираем его
+     внутрь сцены, иначе все 20 сцен слипнутся в одну точку экрана */
+  .scene #liveRoot{position:absolute;inset:0;z-index:1}
+  .badge{position:absolute;top:30px;left:34px;z-index:500;pointer-events:none;
+    font-size:13px;font-weight:700;letter-spacing:3.5px;color:#5ec8ff;opacity:.95}
+  .badge b{display:block;font-size:30px;letter-spacing:.2px;color:#eaf6ff;margin-top:8px}
+  .badge i{display:block;font-style:normal;font-size:13px;font-weight:400;letter-spacing:.2px;
+    color:#7f9bb5;margin-top:6px;max-width:520px;line-height:1.5}
+
+/* ============ ВАРИАНТЫ ОРБА (в палитре приложения) ============ */
+
+/* 01 · ДЫХАНИЕ — текущий, но крупнее и мягче: ореол шире, контраст ниже */
+.v1 .lo-core .lo-a{inset:2%;
+  background:radial-gradient(circle at 46% 40%,rgba(210,242,255,.55),
+    rgba(80,195,250,.26) 46%,rgba(16,80,130,.09) 70%,transparent 86%)}
+.v1 .lo-core .lo-b{inset:-30%;
+  background:radial-gradient(circle,transparent 50%,rgba(80,190,255,.11) 62%,transparent 78%)}
+.v1 .lo-core .lo-c{inset:30%;
+  background:radial-gradient(circle at 50% 45%,rgba(255,250,235,.34),transparent 70%)}
+/* строка 01 — базовая LED-лента приложения */
+.s1#liveRoot.text-on .live-core{background:linear-gradient(180deg,rgba(10,22,38,.5),rgba(6,14,26,.42))}
+
+/* 02 · ОРЕОЛ — огромное мягкое гало, плотное маленькое ядро */
+.v2 .lo-core .lo-a{inset:16%;
+  background:radial-gradient(circle at 48% 42%,rgba(225,247,255,.62),
+    rgba(110,205,250,.26) 40%,transparent 72%)}
+.v2 .lo-core .lo-b{inset:-42%;
+  background:radial-gradient(circle,transparent 44%,rgba(70,180,255,.10) 56%,rgba(60,160,245,.05) 68%,transparent 80%)}
+.v2 .lo-core .lo-c{inset:36%;
+  background:radial-gradient(circle at 50% 46%,rgba(255,252,240,.52),transparent 64%)}
+/* строка 02 — широкое внешнее свечение вместо ленты */
+.s2#liveRoot.text-on .live-core{background:rgba(8,18,32,.34)}
+.s2#liveRoot.text-on .live-core::before{box-shadow:0 0 60px rgba(120,200,255,.14),
+  0 0 160px rgba(90,175,255,.10),0 0 320px rgba(70,150,255,.05)}
+
+/* 03 · ТУМАННОСТЬ — пять размытых пятен света, асимметричное облако */
+.v3 .lo-core .lo-a{inset:0;
+  background:
+    radial-gradient(38% 34% at 38% 36%,rgba(200,240,255,.34),transparent 70%),
+    radial-gradient(34% 30% at 62% 44%,rgba(90,195,250,.26),transparent 72%),
+    radial-gradient(30% 28% at 48% 64%,rgba(60,160,240,.20),transparent 74%),
+    radial-gradient(24% 22% at 66% 28%,rgba(140,220,255,.22),transparent 72%),
+    radial-gradient(26% 24% at 34% 58%,rgba(40,130,220,.16),transparent 74%)}
+.v3 .lo-core .lo-b{inset:-14%;
+  background:radial-gradient(circle,transparent 52%,rgba(80,190,255,.08) 66%,transparent 80%)}
+.v3 .lo-core .lo-c{inset:34%;
+  background:radial-gradient(circle at 44% 42%,rgba(255,250,238,.30),transparent 66%)}
+/* строка 03 — мягкое облако света */
+.s3#liveRoot.text-on .live-core{background:rgba(8,18,32,.30)}
+.s3#liveRoot.text-on .live-core::before{box-shadow:0 0 46px rgba(110,195,255,.12),
+  0 0 120px rgba(80,170,255,.08)}
+
+/* 04 · МЕДУЗА — светящийся купол и мягкие нити вниз */
+.v4 .lo-core .lo-a{left:14%;right:14%;top:4%;bottom:30%;inset:auto;
+  border-radius:50% 50% 46% 46%;
+  background:radial-gradient(circle at 50% 30%,rgba(210,242,255,.50),
+    rgba(90,200,250,.24) 52%,transparent 76%)}
+.v4 .lo-core .lo-b{inset:-16%;
+  background:radial-gradient(circle,transparent 50%,rgba(80,190,255,.10) 62%,transparent 78%)}
+.v4 .lo-core .lo-c{left:38%;right:38%;top:18%;bottom:48%;inset:auto;border-radius:50%;
+  background:radial-gradient(circle at 50% 44%,rgba(255,250,238,.40),transparent 68%)}
+.v4 .lo-core .lo-t{position:absolute;width:11px;bottom:16%;height:42%;border-radius:10px;
+  background:linear-gradient(180deg,rgba(130,215,255,.30),transparent)}
+.v4 .lo-core .lo-t1{left:30%;height:36%;opacity:.8}
+.v4 .lo-core .lo-t2{left:44%;height:48%}
+.v4 .lo-core .lo-t3{left:52%;height:40%;opacity:.7}
+.v4 .lo-core .lo-t4{left:64%;height:44%;opacity:.9}
+/* строка 04 — тонкая световая нить с каплями */
+.s4#liveRoot.text-on .live-core{background:rgba(8,18,32,.32)}
+.s4#liveRoot.text-on .live-core::before{box-shadow:0 22px 60px -18px rgba(120,205,255,.30),
+  0 0 40px rgba(120,205,255,.10)}
+.s4#liveRoot.text-on .live-core::after{content:'';position:absolute;left:12%;right:12%;bottom:11px;
+  height:2px;border-radius:2px;
+  background:linear-gradient(90deg,transparent,rgba(140,215,255,.5) 30%,rgba(140,215,255,.5) 70%,transparent)}
+
+/* 05 · РЯБЬ — компактное ядро и расходящиеся волны */
+.v5 .lo-core .lo-a{inset:30%;
+  background:radial-gradient(circle at 48% 42%,rgba(220,246,255,.60),
+    rgba(100,205,250,.28) 48%,transparent 72%)}
+.v5 .lo-core .lo-b{inset:-8%;
+  background:
+    radial-gradient(circle,transparent 60%,rgba(90,195,255,.15) 68%,transparent 74%),
+    radial-gradient(circle,transparent 74%,rgba(80,185,255,.10) 80%,transparent 86%),
+    radial-gradient(circle,transparent 86%,rgba(70,170,255,.07) 91%,transparent 96%)}
+.v5 .lo-core .lo-c{inset:40%;
+  background:radial-gradient(circle at 50% 45%,rgba(255,250,238,.46),transparent 66%)}
+/* строка 05 — волна-подсветка снизу */
+.s5#liveRoot.text-on .live-core{background:linear-gradient(180deg,rgba(10,22,38,.46),rgba(6,14,26,.38))}
+.s5#liveRoot.text-on .live-core::before{box-shadow:0 26px 70px -14px rgba(110,200,255,.26),
+  0 0 44px rgba(100,190,255,.10)}
+
+/* 06 · СТОЛБЫ — три вертикальных мягких столба света */
+.v6 .lo-core .lo-a{inset:0;border-radius:40%;
+  background:
+    radial-gradient(30% 52% at 34% 46%,rgba(190,238,255,.36),transparent 72%),
+    radial-gradient(34% 62% at 52% 42%,rgba(80,195,250,.30),transparent 74%),
+    radial-gradient(26% 44% at 68% 52%,rgba(120,210,255,.26),transparent 72%)}
+.v6 .lo-core .lo-b{inset:-12%;
+  background:radial-gradient(circle,transparent 54%,rgba(80,190,255,.09) 66%,transparent 80%)}
+.v6 .lo-core .lo-c{left:44%;right:44%;top:34%;bottom:34%;inset:auto;border-radius:50%;
+  background:radial-gradient(circle at 50% 45%,rgba(255,250,238,.40),transparent 66%)}
+/* строка 06 — вертикальный отсвет под строкой */
+.s6#liveRoot.text-on .live-core{background:rgba(8,18,32,.34)}
+.s6#liveRoot.text-on .live-core::before{box-shadow:0 34px 90px -10px rgba(105,195,255,.22),
+  0 0 40px rgba(100,190,255,.10)}
+
+/* 07 · ДВОЙНАЯ ЗВЕЗДА — большое тело и малый спутник */
+.v7 .lo-core .lo-a{left:-8%;top:-2%;right:30%;bottom:30%;inset:auto;border-radius:50%;
+  background:radial-gradient(circle at 44% 40%,rgba(215,245,255,.52),
+    rgba(85,200,250,.26) 46%,transparent 74%)}
+.v7 .lo-core .lo-b{inset:-14%;
+  background:radial-gradient(circle,transparent 52%,rgba(80,190,255,.10) 64%,transparent 78%)}
+.v7 .lo-core .lo-c{left:58%;top:52%;right:2%;bottom:2%;inset:auto;border-radius:50%;
+  background:radial-gradient(circle at 50% 45%,rgba(255,250,238,.44),rgba(255,230,180,.14) 55%,transparent 72%)}
+/* строка 07 — две световые точки по краям */
+.s7#liveRoot.text-on .live-core{background:rgba(8,18,32,.34)}
+.s7#liveRoot.text-on .live-core::before{box-shadow:0 0 40px rgba(120,200,255,.12),
+  0 0 110px rgba(90,180,255,.08)}
+.s7#liveRoot.text-on .live-core::after{content:'';position:absolute;width:8px;height:8px;border-radius:50%;
+  left:26px;bottom:14px;background:#cfeaff;box-shadow:0 0 12px rgba(160,220,255,.9);
+  box-shadow:0 0 12px rgba(160,220,255,.9),640px 0 12px -2px rgba(255,226,170,.8)}
+
+/* 08 · КАПЛЯ РОСЫ — сфера, блик, каустика */
+.v8 .lo-core .lo-a{inset:4%;
+  background:radial-gradient(circle at 42% 34%,rgba(170,228,255,.34),
+    rgba(40,120,210,.18) 52%,rgba(10,50,110,.14) 78%,transparent 92%)}
+.v8 .lo-core .lo-b{inset:2%;filter:blur(7px);
+  background:radial-gradient(circle,transparent 68%,rgba(150,215,255,.17) 79%,transparent 88%)}
+.v8 .lo-core .lo-c{left:22%;top:12%;width:34%;height:22%;inset:auto;border-radius:50%;
+  transform:rotate(-21deg);filter:blur(4px);
+  background:linear-gradient(180deg,rgba(255,255,255,.46),transparent 82%)}
+/* строка 08 — глянцевая пилюля */
+.s8#liveRoot.text-on .live-core{background:linear-gradient(180deg,rgba(0,190,255,.10),rgba(0,110,255,.05));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.10)}
+.s8#liveRoot.text-on .live-core::before{box-shadow:inset 0 0 24px rgba(120,200,255,.10),
+  0 0 44px rgba(90,180,255,.13)}
+
+/* 09 · СЕРДЦЕ ВОДЫ — тёплое ядро и тёплые волны */
+.v9 .lo-core .lo-a{inset:6%;
+  background:radial-gradient(circle at 48% 42%,rgba(255,244,220,.46),
+    rgba(255,208,130,.20) 48%,rgba(120,90,40,.07) 72%,transparent 86%)}
+.v9 .lo-core .lo-b{inset:-12%;
+  background:
+    radial-gradient(circle,transparent 58%,rgba(255,214,140,.13) 68%,transparent 76%),
+    radial-gradient(circle,transparent 74%,rgba(255,204,120,.08) 82%,transparent 90%)}
+.v9 .lo-core .lo-c{inset:33%;
+  background:radial-gradient(circle at 50% 46%,rgba(255,252,240,.60),transparent 62%)}
+/* строка 09 — тёплая LED */
+.s9#liveRoot.text-on .live-core{background:linear-gradient(180deg,rgba(16,24,36,.46),rgba(10,16,26,.38))}
+.s9#liveRoot.text-on .live-core::before{box-shadow:0 0 34px rgba(255,216,150,.14),
+  0 0 90px rgba(255,200,120,.09),0 0 190px rgba(255,190,100,.04)}
+
+/* 10 · ПЛАМЯ ЭФИРА — мягкое тёплое пламя, рвущееся вверх */
+.v10 .lo-core{overflow:visible}
+.v10 .lo-core .lo-a{left:26%;right:26%;top:-6%;bottom:4%;inset:auto;
+  border-radius:50% 50% 48% 48% / 62% 62% 38% 38%;filter:blur(2px);
+  background:radial-gradient(circle at 50% 74%,rgba(255,246,225,.44),
+    rgba(120,215,255,.22) 42%,rgba(40,140,230,.08) 66%,transparent 86%)}
+.v10 .lo-core .lo-b{inset:-10%;
+  background:radial-gradient(circle,transparent 56%,rgba(120,200,255,.08) 68%,transparent 80%)}
+.v10 .lo-core .lo-c{left:40%;right:40%;top:30%;bottom:14%;inset:auto;border-radius:50%;
+  filter:blur(4px);
+  background:radial-gradient(circle at 50% 76%,rgba(255,255,250,.58),transparent 60%)}
+/* строка 10 — тёплая линия света */
+.s10#liveRoot.text-on .live-core{background:linear-gradient(180deg,rgba(16,24,36,.42),rgba(10,16,26,.36))}
+.s10#liveRoot.text-on .live-core::before{box-shadow:0 0 30px rgba(255,224,170,.13),
+  0 0 80px rgba(255,210,140,.08)}
+</style>
+</head>
+<body>
+<div id="host"></div>
+<script>
+/* Точная копия разметки liveBuild() — сцена настоящая, меняются только
+   слои орба (класс vN на lo-core) и строка (класс sN на liveRoot) */
+const ORB = (v, extra) =>
+  '<div class="live-orb"><div class="lo-core v' + v + '">' +
+    '<i class="lo-a"></i><i class="lo-b"></i><i class="lo-c"></i>' +
+    (extra || '') +
+    '<i class="lo-flash"></i><i class="lo-think"></i><i class="lo-speak"></i>' +
+  '</div></div>';
+
+const SCENE = (v, line, mode, num, name, desc) => {
+  const root = document.createElement('div');
+  root.className = 'scene';
+  root.innerHTML =
+    '<div id="liveRoot" class="open ' + mode + ' ' + line + '">' +
+      '<div class="live-bg">' +
+        '<i class="la a1"></i><i class="la a2"></i><i class="la a3"></i>' +
+        '<i class="la a4"></i><i class="la a5"></i><i class="la a6"></i>' +
+        '<i class="la a7"></i>' +
+        '<div class="live-sheen"></div>' +
+        '<div class="live-motes"><i class="lm lm1"></i><i class="lm lm2"></i><i class="lm lm3"></i><i class="lm lm4"></i></div>' +
+        '<div class="live-bubbles"><i class="bu bu1"></i><i class="bu bu2"></i><i class="bu bu3"></i><i class="bu bu4"></i><i class="bu bu5"></i><i class="bu bu6"></i></div>' +
+      '</div>' +
+      '<div class="live-veil"></div>' +
+      '<div class="live-stage"><div class="live-flow">' +
+        '<div class="live-dream"><div class="live-dream-in"><div class="live-q"></div><div class="live-a"></div></div></div>' +
+        '<div class="live-tools"></div>' +
+        '<div class="live-camwrap"><video class="live-video" muted></video></div>' +
+        '<div class="live-core-wrap"><div class="live-core">' +
+          ORB(v, v === 4 ? '<i class="lo-t lo-t1"></i><i class="lo-t lo-t2"></i><i class="lo-t lo-t3"></i><i class="lo-t lo-t4"></i>' : '') +
+          '<div class="live-line">' +
+            '<input placeholder="Спроси Джарвиса…" autocomplete="off">' +
+            '<button class="live-send" aria-label="Отправить"><svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg></button>' +
+          '</div>' +
+        '</div></div>' +
+      '</div>' +
+      '<div class="live-side"><div class="ls-title">ПЛАН АГЕНТА</div><div class="live-side-in"></div></div>' +
+      '</div>' +
+      '<div class="live-voice"></div>' +
+      '<div class="live-bar">' +
+        '<button class="lb" title="Камера"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 8.4v7.2a2 2 0 0 1-2 2H4.8a2 2 0 0 1-2-2V8.4a2 2 0 0 1 2-2H13a2 2 0 0 1 2 2z"/><path d="M15 11.2l5-2.8v7.2l-5-2.8"/></svg></button>' +
+        '<button class="lb on" title="Микрофон"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.6" width="6" height="11.2" rx="3"/><path d="M5.5 11.2a6.5 6.5 0 0 0 13 0"/><path d="M12 17.7V21"/><path d="M8.8 21h6.4"/></svg></button>' +
+        '<button class="lb" title="Компьютер"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="4.6" width="17.2" height="12.4" rx="2.2"/><path d="M9.5 20.5h5M12 17v3.5"/></svg></button>' +
+        '<button class="lb lb-exit" title="Выйти"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4.5H8a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h7"/><path d="M14 8.5l4 3.5-4 3.5"/><path d="M18 12H9.5"/></svg></button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="badge"><span>ВАРИАНТ ' + num + '</span><b>' + name + '</b><i>' + desc + '</i></div>';
+  return root;
+};
+
+const VARIANTS = [
+  ['01', 'Дыхание', 'Текущий орб, но крупнее и мягче: шире ореол, ниже контраст. Самый спокойный вариант.'],
+  ['02', 'Ореол', 'Огромное мягкое гало и плотное маленькое ядро внутри — свет вокруг разума.'],
+  ['03', 'Туманность', 'Пять размытых пятен света асимметрично — живое облако без формы.'],
+  ['04', 'Медуза', 'Светящийся купол и мягкие нити света тянутся вниз — существо из воды.'],
+  ['05', 'Рябь', 'Компактное ядро, от которого расходятся волны — экран как поверхность воды.'],
+  ['06', 'Столбы', 'Три вертикальных мягких столба света дышат высотой — без вращения.'],
+  ['07', 'Двойная звезда', 'Большое мягкое тело и малый тёплый спутник — дышат навстречу друг другу.'],
+  ['08', 'Капля росы', 'Гладкая сфера: глянцевый блик и преломление света снизу.'],
+  ['09', 'Сердце воды', 'Тёплое живое ядро и тёплые волны от него — сердце звонка.'],
+  ['10', 'Пламя эфира', 'Мягкое тёплое пламя колышется вверх — живой огонёк в воде.'],
+];
+
+const host = document.getElementById('host');
+VARIANTS.forEach(([num, name, desc], i) => {
+  const v = i + 1;
+  host.appendChild(SCENE(v, 's' + v, 'mic-on', num, name, desc));   // орб
+  host.appendChild(SCENE(v, 's' + v, 'text-on', num, name, desc));  // строка
+});
+</script>
+</body>
+</html>

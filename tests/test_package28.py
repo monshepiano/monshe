@@ -8583,7 +8583,7 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("u.pitch = 0.92;", js)
         # режим из потока поднимает кнопки звонка, если футер пуст
         self.assertIn("else if (LIVE.on && !S.computerUse) liveSetComp(true);", js)
-        self.assertIn("else if (LIVE.on && !S.cameraOn) liveSetCam(true);", js)
+        self.assertIn("if (LIVE.on) { if (!LIVE.cam) liveSetCam(true); }", js)
         # панель звонка: камера/микрофон/компьютер/выход
         for anchor_id in ('id="lbCam"', 'id="lbMic"', 'id="lbComp"', 'id="lbExit"'):
             self.assertIn(anchor_id, js)
@@ -8690,7 +8690,8 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertNotIn("rgba(255,170,80", css)
         # TTS: классификация отказов вместо слепых ретраев
         self.assertIn('return {"ok": False, "class": "config",', py_server)
-        self.assertIn('"class": "net" if is_net else "server"', py_server)
+        self.assertIn('return {"ok": False, "class": "net", "detail": reason[:200],', py_server)
+        self.assertIn('return {"ok": False, "class": "server", "detail": reason[:200],', py_server)
         self.assertIn("except urllib.error.HTTPError as e:", py_server)
         self.assertIn("Яндекс не принял API-ключ (HTTP 401)", py_server)
         self.assertIn("роли ai.speechkit-tts.user", py_server)
@@ -8712,7 +8713,7 @@ class IterationBM18Tests(unittest.TestCase):
         # в системной ноте, а не в навязанных фразах (просьба человека)
         self.assertNotIn("что ты меня видишь", js)
         # статус голоса всегда виден в сцене (не тост-однодневка)
-        self.assertIn("function liveVoiceSet(kind, reason) {", js)
+        self.assertIn("function liveVoiceSet(kind, reason, detail) {", js)
         self.assertIn("ГОЛОС · ЯНДЕКС (НАСТОЯЩИЙ)", js)
         self.assertIn("ГОЛОС · СИСТЕМНЫЙ — ", js)
         self.assertIn(".live-voice{", css)
@@ -8729,6 +8730,28 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("live-bubbles", js)
         self.assertIn("#liveRoot.ph-thinking .live-bubbles{opacity:1}", css)
         self.assertIn("@keyframes loBubble{", css)
+        # ===== BM30.2: СЛЕПАЯ КАМЕРА И ВЕЧНОЕ МОЛЧАНИЕ — КОРНИ =====
+        # просьба режима ВИДНА в LIVE (сервер ждёт ответа до 300с!)
+        self.assertIn("case 'mode_request': return liveModeAsk(ev);", js)
+        self.assertIn("function liveModeAsk(ev) {", js)
+        self.assertIn("if (ev.mode === 'camera' && !LIVE.cam) liveSetCam(true);", js)
+        # mode_changed камеры в LIVE поднимает камеру ЗВОНКА (не композера)
+        self.assertIn("if (LIVE.on) { if (!LIVE.cam) liveSetCam(true); }", js)
+        # "что ты видишь" триггерит предложение камеры
+        self.assertIn("что\\s+(?:ты\\s+)?видишь", py_agent_src)
+        # кадр не получился — модель знает честно (ретрай + нота)
+        self.assertIn("кадр не удалось получить — скажи об этом одной короткой фразой", js)
+        self.assertIn("text: askText,", js)
+        # позднее включение камеры: система-нота вместо «я не вижу»
+        self.assertIn("Пользователь только что разрешил камеру", py_server)
+        # выход из LIVE возвращает последний диалог / страницу нового
+        self.assertIn("LIVE.prevChatId = (S.chatId && !String(S.chatId).startsWith('live-')) ? S.chatId : '';", js)
+        self.assertIn("if (backId) openChat(backId);", js)
+        self.assertIn("else newChat();", js)
+        # TTS: сырая причина ошибки ОС видна человеку
+        self.assertIn('tail = " · причина: " + reason[:140]', py_server)
+        self.assertIn('"nodename" in low or "servname" in low', py_server)
+        self.assertIn("detail) txt += ' · ' + String(detail).slice(0, 70);", js)
 
         # перебой глушит и серверное аудио
         self.assertIn("if (VOICE.ttsAudio) {              // BM29: серверный голос тоже замолкает", js)
