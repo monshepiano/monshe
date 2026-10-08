@@ -4399,11 +4399,11 @@ function testIterationBM28Contracts() {
   // из центра, панель звонка, агент краснит воду
   assert(css.includes('#liveRoot{') && css.includes('.live-veil{') &&
     /#liveRoot\.open \.live-veil\{opacity:0\}/.test(css) &&
-    /#liveRoot\.open \.live-bg\{filter:blur\(0\) brightness\(1\) saturate\(1\);transform:scale\(1\)\}/.test(css) &&
+    /#liveRoot\.open \.live-bg\{filter:blur\(0\) brightness\(1\);transform:scale\(1\)\}/.test(css) &&
     /#liveRoot\.text-on \.live-core\{width:min\(780px,84vw\);height:84px;border-radius:46px/.test(css) &&
-    /#liveRoot\.mic-on\.cam-on \.live-core-wrap\{transform:translate\(-50%,calc\(-50% - 38vh\)\) scale\(\.55\)\}/.test(css) &&
+    /#liveRoot\.mic-on\.cam-on \.live-core-wrap,\n#liveRoot\.text-on\.cam-on \.live-core-wrap\{\n  transform:translate\(-50%,calc\(-50% - 39vh\)\) scale\(\.55\)\}/.test(css) &&
     css.includes('@keyframes loMorph') && css.includes('@keyframes loFlash') &&
-    /#liveRoot\.ag \.live-redwave\{opacity:1\}/.test(css) &&
+    /#liveRoot\.ag \.live-redwave\{opacity:1;animation:loWave 17s linear infinite\}/.test(css) &&
     css.includes('.live-bar{') && css.includes('.lb-exit:hover{') &&
     css.includes('.live-dream{') &&
     css.includes('.live-camwrap{') && css.includes('.live-side{') &&
@@ -4434,7 +4434,7 @@ function testIterationBM28Contracts() {
     extractFunction(js, 'liveChord').includes('chord([') &&
     openFn.includes("VOICE.chatId = '';") && openFn.includes('killWelcome();') &&
     closeFn.includes('closeVoiceMode();') &&
-    extractFunction(js, 'liveConfirmExit').includes('confirmBox(') &&
+    extractFunction(js, 'liveConfirmExit').includes('.live-confirm') &&
     js.includes('if (LIVE.on) liveConfirmExit();'),
     'BM28 call flow: entry and exit play a Jarvis-style arpeggio, each call is a fresh chat, ESC asks for confirmation before hanging up');
   // handleEvent кормит сцену в try/catch — визуал не рвёт поток

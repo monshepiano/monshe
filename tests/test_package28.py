@@ -8515,8 +8515,8 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn(".live-veil{", css)
         self.assertIn("#liveRoot.open .live-veil{opacity:0}", css)
         self.assertIn("transition:opacity 1.5s ease}", css)
-        self.assertIn("filter:blur(30px) brightness(.55) saturate(.7)", css)
-        self.assertIn("#liveRoot.open .live-bg{filter:blur(0) brightness(1) saturate(1);transform:scale(1)}", css)
+        self.assertIn("filter:blur(14px) brightness(.55)", css)
+        self.assertIn("#liveRoot.open .live-bg{filter:blur(0) brightness(1);transform:scale(1)}", css)
 
         # ядро — одно тело: орб <-> строка (spotlight-морф), большой босс-орб
         self.assertIn("#liveRoot.text-on .live-core{width:min(780px,84vw);height:84px;border-radius:46px", css)
@@ -8533,7 +8533,7 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("animation:deepIn .95s var(--live-ease) both}", css)
         self.assertIn(".live-chunk{animation:deepIn", css)
         # микрофон включён — текста НЕТ, только голос
-        self.assertIn("#liveRoot.mic-on .live-dream{opacity:0}", css)
+        self.assertIn("#liveRoot.mic-on .live-dream,#liveRoot.cam-on .live-dream{opacity:0}", css)
         # элементы уступают: сдвиг влево с затемнением
         self.assertIn("#liveRoot.side-on .live-flow{transform:translateX(-15vw) scale(.84)", css)
         self.assertIn("filter:brightness(.6) saturate(.85)", css)
@@ -8545,14 +8545,14 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("#liveRoot.cam-on .live-camwrap{", css)
         self.assertIn(".live-bar{", css)
         self.assertIn(".lb-exit:hover{", css)
-        self.assertIn("#liveRoot.ag .live-redwave{opacity:1}", css)
+        self.assertIn("#liveRoot.ag .live-redwave{opacity:1;animation:loWave 17s linear infinite}", css)
         self.assertIn(".live-dream{", css)
         self.assertIn(".live-side{", css)
 
         # инструменты и интерактивы — мимолётом, из глубины
         self.assertIn("@keyframes liveToolIn", css)
         self.assertIn("@keyframes liveAskIn", css)
-        self.assertIn("@keyframes liveToolOut", css)
+        self.assertIn("@keyframes deepOut", css)      # единый закон ухода в глубину
 
         # JS: сцена слушает проверенный движок разговора
         self.assertIn("async function liveOpen", js)
@@ -8602,6 +8602,43 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("function liveWakeAudio()", js)
         self.assertIn("liveWakeAudio();                    // СИНХРОННО в жесте клика", js)
         self.assertIn("if (VOICE.ctx.state === 'suspended') { try { VOICE.ctx.resume(); }", js)
+        # BM29.1: лёгкость — вечное движение только transform/opacity,
+        # ни одного blur-фильтра на живых слоях фона
+        self.assertNotIn(".live-waves", css)          # «странные полосы» убраны
+        self.assertNotIn("filter:blur(80px)", css)    # авроры без дорогого blur
+        self.assertIn("will-change:transform", css)   # композитор, не paint
+        # строка — LED-лента: свечение только наружу
+        self.assertIn("#liveRoot.text-on .live-core{width:min(780px,84vw);height:84px;border-radius:46px", css)
+        self.assertIn("0 0 34px rgba(150,220,255,.16),0 0 90px rgba(90,180,255,.1)", css)
+        # ядро — КРУГ (квадратный lo-core больше не накрывает орб)
+        self.assertIn(".lo-core{position:relative;width:74%;height:74%;border-radius:50%", css)
+        # камера: и орб, и строка уезжают НАВЕРХ (не в сторону)
+        self.assertIn("#liveRoot.mic-on.cam-on .live-core-wrap,", css)
+        self.assertIn("#liveRoot.text-on.cam-on .live-core-wrap{", css)
+        self.assertIn("calc(-50% - 39vh)) scale(.55)}", css)
+        self.assertNotIn("calc(-50% - 22vw)", css)
+        # кнопки шире, ховер — свечение-лента без заливок
+        self.assertIn("display:flex;gap:64px;padding:16px 38px", css)
+        self.assertIn(".lb:hover{color:#d9f3ff;transform:translateY(-5px)", css)
+        # подтверждение выхода — в дизайне LIVE
+        self.assertIn(".live-confirm{", css)
+        self.assertIn("'<div class=\"lc-title\">Завершить звонок?</div>'", js)
+        self.assertNotIn("confirmBox('Выйти из LIVE?'", js)
+        # морф: орб РАСТЯГИВАЕТСЯ в строку (перетекание)
+        self.assertIn("transform:scale(1.45,.3);pointer-events:none}", css)
+        # VAD: конец фразы по 1000мс — молниеносность
+        self.assertIn("now - VOICE.lastVoice > 1000", js)
+        # НАСТОЯЩИЙ ГОЛОС: серверный TTS с фолбэком на системный синтез
+        self.assertIn("function voiceSpeakViaServer(text)", js)
+        self.assertIn("VOICE_TTS_OK = false; return null;", js)
+        self.assertIn("api('/api/tts', { text })", js)
+        py_server = Path("app/jarvis/server.py").read_text(encoding="utf-8")
+        self.assertIn('if path == "/api/tts":', py_server)
+        self.assertIn("api.tts.cloud.yandex.net/speech/v1/tts:synthesize", py_server)
+        self.assertIn('"voice": "ermil"', py_server)
+        # перебой глушит и серверное аудио
+        self.assertIn("if (VOICE.ttsAudio) {              // BM29: серверный голос тоже замолкает", js)
+
         # диктовка: СТОП мгновенный, не ждёт транскрипции хвоста
         df = js.split("function dictFinish(D) {")[1].split("\n}\n")[0]
         self.assertIn("DICT = null;", df)

@@ -636,6 +636,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(self._vision(body))
         if path == "/api/transcribe":
             return self._json(media.transcribe_audio(body.get("audio", ""), body.get("language", "ru")))
+        if path == "/api/tts":
+            return self._json(self._tts(body))
         if path == "/api/tool":
             sandbox.set_chat(body.get("chat_id") or "")
             return self._json(tools.call(body.get("name", ""), body.get("args") or {}))
@@ -645,6 +647,42 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"ok": False, "error": "not found"}, 404)
 
     # -------------------------------------------------------------- статика
+    def _tts(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """BM29: НАСТОЯЩИЙ голос Джарвиса. Yandex SpeechKit (мужской ermil),
+        lpcm 48кГц -> WAV. Нет ключа — честный отказ, клиент включает
+        системный синтез: звонок не онемает никогда."""
+        text = (body.get("text") or "").strip()[:900]
+        if not text:
+            return {"ok": False, "error": "пустой текст"}
+        import urllib.request
+        conf = (CONFIG.get("providers") or {}).get("yandex") or {}
+        key = str(conf.get("api_key") or "")
+        folder = str(conf.get("folder_id") or "")
+        if not key or not folder:
+            return {"ok": False, "error": "TTS не настроен: вписать ключ и folder_id Yandex"}
+        data = urllib.parse.urlencode({
+            "text": text, "folderId": folder,
+            "voice": "ermil",            # мужской, живой
+            "format": "lpcm", "sampleRateHertz": "48000",
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.tts.cloud.yandex.net/speech/v1/tts:synthesize",
+            data=data, headers={"Authorization": "Api-Key " + key})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                pcm = r.read()
+        except Exception as e:
+            return {"ok": False, "error": "TTS: " + str(e)[:200]}
+        if not pcm:
+            return {"ok": False, "error": "TTS: пустой ответ"}
+        # lpcm (s16le mono) -> WAV
+        import struct
+        head = b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + \
+            struct.pack("<IHHIIHH", 16, 1, 1, 48000, 96000, 2, 16) + b"data" + \
+            struct.pack("<I", len(pcm))
+        return {"ok": True, "mime": "audio/wav",
+                "audio": base64.b64encode(head + pcm).decode("ascii")}
+
     def _serve_static(self, rel: str) -> None:
         target = (WEB_DIR / rel).resolve()
         # иерархическая проверка: строковый префикс пропускал соседние каталоги

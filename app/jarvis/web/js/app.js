@@ -11340,16 +11340,25 @@ async function dictStart() {
     D.rec.onstop = async () => {
       const closedAll = D.closing;
       if (closedAll) {
-        /* BM29: СТОП — МГНОВЕННЫЙ. Хвост сегмента не ждёт облачной
-           транскрипции (до 25с): кнопка обязана погаснуть в момент клика */
+        /* BM29: СТОП — кнопка уже погасла мгновенно (dictFinish), но хвост
+           фразы НЕ выбрасываем: он распознаётся в фоне и дописывается в поле,
+           пока человек не начал новую запись. Прежний вариант рвал хвост
+           нарочно — короткие фразы не давали ни слова */
         stream.getTracks().forEach((t) => t.stop());
+        try {
+          const text = await dictTranscribeSegment(chunks, D.rec.mimeType);
+          if (text && !DICT) dictPutText(text);        // нового сеанса нет — дописываем
+        } catch (e) { /* хвост не расслышал — уже всё */ }
         return;
       }
       try {
         const text = await dictTranscribeSegment(chunks, D.rec.mimeType);
         if (text && DICT === D) dictPutText(text);
       } catch (e) { /* сегмент не расслышал — просто дальше */ }
-      if (!DICT || DICT !== D) return;                 // пока грузили — стоп
+      if (!DICT || DICT !== D) {                       // пока грузили — стоп
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       armSegment();                                    // следующий сегмент
     };
     try { D.rec.start(250); } catch (e) { dictFinish(D); return; }
@@ -11619,7 +11628,7 @@ function voiceListen() {
     if (LIVE.on) liveLevel(Math.min(1, level * 4));   // BM28: орб LIVE
     const now = performance.now();
     if (level > 0.055) { VOICE.heard = true; VOICE.lastVoice = now; }
-    if (VOICE.heard && now - VOICE.lastVoice > 1400) { voiceStopRec(); return; }
+    if (VOICE.heard && now - VOICE.lastVoice > 1000) { voiceStopRec(); return; }  // BM29: мгновеннее
     if (now - VOICE.startedAt > 30000) { voiceStopRec(); return; }   // страховка от вечной записи
     VOICE.raf = requestAnimationFrame(tick);
   };
@@ -11711,8 +11720,45 @@ function voiceFeed(chunk) {
   if (out) voiceSpeak(out.trim());
 }
 
+/* BM29: НАСТОЯЩИЙ ГОЛОС. Прежний путь — системный speechSynthesis (маковский
+   Юрий): стартует через полсекунды, без интонаций. Серверный TTS (Yandex
+   SpeechKit, мужской ermil) отдаёт WAV со скоростью сети; фолбэк — прежний
+   синтез, чтобы звонок не онемел никогда */
+let VOICE_TTS_OK = null;   // null = не пробовали, true/false — вердикт
+
+function voiceSpeakViaServer(text) {
+  return api('/api/tts', { text }).then((r) => {
+    if (r && r.ok && r.audio) {
+      VOICE_TTS_OK = true;
+      return new Promise((resolve) => {
+        const au = new Audio('data:audio/wav;base64,' + r.audio);
+        VOICE.ttsAudio = au;
+        au.onended = () => { if (VOICE.ttsAudio === au) VOICE.ttsAudio = null; resolve(); };
+        au.onerror = () => { if (VOICE.ttsAudio === au) VOICE.ttsAudio = null; resolve(); };
+        au.play().catch(() => { if (VOICE.ttsAudio === au) VOICE.ttsAudio = null; resolve(); });
+        voiceSetPhase('speaking');
+        cancelAnimationFrame(VOICE.raf);
+        VOICE.raf = requestAnimationFrame(voiceBargeLoop);
+      });
+    }
+    VOICE_TTS_OK = false;
+    return null;                      // сервер не готов — честный фолбэк
+  }).catch(() => { VOICE_TTS_OK = false; return null; });
+}
+
 function voiceSpeak(text) {
   if (!VOICE.open || !text) return;
+  if (VOICE_TTS_OK !== false) {       // сервер ещё не отвергнут — пробуем
+    voiceSpeakViaServer(text).then((done) => {
+      if (done !== null) { voiceAfterSpeak(); return; }
+      voiceSpeakLocal(text);          // фолбэк: системный синтез
+    });
+    return;
+  }
+  voiceSpeakLocal(text);
+}
+
+function voiceSpeakLocal(text) {
   try {
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'ru-RU';
@@ -11755,6 +11801,10 @@ function voiceBargeLoop() {
     if (VOICE.barge >= 7) {
       VOICE.barge = 0;
       try { window.speechSynthesis.cancel(); } catch (e) { /* синтеза нет */ }
+      if (VOICE.ttsAudio) {              // BM29: серверный голос тоже замолкает
+        try { VOICE.ttsAudio.pause(); VOICE.ttsAudio.src = ''; } catch (e) {}
+        VOICE.ttsAudio = null;
+      }
       voiceListen();
       return;
     }
@@ -11849,7 +11899,6 @@ function liveBuild() {
       '<div class="live-deep">' +
         '<i class="ring p1"></i><i class="ring p2"></i><i class="ring p3"></i>' +
       '</div>' +
-      '<div class="live-waves"></div>' +
       '<div class="live-stars"></div>' +
       '<div class="live-sheen"></div>' +
       '<div class="live-redwave"></div>' +
@@ -11976,8 +12025,25 @@ async function liveOpen() {
 
 /* --- ВЫХОД: подтверждение, аккорд, вода закрывается --- */
 function liveConfirmExit() {
-  if (!LIVE.on) return;
-  confirmBox('Выйти из LIVE?', 'Звонок завершится. Разговор сохранится в списке диалогов.', liveClose);
+  /* BM29: подтверждение — часть звонка: панель из глубины в стиле LIVE,
+     а не системное окно поверх */
+  if (!LIVE.on || !LIVE.root) return;
+  const old = LIVE.root.querySelector('.live-confirm');
+  if (old) return;
+  const panel = el('div', 'live-confirm');
+  panel.innerHTML =
+    '<div class="lc-title">Завершить звонок?</div>' +
+    '<div class="lc-body">Джарвис будет ждать следующего созвона.</div>' +
+    '<div class="lc-acts"><button class="btn lc-stay">Остаться</button>' +
+    '<button class="btn danger lc-go">Завершить</button></div>';
+  LIVE.root.querySelector('.live-stage').appendChild(panel);
+  sfx('warn');
+  const close = () => {
+    panel.classList.add('out');
+    setTimeout(() => panel.remove(), 700);
+  };
+  panel.querySelector('.lc-stay').addEventListener('click', close);
+  panel.querySelector('.lc-go').addEventListener('click', () => { close(); liveClose(); });
 }
 
 function liveClose() {
