@@ -4184,8 +4184,13 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 .live-a{font-size:23px;line-height:1.62;color:var(--tx);text-align:center;max-width:100%}
 /* BM32: каждый кусок ответа мягко всплывает снизу — только opacity и
    transform: композитор, не repaint; blur (рвавший кадры) не трогаем */
-.live-a .la-w{display:inline-block;animation:laWord .9s var(--live-ease) both}
-@keyframes laWord{from{opacity:0;transform:translateY(9px)}}
+.live-a .la-w{animation:laWord .65s ease both}
+@keyframes laWord{from{opacity:0}}
+/* BM33: ответ всплывает ЦЕЛИКОМ — тем же движением, что текст запроса:
+   один контейнер плывёт снизу сквозь лёгкий blur; куски дописываются
+   мягким проявлением (только opacity), без рывков и сдвигов строк */
+.live-a.in{animation:laIn .9s var(--live-ease) both}
+@keyframes laIn{from{opacity:0;transform:translateY(16px);filter:blur(9px)}}
 
 /* ГЛУБИНА: единый закон появления */
 @keyframes deepIn{
@@ -4232,25 +4237,28 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
   transform:scale(calc(1 + var(--vl,0)*.16));
   transition:transform .13s linear}
 .lo-pulse i,.lo-pulse svg{position:absolute;pointer-events:none}
-/* гекс-ореолы ПОРТАЛА — SVG-полигоны (никаких clip-path): свет
-   расплывается за вершины сам, границ нет */
+/* ореол — широкий мягкий свет: круг + радиальный градиент, гаснет
+   задолго до края, геометрической границы нет вовсе */
 .lo-pulse .lo-halo{inset:0;width:100%;height:100%;
-  animation:loBreathe 6.4s ease-in-out infinite;will-change:transform,opacity}
-.lo-pulse .lo-veilx{inset:0;width:100%;height:100%;
-  animation:loHalo 7.6s ease-in-out infinite;will-change:transform,opacity}
-.lo-pulse .lo-body{inset:4%;border-radius:50%;
-  background:radial-gradient(circle at 47% 42%,rgba(210,242,255,.34),
-    rgba(110,205,255,.17) 38%,rgba(40,120,190,.08) 62%,transparent 82%);
-  animation:loHeart 5.2s ease-in-out infinite;will-change:transform,opacity}
+  animation:loBreathe 6.4s ease-in-out infinite;will-change:opacity}
+/* ЯРКИЙ ЦЕНТР, свет растушёвывается к краям: один гладкий градиент с
+   длинным хвостом (гаснет к 95% — до края элемента не доходит вовсе).
+   BM33: дышит ТОЛЬКО прозрачность — прежде scale-анимации двигали кромку
+   градиента, и этот ползущий край был виден как «граница к тёмному» */
+.lo-pulse .lo-body{inset:2%;border-radius:50%;
+  background:radial-gradient(circle at 48% 44%,rgba(242,252,255,.62) 0%,
+    rgba(152,219,255,.35) 24%,rgba(82,169,246,.16) 46%,
+    rgba(44,113,193,.065) 66%,rgba(26,92,166,.02) 84%,transparent 95%);
+  animation:loHeart 5.2s ease-in-out infinite;will-change:opacity}
 /* ДЫМКА: два мягких пятна медленно перекатываются и расплываются —
    орб не шар, а свет в воздухе (только transform/opacity + blur слоёв) */
 .lo-pulse .lo-haze{position:absolute;border-radius:50%;mix-blend-mode:screen;
   filter:blur(13px);opacity:0;pointer-events:none;will-change:transform,opacity}
 .lo-pulse .lo-hz1{inset:12%;
-  background:radial-gradient(circle at 60% 40%,rgba(125,205,255,.20),transparent 70%);
+  background:radial-gradient(circle at 60% 40%,rgba(125,205,255,.13),transparent 78%);
   animation:loHz1 19s ease-in-out infinite}
 .lo-pulse .lo-hz2{inset:2%;
-  background:radial-gradient(circle at 38% 62%,rgba(95,185,250,.15),transparent 66%);
+  background:radial-gradient(circle at 38% 62%,rgba(95,185,250,.10),transparent 74%);
   animation:loHz2 27s ease-in-out infinite}
 @keyframes loHz1{0%,100%{opacity:.5;transform:translate(-6%,4%) scale(.94)}
   50%{opacity:.95;transform:translate(7%,-5%) scale(1.12)}}
@@ -4268,32 +4276,24 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
   animation:loIriR 57s ease-in-out infinite}
 @keyframes loIriY{0%,74%,100%{opacity:0}83%{opacity:.95}93%{opacity:.3}}
 @keyframes loIriR{0%,88%,100%{opacity:0}94%{opacity:.85}}
-/* ОРБИТЫ ПОРТАЛА: 2-3 тонких круглых кольца, ЕЛЕ заметные, каждое лежит
-   в своей плоскости и вечно медленно перекатывается вокруг орба (как в
-   портале-эталоне, но круглые). Только transform — работает на чайнике */
+/* ОРБИТЫ ПОРТАЛА: тонкие круглые кольца ВРАЩАЮТСЯ ПО ВСЕМ ОСЯМ — как
+   сияющая штука в голове инопланетянина («Люди в чёрном 3»): ось каждой
+   орбиты сама медленно перекатывается, кольцо вечно валится в 3D.
+   Вращение ведёт JS (liveOrbitsFrame): rotateX+rotateY+rotateZ с разными
+   скоростями — траектория не повторяется никогда. Только transform */
 .lo-orbit{position:absolute;left:50%;top:50%;border-radius:50%;
-  border:1px solid rgba(150,214,255,.15);pointer-events:none;will-change:transform}
-.lo-orbit.lo-o1{width:118%;height:118%;margin:-59% 0 0 -59%;
-  animation:loOrbA 31s linear infinite}
-.lo-orbit.lo-o2{width:136%;height:136%;margin:-68% 0 0 -68%;
-  border-color:rgba(150,214,255,.10);animation:loOrbB 47s linear infinite}
-.lo-orbit.lo-o3{width:154%;height:154%;margin:-77% 0 0 -77%;
-  border-color:rgba(170,225,255,.07);animation:loOrbC 61s linear infinite}
-@keyframes loOrbA{from{transform:rotateX(66deg) rotate(0deg)}
-  to{transform:rotateX(66deg) rotate(360deg)}}
-@keyframes loOrbB{from{transform:rotateX(76deg) rotate(0deg)}
-  to{transform:rotateX(76deg) rotate(-360deg)}}
-@keyframes loOrbC{from{transform:rotateX(56deg) rotate(0deg)}
-  to{transform:rotateX(56deg) rotate(360deg)}}
+  border:1px solid rgba(150,214,255,.17);
+  box-shadow:0 0 7px rgba(110,195,255,.10);pointer-events:none;will-change:transform}
+.lo-orbit.lo-o2{border-color:rgba(150,214,255,.12);box-shadow:0 0 7px rgba(110,195,255,.07)}
+.lo-orbit.lo-o3{border-color:rgba(170,225,255,.08);box-shadow:0 0 7px rgba(110,195,255,.05)}
+.lo-orbit.lo-o1{width:118%;height:118%;margin:-59% 0 0 -59%;}
+.lo-orbit.lo-o2{width:136%;height:136%;margin:-68% 0 0 -68%;}
+.lo-orbit.lo-o3{width:154%;height:154%;margin:-77% 0 0 -77%;}
 /* ТРАНСФОРМАЦИИ: фигуры движка DOT_SHAPES (orbFigureFrame), еле заметные */
 .lo-shape{position:absolute;inset:0;width:100%;height:100%;opacity:0;
   pointer-events:none}
-@keyframes loBreathe{0%,100%{opacity:.8;transform:scale(.97)}
-  50%{opacity:1;transform:scale(1.05)}}
-@keyframes loHalo{0%,100%{opacity:.5;transform:scale(.95)}
-  50%{opacity:.9;transform:scale(1.12)}}
-@keyframes loHeart{0%,100%{opacity:.35;transform:scale(.92)}
-  50%{opacity:.8;transform:scale(1.1)}}
+@keyframes loBreathe{0%,100%{opacity:.78}50%{opacity:1}}
+@keyframes loHeart{0%,100%{opacity:.8}50%{opacity:1}}
 /* жёлтая вспышка жизни — оверлей, дышит прозрачностью (не background) */
 .lo-flash{position:absolute;inset:-4%;border-radius:50%;opacity:0;
   background:radial-gradient(circle at 50% 44%,rgba(255,236,190,.8),
@@ -4439,13 +4439,13 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
   transition:transform .9s var(--live-ease),opacity .7s ease,filter .7s ease}
 #liveRoot.open .live-bar{transform:translate(-50%,0);opacity:1;filter:blur(0)}
 .lb{width:64px;height:64px;border-radius:50%;flex-shrink:0;
-  /* чуть видная круглая область у каждой — световая посадочная площадка */
-  background:radial-gradient(circle,rgba(120,200,255,.06) 0%,rgba(120,200,255,.028) 52%,transparent 72%);
-  border:1px solid transparent;color:var(--tx2);display:grid;place-items:center;
+  background:rgba(10,20,34,.42);
+  border:1px solid rgba(120,200,255,.15);color:var(--tx2);display:grid;place-items:center;
   cursor:pointer;position:relative;
   transition:background .25s ease,border-color .25s ease,color .25s ease,transform .25s ease}
 .lb svg{width:25px;height:25px}
-/* ховер — РОДНОЙ стиль приложения: как кнопки в поле ввода */
+/* BM33: ЧЁТКАЯ круглая область (решение человека): вместо размытой
+   световой лужицы — определённый круг с тонкой светлой кромкой */
 .lb:hover{background:rgba(0,200,240,.13);color:var(--cy2);
   border-color:var(--line2);transform:translateY(-1px)}
 .lb:active{transform:scale(.94)}

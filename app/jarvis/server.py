@@ -671,6 +671,61 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
+    # Интонация Джарвиса для gpt-4o-mini-tts: не «диктор читает текст»,
+    # а живой собеседник. Короткая, конкретная, без противоречий
+    _TTS_INSTRUCTIONS = (
+        "Говори по-русски как Джарвис — домашний ИИ-собеседник: тёплый, "
+        "уверенный, живой мужской голос. Интонация естественная, как у "
+        "умного друга в разговоре, — не дикторская. Дружелюбная лёгкая "
+        "ирония уместна. Фразы короткие, паузы живые."
+    )
+
+    def _tts_openai(self, text: str, prov: Dict[str, Any]) -> "Dict[str, Any] | None":
+        """BM33: голос через OpenAI-совместимый провайдер (AITunnel):
+        gpt-4o-mini-tts + instructions = управляемая живая интонация.
+        None = провайдер не справился (вызовем Яндекс): отказ НЕ глушит
+        голос целиком, каждое событие пишется в tts.log"""
+        import urllib.request
+        import urllib.error
+        import json as _json
+        base = str(prov.get("base_url") or "https://api.aitunnel.ru/v1").rstrip("/")
+        key = str(prov.get("api_key") or "")
+        model = str(prov.get("tts_model") or "gpt-4o-mini-tts")
+        voice = str(prov.get("tts_voice") or "onyx")
+        url = base + "/audio/speech"
+        payload = _json.dumps({
+            "model": model,
+            "voice": voice,
+            "input": text,
+            "instructions": self._TTS_INSTRUCTIONS,
+            "response_format": "wav",
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, method="POST", headers={
+            "Authorization": "Bearer " + key,
+            "Content-Type": "application/json",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                wav = r.read()
+            if not wav or len(wav) < 200:
+                self._tts_log("OPENAI[%s]: пустой ответ" % model)
+                return None
+            self._tts_log("OPENAI[%s/%s] OK %d байт" % (model, voice, len(wav)))
+            return {"ok": True, "mime": "audio/wav",
+                    "audio": base64.b64encode(wav).decode("ascii"),
+                    "engine": "openai"}
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = e.read()[:300].decode("utf-8", "replace")
+            except Exception:
+                pass
+            self._tts_log("OPENAI HTTP %s: %s" % (e.code, detail[:180]))
+            return None          # откат на Яндекс — цепочка не рвётся
+        except Exception as e:
+            self._tts_log("OPENAI NET: %s" % str(e)[:180])
+            return None
+
     def _tts(self, body: Dict[str, Any]) -> Dict[str, Any]:
         """BM29: НАСТОЯЩИЙ голос Джарвиса. Yandex SpeechKit (мужской ermil),
         lpcm 48кГц -> WAV. BM30: ОТКАЗ КЛАССИФИЦИРУЕТСЯ — «нет доступа к TTS»
@@ -682,6 +737,17 @@ class Handler(BaseHTTPRequestHandler):
         text = (body.get("text") or "").strip()[:900]
         if not text:
             return {"ok": False, "error": "пустой текст", "class": "req"}
+        # BM33: ЦЕПОЧКА ГОЛОСОВ. Первым — OpenAI-совместимый TTS (модель
+        # gpt-4o-mini-tts с инструкцией интонации — «голос как у GPT»),
+        # доступный из РФ через AITunnel (рубли, без VPN). Ключа нет или
+        # провайдер отказал — честный откат на Яндекс, дальше системный
+        # синтез в браузере: голос не онемевает никогда
+        at = ((CONFIG.get("providers") or {}).get("aitunnel") or {})
+        at_key = str(at.get("api_key") or "")
+        if at_key:
+            r = self._tts_openai(text, at)
+            if r is not None:
+                return r
         conf = (CONFIG.get("providers") or {}).get("yandex") or {}
         key = str(conf.get("api_key") or "")
         folder = str(conf.get("folder_id") or "")

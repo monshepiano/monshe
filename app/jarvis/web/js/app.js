@@ -12008,7 +12008,32 @@ function liveSyncSide() {
 function liveBeat() {
   if (!LIVE.on) return;
   LIVE.beat = requestAnimationFrame(liveBeat);
-  liveShapeFrame();    // BM32: орб изредка сам проступает фигурой
+  liveShapeFrame();     // BM32: орб изредка сам проступает фигурой
+  liveOrbitsFrame();    // BM33: орбиты вечно валятся по всем осям
+}
+
+/* BM33: ОРБИТЫ ВАЛЯТСЯ ПО ВСЕМ ОСЯМ — как сияющая штука в голове
+   инопланетянина из «Людей в чёрном 3»: каждое кольцо вращается вокруг
+   трёх осей С РАЗНЫМИ скоростями, поэтому плоскость орбиты непрерывно
+   перекатывается и траектория не повторяется никогда. Один transform
+   на кольцо за кадр — дешевле лёгкого чиха композитора */
+const LIVE_ORBITS = [
+  { rx: 12.4, ry: -8.2, rz: 5.1, a: [24, 0, 130] },
+  { rx: -9.7, ry: 6.3, rz: -4.3, a: [90, 200, 40] },
+  { rx: 7.3, ry: -5.6, rz: 3.7, a: [150, 60, 210] },
+];
+
+function liveOrbitsFrame() {
+  if (!LIVE.root || !LIVE.orbits) return;
+  const t = performance.now() / 1000;
+  for (let i = 0; i < LIVE.orbits.length; i++) {
+    const el = LIVE.orbits[i];
+    const o = LIVE_ORBITS[i];
+    if (!el || !o) continue;
+    el.style.transform = 'rotateX(' + ((o.a[0] + o.rx * t) % 360).toFixed(2) + 'deg)' +
+      ' rotateY(' + ((o.a[1] + o.ry * t) % 360).toFixed(2) + 'deg)' +
+      ' rotateZ(' + ((o.a[2] + o.rz * t) % 360).toFixed(2) + 'deg)';
+  }
 }
 
 /* BM32: ОРБ ТРАНСФОРМИРУЕТСЯ САМ. Прежний код морфил КРУГЛЕШКА в фигуру
@@ -12186,12 +12211,10 @@ function liveBuild() {
             '<i class="lo-orbit lo-o3"></i>' +
             '<div class="lo-core">' +
               '<div class="lo-pulse">' +
-                /* ореолы — мягкий свет БЕЗ граней: круг + радиальный градиент */
+                /* один широкий ореол — мягкий свет без граней и без второй
+                   полосы: круг + радиальный градиент, гаснет ДО края */
                 '<svg class="lo-halo" viewBox="-16 -16 32 32">' +
                   '<circle r="15.4" fill="url(#gHalo)"/>' +
-                '</svg>' +
-                '<svg class="lo-veilx" viewBox="-16 -16 32 32">' +
-                  '<circle r="12.7" fill="url(#gVeil)"/>' +
                 '</svg>' +
                 /* дымка, расплывающаяся в воздухе: два дышащих пятна */
                 '<i class="lo-haze lo-hz1"></i>' +
@@ -12216,10 +12239,6 @@ function liveBuild() {
                       '<stop offset="55%" stop-color="#288cf0" stop-opacity=".05"/>' +
                       '<stop offset="100%" stop-color="#288cf0" stop-opacity="0"/>' +
                     '</radialGradient>' +
-                    '<radialGradient id="gVeil" cx="50%" cy="42%" r="66%">' +
-                      '<stop offset="0%" stop-color="#78cdff" stop-opacity=".12"/>' +
-                      '<stop offset="100%" stop-color="#78cdff" stop-opacity="0"/>' +
-                    '</radialGradient>' +
                     '<radialGradient id="gSend" cx="50%" cy="45%" r="60%">' +
                       '<stop offset="0%" stop-color="#5ac8ff" stop-opacity=".32"/>' +
                       '<stop offset="55%" stop-color="#3aaaff" stop-opacity=".10"/>' +
@@ -12233,9 +12252,10 @@ function liveBuild() {
           '<div class="live-line">' +
             '<input id="liveInput" placeholder="Спроси Джарвиса…" autocomplete="off">' +
             '<button class="live-send" aria-label="Отправить">' +
-              /* BM31: портал-гекс со свечением за иконкой отправки */
+              /* BM33: свечение кнопки — мягкий круглый свет, растушёванный
+                 к краям (никаких резких геометрических границ) */
               '<svg class="ls-hex" viewBox="-16 -16 32 32">' +
-                '<polygon points="0,-15.5 13.4,-7.75 13.4,7.75 0,15.5 -13.4,7.75 -13.4,-7.75" fill="url(#gSend)"/>' +
+                '<circle r="14.6" fill="url(#gSend)"/>' +
               '</svg>' +
               '<svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg>' +
             '</button>' +
@@ -12266,6 +12286,7 @@ function liveBuild() {
   LIVE.dreamIn = root.querySelector('.live-dream-in');
   LIVE.qEl = root.querySelector('.live-q');
   LIVE.aEl = root.querySelector('.live-a');
+  LIVE.orbits = Array.from(root.querySelectorAll('.lo-orbit'));   // BM33: волчки
   LIVE.toolsEl = root.querySelector('.live-tools');
   LIVE.sideEl = root.querySelector('.live-side-in');
   /* строка ввода: Enter — спросить */
@@ -12455,7 +12476,7 @@ async function liveSetMic(on) {
     /* BM29.2: возврат к строке — сон чистый лист: прошлый разговор
      (голосом) на экране не оживает */
     if (LIVE.qEl) LIVE.qEl.textContent = '';
-    if (LIVE.aEl) LIVE.aEl.textContent = '';
+    if (LIVE.aEl) { LIVE.aEl.textContent = ''; LIVE.aEl.classList.remove('in'); }
     /* стоп прослушивания БЕЗ транскрипции недосказанного */
     cancelAnimationFrame(VOICE.raf);
     VOICE_TTS_GEN++;                     // BM31: хвост очереди речи гаснет
@@ -12580,6 +12601,7 @@ function liveShowQuestion(text) {
      потока (меньше 400мс) раньше успевала записаться — и свайп-таймер
      затирал её, сцена молчала. Теперь запись после клика всегда жива */
   LIVE.aEl.textContent = '';
+  LIVE.aEl.classList.remove('in');
   d.classList.add('swap');
   setTimeout(() => {
     if (!LIVE.on || !LIVE.dreamIn) return;
@@ -12592,11 +12614,15 @@ function liveShowQuestion(text) {
 }
 
 function liveDelta(chunk) {
-  /* BM32: ответ ВСПЛЫВАЕТ из ниоткуда — как текст запроса. Каждый кусок
-     приходит своим span'ом и мягко проявляется снизу; анимация только на
-     opacity/transform (композитор, не repaint — прежний blur на кусках
-     рвал кадры, этот путь дешёвый) */
+  /* BM33: ответ всплывает КАК ТЕКСТ ЗАПРОСА. Прежняя попытка несла два
+     корня косяков: (1) span'ы были inline-block — такой бокс СЪЕДАЕТ
+     пробелы на своих краях, и весь текст слипся в одно слово; (2) каждый
+     кусок ехал своим translateY — строка дёргалась на каждом куске потока.
+     Теперь: контейнер .live-a ОДИН РАЗ всплывает снизу сквозь blur (laIn —
+     то же движение, что у вопроса), куски дописываются INLINE-span'ами
+     с мягким проявлением (только opacity): пробелы живут, строка стоит */
   if (!LIVE.aEl || !chunk) return;
+  if (!LIVE.aEl.classList.contains('in')) LIVE.aEl.classList.add('in');
   const sp = el('span', 'la-w');
   sp.textContent = chunk;
   LIVE.aEl.appendChild(sp);
@@ -12622,7 +12648,10 @@ function liveEvent(ev) {
     case 'error': {
       /* BM29.2: ошибка провайдера больше не глушит сцену молча — человек
          видит честный текст и может спросить иначе */
-      if (LIVE.aEl) LIVE.aEl.textContent = ev.error || 'Не получилось ответить';
+      if (LIVE.aEl) {
+        LIVE.aEl.textContent = ev.error || 'Не получилось ответить';
+        LIVE.aEl.classList.add('in');     // ошибка всплывает тем же движением
+      }
       voiceSetPhase('idle');
       return;
     }

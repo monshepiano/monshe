@@ -8658,10 +8658,15 @@ class IterationBM18Tests(unittest.TestCase):
         toolshow = js.split("function liveToolShow")[1].split("\nfunction ")[0]
         self.assertNotIn("SILENT_TOOLS", toolshow)
         self.assertNotIn("setTimeout", toolshow)
-        # текст ответа ВСПЛЫВАЕТ из ниоткуда — span на кусок, только opacity/transform
+        # BM33: ответ всплывает КАК ЗАПРОС: контейнер один раз плывёт снизу
+        # (laIn), куски — inline-span'ы с проявлением только прозрачностью:
+        # пробелы не слипаются, строка не дёргается
         self.assertIn("LIVE.aEl.appendChild(sp);", js)
-        self.assertIn(".live-a .la-w{display:inline-block;animation:laWord", css)
-        self.assertIn("@keyframes laWord{from{opacity:0;transform:translateY(9px)}}", css)
+        self.assertIn("if (!LIVE.aEl.classList.contains('in')) LIVE.aEl.classList.add('in');", js)
+        self.assertIn(".live-a .la-w{animation:laWord .65s ease both}", css)
+        self.assertIn("@keyframes laWord{from{opacity:0}}", css)
+        self.assertIn(".live-a.in{animation:laIn .9s var(--live-ease) both}", css)
+        self.assertNotIn("display:inline-block;animation:laWord", css)
         self.assertNotIn("LIVE.aEl.textContent += chunk;", js)
         # возврат к строке: прошлый текст не оживает
         self.assertIn("if (LIVE.qEl) LIVE.qEl.textContent = '';", js)
@@ -8749,10 +8754,9 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertNotIn("loMorphA", css)
         self.assertNotIn(".lo-think", css)
         # орб-портал: тело-дымка + мягкие КРУГЛЫЕ ореолы (гекс-грани ушли)
-        self.assertIn(".lo-pulse .lo-body{inset:4%;border-radius:50%;", css)
-        self.assertIn(".lo-pulse .lo-veilx{inset:0;width:100%;height:100%;", css)
+        self.assertIn(".lo-pulse .lo-body{inset:2%;border-radius:50%;", css)
+        self.assertNotIn("lo-veilx", js)
         self.assertIn("'<circle r=\"15.4\" fill=\"url(#gHalo)\"/>' +", js)
-        self.assertIn("'<circle r=\"12.7\" fill=\"url(#gVeil)\"/>' +", js)
         # очередь речи: два баритона больше не говорят наперекрыз
         self.assertIn("let VOICE_TTS_QUEUE = Promise.resolve();", js)
         self.assertIn("let VOICE_TTS_GEN = 0;", js)
@@ -8770,6 +8774,16 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn('if e.code == 400 and with_emotion and _TTS_EMOTION is None:', py_server)
         self.assertIn('"EMOTION «good» отвергнута — говорю без амплуа"', py_server)
         self.assertIn('"EMOTION «good» принята — говорю с интонацией"', py_server)
+        # BM33: ЦЕПОЧКА ГОЛОСОВ — OpenAI-совместимый TTS (gpt-4o-mini-tts с
+        # instructions = живая интонация) через AITunnel, откат на Яндекс
+        self.assertIn("def _tts_openai(self, text: str, prov:", py_server)
+        self.assertIn('model = str(prov.get("tts_model") or "gpt-4o-mini-tts")', py_server)
+        self.assertIn('voice = str(prov.get("tts_voice") or "onyx")', py_server)
+        self.assertIn('url = base + "/audio/speech"', py_server)
+        self.assertIn('"instructions": self._TTS_INSTRUCTIONS,', py_server)
+        self.assertIn("_TTS_INSTRUCTIONS = (", py_server)
+        self.assertIn("if at_key:", py_server)
+        self.assertIn("if r is not None:\n                return r", py_server)
         # микрофон не открывается поверх ещё говорящего Яндекса (эхо-самосглаз)
         self.assertIn("if (VOICE.ttsBusy) return;", js)
         self.assertIn("VOICE.ttsBusy = true;                   // BM32: Яндекс заговорил", js)
@@ -8783,8 +8797,11 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("'<i class=\"lo-orbit lo-o1\"></i>' +", js)
         self.assertIn(".lo-orbit.lo-o1{width:118%;height:118%;margin:-59% 0 0 -59%;", css)
         self.assertIn(".lo-orbit.lo-o3{width:154%;height:154%;margin:-77% 0 0 -77%;", css)
-        self.assertIn("@keyframes loOrbA{from{transform:rotateX(66deg) rotate(0deg)}", css)
-        self.assertIn("@keyframes loOrbB{from{transform:rotateX(76deg) rotate(0deg)}", css)
+        self.assertIn("function liveOrbitsFrame() {", js)
+        self.assertIn("const LIVE_ORBITS = [", js)
+        self.assertIn("LIVE.orbits = Array.from(root.querySelectorAll('.lo-orbit'));", js)
+        self.assertIn("liveOrbitsFrame();    // BM33: орбиты вечно валятся по всем осям", js)
+        self.assertNotIn("@keyframes loOrbA", css)
         # дымка расплывается: дышащие пятна поверх тела
         self.assertIn(".lo-pulse .lo-haze{position:absolute;border-radius:50%;mix-blend-mode:screen;", css)
         self.assertIn("@keyframes loHz1{0%,100%{opacity:.5;transform:translate(-6%,4%) scale(.94)}", css)
@@ -8798,6 +8815,27 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("const SC = ORB_FIG_SC[key] || 12.0;", js)
         self.assertIn("const op = 0.03 + 0.07 * bright;", js)
         self.assertIn('(0.14 + 0.10 * tt).toFixed(2)', js)
+        # ===== BM33: СУПЕР-ПЛАВНЫЕ ПЕРЕХОДЫ + ОРБИТЫ-ВОЛЧКИ + ЧЁТКИЕ КНОПКИ =====
+        # свет дышит ТОЛЬКО прозрачностью — кромка градиента не ползает
+        # (ползущий край и был видимой «границей перехода к тёмному»)
+        self.assertIn("@keyframes loBreathe{0%,100%{opacity:.78}50%{opacity:1}}", css)
+        self.assertIn("@keyframes loHeart{0%,100%{opacity:.8}50%{opacity:1}}", css)
+        self.assertNotIn("opacity:.8;transform:scale(.97)}", css)
+        self.assertNotIn("opacity:.35;transform:scale(.92)}", css)
+        # яркий центр, растушёванный к краям длинным хвостом (гаснет к 95%)
+        self.assertIn(".lo-pulse .lo-body{inset:2%;border-radius:50%;", css)
+        self.assertIn("rgba(242,252,255,.62) 0%", css)
+        self.assertIn("rgba(26,92,166,.02) 84%,transparent 95%)", css)
+        # орбиты-волчки: три скорости на кольцо, старт в разных плоскостях
+        self.assertIn("{ rx: 12.4, ry: -8.2, rz: 5.1, a: [24, 0, 130] },", js)
+        self.assertIn("' rotateY(' + ((o.a[1] + o.ry * t) % 360).toFixed(2) + 'deg)' +", js)
+        # кнопка отправки: мягкий круглый свет вместо резкого гекса
+        self.assertIn("'<circle r=\"14.6\" fill=\"url(#gSend)\"/>' +", js)
+        self.assertNotIn("0,-15.5", js)
+        # кнопки панели: ЧЁТКАЯ круглая область
+        self.assertIn("background:rgba(10,20,34,.42);", css)
+        self.assertIn("border:1px solid rgba(120,200,255,.15);color:var(--tx2)", css)
+        self.assertNotIn("rgba(120,200,255,.06) 0%,rgba(120,200,255,.028) 52%", css)
         # ===== BM30.2: СЛЕПАЯ КАМЕРА И ВЕЧНОЕ МОЛЧАНИЕ — КОРНИ =====
         # просьба режима ВИДНА в LIVE (сервер ждёт ответа до 300с!)
         self.assertIn("case 'mode_request': return liveModeAsk(ev);", js)

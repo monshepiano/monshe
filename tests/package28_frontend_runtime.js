@@ -4446,10 +4446,19 @@ function testIterationBM30Contracts() {
     css.includes('#liveRoot.ph-thinking .lo-core{--loS:.84}') &&
     js.includes("LIVE_SHAPE.nextAt = now + 17000 + Math.random() * 21000;") &&
     css.includes('.lo-orbit.lo-o1{width:118%;height:118%;margin:-59% 0 0 -59%;') &&
-    css.includes('@keyframes loOrbA{from{transform:rotateX(66deg) rotate(0deg)}') &&
+    js.includes('function liveOrbitsFrame() {') &&
+    js.includes('const LIVE_ORBITS = [') &&
+    js.includes('LIVE.orbits = Array.from(root.querySelectorAll(\'.lo-orbit\'));') &&
+    !css.includes('@keyframes loOrbA') &&
     css.includes('.lo-pulse .lo-haze{position:absolute;border-radius:50%;mix-blend-mode:screen;') &&
     css.includes('filter:brightness(calc(1 - var(--loFig,0)*.45));') &&
-    css.includes('.live-a .la-w{display:inline-block;animation:laWord') &&
+    css.includes('.live-a .la-w{animation:laWord .65s ease both}') &&
+    css.includes('.live-a.in{animation:laIn .9s var(--live-ease) both}') &&
+    css.includes('@keyframes loBreathe{0%,100%{opacity:.78}50%{opacity:1}}') &&
+    css.includes('rgba(242,252,255,.62) 0%') &&
+    css.includes('rgba(26,92,166,.02) 84%,transparent 95%)') &&
+    js.includes('circle r="14.6" fill="url(#gSend)"') &&
+    css.includes('background:rgba(10,20,34,.42);') &&
     !js.includes('live-motes') && !js.includes('live-bubbles') &&
     !css.includes('loMorphA') && !css.includes('.lo-think'),
     'BM32: misty orb (soft round halos + breathing haze + 3 hairline orbits in different planes); the ORB itself rarely surfaces as an orb-sized hairline figure at any moment (no dot morph); answer text floats in');
