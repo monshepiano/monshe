@@ -8524,11 +8524,11 @@ class IterationBM18Tests(unittest.TestCase):
         # ядро — одно тело: орб <-> строка (spotlight-морф), большой босс-орб
         self.assertIn("#liveRoot.text-on .live-core{width:min(780px,84vw);height:84px;border-radius:46px", css)
         self.assertIn(".live-core{position:relative;width:300px;height:300px;border-radius:50%", css)
-        self.assertIn("@keyframes loMorph", css)
+        self.assertIn("@keyframes loIriY", css)
         self.assertIn("@keyframes loFlash", css)
         # БЕЗ колец: шар большой, дышит, по нему переливается свет
         self.assertNotIn("lo-ring", js.split('function liveBuild')[1].split('function ')[0])
-        self.assertIn("@keyframes loMorphA", css)   # эфирное думанье: слои перетекают
+        self.assertIn("@keyframes loIriR", css)   # редкие переливы: золото чаще, красный реже
         self.assertIn("@keyframes loBreathe", css)
         self.assertIn("#liveRoot.ph-speaking .lo-speak{opacity:1}", css)
         # ГЛУБИНА: единый закон появления
@@ -8616,7 +8616,7 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("@keyframes loLed{0%,100%{opacity:.55}50%{opacity:1}}", css)   # лента пульсирует СВЕТОМ
         # ядро — КРУГ (квадратный lo-core больше не накрывает орб)
         self.assertIn(".lo-core{position:relative;width:88%;height:88%;border-radius:50%", css)
-        self.assertIn(".lo-core .lo-a{inset:0;", css)   # эфирные слои света без границ
+        self.assertIn(".lo-pulse .lo-halo{inset:0;width:100%;height:100%;", css)   # орб-портал: гекс-ореолы света
         self.assertNotIn("lo-ring", js)
         # камера: и орб, и строка уезжают НАВЕРХ (не в сторону)
         self.assertIn("#liveRoot.mic-on.cam-on .live-core-wrap,", css)
@@ -8633,7 +8633,7 @@ class IterationBM18Tests(unittest.TestCase):
         # морф: орб РАСТЯГИВАЕТСЯ в строку (перетекание)
         self.assertIn("transform:scale(1.45,.3);pointer-events:none}", css)
         # VAD: конец фразы по 1000мс — молниеносность
-        self.assertIn("now - VOICE.lastVoice > 1000", js)
+        self.assertIn("now - VOICE.lastVoice > 700", js)
         # НАСТОЯЩИЙ ГОЛОС: серверный TTS с фолбэком на системный синтез
         self.assertIn("function voiceSpeakViaServer(text)", js)
         self.assertIn("VOICE_TTS_OK = Date.now() + 45000;", js)
@@ -8678,8 +8678,14 @@ class IterationBM18Tests(unittest.TestCase):
         # орб пульсирует по громкости голоса (идея №1)
         self.assertIn("function liveTtsPulse(au) {", js)
         # мотыльки мысли (идея №2)
-        self.assertIn("live-motes", js)
-        self.assertIn("#liveRoot.ph-thinking .live-motes{opacity:1}", css)
+        # BM31: трансформации — фигуры круглешка в орбе (ещё плавнее)
+        self.assertIn("function liveShapeFrame() {", js)
+        self.assertIn("dotShapeFrame(LIVE_SHAPE.key, t, 'lo', 1 - LIVE_SHAPE.m)", js)
+        self.assertIn("const LIVE_SHAPE = { key: ''", js)
+        self.assertIn(".lo-shape{position:absolute;inset:0;width:100%;height:100%;opacity:0;", css)
+        # сжатие при думанье — вместо анимации «загрузки»
+        self.assertIn("#liveRoot.ph-thinking .lo-core{--loS:.84}", css)
+        self.assertIn("transform 1.1s var(--live-ease)", css)
 
         # ===== BM30: ГЛУБОКАЯ ЧЕСТНОСТЬ ГОЛОСА + ЖИВАЯ СЦЕНА =====
         # звёзды УБРАНЫ: фон — только расплывчатые оттенки синего
@@ -8732,9 +8738,25 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn(".lb{width:64px;height:64px;border-radius:50%", css)
         self.assertIn("display:flex;gap:92px;padding:12px 36px", css)
         # BM30.1: долгое думанье — глубинные пузыри (только transform/opacity)
-        self.assertIn("live-bubbles", js)
-        self.assertIn("#liveRoot.ph-thinking .live-bubbles{opacity:1}", css)
-        self.assertIn("@keyframes loBubble{", css)
+        # BM31: мотыльки и пузыри УБРАНЫ (анимация загрузки упразднена)
+        self.assertNotIn("live-motes", js)
+        self.assertNotIn("live-bubbles", js)
+        self.assertNotIn("loMorphA", css)
+        self.assertNotIn(".lo-think", css)
+        # орб-портал: тело + гекс-вуаль
+        self.assertIn(".lo-pulse .lo-body{inset:8%;border-radius:50%;", css)
+        self.assertIn(".lo-pulse .lo-veilx{inset:0;width:100%;height:100%;", css)
+        self.assertIn("<polygon points=\"0,-15.5 13.4,-7.75 13.4,7.75 0,15.5 -13.4,7.75 -13.4,-7.75\" fill=\"url(#gHalo)\"/>", js)
+        # очередь речи: два баритона больше не говорят наперекрыз
+        self.assertIn("let VOICE_TTS_QUEUE = Promise.resolve();", js)
+        self.assertIn("let VOICE_TTS_GEN = 0;", js)
+        self.assertIn("VOICE_TTS_QUEUE = VOICE_TTS_QUEUE.then(speak, speak);", js)
+        self.assertIn("VOICE_TTS_GEN++;                   // BM31: очередь речи гаснет целиком", js)
+        # кнопка отправки — портал-гекс со свечением; свечение строки меньше
+        self.assertIn(".live-send .ls-hex{position:absolute;inset:-34%;width:168%;height:168%;", css)
+        self.assertIn("box-shadow:0 0 22px rgba(150,220,255,.13)", css)
+        # темп речи
+        self.assertIn('"speed": "1.08"', py_server)
         # ===== BM30.2: СЛЕПАЯ КАМЕРА И ВЕЧНОЕ МОЛЧАНИЕ — КОРНИ =====
         # просьба режима ВИДНА в LIVE (сервер ждёт ответа до 300с!)
         self.assertIn("case 'mode_request': return liveModeAsk(ev);", js)

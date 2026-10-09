@@ -4438,10 +4438,13 @@ function testIterationBM30Contracts() {
     pyServer.includes('tail = " · причина: " + reason[:140]'),
     'BM30.2: mode requests surface in LIVE, the call restores the last dialog, camera-frame failures are honest, TTS shows the raw OS reason');
   // долгое думанье: глубинные пузыри
-  assert(js.includes('live-bubbles') &&
-    css.includes('#liveRoot.ph-thinking .live-bubbles{opacity:1}') &&
-    css.includes('@keyframes loBubble{'),
-    'BM30.1: deep-water bubbles keep long thinking alive (transform/opacity only)');
+  assert(js.includes('function liveShapeFrame() {') &&
+    js.includes("dotShapeFrame(LIVE_SHAPE.key, t, 'lo', 1 - LIVE_SHAPE.m)") &&
+    css.includes('.lo-shape{position:absolute;inset:0;width:100%;height:100%;opacity:0;') &&
+    css.includes('#liveRoot.ph-thinking .lo-core{--loS:.84}') &&
+    !js.includes('live-motes') && !js.includes('live-bubbles') &&
+    !css.includes('loMorphA') && !css.includes('.lo-think'),
+    'BM31: the orb compresses while thinking and morphs into the dialog dot real 3D/4D figures (even smoother); loading animations are gone');
   // камера: орб сильнее сжимается; кнопки/док чуть меньше, разлёт прежний
   assert(css.includes('calc(-50% - 36vh)) scale(.6)}') &&
     css.includes('.lb{width:64px;height:64px;border-radius:50%') &&
@@ -4464,7 +4467,7 @@ function testIterationBM28Contracts() {
     /#liveRoot\.open \.live-bg\{filter:blur\(0\) brightness\(1\);transform:scale\(1\)\}/.test(css) &&
     /#liveRoot\.text-on \.live-core\{width:min\(780px,84vw\);height:84px;border-radius:46px/.test(css) &&
     /#liveRoot\.mic-on\.cam-on \.live-core-wrap,\n#liveRoot\.text-on\.cam-on \.live-core-wrap\{\n  transform:translate\(-50%,calc\(-50% - 36vh\)\) scale\(\.6\)\}/.test(css) &&
-    css.includes('@keyframes loMorph') && css.includes('@keyframes loFlash') &&
+    css.includes('@keyframes loIriY') && css.includes('@keyframes loFlash') &&
     /#liveRoot\.ag \.live-bg \.a1\{background:radial-gradient\(circle,rgba\(224,52,88,\.34\),transparent 66%\)\}/.test(css) &&
     css.includes('.live-bar{') && css.includes('.lb-exit:hover{') &&
     css.includes('.live-dream{') &&

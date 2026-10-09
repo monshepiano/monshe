@@ -696,6 +696,7 @@ class Handler(BaseHTTPRequestHandler):
         data = urllib.parse.urlencode({
             "text": text, "folderId": folder,
             "voice": "ermil",            # мужской, живой
+            "speed": "1.08",             # BM31: живой темп — чуть быстрее среднего
             "format": "lpcm", "sampleRateHertz": "48000",
         }).encode("utf-8")
         last_err: Exception = RuntimeError("не пробовали")

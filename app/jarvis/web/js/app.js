@@ -11668,7 +11668,7 @@ function voiceListen() {
     if (LIVE.on) liveLevel(Math.min(1, level * 4));   // BM28: орб LIVE
     const now = performance.now();
     if (level > 0.055) { VOICE.heard = true; VOICE.lastVoice = now; }
-    if (VOICE.heard && now - VOICE.lastVoice > 1000) { voiceStopRec(); return; }  // BM29: мгновеннее
+    if (VOICE.heard && now - VOICE.lastVoice > 700) { voiceStopRec(); return; }  // BM29: мгновеннее
     if (now - VOICE.startedAt > 30000) { voiceStopRec(); return; }   // страховка от вечной записи
     VOICE.raf = requestAnimationFrame(tick);
   };
@@ -11859,16 +11859,29 @@ function liveTtsPulse(au) {
   } catch (e) { /* без пульса голос всё равно играет */ }
 }
 
+let VOICE_TTS_QUEUE = Promise.resolve();   // BM31: очередь — предложения играют ПО ОДНОМУ
+let VOICE_TTS_GEN = 0;                     // поколение очереди: перебой/выход сбрасывают её
+
 function voiceSpeak(text) {
   if (!VOICE.open || !text) return;
-  if (VOICE_TTS_OK !== false) {       // сервер ещё не отвергнут — пробуем
-    voiceSpeakViaServer(text).then((done) => {
-      if (done !== null) { voiceAfterSpeak(); return; }
-      voiceSpeakLocal(text);          // фолбэк: системный синтез
-    });
-    return;
-  }
-  voiceSpeakLocal(text);
+  /* BM31: ДВА БАРИТОНА — корень найден. Прежний код запускал каждое
+     предложение отдельным Audio: два предложения = два голоса НАПЕРЕКРЫЗ.
+     Теперь речь строго последовательна: очередь проигрывает фразы одна
+     за другой; перебой и выход поднимают поколение и мгновенно гасят
+     всё, что ещё не началось */
+  const gen = VOICE_TTS_GEN;
+  const speak = () => {
+    if (!VOICE.open || gen !== VOICE_TTS_GEN) return Promise.resolve();
+    if (VOICE_TTS_OK !== false) {       // сервер ещё не отвергнут — пробуем
+      return voiceSpeakViaServer(text).then((done) => {
+        if (gen !== VOICE_TTS_GEN) return;      // уже перебили — тишина
+        if (done !== null) { voiceAfterSpeak(); return; }
+        return voiceSpeakLocal(text);           // фолбэк: системный синтез
+      });
+    }
+    return voiceSpeakLocal(text);
+  };
+  VOICE_TTS_QUEUE = VOICE_TTS_QUEUE.then(speak, speak);
 }
 
 function voiceSpeakLocal(text) {
@@ -11918,6 +11931,8 @@ function voiceBargeLoop() {
         try { VOICE.ttsAudio.pause(); VOICE.ttsAudio.src = ''; } catch (e) {}
         VOICE.ttsAudio = null;
       }
+      VOICE_TTS_GEN++;                   // BM31: очередь речи гаснет целиком
+      VOICE_TTS_QUEUE = Promise.resolve();
       voiceListen();
       return;
     }
@@ -11975,6 +11990,39 @@ function liveSyncSide() {
 function liveBeat() {
   if (!LIVE.on) return;
   LIVE.beat = requestAnimationFrame(liveBeat);
+  liveShapeFrame();    // BM31: трансформации орба — фигуры круглешка
+}
+
+/* BM31: ТРАНСФОРМАЦИИ ОРБА — ТЕ ЖЕ честные 3D/4D фигуры, что у круглешка
+   диалога (тессеракт, пентахорон, куб, тетраэдр, кристалл), но ЕЩЁ
+   плавнее: морф внутрь 1.6с, наружу 1.4с, вращение не прерывается.
+   Думанье = орб сжимается и перетекает в фигуру; ответ = фигура тает,
+   орб разжимается и пульсирует в такт речи. Анимация «загрузки» убрана
+   по решению человека — сжатие и есть индикатор */
+const LIVE_SHAPE = { key: '', t0: 0, m: 0, target: 0 };
+
+function liveShapeFrame() {
+  if (!LIVE.root) return;
+  const svg = LIVE.root.querySelector('.lo-shape');
+  const g = svg && svg.querySelector('.lo-shape-g');
+  if (!g) return;
+  const target = LIVE.root.classList.contains('ph-thinking') ? 1 : 0;
+  if (target === 1 && LIVE_SHAPE.target === 0) {
+    LIVE_SHAPE.key = DOT_SHAPE_KEYS[Math.floor(Math.random() * DOT_SHAPE_KEYS.length)];
+    LIVE_SHAPE.t0 = performance.now();
+  }
+  LIVE_SHAPE.target = target;
+  if (!LIVE_SHAPE.key) return;
+  /* морф ЕЩЁ плавнее, чем у круглешка: рост 1.6с, возврат 1.4с */
+  const step = 16 / (target === 1 ? 1600 : 1400);
+  if (LIVE_SHAPE.m < target) LIVE_SHAPE.m = Math.min(target, LIVE_SHAPE.m + step);
+  else if (LIVE_SHAPE.m > target) LIVE_SHAPE.m = Math.max(target, LIVE_SHAPE.m - step);
+  svg.style.opacity = String(Math.min(1, LIVE_SHAPE.m * 1.2));
+  if (LIVE_SHAPE.m <= 0.004) { g.innerHTML = ''; return; }
+  const t = (performance.now() - LIVE_SHAPE.t0) / 1000;
+  /* dotShapeFrame(mForced): 0 = фигура целиком, 1 = круг. Наша фаза —
+     наоборот (1 = фигура), поэтому 1 - m. Внутри уже стоит smoothstep */
+  g.innerHTML = dotShapeFrame(LIVE_SHAPE.key, t, 'lo', 1 - LIVE_SHAPE.m);
 }
 
 /* BM29: аудио просыпается В ЖЕСТЕ КЛИКА — до любых await. Иначе Chrome
@@ -12014,19 +12062,6 @@ function liveBuild() {
          оттенки синего; ИЗРЕДКА сквозь воду проступает градиентная краска */
       '<i class="la a7"></i>' +
       '<div class="live-sheen"></div>' +
-      /* ИДЕЯ №2: мотыльки мысли — пока Джарвис думает, световые пылинки
-         тянутся к ядру из глубины. Без единого paint: только transform */
-      '<div class="live-motes">' +
-        '<i class="lm lm1"></i><i class="lm lm2"></i><i class="lm lm3"></i>' +
-        '<i class="lm lm4"></i>' +
-      '</div>' +
-      /* BM30.1: ГЛУБИННЫЕ ПУЗЫРИ — долгое думанье перестаёт быть скукой:
-         мягкие пузыри воздуха рвутся сквозь воду к ядру и тают. Только
-         transform/opacity — чайник не заметит нагрузки */
-      '<div class="live-bubbles">' +
-        '<i class="bu bu1"></i><i class="bu bu2"></i><i class="bu bu3"></i>' +
-        '<i class="bu bu4"></i><i class="bu bu5"></i><i class="bu bu6"></i>' +
-      '</div>' +
     '</div>' +
     '<div class="live-veil"></div>' +
     '<div class="live-stage">' +
@@ -12039,13 +12074,60 @@ function liveBuild() {
         '<div class="live-camwrap"><video class="live-video" autoplay playsinline muted></video></div>' +
         '<div class="live-core-wrap"><div class="live-core">' +
           '<div class="live-orb">' +
+            /* BM31: ОРБ-ПОРТАЛ — эфирный, расплывается в воздухе: два
+               шестиугольных ореола света + мягкое тело + редкие переливы
+               (чаще жёлтый, иногда красный) + честные 3D/4D-фигуры
+               круглешка, в которые орб ПЛАВНО трансформируется */
             '<div class="lo-core">' +
-              '<i class="lo-a"></i><i class="lo-b"></i><i class="lo-c"></i>' +
-              '<i class="lo-flash"></i><i class="lo-think"></i><i class="lo-speak"></i>' +
+              '<div class="lo-pulse">' +
+                /* гекс-ореолы ПОРТАЛА — честные SVG-полигоны со свечением */
+                '<svg class="lo-halo" viewBox="-16 -16 32 32">' +
+                  '<polygon points="0,-15.5 13.4,-7.75 13.4,7.75 0,15.5 -13.4,7.75 -13.4,-7.75" fill="url(#gHalo)"/>' +
+                '</svg>' +
+                '<svg class="lo-veilx" viewBox="-16 -16 32 32">' +
+                  '<polygon points="0,-12.6 10.9,-6.3 10.9,6.3 0,12.6 -10.9,6.3 -10.9,-6.3" fill="url(#gVeil)"/>' +
+                '</svg>' +
+                '<i class="lo-body"></i>' +
+                '<i class="lo-iri"></i><i class="lo-iri lo-iri-r"></i>' +
+                '<svg class="lo-shape" viewBox="-16 -16 32 32">' +
+                  '<defs>' +
+                    '<radialGradient id="gFlo" cx="34%" cy="28%" r="82%">' +
+                      '<stop offset="0%" stop-color="#ffffff"/>' +
+                      '<stop offset="38%" stop-color="#c8eeff"/>' +
+                      '<stop offset="72%" stop-color="#48b6ea"/>' +
+                      '<stop offset="100%" stop-color="#0e6ea8"/>' +
+                    '</radialGradient>' +
+                    '<linearGradient id="gElo" x1="0" y1="0" x2="1" y2="1">' +
+                      '<stop offset="0%" stop-color="#ffffff"/>' +
+                      '<stop offset="55%" stop-color="#d4f1ff"/>' +
+                      '<stop offset="100%" stop-color="#8ed4f4"/>' +
+                    '</linearGradient>' +
+                    '<radialGradient id="gHalo" cx="50%" cy="45%" r="62%">' +
+                      '<stop offset="0%" stop-color="#46b4ff" stop-opacity=".22"/>' +
+                      '<stop offset="55%" stop-color="#288cf0" stop-opacity=".08"/>' +
+                      '<stop offset="100%" stop-color="#288cf0" stop-opacity="0"/>' +
+                    '</radialGradient>' +
+                    '<radialGradient id="gVeil" cx="50%" cy="42%" r="66%">' +
+                      '<stop offset="0%" stop-color="#78cdff" stop-opacity=".18"/>' +
+                      '<stop offset="100%" stop-color="#78cdff" stop-opacity="0"/>' +
+                    '</radialGradient>' +
+                    '<radialGradient id="gSend" cx="50%" cy="45%" r="60%">' +
+                      '<stop offset="0%" stop-color="#5ac8ff" stop-opacity=".32"/>' +
+                      '<stop offset="55%" stop-color="#3aaaff" stop-opacity=".10"/>' +
+                      '<stop offset="100%" stop-color="#3aaaff" stop-opacity="0"/>' +
+                    '</radialGradient>' +
+                  '</defs><g class="lo-shape-g"></g>' +
+                '</svg>' +
+                '<i class="lo-flash"></i><i class="lo-speak"></i>' +
+              '</div>' +
             '</div></div>' +
           '<div class="live-line">' +
             '<input id="liveInput" placeholder="Спроси Джарвиса…" autocomplete="off">' +
             '<button class="live-send" aria-label="Отправить">' +
+              /* BM31: портал-гекс со свечением за иконкой отправки */
+              '<svg class="ls-hex" viewBox="-16 -16 32 32">' +
+                '<polygon points="0,-15.5 13.4,-7.75 13.4,7.75 0,15.5 -13.4,7.75 -13.4,-7.75" fill="url(#gSend)"/>' +
+              '</svg>' +
               '<svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg>' +
             '</button>' +
           '</div>' +
@@ -12211,6 +12293,9 @@ function liveClose() {
   const liveChat = VOICE.chatId;
   if (liveChat) api('/api/chats/delete', { chat_id: liveChat });
   LIVE.host = null;
+  /* BM31: звонок закрыт — очередь речи умирает целиком, ни слова вдогонку */
+  VOICE_TTS_GEN++;
+  VOICE_TTS_QUEUE = Promise.resolve();
   /* движок закрывается прежним путём: снимет voice-run, погасит синтез */
   closeVoiceMode();
   /* BM30.2: выход возвращает последнее открытое — диалог до звонка или
@@ -12260,6 +12345,8 @@ async function liveSetMic(on) {
     if (LIVE.aEl) LIVE.aEl.textContent = '';
     /* стоп прослушивания БЕЗ транскрипции недосказанного */
     cancelAnimationFrame(VOICE.raf);
+    VOICE_TTS_GEN++;                     // BM31: хвост очереди речи гаснет
+    VOICE_TTS_QUEUE = Promise.resolve();
     if (VOICE.rec) {
       try { VOICE.rec.onstop = null; VOICE.rec.stop(); } catch (e) { /* уже мёртв */ }
       VOICE.rec = null;
