@@ -36,6 +36,9 @@ _TTS_URLS = [
     "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize",
     "https://api.tts.cloud.yandex.net/speech/v1/tts:synthesize",
 ]
+# BM32: амплуа «good» для эрмила: None = ещё не пробовали, True = Яндекс
+# принял интонацию, False = отверг (говорим без амплуа до перезапуска)
+_TTS_EMOTION = None
 
 # Активные foreground-прогоны. Раньше Stop рвал только SSE-соединение, а сам
 # агент продолжал жить до конца: спрашивал санкции, двигал мышью, доводил
@@ -693,80 +696,104 @@ class Handler(BaseHTTPRequestHandler):
         # идёт ПЕРВЫМ поддоменом: llm.api, ai.api, operation.api). Домена
         # api.tts.cloud.yandex.net не существует — macOS честно отвечала
         # Errno 8 nodename. Перебираем оба порядка, рабочий запоминаем
-        data = urllib.parse.urlencode({
-            "text": text, "folderId": folder,
-            "voice": "ermil",            # мужской, живой
-            "speed": "1.08",             # BM31: живой темп — чуть быстрее среднего
-            "format": "lpcm", "sampleRateHertz": "48000",
-        }).encode("utf-8")
-        last_err: Exception = RuntimeError("не пробовали")
-        try:
-            for url in _TTS_URLS:
-                req = urllib.request.Request(url, data=data,
-                                             headers={"Authorization": "Api-Key " + key})
-                try:
-                    with urllib.request.urlopen(req, timeout=20) as r:
-                        pcm = r.read()
-                    _TTS_URLS[:] = [url] + [u for u in _TTS_URLS if u != url]
-                    break
-                except urllib.error.HTTPError:
-                    raise               # дошли до API — ошибка API честнее сетевой
-                except Exception as e:
-                    last_err = e
-                    self._tts_log("HOST FAIL %s: %s" % (url.split("//")[1].split("/")[0],
-                                                        str(e)[:120]))
-            else:
-                raise last_err
-        except urllib.error.HTTPError as e:
-            # Настоящий ответ Яндекса: код + тело. Причина — не догадка
-            detail = ""
+        # BM32: ИНТОНАЦИЯ. У голосов Яндекса есть АМПЛУА (роли произношения):
+        # по актуальному списку у эрмила доступны neutral и good. В v1 амплуа
+        # передаётся параметром emotion. Старая документация обещала его только
+        # jane/omazh — поэтому запрос идёт с «good» и разовым честным фолбэком:
+        # если Яндекс отвергнет параметр (HTTP 400), фраза пересобирается без
+        # него ОДИН раз, решение запоминается до перезапуска (никаких слепых
+        # повторов), путь пишется в tts.log — какой голос реально звучит
+        global _TTS_EMOTION
+        attempts = [True, False] if _TTS_EMOTION is not False else [False]
+        pcm = b""
+        for with_emotion in attempts:
+            payload = {
+                "text": text, "folderId": folder,
+                "voice": "ermil",            # мужской, живой
+                "speed": "1.08",             # BM31: живой темп — чуть быстрее среднего
+                "format": "lpcm", "sampleRateHertz": "48000",
+            }
+            if with_emotion:
+                payload["emotion"] = "good"  # BM32: живая интонация (амплуа)
+            data = urllib.parse.urlencode(payload).encode("utf-8")
+            last_err: Exception = RuntimeError("не пробовали")
             try:
-                detail = e.read()[:400].decode("utf-8", "replace").replace("\n", " ")
-            except Exception:
-                pass
-            self._tts_log("HTTP %s: %s" % (e.code, detail[:200]))
-            if e.code == 401:
-                return {"ok": False, "class": "auth", "status": 401, "detail": detail,
-                        "error": "Яндекс не принял API-ключ (HTTP 401). Ключ "
-                                 "скопируй заново в Настройках — целиком, без пробелов"}
-            if e.code == 403:
-                return {"ok": False, "class": "auth", "status": 403, "detail": detail,
-                        "error": "Ключу не хватает роли ai.speechkit-tts.user "
-                                 "(HTTP 403). Выдай роль каталогу в консоли Яндекса"}
-            if e.code == 404:
-                return {"ok": False, "class": "auth", "status": 404, "detail": detail,
-                        "error": "folder_id не найден (HTTP 404). Проверь "
-                                 "идентификатор каталога — он из того же аккаунта, что и ключ"}
-            if e.code == 429:
-                return {"ok": False, "class": "rate", "status": 429, "detail": detail,
-                        "error": "Лимит запросов к Яндексу (429) — повторю через минуту"}
-            return {"ok": False, "class": "server" if e.code >= 500 else "req",
-                    "status": e.code, "detail": detail,
-                    "error": "Яндекс ответил HTTP %d — %s" % (e.code, detail[:120] or "без пояснений")}
-        except Exception as e:
-            # Сеть: DNS, файрвол, таймаут, сертификат. ГЛАВНЫЙ случай «нет
-            # доступа»: сервер физически не может выйти к Яндексу. Причина
-            # ошибки ОС прикладывается к ответу ЦЕЛИКОМ — человек видит
-            # настоящий текст (Errno 8 / SSL / timeout), а не мою догадку
-            reason = str(e)
-            low = reason.lower()
-            is_net = ("resolve" in low or "name or service" in low or "network" in low
-                      or "unreachable" in low or "timed out" in low or "timeout" in low
-                      or "connection" in low or "ssl" in low
-                      # macOS-формулировки DNS-отказов
-                      or "nodename" in low or "servname" in low or "getaddrinfo" in low
-                      or "name resolution" in low or "no route" in low or "try again" in low)
-            self._tts_log("NET[%s]: %s" % ("net" if is_net else "?", reason[:200]))
-            tail = " · причина: " + reason[:140]
-            if is_net:
-                return {"ok": False, "class": "net", "detail": reason[:200],
-                        "error": "Сервер не может выйти в интернет к Яндексу"
-                                 " (DNS/сеть/сертификат)" + tail +
-                                 ". Если это превью в песочнице — внешнего интернета там "
-                                 "нет ВООБЩЕ, голос оживёт только в локальной сборке "
-                                 "на компьютере; ключ тут ни при чём"}
-            return {"ok": False, "class": "server", "detail": reason[:200],
-                    "error": "Яндекс не ответил" + tail}
+                for url in _TTS_URLS:
+                    req = urllib.request.Request(url, data=data,
+                                                 headers={"Authorization": "Api-Key " + key})
+                    try:
+                        with urllib.request.urlopen(req, timeout=20) as r:
+                            pcm = r.read()
+                        _TTS_URLS[:] = [url] + [u for u in _TTS_URLS if u != url]
+                        break
+                    except urllib.error.HTTPError:
+                        raise               # дошли до API — ошибка API честнее сетевой
+                    except Exception as e:
+                        last_err = e
+                        self._tts_log("HOST FAIL %s: %s" % (url.split("//")[1].split("/")[0],
+                                                            str(e)[:120]))
+                else:
+                    raise last_err
+            except urllib.error.HTTPError as e:
+                # Настоящий ответ Яндекса: код + тело. Причина — не догадка
+                detail = ""
+                try:
+                    detail = e.read()[:400].decode("utf-8", "replace").replace("\n", " ")
+                except Exception:
+                    pass
+                self._tts_log("HTTP %s: %s" % (e.code, detail[:200]))
+                # амплуа отвергнуто — разовый повтор БЕЗ него, дальше без эмоций
+                if e.code == 400 and with_emotion and _TTS_EMOTION is None:
+                    _TTS_EMOTION = False
+                    self._tts_log("EMOTION «good» отвергнута — говорю без амплуа")
+                    continue
+                if e.code == 401:
+                    return {"ok": False, "class": "auth", "status": 401, "detail": detail,
+                            "error": "Яндекс не принял API-ключ (HTTP 401). Ключ "
+                                     "скопируй заново в Настройках — целиком, без пробелов"}
+                if e.code == 403:
+                    return {"ok": False, "class": "auth", "status": 403, "detail": detail,
+                            "error": "Ключу не хватает роли ai.speechkit-tts.user "
+                                     "(HTTP 403). Выдай роль каталогу в консоли Яндекса"}
+                if e.code == 404:
+                    return {"ok": False, "class": "auth", "status": 404, "detail": detail,
+                            "error": "folder_id не найден (HTTP 404). Проверь "
+                                     "идентификатор каталога — он из того же аккаунта, что и ключ"}
+                if e.code == 429:
+                    return {"ok": False, "class": "rate", "status": 429, "detail": detail,
+                            "error": "Лимит запросов к Яндексу (429) — повторю через минуту"}
+                return {"ok": False, "class": "server" if e.code >= 500 else "req",
+                        "status": e.code, "detail": detail,
+                        "error": "Яндекс ответил HTTP %d — %s" % (e.code, detail[:120] or "без пояснений")}
+            except Exception as e:
+                # Сеть: DNS, файрвол, таймаут, сертификат. ГЛАВНЫЙ случай «нет
+                # доступа»: сервер физически не может выйти к Яндексу. Причина
+                # ошибки ОС прикладывается к ответу ЦЕЛИКОМ — человек видит
+                # настоящий текст (Errno 8 / SSL / timeout), а не мою догадку
+                reason = str(e)
+                low = reason.lower()
+                is_net = ("resolve" in low or "name or service" in low or "network" in low
+                          or "unreachable" in low or "timed out" in low or "timeout" in low
+                          or "connection" in low or "ssl" in low
+                          # macOS-формулировки DNS-отказов
+                          or "nodename" in low or "servname" in low or "getaddrinfo" in low
+                          or "name resolution" in low or "no route" in low or "try again" in low)
+                self._tts_log("NET[%s]: %s" % ("net" if is_net else "?", reason[:200]))
+                tail = " · причина: " + reason[:140]
+                if is_net:
+                    return {"ok": False, "class": "net", "detail": reason[:200],
+                            "error": "Сервер не может выйти в интернет к Яндексу"
+                                     " (DNS/сеть/сертификат)" + tail +
+                                     ". Если это превью в песочнице — внешнего интернета там "
+                                     "нет ВООБЩЕ, голос оживёт только в локальной сборке "
+                                     "на компьютере; ключ тут ни при чём"}
+                return {"ok": False, "class": "server", "detail": reason[:200],
+                        "error": "Яндекс не ответил" + tail}
+            # успех: амплуа принято Яндексом — запоминаем, дальше всегда с ним
+            if with_emotion and _TTS_EMOTION is None:
+                _TTS_EMOTION = True
+                self._tts_log("EMOTION «good» принята — говорю с интонацией")
+            break
         if not pcm:
             self._tts_log("EMPTY ответ")
             return {"ok": False, "class": "server", "error": "TTS: пустой ответ"}

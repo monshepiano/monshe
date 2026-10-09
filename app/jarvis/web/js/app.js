@@ -11428,7 +11428,11 @@ $('#micBtn').addEventListener('click', () => { dictStart(); });
    ПРЕДЛОЖЕНИЯМИ, не дожидаясь конца генерации → снова слушаю. */
 const VOICE = { open: false, phase: 'idle', rec: null, chunks: [], stream: null,
                 ctx: null, an: null, raf: 0, heard: false, lastVoice: 0,
-                startedAt: 0, pending: '', barge: 0, ctxOn: true, chatId: '', nodes: [] };
+                startedAt: 0, pending: '', barge: 0, ctxOn: true, chatId: '', nodes: [],
+                /* BM32: ttsBusy — серверский голос ЕЩЁ ГОВОРИТ (микрофон не
+                   открывается поверх собственной речи); asrErrShown — причину
+                   отказа распознавания показываем один раз за звонок */
+                ttsBusy: false, asrErrShown: false };
 let VOICE_RU = null;
 
 /* Контекст диалога: включён — беседа пишется в текущий диалог; выключен —
@@ -11551,6 +11555,8 @@ async function openVoiceMode() {
   VOICE.open = true;
   VOICE.nodes = [];
   VOICE.ctxOn = voiceCtxOn();
+  VOICE.asrErrShown = false;      // BM32: причины отказов — один раз за звонок
+  VOICE_TTS_ERR_SHOWN = false;
   // AG: КАЖДЫЙ ЗВОНОК — НОВЫЙ РАЗГОВОР. Прежний код восстанавливал id
   // прошлого диалога разговора из localStorage, и новая вкладка показывала
   // СТАРУЮ беседу (даже в новом диалоге). Звонок положил — разговор закрыт;
@@ -11705,6 +11711,14 @@ async function voiceTranscribe() {
   if (r.ok && r.text && r.text.trim()) {
     voiceAsk(r.text.trim());
   } else {
+    /* BM32: КОРЕНЬ «спросил — а в ответ тишина». Сервис распознавания —
+       внешний, он иногда отказывает; сцена молча возвращалась к слушанию,
+       и человек не знал, что его НЕ услышали. Причина показывается честно,
+       один раз за звонок; дальше — тихие попытки слушанием */
+    if (!r.ok && r.error && !VOICE.asrErrShown) {
+      VOICE.asrErrShown = true;
+      toast('Распознавание речи: ' + r.error, 'warn', 'ASR');
+    }
     voiceRetry();
   }
 }
@@ -11767,33 +11781,6 @@ function voiceFeed(chunk) {
 let VOICE_TTS_OK = null;      // null = не пробовали; true = живой; число = epoch следующей попытки
 let VOICE_TTS_ERR_SHOWN = false;
 
-/* BM30.1: статус голоса — ВСЕГДА на экране звонка, мелко над панелью.
-   Не тост, не догадка: человек видит, какой голос говорит и почему.
-   BM30.2: к причине прикладывается СЫРОЙ текст ошибки ОС — следующий
-   диагноз ставится по факту, а не по догадке */
-function liveVoiceSet(kind, reason, detail) {
-  if (!LIVE.on || !LIVE.voiceEl) return;
-  const SHORT = {
-    config: 'ключ Яндекс не вписан',
-    net: 'нет связи с Яндексом',
-    auth: 'ключ/роль не приняты Яндексом',
-    rate: 'лимит Яндекс, повторю',
-    server: 'Яндекс не ответил',
-  };
-  if (kind === 'ok') {
-    LIVE.voiceEl.className = 'live-voice on ok';
-    LIVE.voiceEl.textContent = 'ГОЛОС · ЯНДЕКС (НАСТОЯЩИЙ)';
-  } else if (kind === 'sys') {
-    let txt = 'ГОЛОС · СИСТЕМНЫЙ — ' + (SHORT[reason] || 'нет доступа к Яндексу');
-    if (detail) txt += ' · ' + String(detail).slice(0, 70);
-    LIVE.voiceEl.className = 'live-voice on sys';
-    LIVE.voiceEl.textContent = txt;
-  } else {
-    LIVE.voiceEl.className = 'live-voice';
-    LIVE.voiceEl.textContent = '';
-  }
-}
-
 function voiceSpeakViaServer(text) {
   /* BM30: РЕТРАИ — ТОЛЬКО ВРЕМЕННЫМ ОШИБКАМ. Прежний код долбил Яндекс
      каждые 45с что бы ни случилось: DNS-блок песочницы и неверный ключ
@@ -11805,13 +11792,18 @@ function voiceSpeakViaServer(text) {
   return api('/api/tts', { text }).then((r) => {
     if (r && r.ok && r.audio) {
       VOICE_TTS_OK = true;
-      liveVoiceSet('ok');                       // настоящий голос — видно сразу
       return new Promise((resolve) => {
         const au = new Audio('data:audio/wav;base64,' + r.audio);
         VOICE.ttsAudio = au;
-        au.onended = () => { if (VOICE.ttsAudio === au) VOICE.ttsAudio = null; resolve(); };
-        au.onerror = () => { if (VOICE.ttsAudio === au) VOICE.ttsAudio = null; resolve(); };
-        au.play().catch(() => { if (VOICE.ttsAudio === au) VOICE.ttsAudio = null; resolve(); });
+        VOICE.ttsBusy = true;                   // BM32: Яндекс заговорил
+        const fin = () => {
+          if (VOICE.ttsAudio === au) VOICE.ttsAudio = null;
+          VOICE.ttsBusy = false;                // BM32: ...и договорил
+          resolve();
+        };
+        au.onended = fin;
+        au.onerror = fin;
+        au.play().catch(() => { fin(); });
         voiceSetPhase('speaking');
         cancelAnimationFrame(VOICE.raf);
         VOICE.raf = requestAnimationFrame(voiceBargeLoop);
@@ -11819,17 +11811,21 @@ function voiceSpeakViaServer(text) {
       });
     }
     /* честная причина: человек должен ЗНАТЬ, почему голос системный */
-    liveVoiceSet('sys', (r && r.class) || 'server', (r && r.detail) || '');
     if (r && r.error && !VOICE_TTS_ERR_SHOWN) {
       VOICE_TTS_ERR_SHOWN = true;
       toast('Голос Джарвиса: ' + r.error +
         (r.status ? ' (HTTP ' + r.status + ')' : ''), 'warn', 'TTS');
     }
     const cls = (r && r.class) || 'server';
-    if (cls === 'rate' || cls === 'server') {
-      VOICE_TTS_OK = Date.now() + 45000;   // временное — остыть и снова
+    /* BM32: КОРЕНЬ «иногда молчит» — сеть на реальном компьютере подводит
+       НА МИНУТУ (вайфай моргнул, ноутбук проснулся), а прежняя схема
+       хоронила настоящий голос ДО КОНЦА звонка. config/auth — постоянные
+       отказы (ключ неверен — он и через минуту неверен); net теперь
+       остывает на 45с вместе с rate/server: живой голос возвращается */
+    if (cls === 'config' || cls === 'auth') {
+      VOICE_TTS_OK = false;   // ключ не вписан/не принят — до нового звонка
     } else {
-      VOICE_TTS_OK = false;   // config/net/auth: повтор бессмыслен до нового звонка
+      VOICE_TTS_OK = Date.now() + 45000;   // rate/server/net — остыть и снова
     }
     return null;
   }).catch(() => { VOICE_TTS_OK = Date.now() + 45000; return null; });
@@ -11899,8 +11895,25 @@ function voiceSpeakLocal(text) {
         VOICE.raf = requestAnimationFrame(voiceBargeLoop);
       }
     };
-    u.onend = () => { voiceAfterSpeak(); };
-    u.onerror = () => { voiceAfterSpeak(); };
+    /* BM32: КОРЕНЬ «молчит и больше не отвечает» — системный синтез macOS
+       умеет промолчать НАВСЕГДА (голоса не успели загрузиться, движок
+       занят): ни onend, ни onerror не приходят, и вся очередь речи
+       застывает до конца звонка. Сторож доводит фразу до конца очереди
+       в любом случае: 7с на старт + 90мс на символ (не больше 20с) */
+    let done = false;
+    let guard = 0;
+    const fin = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(guard);
+      voiceAfterSpeak();
+    };
+    u.onend = fin;
+    u.onerror = fin;
+    guard = setTimeout(() => {
+      try { window.speechSynthesis.cancel(); } catch (e0) { /* уже мёртв */ }
+      fin();
+    }, 7000 + Math.min(20000, text.length * 90));
     window.speechSynthesis.speak(u);
   } catch (e) { voiceAfterSpeak(); }
 }
@@ -11952,6 +11965,12 @@ function voiceAfterSpeak() {
   setTimeout(() => {
     if (!VOICE.open || S.streaming) return;
     if (window.speechSynthesis && window.speechSynthesis.speaking) return;
+    /* BM32: КОРЕНЬ самосглаза — микрофон открывался ПОВЕРХ ещё говорящего
+       Яндекса (проверялся только системный синтез): запись ловила эхо
+       собственного голоса, распознаватель слышал Джарвиса вместо человека.
+       Пока фраза из очереди звучит — слушание не начинается; последняя
+       фраза сама позовёт voiceAfterSpeak, когда договорит */
+    if (VOICE.ttsBusy) return;
     if (VOICE.phase !== 'listening') voiceListen();
   }, 550);
 }
@@ -11972,8 +11991,7 @@ document.addEventListener('keydown', (e) => {
 /* ============================================================ */
 const LIVE = { on: false, mic: false, cam: false, root: null, video: null,
   dreamIn: null, qEl: null, aEl: null, toolsEl: null, sideEl: null,
-  askEl: null, run: 0, camStream: null, host: null, planOpen: false, askOn: false,
-  voiceEl: null };
+  askEl: null, run: 0, camStream: null, host: null, planOpen: false, askOn: false };
 
 /* BM29: единый закон «элементы уступают друг другу»: как только справа
    живёт большой элемент (интерактив, план, медиа) — главный элемент
@@ -11990,39 +12008,123 @@ function liveSyncSide() {
 function liveBeat() {
   if (!LIVE.on) return;
   LIVE.beat = requestAnimationFrame(liveBeat);
-  liveShapeFrame();    // BM31: трансформации орба — фигуры круглешка
+  liveShapeFrame();    // BM32: орб изредка сам проступает фигурой
 }
 
-/* BM31: ТРАНСФОРМАЦИИ ОРБА — ТЕ ЖЕ честные 3D/4D фигуры, что у круглешка
-   диалога (тессеракт, пентахорон, куб, тетраэдр, кристалл), но ЕЩЁ
-   плавнее: морф внутрь 1.6с, наружу 1.4с, вращение не прерывается.
-   Думанье = орб сжимается и перетекает в фигуру; ответ = фигура тает,
-   орб разжимается и пульсирует в такт речи. Анимация «загрузки» убрана
-   по решению человека — сжатие и есть индикатор */
-const LIVE_SHAPE = { key: '', t0: 0, m: 0, target: 0 };
+/* BM32: ОРБ ТРАНСФОРМИРУЕТСЯ САМ. Прежний код морфил КРУГЛЕШКА в фигуру
+   (движок диалога рисовал свой кружок и выращивал из него грани) — человек
+   справедливо увидел «появляется какой-то круглешок». Теперь изредка —
+   В ЛЮБОЙ МОМЕНТ, не во время думанья — дымка орба чуть тускнеет
+   (яркость уводится var --loFig), и из неё ПРОСТУПАЕТ фигура размером
+   с орб: те же честные тессеракт/пентахорон/куб/тетраэдр/кристалл, но
+   грани — почти прозрачная стеклянная дымка, рёбра — еле заметный
+   волосок. Проявление и растворение — по 5.2с, безумно плавно, движение
+   идёт S-кривой, вращение медленное и непрерывное */
+const LIVE_SHAPE = { key: '', t0: 0, m: 0, phase: 'idle', nextAt: 0, holdTo: 0 };
 
 function liveShapeFrame() {
   if (!LIVE.root) return;
   const svg = LIVE.root.querySelector('.lo-shape');
   const g = svg && svg.querySelector('.lo-shape-g');
   if (!g) return;
-  const target = LIVE.root.classList.contains('ph-thinking') ? 1 : 0;
-  if (target === 1 && LIVE_SHAPE.target === 0) {
-    LIVE_SHAPE.key = DOT_SHAPE_KEYS[Math.floor(Math.random() * DOT_SHAPE_KEYS.length)];
-    LIVE_SHAPE.t0 = performance.now();
+  const now = performance.now();
+  if (LIVE_SHAPE.phase === 'idle') {
+    if (!LIVE_SHAPE.nextAt) {          // первый показ — не сразу после входа
+      LIVE_SHAPE.nextAt = now + 9000 + Math.random() * 9000;
+      return;
+    }
+    if (now < LIVE_SHAPE.nextAt) return;
+    LIVE_SHAPE.key = DOT_SHAPE_KEYS[(Math.random() * DOT_SHAPE_KEYS.length) | 0];
+    LIVE_SHAPE.t0 = now;
+    LIVE_SHAPE.phase = 'in';
   }
-  LIVE_SHAPE.target = target;
-  if (!LIVE_SHAPE.key) return;
-  /* морф ЕЩЁ плавнее, чем у круглешка: рост 1.6с, возврат 1.4с */
-  const step = 16 / (target === 1 ? 1600 : 1400);
-  if (LIVE_SHAPE.m < target) LIVE_SHAPE.m = Math.min(target, LIVE_SHAPE.m + step);
-  else if (LIVE_SHAPE.m > target) LIVE_SHAPE.m = Math.max(target, LIVE_SHAPE.m - step);
-  svg.style.opacity = String(Math.min(1, LIVE_SHAPE.m * 1.2));
-  if (LIVE_SHAPE.m <= 0.004) { g.innerHTML = ''; return; }
-  const t = (performance.now() - LIVE_SHAPE.t0) / 1000;
-  /* dotShapeFrame(mForced): 0 = фигура целиком, 1 = круг. Наша фаза —
-     наоборот (1 = фигура), поэтому 1 - m. Внутри уже стоит smoothstep */
-  g.innerHTML = dotShapeFrame(LIVE_SHAPE.key, t, 'lo', 1 - LIVE_SHAPE.m);
+  const t = (now - LIVE_SHAPE.t0) / 1000;
+  if (LIVE_SHAPE.phase === 'in') {            /* проступает из дымки — 5.2с */
+    LIVE_SHAPE.m = Math.min(1, LIVE_SHAPE.m + 16 / 5200);
+    if (LIVE_SHAPE.m >= 1) {
+      LIVE_SHAPE.phase = 'hold';
+      LIVE_SHAPE.holdTo = now + 9000 + Math.random() * 6000;
+    }
+  } else if (LIVE_SHAPE.phase === 'hold') {   /* живёт 9-15с, вращаясь */
+    if (now >= LIVE_SHAPE.holdTo) LIVE_SHAPE.phase = 'out';
+  } else {                                    /* тает обратно в дымку — 5.2с */
+    LIVE_SHAPE.m = Math.max(0, LIVE_SHAPE.m - 16 / 5200);
+    if (LIVE_SHAPE.m <= 0) {
+      LIVE_SHAPE.phase = 'idle';
+      LIVE_SHAPE.key = '';
+      g.innerHTML = '';
+      svg.style.opacity = '0';
+      LIVE.root.style.setProperty('--loFig', '0');
+      LIVE_SHAPE.nextAt = now + 17000 + Math.random() * 21000;
+      return;
+    }
+  }
+  /* S-кривая поверх линейного m: никакого рывка на старте и финале */
+  const e = LIVE_SHAPE.m * LIVE_SHAPE.m * (3 - 2 * LIVE_SHAPE.m);
+  svg.style.opacity = String(e);
+  LIVE.root.style.setProperty('--loFig', e.toFixed(3));
+  g.innerHTML = orbFigureFrame(LIVE_SHAPE.key, t);
+}
+
+/* ФИГУРА ОРБА — честная геометрия, но НЕ круглешек: без внутреннего
+   круга и без морфа «круг → фигура». Размер — сам орб (радиус фигуры
+   доведён до радиуса тела), грани — дымка (fill 0.03-0.10), рёбра —
+   волосок 0.14-0.24 с opacity 0.12-0.32, глубина чуть меняет яркость */
+const ORB_FIG_SC = { tess: 12.0, penta: 12.4, cube: 13.9, octa: 13.9, tetra: 13.9, crystal: 12.0 };
+
+function orbFigureFrame(key, t) {
+  const sh = DOT_SHAPES[key];
+  /* размер — САМ ОРБ: у фигур разная длина вершин, масштаб каждой подобран
+     до общего радиуса (примерно тело орба), чтобы ни одна не смотрелась
+     игрушечной внутри портала */
+  const SC = ORB_FIG_SC[key] || 12.0;
+  let pts3;
+  if (sh.d === 4) {
+    const a = t * 0.22, b = t * 0.13;      /* медленное 4D-вращение */
+    const ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b);
+    pts3 = sh.V.map((p) => {
+      const x1 = p[0] * ca - p[3] * sa;
+      const w1 = p[0] * sa + p[3] * ca;
+      const z1 = p[2] * cb - w1 * sb;
+      const w2 = p[2] * sb + w1 * cb;
+      const k = 3.1 / (3.1 - w2 * 1.5);      /* перспектива 4D -> 3D */
+      return [x1 * k, p[1] * k, z1 * k];
+    });
+  } else {
+    const ang = t * 0.16;                   /* полный оборот ~39с */
+    pts3 = sh.V.map((p) => dotRotAxis(p, sh.AX, ang));
+  }
+  const P = pts3.map((p) => {
+    const k = 5.6 / (5.6 - p[2] * 1.1);
+    return [p[0] * k * SC, p[1] * k * SC, p[2]];
+  });
+  const px = (i) => P[i][0].toFixed(2) + ',' + P[i][1].toFixed(2);
+  /* грани-дымка: почти прозрачные, свет по нормали лишь чуть заметен */
+  const faces = sh.F.map((f) => {
+    const ps = f.map((i) => P[i]);
+    let depth = 0;
+    ps.forEach((q) => { depth += q[2]; });
+    depth /= ps.length;
+    const n = dotFaceNormal(ps);
+    const bright = Math.abs(n[2] * .62 - n[1] * .5 + n[0] * .36);
+    const op = 0.03 + 0.07 * bright;
+    return {
+      depth,
+      html: '<polygon points="' + f.map((i) => px(i)).join(' ') +
+        '" fill="url(#gFlo)" fill-opacity="' + op.toFixed(3) + '"/>',
+    };
+  }).sort((a, b) => a.depth - b.depth);
+  /* рёбра-волосок: еле заметные, глубина чуть добавляет яркости */
+  let edges = '';
+  sh.E.forEach((e) => {
+    const d = (P[e[0]][2] + P[e[1]][2]) / 2;
+    const tt = Math.max(0, Math.min(1, (d + 1.3) / 2.6));
+    edges += '<line x1="' + P[e[0]][0].toFixed(2) + '" y1="' + P[e[0]][1].toFixed(2) +
+      '" x2="' + P[e[1]][0].toFixed(2) + '" y2="' + P[e[1]][1].toFixed(2) +
+      '" stroke="url(#gElo)" stroke-width="' + (0.14 + 0.10 * tt).toFixed(2) +
+      '" opacity="' + (0.12 + 0.20 * tt).toFixed(3) + '"/>';
+  });
+  return faces.map((f) => f.html).join('') + '<g>' + edges + '</g>';
 }
 
 /* BM29: аудио просыпается В ЖЕСТЕ КЛИКА — до любых await. Иначе Chrome
@@ -12074,19 +12176,26 @@ function liveBuild() {
         '<div class="live-camwrap"><video class="live-video" autoplay playsinline muted></video></div>' +
         '<div class="live-core-wrap"><div class="live-core">' +
           '<div class="live-orb">' +
-            /* BM31: ОРБ-ПОРТАЛ — эфирный, расплывается в воздухе: два
-               шестиугольных ореола света + мягкое тело + редкие переливы
-               (чаще жёлтый, иногда красный) + честные 3D/4D-фигуры
-               круглешка, в которые орб ПЛАВНО трансформируется */
+            /* BM32: ОРБ-ДЫМКА — эфирный, расплывается в воздухе (портал из
+               галереи v3): мягкие КРУГЛЫЕ ореолы света без резких граней,
+               дышащие пятна дымки, редкие переливы (чаще жёлтый, иногда
+               красный) и 2-3 ЕЛЕ ЗАМЕТНЫЕ круглые орбиты, вечно медленно
+               вращающиеся вокруг в разных плоскостях */
+            '<i class="lo-orbit lo-o1"></i>' +
+            '<i class="lo-orbit lo-o2"></i>' +
+            '<i class="lo-orbit lo-o3"></i>' +
             '<div class="lo-core">' +
               '<div class="lo-pulse">' +
-                /* гекс-ореолы ПОРТАЛА — честные SVG-полигоны со свечением */
+                /* ореолы — мягкий свет БЕЗ граней: круг + радиальный градиент */
                 '<svg class="lo-halo" viewBox="-16 -16 32 32">' +
-                  '<polygon points="0,-15.5 13.4,-7.75 13.4,7.75 0,15.5 -13.4,7.75 -13.4,-7.75" fill="url(#gHalo)"/>' +
+                  '<circle r="15.4" fill="url(#gHalo)"/>' +
                 '</svg>' +
                 '<svg class="lo-veilx" viewBox="-16 -16 32 32">' +
-                  '<polygon points="0,-12.6 10.9,-6.3 10.9,6.3 0,12.6 -10.9,6.3 -10.9,-6.3" fill="url(#gVeil)"/>' +
+                  '<circle r="12.7" fill="url(#gVeil)"/>' +
                 '</svg>' +
+                /* дымка, расплывающаяся в воздухе: два дышащих пятна */
+                '<i class="lo-haze lo-hz1"></i>' +
+                '<i class="lo-haze lo-hz2"></i>' +
                 '<i class="lo-body"></i>' +
                 '<i class="lo-iri"></i><i class="lo-iri lo-iri-r"></i>' +
                 '<svg class="lo-shape" viewBox="-16 -16 32 32">' +
@@ -12103,12 +12212,12 @@ function liveBuild() {
                       '<stop offset="100%" stop-color="#8ed4f4"/>' +
                     '</linearGradient>' +
                     '<radialGradient id="gHalo" cx="50%" cy="45%" r="62%">' +
-                      '<stop offset="0%" stop-color="#46b4ff" stop-opacity=".22"/>' +
-                      '<stop offset="55%" stop-color="#288cf0" stop-opacity=".08"/>' +
+                      '<stop offset="0%" stop-color="#46b4ff" stop-opacity=".16"/>' +
+                      '<stop offset="55%" stop-color="#288cf0" stop-opacity=".05"/>' +
                       '<stop offset="100%" stop-color="#288cf0" stop-opacity="0"/>' +
                     '</radialGradient>' +
                     '<radialGradient id="gVeil" cx="50%" cy="42%" r="66%">' +
-                      '<stop offset="0%" stop-color="#78cdff" stop-opacity=".18"/>' +
+                      '<stop offset="0%" stop-color="#78cdff" stop-opacity=".12"/>' +
                       '<stop offset="100%" stop-color="#78cdff" stop-opacity="0"/>' +
                     '</radialGradient>' +
                     '<radialGradient id="gSend" cx="50%" cy="45%" r="60%">' +
@@ -12138,7 +12247,6 @@ function liveBuild() {
     /* BM30.1: ГОЛОС ВСЕГДА ВИДЕН — без тостов-однодневок. Какой голос
        сейчас говорит (Яндекс/системный) и почему — мелкой строкой над
        панелью. Человек больше не гадает, работает настоящий или нет */
-    '<div class="live-voice"></div>' +
     '<div class="live-bar">' +
       '<button class="lb" id="lbCam" title="Камера" aria-label="Камера">' +
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 8.4v7.2a2 2 0 0 1-2 2H4.8a2 2 0 0 1-2-2V8.4a2 2 0 0 1 2-2H13a2 2 0 0 1 2 2z"/><path d="M15 11.2l5-2.8v7.2l-5-2.8"/></svg></button>' +
@@ -12160,7 +12268,6 @@ function liveBuild() {
   LIVE.aEl = root.querySelector('.live-a');
   LIVE.toolsEl = root.querySelector('.live-tools');
   LIVE.sideEl = root.querySelector('.live-side-in');
-  LIVE.voiceEl = root.querySelector('.live-voice');
   /* строка ввода: Enter — спросить */
   const inp = root.querySelector('#liveInput');
   inp.addEventListener('keydown', (e) => {
@@ -12204,7 +12311,7 @@ async function liveOpen() {
      в Настройках между звонками, вечный «false» не должен переживать вызов */
   VOICE_TTS_OK = null;
   VOICE_TTS_ERR_SHOWN = false;
-  liveVoiceSet('off');          // индикатор голоса чистый лист
+  VOICE.asrErrShown = false;    // BM32: причины отказов — один раз за звонок
   killWelcome();
   showView('chat');
   liveBuild();
@@ -12293,6 +12400,11 @@ function liveClose() {
   const liveChat = VOICE.chatId;
   if (liveChat) api('/api/chats/delete', { chat_id: liveChat });
   LIVE.host = null;
+  /* BM32: показ фигуры не переживает звонок — новый начнётся с дымки */
+  LIVE_SHAPE.phase = 'idle';
+  LIVE_SHAPE.m = 0;
+  LIVE_SHAPE.key = '';
+  LIVE_SHAPE.nextAt = 0;
   /* BM31: звонок закрыт — очередь речи умирает целиком, ни слова вдогонку */
   VOICE_TTS_GEN++;
   VOICE_TTS_QUEUE = Promise.resolve();
@@ -12334,6 +12446,7 @@ async function liveSetMic(on) {
     LIVE.mic = true;
     LIVE.root.classList.remove('text-on');
     LIVE.root.classList.add('mic-on');
+    VOICE.asrErrShown = false;   // BM32: микрофон снова поднят — диагностика заново
     voiceListen();
   } else {
     LIVE.mic = false;
@@ -12353,6 +12466,11 @@ async function liveSetMic(on) {
     }
     VOICE.chunks = [];
     try { window.speechSynthesis.cancel(); } catch (e) { /* синтеза нет */ }
+    /* BM32: показ фигуры не переживает звонок — новый начнётся с дымки */
+    LIVE_SHAPE.phase = 'idle';
+    LIVE_SHAPE.m = 0;
+    LIVE_SHAPE.key = '';
+    LIVE_SHAPE.nextAt = 0;
     voiceSetPhase('idle');
     setTimeout(() => { const i = $('#liveInput'); if (i && LIVE.on) i.focus(); }, 620);
   }
@@ -12474,10 +12592,14 @@ function liveShowQuestion(text) {
 }
 
 function liveDelta(chunk) {
-  /* BM29.2: текст дописывается РОВНО (span с анимацией размытия на каждый
-     кусок рвал кадры в клочья). Появление из глубины делает контейнер сна */
-  if (!LIVE.aEl) return;
-  LIVE.aEl.textContent += chunk;
+  /* BM32: ответ ВСПЛЫВАЕТ из ниоткуда — как текст запроса. Каждый кусок
+     приходит своим span'ом и мягко проявляется снизу; анимация только на
+     opacity/transform (композитор, не repaint — прежний blur на кусках
+     рвал кадры, этот путь дешёвый) */
+  if (!LIVE.aEl || !chunk) return;
+  const sp = el('span', 'la-w');
+  sp.textContent = chunk;
+  LIVE.aEl.appendChild(sp);
 }
 
 /* --- СОБЫТИЯ ПОТОКА -> СЦЕНА --- */

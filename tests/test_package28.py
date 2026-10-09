@@ -8658,8 +8658,11 @@ class IterationBM18Tests(unittest.TestCase):
         toolshow = js.split("function liveToolShow")[1].split("\nfunction ")[0]
         self.assertNotIn("SILENT_TOOLS", toolshow)
         self.assertNotIn("setTimeout", toolshow)
-        # текст: ровная строка без span-анимаций (лаг убит)
-        self.assertIn("LIVE.aEl.textContent += chunk;", js)
+        # текст ответа ВСПЛЫВАЕТ из ниоткуда — span на кусок, только opacity/transform
+        self.assertIn("LIVE.aEl.appendChild(sp);", js)
+        self.assertIn(".live-a .la-w{display:inline-block;animation:laWord", css)
+        self.assertIn("@keyframes laWord{from{opacity:0;transform:translateY(9px)}}", css)
+        self.assertNotIn("LIVE.aEl.textContent += chunk;", js)
         # возврат к строке: прошлый текст не оживает
         self.assertIn("if (LIVE.qEl) LIVE.qEl.textContent = '';", js)
         # ошибка потока видна в сцене
@@ -8680,8 +8683,11 @@ class IterationBM18Tests(unittest.TestCase):
         # мотыльки мысли (идея №2)
         # BM31: трансформации — фигуры круглешка в орбе (ещё плавнее)
         self.assertIn("function liveShapeFrame() {", js)
-        self.assertIn("dotShapeFrame(LIVE_SHAPE.key, t, 'lo', 1 - LIVE_SHAPE.m)", js)
+        self.assertIn("g.innerHTML = orbFigureFrame(LIVE_SHAPE.key, t);", js)
+        self.assertIn("function orbFigureFrame(key, t) {", js)
+        self.assertNotIn("dotShapeFrame(LIVE_SHAPE.key", js)   # круглешок больше не рисуется
         self.assertIn("const LIVE_SHAPE = { key: ''", js)
+        self.assertIn("LIVE_SHAPE.nextAt = now + 17000 + Math.random() * 21000;", js)
         self.assertIn(".lo-shape{position:absolute;inset:0;width:100%;height:100%;opacity:0;", css)
         # сжатие при думанье — вместо анимации «загрузки»
         self.assertIn("#liveRoot.ph-thinking .lo-core{--loS:.84}", css)
@@ -8707,9 +8713,9 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("Яндекс не принял API-ключ (HTTP 401)", py_server)
         self.assertIn("роли ai.speechkit-tts.user", py_server)
         self.assertIn("def _tts_log(line: str) -> None:", py_server)
-        # клиент: постоянные отказы не ретраятся, временные — 45с
-        self.assertIn("if (cls === 'rate' || cls === 'server') {", js)
-        self.assertIn("VOICE_TTS_OK = false;   // config/net/auth: повтор бессмыслен до нового звонка", js)
+        # клиент: постоянные отказы (config/auth) не ретраятся; net остывает 45с
+        self.assertIn("if (cls === 'config' || cls === 'auth') {", js)
+        self.assertIn("VOICE_TTS_OK = false;   // ключ не вписан/не принят — до нового звонка", js)
         # новый звонок — новая попытка голоса
         self.assertIn("VOICE_TTS_OK = null;", js)
         # диагностика голоса в один клик из Настроек
@@ -8723,12 +8729,11 @@ class IterationBM18Tests(unittest.TestCase):
         # BM30.1: авто-реплики «вижу тебя» НЕТ — semантика кадра живёт
         # в системной ноте, а не в навязанных фразах (просьба человека)
         self.assertNotIn("что ты меня видишь", js)
-        # статус голоса всегда виден в сцене (не тост-однодневка)
-        self.assertIn("function liveVoiceSet(kind, reason, detail) {", js)
-        self.assertIn("ГОЛОС · ЯНДЕКС (НАСТОЯЩИЙ)", js)
-        self.assertIn("ГОЛОС · СИСТЕМНЫЙ — ", js)
-        self.assertIn(".live-voice{", css)
-        self.assertIn(".live-voice.on{opacity:.62}", css)
+        # BM32: строка состояния голоса УБРАНА (решение человека);
+        # честные причины живут в тостах (TTS/ASR), не в постоянной строке
+        self.assertNotIn("liveVoiceSet", js)
+        self.assertNotIn(".live-voice", css)
+        self.assertNotIn("ГОЛОС · ЯНДЕКС", js)
         # чип провайдера: приоритетно ДОСТУПНЫЙ, а не последний использованный
         self.assertIn("function provPriority() {", js)
         self.assertIn("будет отвечать: ", js)
@@ -8743,10 +8748,11 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertNotIn("live-bubbles", js)
         self.assertNotIn("loMorphA", css)
         self.assertNotIn(".lo-think", css)
-        # орб-портал: тело + гекс-вуаль
-        self.assertIn(".lo-pulse .lo-body{inset:8%;border-radius:50%;", css)
+        # орб-портал: тело-дымка + мягкие КРУГЛЫЕ ореолы (гекс-грани ушли)
+        self.assertIn(".lo-pulse .lo-body{inset:4%;border-radius:50%;", css)
         self.assertIn(".lo-pulse .lo-veilx{inset:0;width:100%;height:100%;", css)
-        self.assertIn("<polygon points=\"0,-15.5 13.4,-7.75 13.4,7.75 0,15.5 -13.4,7.75 -13.4,-7.75\" fill=\"url(#gHalo)\"/>", js)
+        self.assertIn("'<circle r=\"15.4\" fill=\"url(#gHalo)\"/>' +", js)
+        self.assertIn("'<circle r=\"12.7\" fill=\"url(#gVeil)\"/>' +", js)
         # очередь речи: два баритона больше не говорят наперекрыз
         self.assertIn("let VOICE_TTS_QUEUE = Promise.resolve();", js)
         self.assertIn("let VOICE_TTS_GEN = 0;", js)
@@ -8757,6 +8763,41 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("box-shadow:0 0 22px rgba(150,220,255,.13)", css)
         # темп речи
         self.assertIn('"speed": "1.08"', py_server)
+        # ===== BM32: ИНТОНАЦИЯ + КОРНИ «МОЛЧИТ» + ОРБ-ДЫМКА =====
+        # амплуа «good» у эрмила: запрос с emotion + разовый фолбэк без него
+        self.assertIn('_TTS_EMOTION = None', py_server)
+        self.assertIn('payload["emotion"] = "good"', py_server)
+        self.assertIn('if e.code == 400 and with_emotion and _TTS_EMOTION is None:', py_server)
+        self.assertIn('"EMOTION «good» отвергнута — говорю без амплуа"', py_server)
+        self.assertIn('"EMOTION «good» принята — говорю с интонацией"', py_server)
+        # микрофон не открывается поверх ещё говорящего Яндекса (эхо-самосглаз)
+        self.assertIn("if (VOICE.ttsBusy) return;", js)
+        self.assertIn("VOICE.ttsBusy = true;                   // BM32: Яндекс заговорил", js)
+        # системный синтез не может зависнуть навсегда (сторож очереди)
+        self.assertIn("guard = setTimeout(() => {", js)
+        self.assertIn("7000 + Math.min(20000, text.length * 90)", js)
+        # отказ распознавания больше не немой: причина — тостом, раз за звонок
+        self.assertIn("toast('Распознавание речи: ' + r.error, 'warn', 'ASR');", js)
+        self.assertIn("VOICE.asrErrShown = false;", js)
+        # орбиты портала: 3 тонких круга в разных плоскостях, вечное вращение
+        self.assertIn("'<i class=\"lo-orbit lo-o1\"></i>' +", js)
+        self.assertIn(".lo-orbit.lo-o1{width:118%;height:118%;margin:-59% 0 0 -59%;", css)
+        self.assertIn(".lo-orbit.lo-o3{width:154%;height:154%;margin:-77% 0 0 -77%;", css)
+        self.assertIn("@keyframes loOrbA{from{transform:rotateX(66deg) rotate(0deg)}", css)
+        self.assertIn("@keyframes loOrbB{from{transform:rotateX(76deg) rotate(0deg)}", css)
+        # дымка расплывается: дышащие пятна поверх тела
+        self.assertIn(".lo-pulse .lo-haze{position:absolute;border-radius:50%;mix-blend-mode:screen;", css)
+        self.assertIn("@keyframes loHz1{0%,100%{opacity:.5;transform:translate(-6%,4%) scale(.94)}", css)
+        # фигура проступает ИЗ орба: яркость дымки уводится в грани
+        self.assertIn("filter:brightness(calc(1 - var(--loFig,0)*.45));", css)
+        self.assertIn("LIVE.root.style.setProperty('--loFig', e.toFixed(3));", js)
+        # проявление/растворение — 5.2с безумно плавно, S-кривая
+        self.assertIn("LIVE_SHAPE.m = Math.min(1, LIVE_SHAPE.m + 16 / 5200);", js)
+        self.assertIn("const e = LIVE_SHAPE.m * LIVE_SHAPE.m * (3 - 2 * LIVE_SHAPE.m);", js)
+        # фигуры ЕЛЕ заметные: грани-дымка и рёбра-волосок, размером с орб
+        self.assertIn("const SC = ORB_FIG_SC[key] || 12.0;", js)
+        self.assertIn("const op = 0.03 + 0.07 * bright;", js)
+        self.assertIn('(0.14 + 0.10 * tt).toFixed(2)', js)
         # ===== BM30.2: СЛЕПАЯ КАМЕРА И ВЕЧНОЕ МОЛЧАНИЕ — КОРНИ =====
         # просьба режима ВИДНА в LIVE (сервер ждёт ответа до 300с!)
         self.assertIn("case 'mode_request': return liveModeAsk(ev);", js)
@@ -8775,10 +8816,12 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("LIVE.prevChatId = (S.chatId && !String(S.chatId).startsWith('live-')) ? S.chatId : '';", js)
         self.assertIn("if (backId) openChat(backId);", js)
         self.assertIn("else newChat();", js)
-        # TTS: сырая причина ошибки ОС видна человеку
+        # TTS: сырая причина ошибки ОС видна человеку (тост с r.error —
+        # в нём сервер уже приложил хвост причины; строка состояния голоса
+        # удалена в BM32, причины живут в тостах)
         self.assertIn('tail = " · причина: " + reason[:140]', py_server)
         self.assertIn('"nodename" in low or "servname" in low', py_server)
-        self.assertIn("detail) txt += ' · ' + String(detail).slice(0, 70);", js)
+        self.assertIn("toast('Голос Джарвиса: ' + r.error +", js)
 
         # перебой глушит и серверное аудио
         self.assertIn("if (VOICE.ttsAudio) {              // BM29: серверный голос тоже замолкает", js)

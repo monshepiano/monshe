@@ -4399,11 +4399,14 @@ function testIterationBM30Contracts() {
     !css.includes('rgba(216,64,180') && !css.includes('rgba(255,170,80'),
     'BM30 background: stars removed, only blurred shades of blue, a rare gradient veil');
   // TTS: слепых ретраев нет — постоянные отказы (config/net/auth) не долбятся
-  assert(js.includes("if (cls === 'rate' || cls === 'server') {") &&
+  assert(js.includes("if (cls === 'config' || cls === 'auth') {") &&
     js.includes('VOICE_TTS_OK = false;') &&
     js.includes("VOICE_TTS_OK = null;") &&
-    js.includes('id="testTts">Проверить голос'),
-    'BM30 TTS: retries only for transient classes; Settings gains a one-click voice check');
+    js.includes('id="testTts">Проверить голос') &&
+    js.includes('if (VOICE.ttsBusy) return;') &&
+    js.includes('guard = setTimeout(() => {') &&
+    js.includes("toast('Распознавание речи: ' + r.error, 'warn', 'ASR');"),
+    'BM32 TTS/ASR: net failures cool down 45s (no permanent voice lockout), the mic never opens over speaking Yandex, system synthesis cannot hang the queue, ASR failures surface once per call');
   assert(pyServer.includes('except urllib.error.HTTPError as e:') &&
     pyServer.includes('return {"ok": False, "class": "net", "detail": reason[:200],') &&
     pyServer.includes('return {"ok": False, "class": "server", "detail": reason[:200],') &&
@@ -4418,13 +4421,11 @@ function testIterationBM30Contracts() {
     pyServer.includes('НЕ предлагай сделать фото') &&
     !js.includes('что ты меня видишь'),
     'BM30 camera: the frame is declared as live eyes; no forced "I see you" line (user demand)');
-  // статус голоса всегда на экране звонка + приоритетный провайдер в чипе
-  assert(js.includes('function liveVoiceSet(kind, reason, detail) {') &&
-    js.includes('ГОЛОС · ЯНДЕКС (НАСТОЯЩИЙ)') &&
-    css.includes('.live-voice{') &&
+  // BM32: строка состояния голоса УБРАНА (решение человека); причины — в тостах
+  assert(!js.includes('liveVoiceSet') && !css.includes('.live-voice') &&
     js.includes('function provPriority() {') &&
     js.includes('будет отвечать: '),
-    'BM30.1: voice status lives in the scene (not a one-off toast); the header chip shows the first AVAILABLE provider, not the last used');
+    'BM32: the voice status line is gone (user demand); honest reasons live in toasts; the header chip shows the first AVAILABLE provider');
   // BM30.2: просьба режима видна в LIVE (сервер ждал до 300с!), выход
   // возвращает последний диалог, кадр-фейл озвучивается модели честно
   assert(js.includes("case 'mode_request': return liveModeAsk(ev);") &&
@@ -4437,14 +4438,21 @@ function testIterationBM30Contracts() {
     pyServer.includes('Пользователь только что разрешил камеру') &&
     pyServer.includes('tail = " · причина: " + reason[:140]'),
     'BM30.2: mode requests surface in LIVE, the call restores the last dialog, camera-frame failures are honest, TTS shows the raw OS reason');
-  // долгое думанье: глубинные пузыри
+  // BM32: орб-ДЫМКА — трансформируется САМ (никакого круглешка)
   assert(js.includes('function liveShapeFrame() {') &&
-    js.includes("dotShapeFrame(LIVE_SHAPE.key, t, 'lo', 1 - LIVE_SHAPE.m)") &&
+    js.includes('g.innerHTML = orbFigureFrame(LIVE_SHAPE.key, t);') &&
+    !js.includes("dotShapeFrame(LIVE_SHAPE.key") &&
     css.includes('.lo-shape{position:absolute;inset:0;width:100%;height:100%;opacity:0;') &&
     css.includes('#liveRoot.ph-thinking .lo-core{--loS:.84}') &&
+    js.includes("LIVE_SHAPE.nextAt = now + 17000 + Math.random() * 21000;") &&
+    css.includes('.lo-orbit.lo-o1{width:118%;height:118%;margin:-59% 0 0 -59%;') &&
+    css.includes('@keyframes loOrbA{from{transform:rotateX(66deg) rotate(0deg)}') &&
+    css.includes('.lo-pulse .lo-haze{position:absolute;border-radius:50%;mix-blend-mode:screen;') &&
+    css.includes('filter:brightness(calc(1 - var(--loFig,0)*.45));') &&
+    css.includes('.live-a .la-w{display:inline-block;animation:laWord') &&
     !js.includes('live-motes') && !js.includes('live-bubbles') &&
     !css.includes('loMorphA') && !css.includes('.lo-think'),
-    'BM31: the orb compresses while thinking and morphs into the dialog dot real 3D/4D figures (even smoother); loading animations are gone');
+    'BM32: misty orb (soft round halos + breathing haze + 3 hairline orbits in different planes); the ORB itself rarely surfaces as an orb-sized hairline figure at any moment (no dot morph); answer text floats in');
   // камера: орб сильнее сжимается; кнопки/док чуть меньше, разлёт прежний
   assert(css.includes('calc(-50% - 36vh)) scale(.6)}') &&
     css.includes('.lb{width:64px;height:64px;border-radius:50%') &&

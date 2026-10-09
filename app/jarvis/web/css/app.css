@@ -4182,6 +4182,10 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 .live-q{font-size:15px;color:var(--tx2);opacity:.85;max-width:94%;text-align:center;
   animation:deepIn .9s var(--live-ease) both}
 .live-a{font-size:23px;line-height:1.62;color:var(--tx);text-align:center;max-width:100%}
+/* BM32: каждый кусок ответа мягко всплывает снизу — только opacity и
+   transform: композитор, не repaint; blur (рвавший кадры) не трогаем */
+.live-a .la-w{display:inline-block;animation:laWord .9s var(--live-ease) both}
+@keyframes laWord{from{opacity:0;transform:translateY(9px)}}
 
 /* ГЛУБИНА: единый закон появления */
 @keyframes deepIn{
@@ -4217,8 +4221,11 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 #liveRoot.text-on .live-orb{opacity:0;filter:blur(12px);
   transform:scale(1.45,.3);pointer-events:none}
 .lo-core{position:relative;width:88%;height:88%;border-radius:50%;
-  /* СЖАТИЕ при думанье — плавное, 1.1с; пульс речи живёт внутри */
+  /* СЖАТИЕ при думанье — плавное, 1.1с; пульс речи живёт внутри.
+     BM32: когда из дымки проступает фигура, свет орба ЧУТЬ тускнеет —
+     масса перетекает в грани, орб трансформируется, а не «добавляет» */
   transform:scale(var(--loS,1));
+  filter:brightness(calc(1 - var(--loFig,0)*.45));
   transition:transform 1.1s var(--live-ease)}
 #liveRoot.ph-thinking .lo-core{--loS:.84}
 .lo-pulse{position:absolute;inset:0;border-radius:50%;
@@ -4231,10 +4238,24 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
   animation:loBreathe 6.4s ease-in-out infinite;will-change:transform,opacity}
 .lo-pulse .lo-veilx{inset:0;width:100%;height:100%;
   animation:loHalo 7.6s ease-in-out infinite;will-change:transform,opacity}
-.lo-pulse .lo-body{inset:8%;border-radius:50%;
-  background:radial-gradient(circle at 46% 40%,rgba(215,245,255,.52),
-    rgba(90,200,250,.26) 44%,rgba(20,90,140,.10) 68%,transparent 84%);
+.lo-pulse .lo-body{inset:4%;border-radius:50%;
+  background:radial-gradient(circle at 47% 42%,rgba(210,242,255,.34),
+    rgba(110,205,255,.17) 38%,rgba(40,120,190,.08) 62%,transparent 82%);
   animation:loHeart 5.2s ease-in-out infinite;will-change:transform,opacity}
+/* ДЫМКА: два мягких пятна медленно перекатываются и расплываются —
+   орб не шар, а свет в воздухе (только transform/opacity + blur слоёв) */
+.lo-pulse .lo-haze{position:absolute;border-radius:50%;mix-blend-mode:screen;
+  filter:blur(13px);opacity:0;pointer-events:none;will-change:transform,opacity}
+.lo-pulse .lo-hz1{inset:12%;
+  background:radial-gradient(circle at 60% 40%,rgba(125,205,255,.20),transparent 70%);
+  animation:loHz1 19s ease-in-out infinite}
+.lo-pulse .lo-hz2{inset:2%;
+  background:radial-gradient(circle at 38% 62%,rgba(95,185,250,.15),transparent 66%);
+  animation:loHz2 27s ease-in-out infinite}
+@keyframes loHz1{0%,100%{opacity:.5;transform:translate(-6%,4%) scale(.94)}
+  50%{opacity:.95;transform:translate(7%,-5%) scale(1.12)}}
+@keyframes loHz2{0%,100%{opacity:.8;transform:translate(5%,-6%) scale(1.06)}
+  50%{opacity:.35;transform:translate(-8%,7%) scale(.9)}}
 /* ПЕРЕЛИВЫ: орб в основном синий, ИНОГДА вспыхивает золотом (lo-iri),
    реже — красным (lo-iri-r). Только прозрачность, циклы длинные */
 .lo-pulse .lo-iri{inset:-2%;border-radius:50%;mix-blend-mode:screen;opacity:0;
@@ -4247,9 +4268,26 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
   animation:loIriR 57s ease-in-out infinite}
 @keyframes loIriY{0%,74%,100%{opacity:0}83%{opacity:.95}93%{opacity:.3}}
 @keyframes loIriR{0%,88%,100%{opacity:0}94%{opacity:.85}}
-/* ТРАНСФОРМАЦИИ: честные 3D/4D-фигуры круглешка (движок dotShapeFrame) */
+/* ОРБИТЫ ПОРТАЛА: 2-3 тонких круглых кольца, ЕЛЕ заметные, каждое лежит
+   в своей плоскости и вечно медленно перекатывается вокруг орба (как в
+   портале-эталоне, но круглые). Только transform — работает на чайнике */
+.lo-orbit{position:absolute;left:50%;top:50%;border-radius:50%;
+  border:1px solid rgba(150,214,255,.15);pointer-events:none;will-change:transform}
+.lo-orbit.lo-o1{width:118%;height:118%;margin:-59% 0 0 -59%;
+  animation:loOrbA 31s linear infinite}
+.lo-orbit.lo-o2{width:136%;height:136%;margin:-68% 0 0 -68%;
+  border-color:rgba(150,214,255,.10);animation:loOrbB 47s linear infinite}
+.lo-orbit.lo-o3{width:154%;height:154%;margin:-77% 0 0 -77%;
+  border-color:rgba(170,225,255,.07);animation:loOrbC 61s linear infinite}
+@keyframes loOrbA{from{transform:rotateX(66deg) rotate(0deg)}
+  to{transform:rotateX(66deg) rotate(360deg)}}
+@keyframes loOrbB{from{transform:rotateX(76deg) rotate(0deg)}
+  to{transform:rotateX(76deg) rotate(-360deg)}}
+@keyframes loOrbC{from{transform:rotateX(56deg) rotate(0deg)}
+  to{transform:rotateX(56deg) rotate(360deg)}}
+/* ТРАНСФОРМАЦИИ: фигуры движка DOT_SHAPES (orbFigureFrame), еле заметные */
 .lo-shape{position:absolute;inset:0;width:100%;height:100%;opacity:0;
-  pointer-events:none;transition:opacity .5s ease}
+  pointer-events:none}
 @keyframes loBreathe{0%,100%{opacity:.8;transform:scale(.97)}
   50%{opacity:1;transform:scale(1.05)}}
 @keyframes loHalo{0%,100%{opacity:.5;transform:scale(.95)}
@@ -4422,20 +4460,6 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 body.live-on .modal-back{z-index:480}
 body.live-on .g-tip{z-index:490}
 body.live-on .toast{z-index:495}
-/* BM30.1: СТАТУС ГОЛОСА — мелкая строка над панелью звонка. Не тост:
-   живёт, пока звонок, чтобы человек всегда знал, какой голос говорит */
-.live-voice{position:absolute;bottom:12.5vh;left:50%;transform:translateX(-50%);
-  z-index:7;display:flex;align-items:center;gap:8px;pointer-events:none;
-  font-size:11px;font-weight:600;letter-spacing:1.8px;color:var(--tx3);
-  text-transform:uppercase;white-space:nowrap;
-  opacity:0;transition:opacity .7s ease}
-.live-voice.on{opacity:.62}
-.live-voice::before{content:'';width:6px;height:6px;border-radius:50%;flex-shrink:0}
-.live-voice.ok::before{background:var(--green);box-shadow:0 0 9px var(--green)}
-.live-voice.sys::before{background:#e0b45c;box-shadow:0 0 9px rgba(224,180,92,.6)}
-@media (max-width:720px){
-  .live-voice{bottom:9.5vh;font-size:10px;letter-spacing:1.2px}
-}
 @media (max-width:720px){
   .live-core{width:220px;height:220px}
   #liveRoot.text-on .live-core{width:88vw;height:72px;border-radius:40px}
