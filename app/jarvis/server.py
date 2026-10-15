@@ -689,8 +689,11 @@ class Handler(BaseHTTPRequestHandler):
         model = str((prov.get("model_cheap") if cheap else prov.get("model")) or "")
         if not model:
             model = "eleven_flash_v2.5" if cheap else "eleven_v3"
-        url = ("https://api.elevenlabs.io/v1/text-to-speech/" + voice +
-               "?output_format=mp3_44100_128")
+        # base_url можно заменить на личный прокси (VPS за границей,
+        # nginx -> api.elevenlabs.io) или эндпоинт реселлера — тогда VPN
+        # на компьютере не нужен вовсе, сервер ходит напрямую
+        base = str(prov.get("base_url") or "https://api.elevenlabs.io").rstrip("/")
+        url = (base + "/v1/text-to-speech/" + voice + "?output_format=mp3_44100_128")
         payload = _json.dumps({"text": text, "model_id": model}).encode("utf-8")
         req = urllib.request.Request(url, data=payload, method="POST", headers={
             "xi-api-key": key,

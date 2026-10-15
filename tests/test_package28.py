@@ -8522,8 +8522,8 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("#liveRoot.open .live-bg{filter:blur(0) brightness(1);transform:scale(1)}", css)
 
         # ядро — одно тело: орб <-> строка (spotlight-морф), большой босс-орб
-        self.assertIn("#liveRoot.text-on .live-core{width:min(600px,76vw);height:60px;border-radius:32px", css)
-        self.assertIn(".live-core{position:relative;width:190px;height:190px;border-radius:50%", css)
+        self.assertIn("#liveRoot.text-on .live-core{width:min(680px,80vw);height:66px;border-radius:36px", css)
+        self.assertIn(".live-core{position:relative;width:240px;height:240px;border-radius:50%", css)
         self.assertIn("@keyframes loThink", css)
         self.assertIn("@keyframes loFlash", css)
         # BM34: ПЕРВОНАЧАЛЬНЫЙ ДИЗАЙН возвращён (legacy/live-bm28): кольца снова в деле
@@ -8611,11 +8611,11 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertNotIn("filter:blur(80px)", css)    # авроры без дорогого blur
         self.assertIn("will-change:transform", css)   # композитор, не paint
         # строка — LED-лента: свечение только наружу
-        self.assertIn("#liveRoot.text-on .live-core{width:min(600px,76vw);height:60px;border-radius:32px", css)
+        self.assertIn("#liveRoot.text-on .live-core{width:min(680px,80vw);height:66px;border-radius:36px", css)
         self.assertNotIn(".live-core::before", css)   # BM34: LED-псевдослой ушёл с первоначальным дизайном
         self.assertNotIn("loLed", css)
         # ядро — КРУГ (квадратный lo-core больше не накрывает орб)
-        self.assertIn(".lo-core{width:46%;height:46%;border-radius:50%;", css)
+        self.assertIn(".lo-core{width:52%;height:52%;display:block;border-radius:50%;", css)
         self.assertNotIn("lo-pulse", css)   # BM34: слои портала (halo/body/haze/iri) демонтированы
         # камера: и орб, и строка уезжают НАВЕРХ (не в сторону)
         self.assertIn("#liveRoot.mic-on.cam-on .live-core-wrap,", css)
@@ -8687,12 +8687,16 @@ class IterationBM18Tests(unittest.TestCase):
         # мотыльки мысли (идея №2)
         # BM31: трансформации — фигуры круглешка в орбе (ещё плавнее)
         self.assertIn("function liveShapeFrame() {", js)
-        self.assertIn("g.innerHTML = orbFigureFrame(LIVE_SHAPE.key, t, e);", js)
-        self.assertIn("function orbFigureFrame(key, t, m) {", js)
+        self.assertIn("const d = orbBoundaryD(LIVE_SHAPE.key, t, e);", js)
+        self.assertIn('bodyP.setAttribute(\'d\', d);', js)
+        self.assertIn("function orbBoundaryD(key, t, m) {", js)
+        self.assertIn("function orbHull(P) {", js)
+        self.assertIn("function orbEdgesHTML(key, t, m) {", js)
         self.assertNotIn("dotShapeFrame(LIVE_SHAPE.key", js)   # круглешок больше не рисуется
         self.assertIn("const LIVE_SHAPE = { key: ''", js)
         self.assertIn("LIVE_SHAPE.nextAt = now + 17000 + Math.random() * 21000;", js)
-        self.assertIn(".lo-shape{position:absolute;inset:0;width:100%;height:100%;opacity:0;", css)
+        self.assertNotIn("lo-shape", js)   # BM35: отдельного слоя фигуры НЕТ — морфится само тело
+        self.assertNotIn(".lo-shape", css)
         # сжатие при думанье — вместо анимации «загрузки»
         self.assertIn("#liveRoot.ph-thinking .lo-core{animation:loThink 1.5s ease-in-out infinite}", css)
         self.assertNotIn("--loS", css)
@@ -8753,7 +8757,10 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertNotIn("loMorphA", css)
         self.assertNotIn(".lo-think", css)
         # орб-портал: тело-дымка + мягкие КРУГЛЫЕ ореолы (гекс-грани ушли)
-        self.assertIn("background:radial-gradient(circle at 50% 40%,rgba(190,242,255,.95),", css)
+        self.assertIn("'<path class=\"lo-body-p\" fill=\"url(#gCore)\"/>' +", js)
+        self.assertIn("'<path class=\"lo-flash-p\" fill=\"url(#gCoreY)\"/>' +", js)
+        self.assertIn(".lo-core .lo-flash-p{opacity:0;animation:loFlash 7s ease-in-out infinite}", css)
+        self.assertIn("@keyframes loFlash{0%,88%,100%{opacity:0}93%{opacity:.85}}", css)
         self.assertNotIn("lo-veilx", js)
         self.assertNotIn("gHalo", js)
         # очередь речи: два баритона больше не говорят наперекрыз
@@ -8763,7 +8770,7 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("VOICE_TTS_GEN++;                   // BM31: очередь речи гаснет целиком", js)
         # кнопка отправки — портал-гекс со свечением; свечение строки меньше
         self.assertIn(".live-send{width:42px;height:42px;border-radius:50%;border:1px solid rgba(0,212,255,.25);", css)
-        self.assertIn(".live-core:focus-within{border-color:rgba(0,212,255,.4);", css)
+        self.assertIn(".live-core:focus-within{border-color:rgba(0,212,255,.2);", css)
         # темп речи
         self.assertIn('"speed": "1.08"', py_server)
         # ===== BM32: ИНТОНАЦИЯ + КОРНИ «МОЛЧИТ» + ОРБ-ДЫМКА =====
@@ -8799,14 +8806,17 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertNotIn("LIVE_ORBITS", js)
         self.assertNotIn("lo-haze", css)
         # фигура проступает ИЗ орба: яркость дымки уводится в грани
-        self.assertIn("filter:brightness(calc(1 - var(--loFig,0)*.45));", css)
-        self.assertIn("LIVE.root.style.setProperty('--loFig', e.toFixed(3));", js)
+        # BM35: никаких --loFig и подмен — контур тела сам меняет форму
+        self.assertNotIn("--loFig", js)
+        self.assertNotIn("--loFig", css)
+        self.assertIn("bodyP.setAttribute('fill-opacity', (1 - .38 * e).toFixed(3));", js)
         # проявление/растворение — 5.2с безумно плавно, S-кривая
         self.assertIn("LIVE_SHAPE.m = Math.min(1, LIVE_SHAPE.m + 16 / 5200);", js)
         self.assertIn("const e = LIVE_SHAPE.m * LIVE_SHAPE.m * (3 - 2 * LIVE_SHAPE.m);", js)
         # фигуры ЕЛЕ заметные: грани-дымка и рёбра-волосок, размером с орб
         self.assertIn("const SC = ORB_FIG_SC[key] || 12.0;", js)
-        self.assertIn("const op = 0.03 + 0.07 * bright;", js)
+        # BM35: грани исчезли вовсе — тело ОДИН контур + рёбра-волосок внутри
+        self.assertNotIn("const op = 0.03 + 0.07 * bright;", js)
         self.assertIn('(0.14 + 0.10 * tt).toFixed(2)', js)
         # ===== BM33: СУПЕР-ПЛАВНЫЕ ПЕРЕХОДЫ + ОРБИТЫ-ВОЛЧКИ + ЧЁТКИЕ КНОПКИ =====
         # свет дышит ТОЛЬКО прозрачностью — кромка градиента не ползает
@@ -8816,12 +8826,12 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertNotIn("opacity:.8;transform:scale(.97)}", css)
         self.assertNotIn("opacity:.35;transform:scale(.92)}", css)
         # яркий центр, растушёванный к краям длинным хвостом (гаснет к 95%)
-        self.assertIn("transform:scale(calc((1 + var(--vl,0)*.17)*(1 - var(--loFig,0)*.5)));", css)
+        self.assertIn("transform:scale(calc(1 + var(--vl,0)*.17));", css)
         self.assertIn(".la-grow{display:grid;grid-template-rows:0fr;transition:grid-template-rows .85s var(--live-ease)}", css)
         self.assertIn(".la-clip{overflow:hidden;min-height:0}", css)
         # орбиты-волчки: три скорости на кольцо, старт в разных плоскостях
-        self.assertIn("const R0 = 7.35;", js)
-        self.assertIn("transform:scale(calc((1 + var(--vl,0)*.17)*(1 - var(--loFig,0)*.5)));", css)
+        self.assertIn("const ORB_CIRCLE_R = 7.35;", js)
+        self.assertIn("transform:scale(calc(1 + var(--vl,0)*.17));", css)
         # кнопка отправки: мягкий круглый свет вместо резкого гекса
         self.assertNotIn("gSend", js)
         self.assertNotIn("0,-15.5", js)
@@ -8833,11 +8843,13 @@ class IterationBM18Tests(unittest.TestCase):
         # ElevenLabs первым в цепочке голоса: разговор — выразительная модель,
         # рабочие фразы при инструментах — дешёвая, голос ОДИН (voice_id общий)
         self.assertIn("def _tts_elevenlabs(self, text: str, prov:", py_server)
+        self.assertIn('str(prov.get("base_url") or "https://api.elevenlabs.io")', py_server)
         self.assertIn('"eleven_flash_v2.5" if cheap else "eleven_v3"', py_server)
-        self.assertIn('"https://api.elevenlabs.io/v1/text-to-speech/" + voice +', py_server)
+        self.assertIn('base + "/v1/text-to-speech/" + voice +', py_server)
         self.assertIn('"xi-api-key": key,', py_server)
         self.assertIn("r = self._tts_elevenlabs(text, el, bool(body.get(\"cheap\")))", py_server)
         py_config = Path("app/jarvis/config.py").read_text(encoding="utf-8")
+        self.assertIn('"base_url": "https://api.elevenlabs.io",', py_config)
         py_llm = Path("app/jarvis/llm.py").read_text(encoding="utf-8")
         self.assertIn('"voice_id": "",', py_config)
         self.assertIn("if name == \"elevenlabs\":", py_llm)
@@ -8845,11 +8857,21 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("const cheap = !!(LIVE.on && LIVE.root && LIVE.root.querySelector('.live-tool:not(.out)'));", js)
         self.assertIn("'data:' + (r.mime || 'audio/wav') + ';base64,' + r.audio", js)
         # превращение: вершины фигур стартуют с обода ЯДРА, ядро гаснет и сжимается
-        self.assertIn("const mm = m == null ? 1 : m;", js)
-        self.assertIn("const rr = R0 + (r - R0) * mm;", js)
+        self.assertIn("const r = ORB_CIRCLE_R + (rayR(a) - ORB_CIRCLE_R) * m;", js)
+        self.assertIn("const u = (ux * ey - uy * ex) / den;      /* точка на луче */", js)
         # настройки: voice_id вписывается прямо в карточке провайдера
         self.assertIn("'voice_id' in pc ?", js)
         self.assertIn("part.voice_id = vidEl.value.trim();", js)
+        # ===== BM35: КРУПНЕЕ/ЭФИРНЕЕ + НАСТОЯЩЕЕ ПРЕВРАЩЕНИЕ =====
+        # орб и строка крупнее; кольца и грани незаметнее; анимация отправки убрана
+        self.assertIn(".lo-ring{position:absolute;inset:5%;border-radius:50%;", css)
+        self.assertIn("border:1px solid rgba(0,212,255,.11);", css)
+        self.assertIn("border:1px solid rgba(120,220,255,.09);", css)
+        self.assertNotIn("loSend", css)
+        self.assertNotIn("classList.add('flash')", js)
+        # свет тела — эфирная заливка градиентом (не background div)
+        self.assertIn('<stop offset="0%" stop-color="#eafaff" stop-opacity=".85"/>', js)
+        self.assertIn('<stop offset="40%" stop-color="#00d4ff" stop-opacity=".36"/>', js)
         # ===== BM30.2: СЛЕПАЯ КАМЕРА И ВЕЧНОЕ МОЛЧАНИЕ — КОРНИ =====
         # просьба режима ВИДНА в LIVE (сервер ждёт ответа до 300с!)
         self.assertIn("case 'mode_request': return liveModeAsk(ev);", js)

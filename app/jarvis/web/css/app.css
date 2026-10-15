@@ -4219,17 +4219,17 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 #liveRoot.mic-on.cam-on .live-core-wrap,
 #liveRoot.text-on.cam-on .live-core-wrap{
   transform:translate(-50%,calc(-50% - 36vh)) scale(.6)}
-.live-core{position:relative;width:190px;height:190px;border-radius:50%;
-  background:linear-gradient(180deg,rgba(16,34,56,.4),rgba(8,18,32,.32));
-  border:1px solid rgba(120,220,255,.15);
-  box-shadow:0 26px 80px rgba(0,0,0,.5),0 0 60px rgba(0,150,220,.1),
-    inset 0 1px 0 rgba(255,255,255,.08);
+.live-core{position:relative;width:240px;height:240px;border-radius:50%;
+  background:linear-gradient(180deg,rgba(16,34,56,.3),rgba(8,18,32,.24));
+  border:1px solid rgba(120,220,255,.09);
+  box-shadow:0 22px 64px rgba(0,0,0,.42),0 0 44px rgba(0,150,220,.06),
+    inset 0 1px 0 rgba(255,255,255,.06);
   transition:width .65s var(--live-ease),height .65s var(--live-ease),
     border-radius .65s var(--live-ease),transform .5s var(--live-ease),
     border-color .5s ease,box-shadow .5s ease}
 #liveRoot.tools-up .live-core{transform:translateY(-26px)}
 #liveRoot.side-on .live-core{transform:scale(.94)}
-#liveRoot.text-on .live-core{width:min(600px,76vw);height:60px;border-radius:32px}
+#liveRoot.text-on .live-core{width:min(680px,80vw);height:66px;border-radius:36px}
 /* думание/простой — орб медленно дышит формой */
 #liveRoot.ph-thinking .live-core,#liveRoot.ph-idle.mic-on .live-core{
   animation:loMorph 3.8s ease-in-out infinite alternate}
@@ -4242,28 +4242,23 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
   transition:opacity .5s ease,filter .5s ease}
 #liveRoot.text-on .live-orb{opacity:0;filter:blur(9px);pointer-events:none}
 .lo-ring{position:absolute;inset:5%;border-radius:50%;
-  border:1.5px solid rgba(0,212,255,.2);
+  border:1px solid rgba(0,212,255,.11);
   animation:loSpin 15s linear infinite}
-.lo-ring.r2{inset:15%;animation:loSpinRev 10s linear infinite;border-color:rgba(0,212,255,.14)}
+.lo-ring.r2{inset:15%;animation:loSpinRev 10s linear infinite;border-color:rgba(0,212,255,.08)}
 @keyframes loSpin{to{transform:rotate(360deg)}}
 @keyframes loSpinRev{to{transform:rotate(-360deg)}}
-.lo-core{width:46%;height:46%;border-radius:50%;
-  background:radial-gradient(circle at 50% 40%,rgba(190,242,255,.95),
-    rgba(0,212,255,.5) 40%,rgba(2,64,96,.2) 78%);
-  box-shadow:0 0 44px rgba(0,212,255,.35),0 0 100px rgba(0,212,255,.16),
-    inset 0 0 26px rgba(130,232,255,.5);
-  /* BM34: ТРАНСФОРМАЦИЯ — орб превращается в фигуру САМ: ядро отдаёт
-     свой свет граням (--loFig растёт вместе с фигурой) и сжимается;
-     пульс речи (--vl) живёт в том же transform */
-  transform:scale(calc((1 + var(--vl,0)*.17)*(1 - var(--loFig,0)*.5)));
-  filter:brightness(calc(1 - var(--loFig,0)*.45));
-  transition:transform .13s linear;
-  animation:loFlash 7s ease-in-out infinite}
-/* ядро периодически светится изнутри жёлтым — слабые огни */
-@keyframes loFlash{0%,88%,100%{background:radial-gradient(circle at 50% 40%,rgba(190,242,255,.95),
-    rgba(0,212,255,.5) 40%,rgba(2,64,96,.2) 78%)}
-  93%{background:radial-gradient(circle at 50% 40%,rgba(255,232,180,.95),
-    rgba(230,180,80,.5) 42%,rgba(90,60,10,.25) 78%)}}
+.lo-core{width:52%;height:52%;display:block;border-radius:50%;
+  /* BM35: ТЕЛО ОРБА — ОДИН SVG-контур (.lo-body-p): в покое круг, при
+     превращении САМ контур деформируется в фигуру. Свет тела — заливка
+     градиентом; наружное свечение — мягкое и эфирное */
+  box-shadow:0 0 36px rgba(0,212,255,.28),0 0 90px rgba(0,212,255,.12);
+  transform:scale(calc(1 + var(--vl,0)*.17));
+  transition:transform .13s linear}
+/* жёлтая вспышка изнутри — второй контур той же формы, дышит прозрачностью */
+.lo-core .lo-flash-p{opacity:0;animation:loFlash 7s ease-in-out infinite}
+@keyframes loFlash{0%,88%,100%{opacity:0}93%{opacity:.85}}
+/* рёбра фигуры — внутри того же тела (появляются по мере превращения) */
+.lo-core .lo-edges-g{pointer-events:none}
 /* фазы: думает — золото изнутри; говорит — зелёная волна */
 #liveRoot.ph-thinking .lo-core{animation:loThink 1.5s ease-in-out infinite}
 @keyframes loThink{
@@ -4275,11 +4270,6 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
 @keyframes loRipple{0%{transform:scale(1);opacity:.55}100%{transform:scale(1.45);opacity:0}}
 #liveRoot.ph-speaking .lo-core{box-shadow:0 0 54px rgba(63,191,149,.5),
   0 0 120px rgba(63,191,149,.22),inset 0 0 30px rgba(140,255,220,.6)}
-/* ТРАНСФОРМАЦИЯ ОРБА: SVG-фигуры вырастают из обода САМОГО ЯДРА
-   (движок orbFigureFrame): ядро гаснет и сжимается, его свет становится
-   гранями — орб ПРЕВРАЩАЕТСЯ, а не «показывает фигуру внутри» */
-.lo-shape{position:absolute;inset:0;width:100%;height:100%;opacity:0;
-  pointer-events:none}
 /* лицо строки */
 .live-line{position:absolute;inset:0;display:flex;align-items:center;gap:8px;
   padding:0 10px 0 22px;opacity:0;filter:blur(9px);pointer-events:none;
@@ -4293,12 +4283,9 @@ body.agent-on .agent-switch[data-tip]:not(.tip-dismissed):hover::after{
   cursor:pointer;transition:all .25s ease;flex-shrink:0}
 .live-send svg{width:18px;height:18px}
 .live-send:hover{background:rgba(0,212,255,.18);box-shadow:0 0 22px rgba(0,212,255,.25);transform:translateY(-1px)}
-.live-core:focus-within{border-color:rgba(0,212,255,.4);
-  box-shadow:0 26px 80px rgba(0,0,0,.5),0 0 80px rgba(0,180,255,.14),
-    inset 0 1px 0 rgba(255,255,255,.08)}
-.live-core.flash{animation:loSend .8s ease}
-@keyframes loSend{30%{border-color:rgba(0,212,255,.55);box-shadow:0 26px 80px rgba(0,0,0,.5),
-  0 0 110px rgba(0,200,255,.22)}}
+.live-core:focus-within{border-color:rgba(0,212,255,.2);
+  box-shadow:0 22px 64px rgba(0,0,0,.42),0 0 56px rgba(0,180,255,.1),
+    inset 0 1px 0 rgba(255,255,255,.06)}
 
 /* --- КАМЕРА: панель из глубины, тёплая виньетка по краям --- */
 .live-camwrap{position:absolute;left:50%;top:50%;z-index:1;
@@ -4426,8 +4413,8 @@ body.live-on .modal-back{z-index:480}
 body.live-on .g-tip{z-index:490}
 body.live-on .toast{z-index:495}
 @media (max-width:720px){
-  .live-core{width:150px;height:150px}
-  #liveRoot.text-on .live-core{width:86vw}
+  .live-core{width:190px;height:190px}
+  #liveRoot.text-on .live-core{width:88vw}
   .live-camwrap{width:88vw}
   .lb{width:54px;height:54px}
   .lb svg{width:21px;height:21px}

@@ -12016,79 +12016,35 @@ function liveBeat() {
   liveShapeFrame();     // BM32/BM34: орб изредка сам превращается в фигуру
 }
 
-/* BM32: ОРБ ТРАНСФОРМИРУЕТСЯ САМ. Прежний код морфил КРУГЛЕШКА в фигуру
-   (движок диалога рисовал свой кружок и выращивал из него грани) — человек
-   справедливо увидел «появляется какой-то круглешок». Теперь изредка —
-   В ЛЮБОЙ МОМЕНТ, не во время думанья — дымка орба чуть тускнеет
-   (яркость уводится var --loFig), и из неё ПРОСТУПАЕТ фигура размером
-   с орб: те же честные тессеракт/пентахорон/куб/тетраэдр/кристалл, но
-   грани — почти прозрачная стеклянная дымка, рёбра — еле заметный
-   волосок. Проявление и растворение — по 5.2с, безумно плавно, движение
-   идёт S-кривой, вращение медленное и непрерывное */
+/* BM35: ОРБ ПРЕВРАЩАЕТСЯ В ФИГУРУ — БЕЗ ПОДМЕН И НАЛОЖЕНИЙ. Тело орба —
+   ОДИН замкнутый SVG-контур: в покое это круг (орб), при превращении
+   граница САМОГО ТЕЛА едет по лучам от круга к выпуклой оболочке фигуры,
+   заливка чуть прозрачнеет, внутри проступают рёбра. Не «фигура поверх
+   орба» и не «орб гаснет, фигура появляется»: орб ЕСТЬ этот контур —
+   он меняет форму, как капля света. Превращение редкое, в любой момент,
+   плавное (5.2с по S-кривой), вращение фигуры медленное и непрерывное */
 const LIVE_SHAPE = { key: '', t0: 0, m: 0, phase: 'idle', nextAt: 0, holdTo: 0 };
+const ORB_CIRCLE_R = 7.35;    /* радиус тела орба в единицах viewBox */
+const ORB_HULL_N = 72;        /* точек контура: гладкий круг и морф */
 
-function liveShapeFrame() {
-  if (!LIVE.root) return;
-  const svg = LIVE.root.querySelector('.lo-shape');
-  const g = svg && svg.querySelector('.lo-shape-g');
-  if (!g) return;
-  const now = performance.now();
-  if (LIVE_SHAPE.phase === 'idle') {
-    if (!LIVE_SHAPE.nextAt) {          // первый показ — не сразу после входа
-      LIVE_SHAPE.nextAt = now + 9000 + Math.random() * 9000;
-      return;
-    }
-    if (now < LIVE_SHAPE.nextAt) return;
-    LIVE_SHAPE.key = DOT_SHAPE_KEYS[(Math.random() * DOT_SHAPE_KEYS.length) | 0];
-    LIVE_SHAPE.t0 = now;
-    LIVE_SHAPE.phase = 'in';
+/* путь круглого тела (m=0) — считается один раз */
+const ORB_CIRCLE_D = (() => {
+  let d = '';
+  for (let i = 0; i <= ORB_HULL_N; i++) {
+    const a = (i % ORB_HULL_N) / ORB_HULL_N * Math.PI * 2;
+    d += (i ? 'L' : 'M') + (Math.cos(a) * ORB_CIRCLE_R).toFixed(2) +
+      ' ' + (Math.sin(a) * ORB_CIRCLE_R).toFixed(2);
   }
-  const t = (now - LIVE_SHAPE.t0) / 1000;
-  if (LIVE_SHAPE.phase === 'in') {            /* проступает из дымки — 5.2с */
-    LIVE_SHAPE.m = Math.min(1, LIVE_SHAPE.m + 16 / 5200);
-    if (LIVE_SHAPE.m >= 1) {
-      LIVE_SHAPE.phase = 'hold';
-      LIVE_SHAPE.holdTo = now + 9000 + Math.random() * 6000;
-    }
-  } else if (LIVE_SHAPE.phase === 'hold') {   /* живёт 9-15с, вращаясь */
-    if (now >= LIVE_SHAPE.holdTo) LIVE_SHAPE.phase = 'out';
-  } else {                                    /* тает обратно в дымку — 5.2с */
-    LIVE_SHAPE.m = Math.max(0, LIVE_SHAPE.m - 16 / 5200);
-    if (LIVE_SHAPE.m <= 0) {
-      LIVE_SHAPE.phase = 'idle';
-      LIVE_SHAPE.key = '';
-      g.innerHTML = '';
-      svg.style.opacity = '0';
-      LIVE.root.style.setProperty('--loFig', '0');
-      LIVE_SHAPE.nextAt = now + 17000 + Math.random() * 21000;
-      return;
-    }
-  }
-  /* S-кривая поверх линейного m: никакого рывка на старте и финале */
-  const e = LIVE_SHAPE.m * LIVE_SHAPE.m * (3 - 2 * LIVE_SHAPE.m);
-  svg.style.opacity = String(e);
-  LIVE.root.style.setProperty('--loFig', e.toFixed(3));
-  g.innerHTML = orbFigureFrame(LIVE_SHAPE.key, t, e);
-}
+  return d + 'Z';
+})();
 
-/* ФИГУРА ОРБА — честная геометрия, но НЕ круглешек: без внутреннего
-   круга и без морфа «круг → фигура». Размер — сам орб (радиус фигуры
-   доведён до радиуса тела), грани — дымка (fill 0.03-0.10), рёбра —
-   волосок 0.14-0.24 с opacity 0.12-0.32, глубина чуть меняет яркость */
+/* масштаб каждой фигуры: общий радиус превращения (размер орба) */
 const ORB_FIG_SC = { tess: 12.0, penta: 12.4, cube: 13.9, octa: 13.9, tetra: 13.9, crystal: 12.0 };
 
-function orbFigureFrame(key, t, m) {
+/* проекция фигуры в 2D (3D-глубина сохранена для рёбер) */
+function orbFigureData(key, t) {
   const sh = DOT_SHAPES[key];
-  /* размер — САМ ОРБ: у фигур разная длина вершин, масштаб каждой подобран
-     до общего радиуса, чтобы ни одна не смотрелась игрушечной */
   const SC = ORB_FIG_SC[key] || 12.0;
-  /* BM34: ПРЕВРАЩЕНИЕ, а не появление. Вершины стартуют на ободе ЯДРА
-     орба (46% от 190px = 7.35 единицы viewBox) и разъезжаются в свои
-     позиции; ядро в этот момент гаснет (--loFig) и сжимается — свет
-     ядра становится гранями. Никакого отдельного «круглешка»:
-     круг здесь — САМО ядро орба */
-  const R0 = 7.35;
-  const mm = m == null ? 1 : m;
   let pts3;
   if (sh.d === 4) {
     const a = t * 0.22, b = t * 0.13;      /* медленное 4D-вращение */
@@ -12098,51 +12054,145 @@ function orbFigureFrame(key, t, m) {
       const w1 = p[0] * sa + p[3] * ca;
       const z1 = p[2] * cb - w1 * sb;
       const w2 = p[2] * sb + w1 * cb;
-      const k = 3.1 / (3.1 - w2 * 1.5);      /* перспектива 4D -> 3D */
+      const k = 3.1 / (3.1 - w2 * 1.5);
       return [x1 * k, p[1] * k, z1 * k];
     });
   } else {
-    const ang = t * 0.16;                   /* полный оборот ~39с */
+    const ang = t * 0.16;                  /* полный оборот ~39с */
     pts3 = sh.V.map((p) => dotRotAxis(p, sh.AX, ang));
   }
   const P = pts3.map((p) => {
     const k = 5.6 / (5.6 - p[2] * 1.1);
     return [p[0] * k * SC, p[1] * k * SC, p[2]];
   });
-  const Q = P.map((p) => {
-    const r = Math.hypot(p[0], p[1]);
-    if (r < 1e-9) return [p[0] * mm, p[1] * mm, p[2]];
-    const rr = R0 + (r - R0) * mm;
-    const k = rr / r;
-    return [p[0] * k, p[1] * k, p[2]];
-  });
-  const px = (i) => Q[i][0].toFixed(2) + ',' + Q[i][1].toFixed(2);
-  /* грани-дымка: почти прозрачные, свет по нормали лишь чуть заметен */
-  const faces = sh.F.map((f) => {
-    const ps = f.map((i) => Q[i]);
-    let depth = 0;
-    ps.forEach((q) => { depth += q[2]; });
-    depth /= ps.length;
-    const n = dotFaceNormal(ps);
-    const bright = Math.abs(n[2] * .62 - n[1] * .5 + n[0] * .36);
-    const op = 0.03 + 0.07 * bright;
-    return {
-      depth,
-      html: '<polygon points="' + f.map((i) => px(i)).join(' ') +
-        '" fill="url(#gFlo)" fill-opacity="' + op.toFixed(3) + '"/>',
-    };
-  }).sort((a, b) => a.depth - b.depth);
-  /* рёбра-волосок: еле заметные, глубина чуть добавляет яркости */
-  let edges = '';
-  sh.E.forEach((ed) => {
-    const d = (Q[ed[0]][2] + Q[ed[1]][2]) / 2;
+  return { sh, P };
+}
+
+/* выпуклая оболочка 2D-точек (монотонная цепь Эндрю) — силуэт фигуры */
+function orbHull(P) {
+  const pts = P.map((p) => [p[0], p[1]]);
+  pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const p of pts) {
+    while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop();
+    lo.push(p);
+  }
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop();
+    up.push(p);
+  }
+  lo.pop(); up.pop();
+  return lo.concat(up);
+}
+
+/* КОНТУР ТЕЛА ОРБА: круг (m=0) превращается в силуэт фигуры (m=1).
+   Каждый луч из центра едет от радиуса круга к радиусу оболочки фигуры */
+function orbBoundaryD(key, t, m) {
+  const { P } = orbFigureData(key, t);
+  const hull = orbHull(P);
+  if (!hull.length) return ORB_CIRCLE_D;
+  let cx = 0, cy = 0;
+  hull.forEach((q) => { cx += q[0]; cy += q[1]; });
+  cx /= hull.length; cy /= hull.length;
+  /* точный силуэт: луч из центроида до пересечения с ребром оболочки
+     (линейная интерполяция радиуса по углу разувала силуэт на тонких
+     проекциях — тессеракт ребром давал 16.9 вместо 14.2) */
+  const rayR = (a) => {
+    const dx = Math.cos(a), dy = Math.sin(a);
+    let best = 0;
+    for (let i = 0; i < hull.length; i++) {
+      const q1 = hull[i], q2 = hull[(i + 1) % hull.length];
+      const ex = q2[0] - q1[0], ey = q2[1] - q1[1];
+      const den = dx * ey - dy * ex;
+      if (Math.abs(den) < 1e-9) continue;
+      const ux = q1[0] - cx, uy = q1[1] - cy;
+      const u = (ux * ey - uy * ex) / den;      /* точка на луче */
+      const v = (ux * dy - uy * dx) / den;      /* точка на ребре */
+      if (u > 0 && v >= 0 && v <= 1 && u > best) best = u;
+    }
+    return best || ORB_CIRCLE_R;
+  };
+  let d = '';
+  for (let i = 0; i <= ORB_HULL_N; i++) {
+    const a = (i % ORB_HULL_N) / ORB_HULL_N * Math.PI * 2;
+    const r = ORB_CIRCLE_R + (rayR(a) - ORB_CIRCLE_R) * m;
+    d += (i ? 'L' : 'M') + (cx * m + Math.cos(a) * r).toFixed(2) +
+      ' ' + (cy * m + Math.sin(a) * r).toFixed(2);
+  }
+  return d + 'Z';
+}
+
+/* рёбра внутри превращающегося тела: волосок, глубина чуть добавляет света */
+function orbEdgesHTML(key, t, m) {
+  const { sh, P } = orbFigureData(key, t);
+  let out = '';
+  sh.E.forEach((e) => {
+    const d = (P[e[0]][2] + P[e[1]][2]) / 2;
     const tt = Math.max(0, Math.min(1, (d + 1.3) / 2.6));
-    edges += '<line x1="' + Q[ed[0]][0].toFixed(2) + '" y1="' + Q[ed[0]][1].toFixed(2) +
-      '" x2="' + Q[ed[1]][0].toFixed(2) + '" y2="' + Q[ed[1]][1].toFixed(2) +
+    out += '<line x1="' + P[e[0]][0].toFixed(2) + '" y1="' + P[e[0]][1].toFixed(2) +
+      '" x2="' + P[e[1]][0].toFixed(2) + '" y2="' + P[e[1]][1].toFixed(2) +
       '" stroke="url(#gElo)" stroke-width="' + (0.14 + 0.10 * tt).toFixed(2) +
       '" opacity="' + (0.12 + 0.20 * tt).toFixed(3) + '"/>';
   });
-  return faces.map((f) => f.html).join('') + '<g>' + edges + '</g>';
+  return '<g opacity="' + m.toFixed(3) + '">' + out + '</g>';
+}
+
+function liveShapeFrame() {
+  if (!LIVE.root) return;
+  const svg = LIVE.root.querySelector('svg.lo-core');
+  if (!svg) return;
+  const bodyP = svg.querySelector('.lo-body-p');
+  const flashP = svg.querySelector('.lo-flash-p');
+  const edgesG = svg.querySelector('.lo-edges-g');
+  if (!bodyP || !flashP || !edgesG) return;
+  const now = performance.now();
+  if (LIVE_SHAPE.phase === 'idle') {
+    if (!LIVE_SHAPE.nextAt) {
+      LIVE_SHAPE.nextAt = now + 9000 + Math.random() * 9000;
+    } else if (now >= LIVE_SHAPE.nextAt) {
+      LIVE_SHAPE.key = DOT_SHAPE_KEYS[(Math.random() * DOT_SHAPE_KEYS.length) | 0];
+      LIVE_SHAPE.t0 = now;
+      LIVE_SHAPE.phase = 'in';
+    }
+  }
+  if (!LIVE_SHAPE.key) {
+    bodyP.setAttribute('d', ORB_CIRCLE_D);      /* покой: тело — круг */
+    flashP.setAttribute('d', ORB_CIRCLE_D);
+    bodyP.setAttribute('fill-opacity', '1');
+    edgesG.innerHTML = '';
+    return;
+  }
+  const t = (now - LIVE_SHAPE.t0) / 1000;
+  if (LIVE_SHAPE.phase === 'in') {            /* тело деформируется — 5.2с */
+    LIVE_SHAPE.m = Math.min(1, LIVE_SHAPE.m + 16 / 5200);
+    if (LIVE_SHAPE.m >= 1) {
+      LIVE_SHAPE.phase = 'hold';
+      LIVE_SHAPE.holdTo = now + 9000 + Math.random() * 6000;
+    }
+  } else if (LIVE_SHAPE.phase === 'hold') {   /* орб ЖИВЁТ фигурой 9-15с */
+    if (now >= LIVE_SHAPE.holdTo) LIVE_SHAPE.phase = 'out';
+  } else {                                    /* тело стекает обратно в круг */
+    LIVE_SHAPE.m = Math.max(0, LIVE_SHAPE.m - 16 / 5200);
+    if (LIVE_SHAPE.m <= 0) {
+      LIVE_SHAPE.phase = 'idle';
+      LIVE_SHAPE.key = '';
+      bodyP.setAttribute('d', ORB_CIRCLE_D);
+      flashP.setAttribute('d', ORB_CIRCLE_D);
+      bodyP.setAttribute('fill-opacity', '1');
+      edgesG.innerHTML = '';
+      LIVE_SHAPE.nextAt = now + 17000 + Math.random() * 21000;
+      return;
+    }
+  }
+  /* S-кривая поверх линейного m: никакого рывка на старте и финале */
+  const e = LIVE_SHAPE.m * LIVE_SHAPE.m * (3 - 2 * LIVE_SHAPE.m);
+  const d = orbBoundaryD(LIVE_SHAPE.key, t, e);
+  bodyP.setAttribute('d', d);
+  flashP.setAttribute('d', d);
+  bodyP.setAttribute('fill-opacity', (1 - .38 * e).toFixed(3));
+  edgesG.innerHTML = e > 0.02 ? orbEdgesHTML(LIVE_SHAPE.key, t, e) : '';
 }
 
 /* BM29: аудио просыпается В ЖЕСТЕ КЛИКА — до любых await. Иначе Chrome
@@ -12195,25 +12245,33 @@ function liveBuild() {
         '<div class="live-tools"></div>' +
         '<div class="live-camwrap"><video class="live-video" autoplay playsinline muted></video></div>' +
         '<div class="live-core-wrap"><div class="live-core">' +
-          /* BM34: ПЕРВОНАЧАЛЬНЫЙ ДИЗАЙН (legacy/live-bm28): стеклянный круг,
-             два вращающихся кольца, яркое ядро. Трансформации: фигуры
-             вырастают из обода САМОГО ядра — орб превращается в них */
+          /* BM35: ПЕРВОНАЧАЛЬНЫЙ ДИЗАЙН (legacy/live-bm28), крупнее и эфирнее:
+             два кольца + тело орба. ТЕЛО ОРБА — ОДИН SVG-контур (path):
+             в покое это круг, при превращении САМ КОНТУР деформируется в
+             фигуру — орб ПРЕВРАЩАЕТСЯ, никакой фигуры поверх него */
           '<div class="live-orb"><i class="lo-ring r1"></i><i class="lo-ring r2"></i>' +
-            '<div class="lo-core"></div>' +
-            '<svg class="lo-shape" viewBox="-16 -16 32 32">' +
+            '<svg class="lo-core" viewBox="-16 -16 32 32">' +
               '<defs>' +
-                '<radialGradient id="gFlo" cx="34%" cy="28%" r="82%">' +
-                  '<stop offset="0%" stop-color="#ffffff"/>' +
-                  '<stop offset="38%" stop-color="#c8eeff"/>' +
-                  '<stop offset="72%" stop-color="#48b6ea"/>' +
-                  '<stop offset="100%" stop-color="#0e6ea8"/>' +
+                '<radialGradient id="gCore" cx="50%" cy="42%" r="62%">' +
+                  '<stop offset="0%" stop-color="#eafaff" stop-opacity=".85"/>' +
+                  '<stop offset="40%" stop-color="#00d4ff" stop-opacity=".36"/>' +
+                  '<stop offset="78%" stop-color="#02405e" stop-opacity=".12"/>' +
+                  '<stop offset="100%" stop-color="#02405e" stop-opacity="0"/>' +
+                '</radialGradient>' +
+                '<radialGradient id="gCoreY" cx="50%" cy="42%" r="62%">' +
+                  '<stop offset="0%" stop-color="#fff6dd" stop-opacity=".9"/>' +
+                  '<stop offset="45%" stop-color="#e6b450" stop-opacity=".38"/>' +
+                  '<stop offset="100%" stop-color="#5a3c0a" stop-opacity="0"/>' +
                 '</radialGradient>' +
                 '<linearGradient id="gElo" x1="0" y1="0" x2="1" y2="1">' +
                   '<stop offset="0%" stop-color="#ffffff"/>' +
                   '<stop offset="55%" stop-color="#d4f1ff"/>' +
                   '<stop offset="100%" stop-color="#8ed4f4"/>' +
                 '</linearGradient>' +
-              '</defs><g class="lo-shape-g"></g>' +
+              '</defs>' +
+              '<path class="lo-body-p" fill="url(#gCore)"/>' +
+              '<path class="lo-flash-p" fill="url(#gCoreY)"/>' +
+              '<g class="lo-edges-g"></g>' +
             '</svg></div>' +
           '<div class="live-line">' +
             '<input id="liveInput" placeholder="Спроси Джарвиса…" autocomplete="off">' +
@@ -12258,8 +12316,8 @@ function liveBuild() {
       const t = inp.value.trim();
       if (!t || S.streaming) return;
       inp.value = '';
-      const core = root.querySelector('.live-core');
-      if (core) { core.classList.remove('flash'); void core.offsetWidth; core.classList.add('flash'); }
+      /* BM35: «ужасная анимация при отправке» УБРАНА — строка просто
+         спокойно уходит в разговор, без вспышки */
       liveAskText(t);
     }
   });

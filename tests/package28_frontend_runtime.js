@@ -4443,9 +4443,11 @@ function testIterationBM30Contracts() {
     'BM30.2: mode requests surface in LIVE, the call restores the last dialog, camera-frame failures are honest, TTS shows the raw OS reason');
   // BM32: орб-ДЫМКА — трансформируется САМ (никакого круглешка)
   assert(js.includes('function liveShapeFrame() {') &&
-    js.includes('g.innerHTML = orbFigureFrame(LIVE_SHAPE.key, t, e);') &&
+    js.includes('const d = orbBoundaryD(LIVE_SHAPE.key, t, e);') &&
+    js.includes('function orbHull(P) {') &&
+    !js.includes('lo-shape') && !css.includes('.lo-shape') &&
     !js.includes("dotShapeFrame(LIVE_SHAPE.key") &&
-    css.includes('.lo-shape{position:absolute;inset:0;width:100%;height:100%;opacity:0;') &&
+    css.includes('.lo-core .lo-flash-p{opacity:0;animation:loFlash 7s ease-in-out infinite}') &&
     css.includes('#liveRoot.ph-thinking .lo-core{animation:loThink 1.5s ease-in-out infinite}') &&
     js.includes("LIVE_SHAPE.nextAt = now + 17000 + Math.random() * 21000;") &&
     !css.includes('.lo-orbit') && !js.includes('lo-orbit') &&
@@ -4453,14 +4455,17 @@ function testIterationBM30Contracts() {
     !js.includes('const LIVE_ORBITS = [') &&
     !css.includes('@keyframes loOrbA') &&
     !css.includes('lo-haze') && !css.includes('lo-pulse') &&
-    css.includes('filter:brightness(calc(1 - var(--loFig,0)*.45));') &&
+    !js.includes('--loFig') && !css.includes('--loFig') &&
     css.includes('.live-a .la-w{animation:laWord .65s ease both}') &&
     css.includes('.live-a.in{animation:laIn .9s var(--live-ease) both}') &&
     css.includes('@keyframes loMorph{') && css.includes('@keyframes loRipple{') &&
     css.includes('.la-grow{display:grid;grid-template-rows:0fr;transition:grid-template-rows .85s var(--live-ease)}') &&
     css.includes('.la-clip{overflow:hidden;min-height:0}') &&
     js.includes('<i class="lo-ring r1"></i><i class="lo-ring r2"></i>') &&
-    js.includes('const R0 = 7.35;') &&
+    js.includes('const ORB_CIRCLE_R = 7.35;') &&
+    css.includes('.lo-core{width:52%;height:52%;display:block;border-radius:50%;') &&
+    css.includes('.live-core{position:relative;width:240px;height:240px;border-radius:50%;') &&
+    !css.includes('loSend') && !js.includes("classList.add('flash')") &&
     js.includes("const cheap = !!(LIVE.on && LIVE.root && LIVE.root.querySelector('.live-tool:not(.out)'));") &&
     css.includes('background:rgba(10,20,34,.42);') &&
     !js.includes('live-motes') && !js.includes('live-bubbles') &&
@@ -4486,7 +4491,7 @@ function testIterationBM28Contracts() {
   assert(css.includes('#liveRoot{') && css.includes('.live-veil{') &&
     /#liveRoot\.open \.live-veil\{opacity:0\}/.test(css) &&
     /#liveRoot\.open \.live-bg\{filter:blur\(0\) brightness\(1\);transform:scale\(1\)\}/.test(css) &&
-    /#liveRoot\.text-on \.live-core\{width:min\(600px,76vw\);height:60px;border-radius:32px/.test(css) &&
+    /#liveRoot\.text-on \.live-core\{width:min\(680px,80vw\);height:66px;border-radius:36px/.test(css) &&
     /#liveRoot\.mic-on\.cam-on \.live-core-wrap,\n#liveRoot\.text-on\.cam-on \.live-core-wrap\{\n  transform:translate\(-50%,calc\(-50% - 36vh\)\) scale\(\.6\)\}/.test(css) &&
     css.includes('@keyframes loThink') && css.includes('@keyframes loFlash') &&
     /#liveRoot\.ag \.live-bg \.a1\{background:radial-gradient\(circle,rgba\(224,52,88,\.34\),transparent 66%\)\}/.test(css) &&

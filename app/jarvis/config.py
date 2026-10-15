@@ -75,6 +75,7 @@ DEFAULTS: Dict[str, Any] = {
         "elevenlabs": {
             "enabled": False,
             "priority": 50,
+            "base_url": "https://api.elevenlabs.io",
             "api_key": "",
             "voice_id": "",
             "model": "eleven_v3",
