@@ -3307,7 +3307,10 @@ function testIterationBM9Contracts() {
   // BM10: папки анимирует JS-вальс (Web Animations + rAF высота);
   // CSS-переход(grid) конкурировал с ним и давал резкий кадр в конце
   assert(css.includes('.qt-folder .qt-kids{display:none}') &&
-    !css.includes('grid-template-rows:0fr') &&
+    !css.includes('.qt-kids{display:grid') &&   /* BM34: запрет сужен до папок:
+       la-grow раскрывает место под ответ тем же grid-приёмом, но это другой
+       компонент (LIVE-сон), вальсу папок он не мешает */
+    !css.includes('.qt-folder .qt-kids{grid-template-rows') &&
     js.includes("kids.style.height = (wasOpen ? H : 0) + 'px';"),
     'BM10: folders animate via the JS waltz alone — no CSS transition fighting it at the end');
   // BM10: степень корня — ниже и левее: не залезает за черту корня;
@@ -4440,28 +4443,29 @@ function testIterationBM30Contracts() {
     'BM30.2: mode requests surface in LIVE, the call restores the last dialog, camera-frame failures are honest, TTS shows the raw OS reason');
   // BM32: орб-ДЫМКА — трансформируется САМ (никакого круглешка)
   assert(js.includes('function liveShapeFrame() {') &&
-    js.includes('g.innerHTML = orbFigureFrame(LIVE_SHAPE.key, t);') &&
+    js.includes('g.innerHTML = orbFigureFrame(LIVE_SHAPE.key, t, e);') &&
     !js.includes("dotShapeFrame(LIVE_SHAPE.key") &&
     css.includes('.lo-shape{position:absolute;inset:0;width:100%;height:100%;opacity:0;') &&
-    css.includes('#liveRoot.ph-thinking .lo-core{--loS:.84}') &&
+    css.includes('#liveRoot.ph-thinking .lo-core{animation:loThink 1.5s ease-in-out infinite}') &&
     js.includes("LIVE_SHAPE.nextAt = now + 17000 + Math.random() * 21000;") &&
-    css.includes('.lo-orbit.lo-o1{width:118%;height:118%;margin:-59% 0 0 -59%;') &&
-    js.includes('function liveOrbitsFrame() {') &&
-    js.includes('const LIVE_ORBITS = [') &&
-    js.includes('LIVE.orbits = Array.from(root.querySelectorAll(\'.lo-orbit\'));') &&
+    !css.includes('.lo-orbit') && !js.includes('lo-orbit') &&
+    !js.includes('function liveOrbitsFrame() {') &&
+    !js.includes('const LIVE_ORBITS = [') &&
     !css.includes('@keyframes loOrbA') &&
-    css.includes('.lo-pulse .lo-haze{position:absolute;border-radius:50%;mix-blend-mode:screen;') &&
+    !css.includes('lo-haze') && !css.includes('lo-pulse') &&
     css.includes('filter:brightness(calc(1 - var(--loFig,0)*.45));') &&
     css.includes('.live-a .la-w{animation:laWord .65s ease both}') &&
     css.includes('.live-a.in{animation:laIn .9s var(--live-ease) both}') &&
-    css.includes('@keyframes loBreathe{0%,100%{opacity:.78}50%{opacity:1}}') &&
-    css.includes('rgba(242,252,255,.62) 0%') &&
-    css.includes('rgba(26,92,166,.02) 84%,transparent 95%)') &&
-    js.includes('circle r="14.6" fill="url(#gSend)"') &&
+    css.includes('@keyframes loMorph{') && css.includes('@keyframes loRipple{') &&
+    css.includes('.la-grow{display:grid;grid-template-rows:0fr;transition:grid-template-rows .85s var(--live-ease)}') &&
+    css.includes('.la-clip{overflow:hidden;min-height:0}') &&
+    js.includes('<i class="lo-ring r1"></i><i class="lo-ring r2"></i>') &&
+    js.includes('const R0 = 7.35;') &&
+    js.includes("const cheap = !!(LIVE.on && LIVE.root && LIVE.root.querySelector('.live-tool:not(.out)'));") &&
     css.includes('background:rgba(10,20,34,.42);') &&
     !js.includes('live-motes') && !js.includes('live-bubbles') &&
     !css.includes('loMorphA') && !css.includes('.lo-think'),
-    'BM32: misty orb (soft round halos + breathing haze + 3 hairline orbits in different planes); the ORB itself rarely surfaces as an orb-sized hairline figure at any moment (no dot morph); answer text floats in');
+    'BM34: the ORIGINAL BM28 design is back (glass circle, two rings, bright core); the orb ITSELF turns into figures — vertices grow from the core rim while the core dims; answer text opens its space smoothly (la-grow); ElevenLabs leads the voice chain with a cheap model while tools run');
   // камера: орб сильнее сжимается; кнопки/док чуть меньше, разлёт прежний
   assert(css.includes('calc(-50% - 36vh)) scale(.6)}') &&
     css.includes('.lb{width:64px;height:64px;border-radius:50%') &&
@@ -4482,9 +4486,9 @@ function testIterationBM28Contracts() {
   assert(css.includes('#liveRoot{') && css.includes('.live-veil{') &&
     /#liveRoot\.open \.live-veil\{opacity:0\}/.test(css) &&
     /#liveRoot\.open \.live-bg\{filter:blur\(0\) brightness\(1\);transform:scale\(1\)\}/.test(css) &&
-    /#liveRoot\.text-on \.live-core\{width:min\(780px,84vw\);height:84px;border-radius:46px/.test(css) &&
+    /#liveRoot\.text-on \.live-core\{width:min\(600px,76vw\);height:60px;border-radius:32px/.test(css) &&
     /#liveRoot\.mic-on\.cam-on \.live-core-wrap,\n#liveRoot\.text-on\.cam-on \.live-core-wrap\{\n  transform:translate\(-50%,calc\(-50% - 36vh\)\) scale\(\.6\)\}/.test(css) &&
-    css.includes('@keyframes loIriY') && css.includes('@keyframes loFlash') &&
+    css.includes('@keyframes loThink') && css.includes('@keyframes loFlash') &&
     /#liveRoot\.ag \.live-bg \.a1\{background:radial-gradient\(circle,rgba\(224,52,88,\.34\),transparent 66%\)\}/.test(css) &&
     css.includes('.live-bar{') && css.includes('.lb-exit:hover{') &&
     css.includes('.live-dream{') &&

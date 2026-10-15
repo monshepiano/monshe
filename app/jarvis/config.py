@@ -67,6 +67,20 @@ DEFAULTS: Dict[str, Any] = {
             "api_key": "",
             "label": "AITunnel",
         },
+        # BM34: ГОЛОС максимальной правдоподобности. Не LLM-провайдер:
+        # в маршрутизации чата не участвует (llm.py его пропускает),
+        # работает только в цепочке TTS (server.py, _tts_elevenlabs).
+        # Разговор — model (eleven_v3), рабочие фразы при инструментах —
+        # model_cheap (eleven_flash_v2.5). Голос один: voice_id общий
+        "elevenlabs": {
+            "enabled": False,
+            "priority": 50,
+            "api_key": "",
+            "voice_id": "",
+            "model": "eleven_v3",
+            "model_cheap": "eleven_flash_v2.5",
+            "label": "ElevenLabs (голос)",
+        },
     },
     # Предпочтения по моделям для каждого «уровня». Поиск идёт по подстроке
     # среди реально доступных моделей провайдера (GET /v1/models).

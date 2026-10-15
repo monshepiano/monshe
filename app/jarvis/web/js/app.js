@@ -11789,11 +11789,16 @@ function voiceSpeakViaServer(text) {
      rate/server — временные (остыть 45с и попробовать) */
   if (VOICE_TTS_OK !== null && VOICE_TTS_OK !== true && Date.now() < VOICE_TTS_OK) return Promise.resolve(null);
   if (VOICE_TTS_OK === false) return Promise.resolve(null);
-  return api('/api/tts', { text }).then((r) => {
+  /* BM34: ЭКОНОМИЯ ElevenLabs. Обычный разговор — выразительная модель;
+     фразы, произносимые ПОКА РАБОТАЮТ ИНСТРУМЕНТЫ (интонация не критична
+     там человек ждёт результата) — дешёвая быстрая модель. Голос один:
+     voice_id общий, выбор модели делает сервер по флагу cheap */
+  const cheap = !!(LIVE.on && LIVE.root && LIVE.root.querySelector('.live-tool:not(.out)'));
+  return api('/api/tts', { text, cheap }).then((r) => {
     if (r && r.ok && r.audio) {
       VOICE_TTS_OK = true;
       return new Promise((resolve) => {
-        const au = new Audio('data:audio/wav;base64,' + r.audio);
+        const au = new Audio('data:' + (r.mime || 'audio/wav') + ';base64,' + r.audio);
         VOICE.ttsAudio = au;
         VOICE.ttsBusy = true;                   // BM32: Яндекс заговорил
         const fin = () => {
@@ -11990,7 +11995,7 @@ document.addEventListener('keydown', (e) => {
 /* синтез) — прежний, battle-tested; LIVE — его новое лицо.      */
 /* ============================================================ */
 const LIVE = { on: false, mic: false, cam: false, root: null, video: null,
-  dreamIn: null, qEl: null, aEl: null, toolsEl: null, sideEl: null,
+  dreamIn: null, qEl: null, aEl: null, aGrow: null, toolsEl: null, sideEl: null,
   askEl: null, run: 0, camStream: null, host: null, planOpen: false, askOn: false };
 
 /* BM29: единый закон «элементы уступают друг другу»: как только справа
@@ -12008,32 +12013,7 @@ function liveSyncSide() {
 function liveBeat() {
   if (!LIVE.on) return;
   LIVE.beat = requestAnimationFrame(liveBeat);
-  liveShapeFrame();     // BM32: орб изредка сам проступает фигурой
-  liveOrbitsFrame();    // BM33: орбиты вечно валятся по всем осям
-}
-
-/* BM33: ОРБИТЫ ВАЛЯТСЯ ПО ВСЕМ ОСЯМ — как сияющая штука в голове
-   инопланетянина из «Людей в чёрном 3»: каждое кольцо вращается вокруг
-   трёх осей С РАЗНЫМИ скоростями, поэтому плоскость орбиты непрерывно
-   перекатывается и траектория не повторяется никогда. Один transform
-   на кольцо за кадр — дешевле лёгкого чиха композитора */
-const LIVE_ORBITS = [
-  { rx: 12.4, ry: -8.2, rz: 5.1, a: [24, 0, 130] },
-  { rx: -9.7, ry: 6.3, rz: -4.3, a: [90, 200, 40] },
-  { rx: 7.3, ry: -5.6, rz: 3.7, a: [150, 60, 210] },
-];
-
-function liveOrbitsFrame() {
-  if (!LIVE.root || !LIVE.orbits) return;
-  const t = performance.now() / 1000;
-  for (let i = 0; i < LIVE.orbits.length; i++) {
-    const el = LIVE.orbits[i];
-    const o = LIVE_ORBITS[i];
-    if (!el || !o) continue;
-    el.style.transform = 'rotateX(' + ((o.a[0] + o.rx * t) % 360).toFixed(2) + 'deg)' +
-      ' rotateY(' + ((o.a[1] + o.ry * t) % 360).toFixed(2) + 'deg)' +
-      ' rotateZ(' + ((o.a[2] + o.rz * t) % 360).toFixed(2) + 'deg)';
-  }
+  liveShapeFrame();     // BM32/BM34: орб изредка сам превращается в фигуру
 }
 
 /* BM32: ОРБ ТРАНСФОРМИРУЕТСЯ САМ. Прежний код морфил КРУГЛЕШКА в фигуру
@@ -12088,7 +12068,7 @@ function liveShapeFrame() {
   const e = LIVE_SHAPE.m * LIVE_SHAPE.m * (3 - 2 * LIVE_SHAPE.m);
   svg.style.opacity = String(e);
   LIVE.root.style.setProperty('--loFig', e.toFixed(3));
-  g.innerHTML = orbFigureFrame(LIVE_SHAPE.key, t);
+  g.innerHTML = orbFigureFrame(LIVE_SHAPE.key, t, e);
 }
 
 /* ФИГУРА ОРБА — честная геометрия, но НЕ круглешек: без внутреннего
@@ -12097,12 +12077,18 @@ function liveShapeFrame() {
    волосок 0.14-0.24 с opacity 0.12-0.32, глубина чуть меняет яркость */
 const ORB_FIG_SC = { tess: 12.0, penta: 12.4, cube: 13.9, octa: 13.9, tetra: 13.9, crystal: 12.0 };
 
-function orbFigureFrame(key, t) {
+function orbFigureFrame(key, t, m) {
   const sh = DOT_SHAPES[key];
   /* размер — САМ ОРБ: у фигур разная длина вершин, масштаб каждой подобран
-     до общего радиуса (примерно тело орба), чтобы ни одна не смотрелась
-     игрушечной внутри портала */
+     до общего радиуса, чтобы ни одна не смотрелась игрушечной */
   const SC = ORB_FIG_SC[key] || 12.0;
+  /* BM34: ПРЕВРАЩЕНИЕ, а не появление. Вершины стартуют на ободе ЯДРА
+     орба (46% от 190px = 7.35 единицы viewBox) и разъезжаются в свои
+     позиции; ядро в этот момент гаснет (--loFig) и сжимается — свет
+     ядра становится гранями. Никакого отдельного «круглешка»:
+     круг здесь — САМО ядро орба */
+  const R0 = 7.35;
+  const mm = m == null ? 1 : m;
   let pts3;
   if (sh.d === 4) {
     const a = t * 0.22, b = t * 0.13;      /* медленное 4D-вращение */
@@ -12123,10 +12109,17 @@ function orbFigureFrame(key, t) {
     const k = 5.6 / (5.6 - p[2] * 1.1);
     return [p[0] * k * SC, p[1] * k * SC, p[2]];
   });
-  const px = (i) => P[i][0].toFixed(2) + ',' + P[i][1].toFixed(2);
+  const Q = P.map((p) => {
+    const r = Math.hypot(p[0], p[1]);
+    if (r < 1e-9) return [p[0] * mm, p[1] * mm, p[2]];
+    const rr = R0 + (r - R0) * mm;
+    const k = rr / r;
+    return [p[0] * k, p[1] * k, p[2]];
+  });
+  const px = (i) => Q[i][0].toFixed(2) + ',' + Q[i][1].toFixed(2);
   /* грани-дымка: почти прозрачные, свет по нормали лишь чуть заметен */
   const faces = sh.F.map((f) => {
-    const ps = f.map((i) => P[i]);
+    const ps = f.map((i) => Q[i]);
     let depth = 0;
     ps.forEach((q) => { depth += q[2]; });
     depth /= ps.length;
@@ -12141,11 +12134,11 @@ function orbFigureFrame(key, t) {
   }).sort((a, b) => a.depth - b.depth);
   /* рёбра-волосок: еле заметные, глубина чуть добавляет яркости */
   let edges = '';
-  sh.E.forEach((e) => {
-    const d = (P[e[0]][2] + P[e[1]][2]) / 2;
+  sh.E.forEach((ed) => {
+    const d = (Q[ed[0]][2] + Q[ed[1]][2]) / 2;
     const tt = Math.max(0, Math.min(1, (d + 1.3) / 2.6));
-    edges += '<line x1="' + P[e[0]][0].toFixed(2) + '" y1="' + P[e[0]][1].toFixed(2) +
-      '" x2="' + P[e[1]][0].toFixed(2) + '" y2="' + P[e[1]][1].toFixed(2) +
+    edges += '<line x1="' + Q[ed[0]][0].toFixed(2) + '" y1="' + Q[ed[0]][1].toFixed(2) +
+      '" x2="' + Q[ed[1]][0].toFixed(2) + '" y2="' + Q[ed[1]][1].toFixed(2) +
       '" stroke="url(#gElo)" stroke-width="' + (0.14 + 0.10 * tt).toFixed(2) +
       '" opacity="' + (0.12 + 0.20 * tt).toFixed(3) + '"/>';
   });
@@ -12195,68 +12188,36 @@ function liveBuild() {
       '<div class="live-flow">' +
         '<div class="live-dream"><div class="live-dream-in">' +
           '<div class="live-q"></div>' +
-          '<div class="live-a"></div>' +
+          /* BM34: место под ответ раскрывается ПЛАВНО (grid-строка) —
+             запрос больше не прыгает вверх одним кадром */
+          '<div class="la-grow"><div class="la-clip"><div class="live-a"></div></div></div>' +
         '</div></div>' +
         '<div class="live-tools"></div>' +
         '<div class="live-camwrap"><video class="live-video" autoplay playsinline muted></video></div>' +
         '<div class="live-core-wrap"><div class="live-core">' +
-          '<div class="live-orb">' +
-            /* BM32: ОРБ-ДЫМКА — эфирный, расплывается в воздухе (портал из
-               галереи v3): мягкие КРУГЛЫЕ ореолы света без резких граней,
-               дышащие пятна дымки, редкие переливы (чаще жёлтый, иногда
-               красный) и 2-3 ЕЛЕ ЗАМЕТНЫЕ круглые орбиты, вечно медленно
-               вращающиеся вокруг в разных плоскостях */
-            '<i class="lo-orbit lo-o1"></i>' +
-            '<i class="lo-orbit lo-o2"></i>' +
-            '<i class="lo-orbit lo-o3"></i>' +
-            '<div class="lo-core">' +
-              '<div class="lo-pulse">' +
-                /* один широкий ореол — мягкий свет без граней и без второй
-                   полосы: круг + радиальный градиент, гаснет ДО края */
-                '<svg class="lo-halo" viewBox="-16 -16 32 32">' +
-                  '<circle r="15.4" fill="url(#gHalo)"/>' +
-                '</svg>' +
-                /* дымка, расплывающаяся в воздухе: два дышащих пятна */
-                '<i class="lo-haze lo-hz1"></i>' +
-                '<i class="lo-haze lo-hz2"></i>' +
-                '<i class="lo-body"></i>' +
-                '<i class="lo-iri"></i><i class="lo-iri lo-iri-r"></i>' +
-                '<svg class="lo-shape" viewBox="-16 -16 32 32">' +
-                  '<defs>' +
-                    '<radialGradient id="gFlo" cx="34%" cy="28%" r="82%">' +
-                      '<stop offset="0%" stop-color="#ffffff"/>' +
-                      '<stop offset="38%" stop-color="#c8eeff"/>' +
-                      '<stop offset="72%" stop-color="#48b6ea"/>' +
-                      '<stop offset="100%" stop-color="#0e6ea8"/>' +
-                    '</radialGradient>' +
-                    '<linearGradient id="gElo" x1="0" y1="0" x2="1" y2="1">' +
-                      '<stop offset="0%" stop-color="#ffffff"/>' +
-                      '<stop offset="55%" stop-color="#d4f1ff"/>' +
-                      '<stop offset="100%" stop-color="#8ed4f4"/>' +
-                    '</linearGradient>' +
-                    '<radialGradient id="gHalo" cx="50%" cy="45%" r="62%">' +
-                      '<stop offset="0%" stop-color="#46b4ff" stop-opacity=".16"/>' +
-                      '<stop offset="55%" stop-color="#288cf0" stop-opacity=".05"/>' +
-                      '<stop offset="100%" stop-color="#288cf0" stop-opacity="0"/>' +
-                    '</radialGradient>' +
-                    '<radialGradient id="gSend" cx="50%" cy="45%" r="60%">' +
-                      '<stop offset="0%" stop-color="#5ac8ff" stop-opacity=".32"/>' +
-                      '<stop offset="55%" stop-color="#3aaaff" stop-opacity=".10"/>' +
-                      '<stop offset="100%" stop-color="#3aaaff" stop-opacity="0"/>' +
-                    '</radialGradient>' +
-                  '</defs><g class="lo-shape-g"></g>' +
-                '</svg>' +
-                '<i class="lo-flash"></i><i class="lo-speak"></i>' +
-              '</div>' +
-            '</div></div>' +
+          /* BM34: ПЕРВОНАЧАЛЬНЫЙ ДИЗАЙН (legacy/live-bm28): стеклянный круг,
+             два вращающихся кольца, яркое ядро. Трансформации: фигуры
+             вырастают из обода САМОГО ядра — орб превращается в них */
+          '<div class="live-orb"><i class="lo-ring r1"></i><i class="lo-ring r2"></i>' +
+            '<div class="lo-core"></div>' +
+            '<svg class="lo-shape" viewBox="-16 -16 32 32">' +
+              '<defs>' +
+                '<radialGradient id="gFlo" cx="34%" cy="28%" r="82%">' +
+                  '<stop offset="0%" stop-color="#ffffff"/>' +
+                  '<stop offset="38%" stop-color="#c8eeff"/>' +
+                  '<stop offset="72%" stop-color="#48b6ea"/>' +
+                  '<stop offset="100%" stop-color="#0e6ea8"/>' +
+                '</radialGradient>' +
+                '<linearGradient id="gElo" x1="0" y1="0" x2="1" y2="1">' +
+                  '<stop offset="0%" stop-color="#ffffff"/>' +
+                  '<stop offset="55%" stop-color="#d4f1ff"/>' +
+                  '<stop offset="100%" stop-color="#8ed4f4"/>' +
+                '</linearGradient>' +
+              '</defs><g class="lo-shape-g"></g>' +
+            '</svg></div>' +
           '<div class="live-line">' +
             '<input id="liveInput" placeholder="Спроси Джарвиса…" autocomplete="off">' +
             '<button class="live-send" aria-label="Отправить">' +
-              /* BM33: свечение кнопки — мягкий круглый свет, растушёванный
-                 к краям (никаких резких геометрических границ) */
-              '<svg class="ls-hex" viewBox="-16 -16 32 32">' +
-                '<circle r="14.6" fill="url(#gSend)"/>' +
-              '</svg>' +
               '<svg viewBox="0 0 24 24"><path d="M3 20l18-8L3 4v6l12 2-12 2z" fill="currentColor"/></svg>' +
             '</button>' +
           '</div>' +
@@ -12286,7 +12247,7 @@ function liveBuild() {
   LIVE.dreamIn = root.querySelector('.live-dream-in');
   LIVE.qEl = root.querySelector('.live-q');
   LIVE.aEl = root.querySelector('.live-a');
-  LIVE.orbits = Array.from(root.querySelectorAll('.lo-orbit'));   // BM33: волчки
+  LIVE.aGrow = root.querySelector('.la-grow');   // BM34: плавное раскрытие
   LIVE.toolsEl = root.querySelector('.live-tools');
   LIVE.sideEl = root.querySelector('.live-side-in');
   /* строка ввода: Enter — спросить */
@@ -12477,6 +12438,7 @@ async function liveSetMic(on) {
      (голосом) на экране не оживает */
     if (LIVE.qEl) LIVE.qEl.textContent = '';
     if (LIVE.aEl) { LIVE.aEl.textContent = ''; LIVE.aEl.classList.remove('in'); }
+    if (LIVE.aGrow) LIVE.aGrow.classList.remove('open');
     /* стоп прослушивания БЕЗ транскрипции недосказанного */
     cancelAnimationFrame(VOICE.raf);
     VOICE_TTS_GEN++;                     // BM31: хвост очереди речи гаснет
@@ -12602,6 +12564,7 @@ function liveShowQuestion(text) {
      затирал её, сцена молчала. Теперь запись после клика всегда жива */
   LIVE.aEl.textContent = '';
   LIVE.aEl.classList.remove('in');
+  if (LIVE.aGrow) LIVE.aGrow.classList.remove('open');
   d.classList.add('swap');
   setTimeout(() => {
     if (!LIVE.on || !LIVE.dreamIn) return;
@@ -12622,6 +12585,11 @@ function liveDelta(chunk) {
      то же движение, что у вопроса), куски дописываются INLINE-span'ами
      с мягким проявлением (только opacity): пробелы живут, строка стоит */
   if (!LIVE.aEl || !chunk) return;
+  /* BM34: КОРЕНЬ «строка смещается, запрос прыгает вверх одним кадром» —
+     при первом куске колонка q+a мгновенно вырастала. Теперь место под
+     ответ раскрывает .la-grow (grid 0fr->1fr, .85s той же кривой) —
+     запрос уезжает вверх ПЛАВНО, до появления самого текста */
+  if (LIVE.aGrow && !LIVE.aGrow.classList.contains('open')) LIVE.aGrow.classList.add('open');
   if (!LIVE.aEl.classList.contains('in')) LIVE.aEl.classList.add('in');
   const sp = el('span', 'la-w');
   sp.textContent = chunk;
@@ -12651,6 +12619,7 @@ function liveEvent(ev) {
       if (LIVE.aEl) {
         LIVE.aEl.textContent = ev.error || 'Не получилось ответить';
         LIVE.aEl.classList.add('in');     // ошибка всплывает тем же движением
+        if (LIVE.aGrow) LIVE.aGrow.classList.add('open');
       }
       voiceSetPhase('idle');
       return;
@@ -15013,6 +14982,8 @@ function renderSettings() {
         '" placeholder="' + esc(pc.api_key || 'вставь ключ') + '"></div>' +
         ('folder_id' in pc ? '<div class="field"><label>folder_id</label><input id="fid_' + name +
           '" placeholder="' + esc(pc.folder_id || 'идентификатор каталога') + '"></div>' : '') +
+        ('voice_id' in pc ? '<div class="field"><label>voice_id — голос ElevenLabs</label><input id="vid_' + name +
+          '" placeholder="' + esc(pc.voice_id || 'идентификатор голоса из библиотеки') + '"></div>' : '') +
         '<div class="field"><label>Роль</label><select id="r_' + name + '">' +
         ROLE_OPTS.map((o) => '<option value="' + o[0] + '"' + (curRole === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
         '</select></div></div></div>';
@@ -15041,6 +15012,8 @@ function renderSettings() {
       if (kv) part.api_key = kv;
       const fidEl = $('#fid_' + name, prov);
       if (fidEl && fidEl.value.trim()) part.folder_id = fidEl.value.trim();
+      const vidEl = $('#vid_' + name, prov);
+      if (vidEl && vidEl.value.trim()) part.voice_id = vidEl.value.trim();
       const role = Number($('#r_' + name, prov).value);
       if (role !== (Number((pc || {}).priority) || 100)) part.priority = role;
       if (Object.keys(part).length) patch.providers[name] = part;

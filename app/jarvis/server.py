@@ -671,6 +671,55 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
+    def _tts_elevenlabs(self, text: str, prov: Dict[str, Any], cheap: bool) -> "Dict[str, Any] | None":
+        """BM34: ElevenLabs — МАКСИМАЛЬНАЯ ПРАВДОПОДОБНОСТЬ голоса.
+        Экономия без потери голоса: обычный разговор — выразительная
+        модель (eleven_v3), фразы во время работы инструментов (там
+        интонация не критична) — дешёвая быстрая eleven_flash_v2.5.
+        Голос ОДИН: voice_id общий для обеих моделей. None = не вышло,
+        цепочка продолжится (OpenAI-совместимый -> Яндекс -> системный)"""
+        import urllib.request
+        import urllib.error
+        import json as _json
+        key = str(prov.get("api_key") or "")
+        voice = str(prov.get("voice_id") or "")
+        if not voice:
+            self._tts_log("ELEVENLABS: ключ есть, voice_id НЕ вписан — мимо")
+            return None
+        model = str((prov.get("model_cheap") if cheap else prov.get("model")) or "")
+        if not model:
+            model = "eleven_flash_v2.5" if cheap else "eleven_v3"
+        url = ("https://api.elevenlabs.io/v1/text-to-speech/" + voice +
+               "?output_format=mp3_44100_128")
+        payload = _json.dumps({"text": text, "model_id": model}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, method="POST", headers={
+            "xi-api-key": key,
+            "Content-Type": "application/json",
+            "Accept": "audio/mpeg",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                mp3 = r.read()
+            if not mp3 or len(mp3) < 200:
+                self._tts_log("ELEVENLABS[%s]: пустой ответ" % model)
+                return None
+            self._tts_log("ELEVENLABS[%s%s] OK %d байт" %
+                          (model, " (дешёвая)" if cheap else "", len(mp3)))
+            return {"ok": True, "mime": "audio/mpeg",
+                    "audio": base64.b64encode(mp3).decode("ascii"),
+                    "engine": "elevenlabs"}
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = e.read()[:300].decode("utf-8", "replace")
+            except Exception:
+                pass
+            self._tts_log("ELEVENLABS HTTP %s: %s" % (e.code, detail[:180]))
+            return None          # цепочка не рвётся — скажет следующий
+        except Exception as e:
+            self._tts_log("ELEVENLABS NET: %s" % str(e)[:180])
+            return None
+
     # Интонация Джарвиса для gpt-4o-mini-tts: не «диктор читает текст»,
     # а живой собеседник. Короткая, конкретная, без противоречий
     _TTS_INSTRUCTIONS = (
@@ -737,11 +786,18 @@ class Handler(BaseHTTPRequestHandler):
         text = (body.get("text") or "").strip()[:900]
         if not text:
             return {"ok": False, "error": "пустой текст", "class": "req"}
-        # BM33: ЦЕПОЧКА ГОЛОСОВ. Первым — OpenAI-совместимый TTS (модель
-        # gpt-4o-mini-tts с инструкцией интонации — «голос как у GPT»),
-        # доступный из РФ через AITunnel (рубли, без VPN). Ключа нет или
-        # провайдер отказал — честный откат на Яндекс, дальше системный
-        # синтез в браузере: голос не онемевает никогда
+        # BM34: ЦЕПОЧКА ГОЛОСОВ. Первым — ElevenLabs (максимальная
+        # правдоподобность; разговор на eleven_v3, рабочие фразы на дешёвой
+        # eleven_flash_v2.5, голос один). Дальше — OpenAI-совместимый TTS
+        # (gpt-4o-mini-tts с инструкцией интонации, доступный из РФ через
+        # AITunnel), затем Яндекс, и системный синтез в браузере: голос не
+        # онемевает никогда
+        el = ((CONFIG.get("providers") or {}).get("elevenlabs") or {})
+        el_key = str(el.get("api_key") or "")
+        if el_key:
+            r = self._tts_elevenlabs(text, el, bool(body.get("cheap")))
+            if r is not None:
+                return r
         at = ((CONFIG.get("providers") or {}).get("aitunnel") or {})
         at_key = str(at.get("api_key") or "")
         if at_key:

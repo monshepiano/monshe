@@ -703,6 +703,8 @@ def active_providers() -> List[str]:
     for idx, (name, conf) in enumerate(confs.items()):
         if not isinstance(conf, dict):
             continue
+        if name == "elevenlabs":
+            continue   # BM34: голосовой TTS-провайдер, не LLM
         if conf.get("enabled") and str(conf.get("api_key") or "").strip():
             try:
                 prio = float(conf.get("priority", 100))
