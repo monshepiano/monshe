@@ -4465,7 +4465,7 @@ function testIterationBM30Contracts() {
     js.includes('<i class="lo-ring r1"></i><i class="lo-ring r2"></i>') &&
     js.includes('const ORB_CIRCLE_R = 8.0;') &&
     css.includes('.lo-core{width:100%;height:100%;display:block;') &&
-    css.includes('.live-core{position:relative;width:400px;height:400px;border-radius:50%;') &&
+    css.includes('.live-core{position:relative;width:360px;height:360px;border-radius:50%;') &&
     !css.includes('loSend') && !js.includes("classList.add('flash')") &&
     js.includes("const cheap = !!(LIVE.on && LIVE.root && LIVE.root.querySelector('.live-tool:not(.out)'));") &&
     css.includes('background:rgba(10,20,34,.42);') &&
@@ -4496,6 +4496,7 @@ function testIterationBM28Contracts() {
     /#liveRoot\.mic-on\.cam-on \.live-core-wrap\{\n  transform:translate\(-50%,calc\(-50% - 36vh\)\) scale\(\.6\)\}/.test(css) &&
     /#liveRoot\.text-on\.cam-on \.live-core-wrap\{\n  transform:translate\(-50%,calc\(-50% - 24vh\)\) scale\(\.88\)\}/.test(css) &&
     css.includes('#liveRoot.text-on.cam-on .live-dream{height:11vh}') && !css.includes('top:74vh') &&
+    css.includes('#liveRoot.text-on.cam-on .live-camwrap{transform:translate(-50%,calc(-50% + 9vh)) scale(.92)}') &&
     css.includes('@keyframes loThink') && css.includes('@keyframes loFlash') &&
     /#liveRoot\.ag \.live-bg \.a1\{background:radial-gradient\(circle,rgba\(224,52,88,\.34\),transparent 66%\)\}/.test(css) &&
     css.includes('.live-bar{') && css.includes('.lb-exit:hover{') &&

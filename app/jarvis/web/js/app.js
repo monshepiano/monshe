@@ -11775,7 +11775,7 @@ function voiceFeed(chunk) {
   if (flat.length >= 170) {
     const sp = flat.lastIndexOf(' ', 150);
     if (sp > 30) {
-      out += flat.slice(0, sp) + ' ';
+      out += flat.slice(0, sp) + ', ';   /* BM39: запятая — короткая живая пауза */
       VOICE.pending = flat.slice(sp + 1);
     }
   }
@@ -11836,13 +11836,12 @@ function voiceFetchServer(text) {
 function voicePlayServer(r) {
   return new Promise((resolve) => {
     const au = new Audio('data:' + (r.mime || 'audio/wav') + ';base64,' + r.audio);
-    /* BM38: ТЕМП — НА КЛИЕНТЕ. Серверный параметр speed агрегатор может
-       молча проигнорировать (и голос оставался медленным). playbackRate
-       работает всегда: ускоряет и слова, и неестественные паузы внутри
-       клипа, высота тона сохраняется */
+    /* BM38/39: ТЕМП — НА КЛИЕНТЕ (playbackRate работает всегда, серверный
+       speed агрегатор мог молчать). 1.12, не 1.18: перегон глушил
+       интонации — голос звучал неживым, просодии нужен воздух */
     try {
       au.preservesPitch = true;
-      au.playbackRate = 1.18;
+      au.playbackRate = 1.12;
     } catch (e0) { /* старые сафари — обычная скорость */ }
     VOICE.ttsAudio = au;
     VOICE.ttsBusy = true;                   // серверский голос заговорил

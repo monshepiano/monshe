@@ -8523,7 +8523,7 @@ class IterationBM18Tests(unittest.TestCase):
 
         # ядро — одно тело: орб <-> строка (spotlight-морф), большой босс-орб
         self.assertIn("#liveRoot.text-on .live-core{width:min(940px,88vw);height:86px;border-radius:46px", css)
-        self.assertIn(".live-core{position:relative;width:400px;height:400px;border-radius:50%", css)
+        self.assertIn(".live-core{position:relative;width:360px;height:360px;border-radius:50%", css)
         self.assertIn("@keyframes loThink", css)
         self.assertIn("@keyframes loFlash", css)
         # BM34: ПЕРВОНАЧАЛЬНЫЙ ДИЗАЙН возвращён (legacy/live-bm28): кольца снова в деле
@@ -8540,6 +8540,9 @@ class IterationBM18Tests(unittest.TestCase):
         # BM38: в режиме камеры ответ ПЕЧАТАЕТСЯ НА ОБЫЧНОМ МЕСТЕ СВЕРХУ
         self.assertIn("#liveRoot.text-on.cam-on .live-dream{height:11vh}", css)
         self.assertNotIn("top:74vh", css)
+        # BM39: камера ЧУТЬ НИЖЕ — не заезжает на строку/орб
+        self.assertIn("#liveRoot.mic-on.cam-on .live-camwrap{transform:translate(-50%,calc(-50% + 5vh)) scale(1)}", css)
+        self.assertIn("#liveRoot.text-on.cam-on .live-camwrap{transform:translate(-50%,calc(-50% + 9vh)) scale(.92)}", css)
         # элементы уступают: сдвиг влево с затемнением
         self.assertIn("#liveRoot.side-on .live-flow{transform:translateX(-15vw) scale(.84)", css)
         self.assertIn("filter:brightness(.6) saturate(.85)", css)
@@ -8800,11 +8803,14 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn('url = base + "/audio/speech"', py_server)
         self.assertIn('"instructions": self._TTS_INSTRUCTIONS,', py_server)
         self.assertIn("_TTS_INSTRUCTIONS = (", py_server)
-        self.assertIn('"энергичный: произноси текст слитно, фразы идут подряд, без "', py_server)
+        # BM39: инструкция вернулась к ЖИВОЙ просодии («слитно без пауз»
+        # BM37 расплющило интонации), темп клиента 1.12 (не 1.18)
+        self.assertIn('"уверенный, живой мужской голос. Интонация живая и естественная, "', py_server)
+        self.assertIn('"мыслей — не внутри слов и не после каждого слова."', py_server)
         # BM38: темп — НА КЛИЕНТЕ (playbackRate), серверный speed убран:
         # агрегатор мог молча его игнорировать, двойное ускорение — плохо
         self.assertNotIn('payload["speed"]', py_server)
-        self.assertIn("au.playbackRate = 1.18;", js)
+        self.assertIn("au.playbackRate = 1.12;", js)
         self.assertIn("au.preservesPitch = true;", js)
         self.assertIn("VOICE.pending = out + VOICE.pending;", js)
         self.assertIn("if at_key:", py_server)
