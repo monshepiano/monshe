@@ -11781,7 +11781,12 @@ function voiceFeed(chunk) {
 let VOICE_TTS_OK = null;      // null = не пробовали; true = живой; число = epoch следующей попытки
 let VOICE_TTS_ERR_SHOWN = false;
 
-function voiceSpeakViaServer(text) {
+/* BM37: СЕТЬ И ВОСПРОИЗВЕДЕНИЕ РАЗВЕДЕНЫ. Корень «говорит с огромными
+   паузами»: прежде следующее предложение НЕ НАЧИНАЛО качаться, пока
+   текущее не договорило — между фразами стоял полный круг сети до TTS
+   (секунды). Теперь аудио фразы качается УЖЕ ВО ВРЕМЯ звучания
+   предыдущей: очередь играет встык */
+function voiceFetchServer(text) {
   /* BM30: РЕТРАИ — ТОЛЬКО ВРЕМЕННЫМ ОШИБКАМ. Прежний код долбил Яндекс
      каждые 45с что бы ни случилось: DNS-блок песочницы и неверный ключ
      ретраями не лечатся. Сервер теперь классифицирует отказ:
@@ -11797,23 +11802,7 @@ function voiceSpeakViaServer(text) {
   return api('/api/tts', { text, cheap }).then((r) => {
     if (r && r.ok && r.audio) {
       VOICE_TTS_OK = true;
-      return new Promise((resolve) => {
-        const au = new Audio('data:' + (r.mime || 'audio/wav') + ';base64,' + r.audio);
-        VOICE.ttsAudio = au;
-        VOICE.ttsBusy = true;                   // BM32: Яндекс заговорил
-        const fin = () => {
-          if (VOICE.ttsAudio === au) VOICE.ttsAudio = null;
-          VOICE.ttsBusy = false;                // BM32: ...и договорил
-          resolve();
-        };
-        au.onended = fin;
-        au.onerror = fin;
-        au.play().catch(() => { fin(); });
-        voiceSetPhase('speaking');
-        cancelAnimationFrame(VOICE.raf);
-        VOICE.raf = requestAnimationFrame(voiceBargeLoop);
-        liveTtsPulse(au);             // орб дышит в такт голосу Джарвиса
-      });
+      return r;
     }
     /* честная причина: человек должен ЗНАТЬ, почему голос системный */
     if (r && r.error && !VOICE_TTS_ERR_SHOWN) {
@@ -11834,6 +11823,26 @@ function voiceSpeakViaServer(text) {
     }
     return null;
   }).catch(() => { VOICE_TTS_OK = Date.now() + 45000; return null; });
+}
+
+function voicePlayServer(r) {
+  return new Promise((resolve) => {
+    const au = new Audio('data:' + (r.mime || 'audio/wav') + ';base64,' + r.audio);
+    VOICE.ttsAudio = au;
+    VOICE.ttsBusy = true;                   // серверский голос заговорил
+    const fin = () => {
+      if (VOICE.ttsAudio === au) VOICE.ttsAudio = null;
+      VOICE.ttsBusy = false;                // ...и договорил
+      resolve();
+    };
+    au.onended = fin;
+    au.onerror = fin;
+    au.play().catch(() => { fin(); });
+    voiceSetPhase('speaking');
+    cancelAnimationFrame(VOICE.raf);
+    VOICE.raf = requestAnimationFrame(voiceBargeLoop);
+    liveTtsPulse(au);             // орб дышит в такт голосу Джарвиса
+  });
 }
 
 /* ИДЕЯ №1: орб пульсирует РОВНО по громкости голоса Джарвиса — говорящий
@@ -11871,16 +11880,18 @@ function voiceSpeak(text) {
      за другой; перебой и выход поднимают поколение и мгновенно гасят
      всё, что ещё не началось */
   const gen = VOICE_TTS_GEN;
+  /* BM37: ПОДКАЧКА ВПЕРЁД — фраза начинает качаться СРАЗУ, ещё пока
+     звучит предыдущая; играет строго по очереди */
+  const fetchP = voiceFetchServer(text);
   const speak = () => {
     if (!VOICE.open || gen !== VOICE_TTS_GEN) return Promise.resolve();
-    if (VOICE_TTS_OK !== false) {       // сервер ещё не отвергнут — пробуем
-      return voiceSpeakViaServer(text).then((done) => {
-        if (gen !== VOICE_TTS_GEN) return;      // уже перебили — тишина
-        if (done !== null) { voiceAfterSpeak(); return; }
-        return voiceSpeakLocal(text);           // фолбэк: системный синтез
-      });
-    }
-    return voiceSpeakLocal(text);
+    return fetchP.then((r) => {
+      if (gen !== VOICE_TTS_GEN) return;        // уже перебили — тишина
+      if (r && r.ok && r.audio) {
+        return voicePlayServer(r).then(() => { voiceAfterSpeak(); });
+      }
+      return voiceSpeakLocal(text);             // фолбэк: системный синтез
+    });
   };
   VOICE_TTS_QUEUE = VOICE_TTS_QUEUE.then(speak, speak);
 }

@@ -39,6 +39,7 @@ _TTS_URLS = [
 # BM32: амплуа «good» для эрмила: None = ещё не пробовали, True = Яндекс
 # принял интонацию, False = отверг (говорим без амплуа до перезапуска)
 _TTS_EMOTION = None
+_TTS_OPENAI_SPEED = None      # BM37: speed у OpenAI-TTS (None = пробуем, False = отвергнут)
 
 # Активные foreground-прогоны. Раньше Stop рвал только SSE-соединение, а сам
 # агент продолжал жить до конца: спрашивал санкции, двигал мышью, доводил
@@ -728,8 +729,10 @@ class Handler(BaseHTTPRequestHandler):
     _TTS_INSTRUCTIONS = (
         "Говори по-русски как Джарвис — домашний ИИ-собеседник: тёплый, "
         "уверенный, живой мужской голос. Интонация естественная, как у "
-        "умного друга в разговоре, — не дикторская. Дружелюбная лёгкая "
-        "ирония уместна. Фразы короткие, паузы живые."
+        "умного друга в разговоре, — не дикторская. Темп бодрый и "
+        "энергичный: произноси текст слитно, фразы идут подряд, без "
+        "замедления и без пауз между фразами. Никаких театральных "
+        "остановок."
     )
 
     def _tts_openai(self, text: str, prov: Dict[str, Any]) -> "Dict[str, Any] | None":
@@ -740,43 +743,58 @@ class Handler(BaseHTTPRequestHandler):
         import urllib.request
         import urllib.error
         import json as _json
+        global _TTS_OPENAI_SPEED
         base = str(prov.get("base_url") or "https://api.aitunnel.ru/v1").rstrip("/")
         key = str(prov.get("api_key") or "")
         model = str(prov.get("tts_model") or "gpt-4o-mini-tts")
         voice = str(prov.get("tts_voice") or "onyx")
         url = base + "/audio/speech"
-        payload = _json.dumps({
-            "model": model,
-            "voice": voice,
-            "input": text,
-            "instructions": self._TTS_INSTRUCTIONS,
-            "response_format": "wav",
-        }).encode("utf-8")
-        req = urllib.request.Request(url, data=payload, method="POST", headers={
-            "Authorization": "Bearer " + key,
-            "Content-Type": "application/json",
-        })
-        try:
-            with urllib.request.urlopen(req, timeout=20) as r:
-                wav = r.read()
-            if not wav or len(wav) < 200:
-                self._tts_log("OPENAI[%s]: пустой ответ" % model)
-                return None
-            self._tts_log("OPENAI[%s/%s] OK %d байт" % (model, voice, len(wav)))
-            return {"ok": True, "mime": "audio/wav",
-                    "audio": base64.b64encode(wav).decode("ascii"),
-                    "engine": "openai"}
-        except urllib.error.HTTPError as e:
-            detail = ""
+        # BM37: «говорит медленно, с большими паузами» — темп подтягиваем
+        # и инструкцией, и параметром speed. Не всякая модель/прокси
+        # принимает speed: отвергнет (400 с упоминанием speed) — один
+        # честный фолбэк без него, решение помнится до перезапуска
+        attempts = [True, False] if _TTS_OPENAI_SPEED is not False else [False]
+        for with_speed in attempts:
+            payload = {
+                "model": model,
+                "voice": voice,
+                "input": text,
+                "instructions": self._TTS_INSTRUCTIONS,
+                "response_format": "wav",
+            }
+            if with_speed:
+                payload["speed"] = "1.15"
+            req = urllib.request.Request(
+                url, data=_json.dumps(payload).encode("utf-8"), method="POST",
+                headers={"Authorization": "Bearer " + key,
+                         "Content-Type": "application/json"})
             try:
-                detail = e.read()[:300].decode("utf-8", "replace")
-            except Exception:
-                pass
-            self._tts_log("OPENAI HTTP %s: %s" % (e.code, detail[:180]))
-            return None          # откат на Яндекс — цепочка не рвётся
-        except Exception as e:
-            self._tts_log("OPENAI NET: %s" % str(e)[:180])
-            return None
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    wav = r.read()
+                if not wav or len(wav) < 200:
+                    self._tts_log("OPENAI[%s]: пустой ответ" % model)
+                    return None
+                self._tts_log("OPENAI[%s/%s] OK %d байт%s" % (
+                    model, voice, len(wav), " speed=1.15" if with_speed else ""))
+                return {"ok": True, "mime": "audio/wav",
+                        "audio": base64.b64encode(wav).decode("ascii"),
+                        "engine": "openai"}
+            except urllib.error.HTTPError as e:
+                detail = ""
+                try:
+                    detail = e.read()[:300].decode("utf-8", "replace")
+                except Exception:
+                    pass
+                if with_speed and e.code == 400 and "speed" in detail.lower():
+                    _TTS_OPENAI_SPEED = False
+                    self._tts_log("OPENAI: speed не принят — дальше без него")
+                    continue
+                self._tts_log("OPENAI HTTP %s: %s" % (e.code, detail[:180]))
+                return None      # откат на Яндекс — цепочка не рвётся
+            except Exception as e:
+                self._tts_log("OPENAI NET: %s" % str(e)[:180])
+                return None
+        return None
 
     def _tts(self, body: Dict[str, Any]) -> Dict[str, Any]:
         """BM29: НАСТОЯЩИЙ голос Джарвиса. Yandex SpeechKit (мужской ermil),

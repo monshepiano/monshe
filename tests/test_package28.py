@@ -8522,8 +8522,8 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("#liveRoot.open .live-bg{filter:blur(0) brightness(1);transform:scale(1)}", css)
 
         # ядро — одно тело: орб <-> строка (spotlight-морф), большой босс-орб
-        self.assertIn("#liveRoot.text-on .live-core{width:min(780px,84vw);height:74px;border-radius:40px", css)
-        self.assertIn(".live-core{position:relative;width:300px;height:300px;border-radius:50%", css)
+        self.assertIn("#liveRoot.text-on .live-core{width:min(860px,86vw);height:80px;border-radius:44px", css)
+        self.assertIn(".live-core{position:relative;width:340px;height:340px;border-radius:50%", css)
         self.assertIn("@keyframes loThink", css)
         self.assertIn("@keyframes loFlash", css)
         # BM34: ПЕРВОНАЧАЛЬНЫЙ ДИЗАЙН возвращён (legacy/live-bm28): кольца снова в деле
@@ -8536,7 +8536,9 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn("animation:deepIn .9s var(--live-ease) both}", css)
         self.assertIn(".live-a{font-size:23px;line-height:1.62;", css)
         # микрофон включён — текста НЕТ, только голос
-        self.assertIn("#liveRoot.mic-on .live-dream,#liveRoot.cam-on .live-dream{opacity:0}", css)
+        self.assertIn("#liveRoot.mic-on .live-dream,#liveRoot.cam-on:not(.text-on) .live-dream{opacity:0}", css)
+        # BM37: в режиме камеры ответ ПЕЧАТАЕТСЯ — подписью под камерой
+        self.assertIn("#liveRoot.text-on.cam-on .live-dream{opacity:1;top:74vh;height:22vh}", css)
         # элементы уступают: сдвиг влево с затемнением
         self.assertIn("#liveRoot.side-on .live-flow{transform:translateX(-15vw) scale(.84)", css)
         self.assertIn("filter:brightness(.6) saturate(.85)", css)
@@ -8611,16 +8613,17 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertNotIn("filter:blur(80px)", css)    # авроры без дорогого blur
         self.assertIn("will-change:transform", css)   # композитор, не paint
         # строка — LED-лента: свечение только наружу
-        self.assertIn("#liveRoot.text-on .live-core{width:min(780px,84vw);height:74px;border-radius:40px", css)
+        self.assertIn("#liveRoot.text-on .live-core{width:min(860px,86vw);height:80px;border-radius:44px", css)
         self.assertNotIn(".live-core::before", css)   # BM34: LED-псевдослой ушёл с первоначальным дизайном
         self.assertNotIn("loLed", css)
         # ядро — КРУГ (квадратный lo-core больше не накрывает орб)
         self.assertIn(".lo-core{width:100%;height:100%;display:block;", css)
         self.assertNotIn("lo-pulse", css)   # BM34: слои портала (halo/body/haze/iri) демонтированы
         # камера: и орб, и строка уезжают НАВЕРХ (не в сторону)
-        self.assertIn("#liveRoot.mic-on.cam-on .live-core-wrap,", css)
-        self.assertIn("#liveRoot.text-on.cam-on .live-core-wrap{", css)
+        self.assertIn("#liveRoot.mic-on.cam-on .live-core-wrap{", css)
         self.assertIn("calc(-50% - 36vh)) scale(.6)}", css)
+        self.assertIn("#liveRoot.text-on.cam-on .live-core-wrap{", css)
+        self.assertIn("calc(-50% - 36vh)) scale(.88)}", css)
         self.assertNotIn("calc(-50% - 22vw)", css)
         # кнопки шире, ховер — свечение-лента без заливок
         self.assertIn("display:flex;gap:92px;padding:12px 36px", css)
@@ -8634,7 +8637,9 @@ class IterationBM18Tests(unittest.TestCase):
         # VAD: конец фразы по 1000мс — молниеносность
         self.assertIn("now - VOICE.lastVoice > 700", js)
         # НАСТОЯЩИЙ ГОЛОС: серверный TTS с фолбэком на системный синтез
-        self.assertIn("function voiceSpeakViaServer(text)", js)
+        self.assertIn("function voiceFetchServer(text)", js)
+        self.assertIn("function voicePlayServer(r)", js)
+        self.assertIn("const fetchP = voiceFetchServer(text);", js)
         self.assertIn("VOICE_TTS_OK = Date.now() + 45000;", js)
         self.assertIn("api('/api/tts', { text, cheap })", js)
         py_server = Path("app/jarvis/server.py").read_text(encoding="utf-8")
@@ -8776,6 +8781,7 @@ class IterationBM18Tests(unittest.TestCase):
         # ===== BM32: ИНТОНАЦИЯ + КОРНИ «МОЛЧИТ» + ОРБ-ДЫМКА =====
         # амплуа «good» у эрмила: запрос с emotion + разовый фолбэк без него
         self.assertIn('_TTS_EMOTION = None', py_server)
+        self.assertIn('_TTS_OPENAI_SPEED = None', py_server)
         self.assertIn('payload["emotion"] = "good"', py_server)
         self.assertIn('if e.code == 400 and with_emotion and _TTS_EMOTION is None:', py_server)
         self.assertIn('"EMOTION «good» отвергнута — говорю без амплуа"', py_server)
@@ -8788,11 +8794,14 @@ class IterationBM18Tests(unittest.TestCase):
         self.assertIn('url = base + "/audio/speech"', py_server)
         self.assertIn('"instructions": self._TTS_INSTRUCTIONS,', py_server)
         self.assertIn("_TTS_INSTRUCTIONS = (", py_server)
+        self.assertIn('"энергичный: произноси текст слитно, фразы идут подряд, без "', py_server)
+        self.assertIn('payload["speed"] = "1.15"', py_server)
+        self.assertIn('attempts = [True, False] if _TTS_OPENAI_SPEED is not False else [False]', py_server)
         self.assertIn("if at_key:", py_server)
         self.assertIn("if r is not None:\n                return r", py_server)
         # микрофон не открывается поверх ещё говорящего Яндекса (эхо-самосглаз)
         self.assertIn("if (VOICE.ttsBusy) return;", js)
-        self.assertIn("VOICE.ttsBusy = true;                   // BM32: Яндекс заговорил", js)
+        self.assertIn("VOICE.ttsBusy = true;                   // серверский голос заговорил", js)
         # системный синтез не может зависнуть навсегда (сторож очереди)
         self.assertIn("guard = setTimeout(() => {", js)
         self.assertIn("7000 + Math.min(20000, text.length * 90)", js)
