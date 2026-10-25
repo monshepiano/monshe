@@ -550,6 +550,38 @@ def start_prober() -> None:
     _PROBER.start()
 
 
+def _vision_log(line: str) -> None:
+    """BM38: посмертный след зрения — какой провайдер/модель смотрели кадр."""
+    try:
+        from .config import LOG_DIR
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        import datetime
+        with open(LOG_DIR / "vision.log", "a", encoding="utf-8") as fh:
+            fh.write("%s %s\n" % (datetime.datetime.now().isoformat(timespec="seconds"), line))
+    except Exception:
+        pass
+
+
+def _vision_first(providers: List[str], messages: List[Dict]) -> List[str]:
+    """BM38: КОРЕНЬ «камера не видит — просит описать картинку». Картинка
+    не должна молча попадать к слепой модели: прежде при деградации
+    Cloud.ru (или без каталога) запрос с кадром уходил к DeepSeek —
+    зрячих моделей там нет, pick_model брал первую текстовую, а
+    flatten_images ПОМЕНЯЛ КАРТИНКУ НА ПОМЕТКУ. Модель честно читала
+    «изображение приложено, но я не умею смотреть» и просила описать
+    её словами. Теперь провайдеры со зрячими моделями идут первыми;
+    слепые остаются только если зрячих нет вовсе."""
+    if len(providers) < 2 or not has_image(messages):
+        return providers
+    seeing = [p for p in providers if vision_models(p)]
+    if not seeing:
+        _vision_log("зрячих провайдеров нет: %s" % providers)
+        return providers
+    ordered = seeing + [p for p in providers if p not in seeing]
+    _vision_log("провайдеры по зрению: %s" % ordered)
+    return ordered
+
+
 def _cheap_first(providers: List[str], tier: str) -> List[str]:
     """BM29.2: ПРОСТЫЕ РЕПЛИКИ — ДЕШЁВЫМ ПРОВАЙДЕРАМ. Пока Cloud.ru
     деградирует, «как дела» не должна стоить как умный ответ: nano/base
@@ -903,6 +935,10 @@ def pick_model(tier: str, provider: str = "cloudru") -> str:
         seeing = vision_models(provider)
         if seeing:
             return seeing[0]
+        # BM38: прежде падали в available[0] — ПЕРВАЯ ПОПАВШАЯСЯ текстовая
+        # модель «смотрела» кадр через пометку flatten_images. Честнее
+        # попробовать предпочтение: ошибку модели видно сразу, а не шёпотом
+        return prefs[0] if prefs else available[0]
     return available[0]
 
 
@@ -1034,6 +1070,7 @@ def _build_payload(model: str, messages: List[Dict], tools: Optional[List[Dict]]
     # маршрутизация не подведёт; любая эскалация или смена провайдера
     # ломала эту надежду и приносила HTTP 400.
     if has_image(messages) and not model_can_see(provider, model):
+        _vision_log("FLATTEN: %s/%s слепа — картинка заменена пометкой" % (provider, model))
         messages = flatten_images(messages)
     payload: Dict[str, Any] = {
         "model": model,
@@ -1081,6 +1118,7 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
     providers = [provider] if provider else provider_order(
         active_providers() or ["cloudru"])
     providers = _cheap_first(providers, tier)      # BM29.2: простое — дешёвым
+    providers = _vision_first(providers, messages)  # BM38: кадр — только зрячим
     span = telemetry.Span(operation, tier=tier)
     deadline = time.monotonic() + max(0.25, float(timeout))
     last_error: Optional[Exception] = None
@@ -1110,7 +1148,9 @@ def chat(messages: List[Dict], tier: str = "base", tools: Optional[List[Dict]] =
         # (она отвечает — главные ответы работают), а не умирает
         with _CACHE_LOCK:
             _have_models = bool(_META_CACHE.get(prov))
-        if tier != "base" and not _have_models:
+        if tier != "base" and not _have_models and not has_image(messages):
+            # BM38: у картинки даунгрейд на базовую (слепую) модель — это
+            # молчая подмена зрения текстом; честнее попробовать предпочтение
             model = pick_model("base", prov)
             payload = _build_payload(model, messages, tools, False,
                                      temperature, max_tokens, prov, "base")
@@ -1200,6 +1240,7 @@ def _chat_stream_impl(messages: List[Dict], tier: str = "base", tools: Optional[
     providers = [provider] if provider else provider_order(
         active_providers() or ["cloudru"])
     providers = _cheap_first(providers, tier)      # BM29.2: простое — дешёвым
+    providers = _vision_first(providers, messages)  # BM38: кадр — только зрячим
     span = _span or telemetry.Span(operation, tier=tier)
     last_error: Optional[Exception] = None
     last_provider = ""

@@ -11763,11 +11763,19 @@ function voiceFeed(chunk) {
     out += VOICE.pending.slice(0, idx + 1) + ' ';
     VOICE.pending = VOICE.pending.slice(idx + 1).replace(/^\s+/, '');
   }
+  /* BM38: КОРОТКИЕ ОБРЫВКИ НЕ ЛЕТЯТ ОТДЕЛЬНЫМИ КЛИПАМИ. «Да.» «Хорошо.» —
+     каждый клип TTS несёт свои тишины в начале и конце, и речь звучала
+     «с паузами между словами». Мелочь копится до следующей границы —
+     поток ещё пишет, задержка не больше пары слов */
+  if (out.trim() && out.trim().length < 24 && S.streaming) {
+    VOICE.pending = out + VOICE.pending;
+    return;
+  }
   const flat = VOICE.pending.replace(/\s+/g, ' ').trim();
   if (flat.length >= 170) {
     const sp = flat.lastIndexOf(' ', 150);
     if (sp > 30) {
-      out += flat.slice(0, sp) + '… ';
+      out += flat.slice(0, sp) + ' ';
       VOICE.pending = flat.slice(sp + 1);
     }
   }
@@ -11828,6 +11836,14 @@ function voiceFetchServer(text) {
 function voicePlayServer(r) {
   return new Promise((resolve) => {
     const au = new Audio('data:' + (r.mime || 'audio/wav') + ';base64,' + r.audio);
+    /* BM38: ТЕМП — НА КЛИЕНТЕ. Серверный параметр speed агрегатор может
+       молча проигнорировать (и голос оставался медленным). playbackRate
+       работает всегда: ускоряет и слова, и неестественные паузы внутри
+       клипа, высота тона сохраняется */
+    try {
+      au.preservesPitch = true;
+      au.playbackRate = 1.18;
+    } catch (e0) { /* старые сафари — обычная скорость */ }
     VOICE.ttsAudio = au;
     VOICE.ttsBusy = true;                   // серверский голос заговорил
     const fin = () => {

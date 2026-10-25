@@ -4465,7 +4465,7 @@ function testIterationBM30Contracts() {
     js.includes('<i class="lo-ring r1"></i><i class="lo-ring r2"></i>') &&
     js.includes('const ORB_CIRCLE_R = 8.0;') &&
     css.includes('.lo-core{width:100%;height:100%;display:block;') &&
-    css.includes('.live-core{position:relative;width:340px;height:340px;border-radius:50%;') &&
+    css.includes('.live-core{position:relative;width:400px;height:400px;border-radius:50%;') &&
     !css.includes('loSend') && !js.includes("classList.add('flash')") &&
     js.includes("const cheap = !!(LIVE.on && LIVE.root && LIVE.root.querySelector('.live-tool:not(.out)'));") &&
     css.includes('background:rgba(10,20,34,.42);') &&
@@ -4492,9 +4492,10 @@ function testIterationBM28Contracts() {
   assert(css.includes('#liveRoot{') && css.includes('.live-veil{') &&
     /#liveRoot\.open \.live-veil\{opacity:0\}/.test(css) &&
     /#liveRoot\.open \.live-bg\{filter:blur\(0\) brightness\(1\);transform:scale\(1\)\}/.test(css) &&
-    /#liveRoot\.text-on \.live-core\{width:min\(860px,86vw\);height:80px;border-radius:44px/.test(css) &&
+    /#liveRoot\.text-on \.live-core\{width:min\(940px,88vw\);height:86px;border-radius:46px/.test(css) &&
     /#liveRoot\.mic-on\.cam-on \.live-core-wrap\{\n  transform:translate\(-50%,calc\(-50% - 36vh\)\) scale\(\.6\)\}/.test(css) &&
-    /#liveRoot\.text-on\.cam-on \.live-core-wrap\{\n  transform:translate\(-50%,calc\(-50% - 36vh\)\) scale\(\.88\)\}/.test(css) &&
+    /#liveRoot\.text-on\.cam-on \.live-core-wrap\{\n  transform:translate\(-50%,calc\(-50% - 24vh\)\) scale\(\.88\)\}/.test(css) &&
+    css.includes('#liveRoot.text-on.cam-on .live-dream{height:11vh}') && !css.includes('top:74vh') &&
     css.includes('@keyframes loThink') && css.includes('@keyframes loFlash') &&
     /#liveRoot\.ag \.live-bg \.a1\{background:radial-gradient\(circle,rgba\(224,52,88,\.34\),transparent 66%\)\}/.test(css) &&
     css.includes('.live-bar{') && css.includes('.lb-exit:hover{') &&
