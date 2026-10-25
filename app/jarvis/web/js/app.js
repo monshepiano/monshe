@@ -12024,7 +12024,7 @@ function liveBeat() {
    он меняет форму, как капля света. Превращение редкое, в любой момент,
    плавное (5.2с по S-кривой), вращение фигуры медленное и непрерывное */
 const LIVE_SHAPE = { key: '', t0: 0, m: 0, phase: 'idle', nextAt: 0, holdTo: 0 };
-const ORB_CIRCLE_R = 7.35;    /* радиус тела орба в единицах viewBox */
+const ORB_CIRCLE_R = 8.0;     /* радиус тела орба: 8 из 16 ед viewBox = 50% капсулы */
 const ORB_HULL_N = 72;        /* точек контура: гладкий круг и морф */
 
 /* путь круглого тела (m=0) — считается один раз */
@@ -12253,9 +12253,9 @@ function liveBuild() {
             '<svg class="lo-core" viewBox="-16 -16 32 32">' +
               '<defs>' +
                 '<radialGradient id="gCore" cx="50%" cy="42%" r="62%">' +
-                  '<stop offset="0%" stop-color="#eafaff" stop-opacity=".85"/>' +
-                  '<stop offset="40%" stop-color="#00d4ff" stop-opacity=".36"/>' +
-                  '<stop offset="78%" stop-color="#02405e" stop-opacity=".12"/>' +
+                  '<stop offset="0%" stop-color="#eafaff" stop-opacity=".72"/>' +
+                  '<stop offset="40%" stop-color="#00d4ff" stop-opacity=".26"/>' +
+                  '<stop offset="78%" stop-color="#02405e" stop-opacity=".09"/>' +
                   '<stop offset="100%" stop-color="#02405e" stop-opacity="0"/>' +
                 '</radialGradient>' +
                 '<radialGradient id="gCoreY" cx="50%" cy="42%" r="62%">' +
